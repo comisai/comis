@@ -445,6 +445,80 @@ describe("chan/tg CLI — runVerb: drive verbs over /control/* (CLI-02)", () => 
   });
 });
 
+describe("chan/tg CLI — runVerb: control-response shape guard (WR-03: no exit-0 false success)", () => {
+  /** A fake fetch whose responses are scripted per (method, url-substring). */
+  function fakeFetch(
+    handler: (url: string, init?: RequestInit) => { status?: number; body: unknown },
+  ): typeof fetch {
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const { status = 200, body } = handler(url, init);
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+      } as Response;
+    }) as typeof fetch;
+  }
+
+  it("readOutbound on a NON-ARRAY control body fails honestly — NOT an exit-0 { reply: undefined }", async () => {
+    // The most worrying branch: a 200 with a NON-array object (e.g. an error
+    // object) used to make outbounds.length undefined -> !== 0 -> the last
+    // element undefined -> send returned { reply: undefined } as a SUCCESS.
+    const controlFetch = fakeFetch((url) => {
+      if (url.includes("/outbound")) return { status: 200, body: { ok: false, error: "boom" } };
+      return { status: 200, body: { messageId: 7 } }; // the POST is fine
+    });
+    const err = await runVerb("send", ["ping"], { handle: fakeHandle(), controlFetch }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_bad_shape");
+  });
+
+  it("readOutbound on a non-2xx control response fails honestly (control_http_error)", async () => {
+    const controlFetch = fakeFetch((url) => {
+      if (url.includes("/outbound")) return { status: 500, body: { error: "internal" } };
+      return { status: 200, body: { messageId: 7 } };
+    });
+    const err = await runVerb("last", [], { handle: fakeHandle(), controlFetch }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_http_error");
+  });
+
+  it("send on a non-2xx POST (no messageId) fails honestly BEFORE the reply-wait", async () => {
+    const controlFetch = fakeFetch((url) => {
+      // The POST itself 400s — there is no messageId to wait on.
+      if (url.includes("/messages")) return { status: 400, body: { ok: false, error: "bad input" } };
+      return { status: 200, body: [] };
+    });
+    const err = await runVerb("send", ["ping"], { handle: fakeHandle(), controlFetch }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    // Reason names the POST failure, not a downstream no_reply after the full wait.
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+  });
+
+  it("send on a 200 POST with a NON-numeric messageId fails honestly (not a 45s no_reply)", async () => {
+    const controlFetch = fakeFetch((url) => {
+      if (url.includes("/messages")) return { status: 200, body: { ok: true } }; // no messageId
+      return { status: 200, body: [] };
+    });
+    const err = await runVerb("send", ["ping"], { handle: fakeHandle(), controlFetch }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+  });
+});
+
 describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_error)", () => {
   it("db against a MISSING memory.db is a dead_handle (db_unavailable), NOT rpc_error", async () => {
     // A freshly-spawned rig before its first write: the db path does not exist.

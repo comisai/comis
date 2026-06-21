@@ -441,7 +441,20 @@ async function readOutbound(
     `${handle.controlEndpoint}/control/chats/${handle.chatId}/outbound` +
     `?afterMessageId=${afterMessageId}&waitMs=${waitMs}`;
   const res = await doFetch(url);
-  return (await res.json()) as OutboundLine[];
+  // WR-03 (false-success-adjacent): verify the HTTP status AND shape BEFORE
+  // treating the body as outbounds. A non-2xx (e.g. the control-api's 400
+  // `{ok:false,error}` or a 404 object) or any NON-array body would otherwise
+  // make `outbounds.length` undefined → the last element undefined → `send`
+  // returns `{ reply: undefined }` as an exit-0 SUCCESS. A non-array / non-ok
+  // control response is NOT a reply — fail honestly, reason-coded, non-zero.
+  if (!res.ok) {
+    throw new VerbFailure("dead_handle", { reason: "control_http_error", status: res.status, url });
+  }
+  const body = (await res.json()) as unknown;
+  if (!Array.isArray(body)) {
+    throw new VerbFailure("dead_handle", { reason: "control_bad_shape", url });
+  }
+  return body as OutboundLine[];
 }
 
 /**
@@ -557,7 +570,22 @@ export async function runVerb(
           body: JSON.stringify({ fromUserId: 111, text }),
         },
       );
-      const { messageId: inboundId } = (await postRes.json()) as { messageId: number };
+      // WR-03: verify the POST status + that a numeric messageId came back BEFORE
+      // waiting. A 400 body (or any body without a numeric messageId) would make
+      // `inboundId` undefined, and the reply-wait's `messageId > undefined`
+      // filter is always false → an eventual no_reply after the full 45s wait
+      // (a misleading slow failure). Fail fast + honestly instead.
+      if (!postRes.ok) {
+        throw new VerbFailure("dead_handle", { reason: "control_post_error", status: postRes.status });
+      }
+      const postBody = (await postRes.json()) as { messageId?: unknown };
+      const inboundId = postBody.messageId;
+      if (typeof inboundId !== "number") {
+        throw new VerbFailure("dead_handle", {
+          reason: "control_post_error",
+          hint: "the control POST returned no numeric messageId — cannot wait for a reply.",
+        });
+      }
       // Wait once for the reply outbound.
       const outbounds = await readOutbound(ctx, handle, inboundId, SEND_WAIT_MS);
       if (outbounds.length === 0) {
