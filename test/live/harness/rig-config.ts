@@ -192,3 +192,152 @@ monitoring:
     enabled: false
 `;
 }
+
+/**
+ * Build the throwaway daemon YAML for a SIGNAL rig (CHAN2-02, Phase 209-05). The
+ * Signal sibling of {@link buildConfigYaml}: identical in every respect EXCEPT
+ * the channel block — it writes a `channels.signal` block carrying the dynamic
+ * `baseUrl` redirect seam instead of `channels.telegram` with `apiRoot`.
+ *
+ * - `channels.signal = { enabled:true, baseUrl: "http://127.0.0.1:P" }` — THE
+ *   integration (zero production code change). The verified seam:
+ *   `setup-channels-adapters.ts:216-227` reads `signal.baseUrl` →
+ *   `validateSignalConnection({ baseUrl })` (the boot `GET /api/v1/check`) →
+ *   `createSignalPlugin({ baseUrl })`, so the REAL Signal adapter's JSON-RPC +
+ *   SSE hit the loopback emulator with NO product change. `schema-channel.ts`
+ *   already has `signal.baseUrl` (default `http://127.0.0.1:8080`).
+ * - NO `account` — the daemon boot is the health-check ONLY (the adapter's
+ *   `validateSignalConnection` skips `listAccounts` when no account is
+ *   configured, `credential-validator.ts:56`), so the rig boots account-less
+ *   ($0/offline/isolated — no real Signal account, no real network, T-209-12).
+ * - keyless `ollama` provider, `models.defaultProvider: ollama`, the
+ *   `agents.default` learning block, and the ≥32-char LITERAL `gateway` token —
+ *   ALL byte-identical to {@link buildConfigYaml} (the only difference is the
+ *   channel block). The learning gotchas (REACT-03) carry over unchanged.
+ *
+ * CONSTRAINT (the same as {@link buildConfigYaml}): this module — and therefore
+ * this writer — stays `@comis/*`-FREE (the detached `rig-daemon.ts` imports it
+ * under a bare `tsx`; a `@comis/*` import would break that AND is a
+ * published-graph concern, T-209-13). It is plain-string only.
+ *
+ * EXPORTED so the Task-1 config-shape test (`rig.test.ts`) asserts the seam +
+ * the no-account posture on the produced YAML, and so `rig.ts`'s channel→factory
+ * map registers it as the Signal config writer (the ONE-LINE registration).
+ */
+export function buildSignalConfigYaml(baseUrl: string, gatewayPort: number, model: string): string {
+  // The keyless leg uses ollama; an explicit non-keyless model string is passed
+  // through as the provider model id (operator/live.env path) — identical to
+  // buildConfigYaml.
+  const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
+  return `# THROWAWAY config — Phase 209 channel-emulation, SIGNAL rig (rig.ts).
+# Written AFTER the emulator starts so channels.signal.baseUrl carries the
+# kernel-allocated emulator port. The daemon reads this via COMIS_CONFIG_PATHS.
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to COMIS_DATA_DIR at runtime (set per-rig by the rig).
+
+channels:
+  signal:
+    enabled: true
+    # THE redirect seam — the whole integration, zero production code change
+    # (setup-channels-adapters.ts:216-227 reads signal.baseUrl → validateSignalConnection
+    # → createSignalPlugin). The loopback emulator's apiRoot.
+    baseUrl: "${baseUrl}"
+    # NO account — validateSignalConnection skips listAccounts when no account is
+    # set (credential-validator.ts:56), so the boot is the GET /api/v1/check
+    # health-check only ($0/offline/isolated; no real Signal account, no network).
+
+providers:
+  entries:
+    keyless-local:
+      type: ollama
+      # /v1 suffix required: pi-ai registers type=ollama as openai-completions and
+      # posts to \`\${baseUrl}/chat/completions\` — bare Ollama 404s without /v1.
+      baseUrl: "http://localhost:11434/v1"
+      # Keyless — ollama is in KEYLESS_PROVIDER_TYPES; no secret entry needed; the
+      # daemon registers the ollama-no-auth sentinel (omitting avoids a boot FATAL).
+      models:
+        - id: "${providerModelId}"
+          input: ["text", "image"]
+          contextWindow: 131072
+          reasoning: true
+          maxTokens: 2048
+
+models:
+  # defaultProvider keeps the agent on the keyless local provider ($0/offline).
+  defaultProvider: ollama
+  # defaultModel lets an ad-hoc agent resolve the custom-provider model.
+  defaultModel: "keyless-local:${providerModelId}"
+
+agents:
+  default:
+    name: "ChannelEmuTestAgent"
+    provider: keyless-local
+    model: "${providerModelId}"
+    maxSteps: 6
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+    rag:
+      enabled: false
+    # REACT-03 GOTCHA C — learning is byte-identical-OFF until BOTH
+    # memory.costFeatures.enabled (below) AND these per-agent toggles are on
+    # (setup-learning-reactions.ts:651-656,720). Carried over from buildConfigYaml
+    # so the Signal rig exercises the SAME learning bed.
+    learningOutcome:
+      enabled: true
+    learningSkills:
+      enabled: true
+    learningTuning:
+      enabled: true
+    # REACT-03 GOTCHA D — the reactor trust floor (the #1 REACT-03 trap):
+    # 0.6 (REACTION_BASE_CONFIDENCE) x 0.4 (trustWeight known) = 0.24 >=
+    # 0.05 (REACTION_MIN_CONFIDENCE_TO_WRITE). Rig config ONLY — never a
+    # product-default flip.
+    elevatedReply:
+      defaultTrustLevel: "known"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: ${gatewayPort}
+  tokens:
+    - id: "chan-live"
+      # ≥32-char LITERAL (38 chars) — env-refs do NOT resolve for the test gateway
+      # (schema-gateway.ts:45 z.string().min(32); token-auth.ts timingSafeEqual).
+      secret: "${GATEWAY_TOKEN}"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "${MEMORY_DB_FILE}"
+  # REACT-03 GOTCHA C — someLearningOn requires costFeatures (the master
+  # cost-feature switch, default ON but explicit here for the config-shape test).
+  costFeatures:
+    enabled: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+`;
+}
