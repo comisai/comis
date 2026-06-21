@@ -17,12 +17,16 @@
  * `test/e2e/mocks/telegram/mock-telegram-server.ts:227-245`. Same runtime
  * shape — now grammy-typed.
  *
- * Scope (Phase 206): the `message` Update (the DM text round-trip, Phase 204)
- * AND the `message_reaction` ADD Update (REACT-01, this phase — the inbound
- * half that trips the already-wired adapter handler at telegram-inbound.ts:266).
- * Callback / edited-message builders REMAIN deferred (INTERACT-01 Phase 207) and
- * are intentionally NOT built here — the §4.2 scope guard asserts no
- * still-deferred-kind literal appears.
+ * Scope (Phase 207): the `message` Update (the DM text round-trip, Phase 204),
+ * the `message_reaction` ADD Update (REACT-01, Phase 206), the inbound MEDIA
+ * `message` (MEDIA-03 — `makeMediaUpdate`/`makeLocationUpdate`, mirroring
+ * `buildAttachments`/`message-mapper`), the `callback_query` Update (INTERACT-01
+ * — `makeCallbackUpdate`, the `telegram-inbound.ts:165` handler) AND the
+ * `edited_message` Update (INTERACT-02 — `makeEditUpdate`, the
+ * `telegram-inbound.ts:117` handler). The §4.2 scope guard now PERMITS those
+ * kinds and still forbids the Out-of-Scope kinds (channel-post / inline-query /
+ * poll-answer / chat-member updates) — the harness must not mint an update kind
+ * the adapter does not handle (T-207-03).
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture rule.
@@ -114,10 +118,11 @@ export interface MakeMessageUpdateOptions {
  * timestamp (message-mapper.ts:207, design §4.2). Emitting ms here would make
  * the mapped timestamp ~1000× too large.
  *
- * Only the `message` kind is populated — no other (channel-post, inline-query,
- * reaction, callback) kinds (those are deferred to Phases 206/207; §4.2 scope
- * guard — the AC greps the whole file, so even a comment must avoid those
- * exact update-kind tokens).
+ * Only the `message` kind is populated by THIS builder — the other in-scope
+ * kinds (reaction / media / callback / edit) each have their own builder; the
+ * §4.2-Out-of-Scope kinds (channel-post / inline-query / poll-answer) are minted
+ * by NO builder. The source-grep AC strips comment lines, so a doc-comment
+ * naming a kind is not a false hit.
  */
 export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
   return {
@@ -406,8 +411,8 @@ export interface MakeReactionUpdateOptions {
  * as {@link makeMessageUpdate}); emitting ms would make the mapped timestamp
  * ~1000× too large.
  *
- * Only the `message_reaction` kind is populated — no callback / edited-message
- * kind (those stay deferred to Phase 207; §4.2 scope guard).
+ * Only the `message_reaction` kind is populated by THIS builder (the callback /
+ * edited-message kinds have their own Phase-207 builders; §4.2 scope guard).
  */
 export function makeReactionUpdate(opts: MakeReactionUpdateOptions): Update {
   return {
@@ -424,6 +429,126 @@ export function makeReactionUpdate(opts: MakeReactionUpdateOptions): Update {
       // new_reaction is exactly an ADD the adapter dispatches.
       old_reaction: [],
       new_reaction: [{ type: "emoji", emoji: opts.emoji }],
+    },
+  };
+}
+
+/**
+ * Options for {@link makeBotMessage}.
+ */
+export interface MakeBotMessageOptions {
+  /** The message's id inside the chat (the EXISTING bot reply id a callback taps). */
+  readonly messageId: number;
+  /** The private-chat id the bot reply lives in. */
+  readonly chatId: number;
+  /** The bot sender — built via {@link makeBotUser} (`is_bot: true`). */
+  readonly botUser: User;
+  /** Optional reply text (the bot's message body). Omitted when absent (exactOptional). */
+  readonly text?: string;
+}
+
+/**
+ * Build a grammy `Message` authored BY the bot — the EXISTING reply a
+ * `callback_query` taps (it carries the `chat.id` + `message_id` the adapter
+ * reads at `telegram-inbound.ts:173,181`). `from` is the bot (`is_bot: true`),
+ * distinguishing it from an inbound human message. Return-annotated `: Message`
+ * so a grammy drift is a compile error (I4).
+ */
+export function makeBotMessage(opts: MakeBotMessageOptions): Message {
+  return {
+    message_id: opts.messageId,
+    from: opts.botUser,
+    // PrivateChat requires first_name; in a DM the chat mirrors the other party.
+    chat: { id: opts.chatId, type: "private", first_name: opts.botUser.first_name },
+    date: Math.floor(Date.now() / 1000),
+    ...(opts.text !== undefined ? { text: opts.text } : {}),
+  };
+}
+
+/**
+ * Options for {@link makeCallbackUpdate}.
+ */
+export interface MakeCallbackUpdateOptions {
+  /** The Update's unique, monotonically-increasing id (see {@link nextUpdateId}). */
+  readonly updateId: number;
+  /** The callback query's unique id (`randomBytes` hex in practice). */
+  readonly id: string;
+  /** The TAPPING user — built via {@link makeUser} (≠ the bot; the handler reads `ctx.from.id`). */
+  readonly from: User;
+  /** The EXISTING bot reply the button belongs to — built via {@link makeBotMessage}. Carries `chat.id` + `message_id`. */
+  readonly botMessage: Message;
+  /** grammy's `CallbackQuery` REQUIRES `chat_instance` — a stable per-chat string. */
+  readonly chatInstance: string;
+  /** The button payload (`ctx.callbackQuery.data`) — a SCALAR string (IN-04 safe). */
+  readonly data: string;
+}
+
+/**
+ * Build a `callback_query` `Update` the adapter's button handler consumes
+ * (`telegram-inbound.ts:165` — `answerCallbackQuery()` is the first statement,
+ * then it reads `ctx.callbackQuery.message?.chat.id`, `ctx.from.id`,
+ * `ctx.callbackQuery.data`, `ctx.callbackQuery.message.message_id`).
+ *
+ * The return annotation IS grammy's `Update` (I4). `message` is the EXISTING bot
+ * `Message` (a regular accessible message — assignable to grammy's
+ * `MaybeInaccessibleMessage`), `data` is a scalar string, `from` is the tapper.
+ * Only the `callback_query` kind is populated (the §4.2 guard now PERMITS it —
+ * lifted by INTERACT-01, Phase 207).
+ */
+export function makeCallbackUpdate(opts: MakeCallbackUpdateOptions): Update {
+  const callbackQuery: CallbackQuery = {
+    id: opts.id,
+    from: opts.from,
+    message: opts.botMessage,
+    chat_instance: opts.chatInstance,
+    data: opts.data,
+  };
+  return {
+    update_id: opts.updateId,
+    callback_query: callbackQuery,
+  };
+}
+
+/**
+ * Options for {@link makeEditUpdate}.
+ */
+export interface MakeEditUpdateOptions {
+  /** The Update's unique, monotonically-increasing id (see {@link nextUpdateId}). */
+  readonly updateId: number;
+  /** The id of the message being edited (the same id arrived earlier as a `message`). */
+  readonly messageId: number;
+  /** The private-chat id the edited message lives in. */
+  readonly chatId: number;
+  /** The (human) sender — built via {@link makeUser}. */
+  readonly from: User;
+  /** The new (post-edit) message text. */
+  readonly newText: string;
+}
+
+/**
+ * Build an `edited_message` `Update` the adapter routes through the SAME
+ * `handleInboundMessage` (`telegram-inbound.ts:117` — `ctx.editedMessage` →
+ * `handleInboundMessage(state, deps, ctx.editedMessage, ctx.editedMessage.chat.id)`).
+ *
+ * The inner shape is exactly {@link makeMessageUpdate}'s `message` (a `private`
+ * chat + a mandatory `from`), under the `edited_message` key, PLUS `edit_date`
+ * (what distinguishes an edit from a fresh message). The return annotation IS
+ * grammy's `Update` (I4); `date`/`edit_date` are unix SECONDS. Only the
+ * `edited_message` kind is populated (the §4.2 guard now PERMITS it — lifted by
+ * INTERACT-02, Phase 207).
+ */
+export function makeEditUpdate(opts: MakeEditUpdateOptions): Update {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return {
+    update_id: opts.updateId,
+    edited_message: {
+      message_id: opts.messageId,
+      from: opts.from,
+      // PrivateChat requires first_name; in a DM the chat IS the sender.
+      chat: { id: opts.chatId, type: "private", first_name: opts.from.first_name },
+      date: nowSeconds,
+      edit_date: nowSeconds,
+      text: opts.newText,
     },
   };
 }
