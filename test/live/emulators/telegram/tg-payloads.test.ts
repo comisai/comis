@@ -28,12 +28,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import type { CallbackQuery, Message, MessageReactionUpdated, Update } from "grammy/types";
+import type { CallbackQuery, Chat, Message, MessageReactionUpdated, Update } from "grammy/types";
 import {
   makeBotMessage,
   makeBotUser,
   makeCallbackUpdate,
   makeEditUpdate,
+  makeGroupChat,
   makeLocationUpdate,
   makeMediaUpdate,
   makeMessageUpdate,
@@ -818,5 +819,149 @@ describe("tg-payloads.ts scope guard (message/reaction/callback/edit in scope; �
     expect(code).not.toMatch(/poll_answer/);
     expect(code).not.toMatch(/my_chat_member/);
     expect(code).not.toMatch(/chat_join_request/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeGroupChat — a grammy Chat of type group/supergroup (+is_forum) — GROUP-01
+// (Phase 208). The group/supergroup/forum chat shape the mapper derives
+// chatType + the thread context from (message-mapper.ts:147-148,194). Every
+// prior builder hardcoded `type: "private"`; makeGroupChat is the group seed.
+// ---------------------------------------------------------------------------
+
+describe("makeGroupChat runtime shape (the group/supergroup/forum chat seed, GROUP-01)", () => {
+  it("type:'group' → a grammy GroupChat (no is_forum)", () => {
+    const chat = makeGroupChat({ id: -100123, type: "group" });
+    expect(chat.id).toBe(-100123);
+    expect(chat.type).toBe("group");
+    // A plain group is NOT a forum.
+    expect("is_forum" in chat ? (chat as { is_forum?: boolean }).is_forum : undefined).toBeUndefined();
+  });
+
+  it("type:'supergroup', isForum:true → a SupergroupChat with is_forum:true (the forum flag the mapper reads)", () => {
+    const chat = makeGroupChat({ id: -100456, type: "supergroup", isForum: true });
+    expect(chat.id).toBe(-100456);
+    expect(chat.type).toBe("supergroup");
+    // is_forum:true is what message-mapper.ts:147 reads to derive chatType "forum".
+    expect((chat as { is_forum?: boolean }).is_forum).toBe(true);
+  });
+
+  it("type:'supergroup' without isForum → no is_forum flag (a non-forum supergroup)", () => {
+    const chat = makeGroupChat({ id: -100789, type: "supergroup" });
+    expect(chat.type).toBe("supergroup");
+    expect((chat as { is_forum?: boolean }).is_forum).toBeUndefined();
+  });
+
+  it("the builder return is assignable to grammy `Chat` (I4 drift tripwire)", () => {
+    const chat: Chat = makeGroupChat({ id: -100, type: "supergroup", isForum: true });
+    expect(chat.type).toBe("supergroup");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeMessageUpdate addressing extensions — chat / entities / replyToMessage /
+// messageThreadId (GROUP-01/02). The DM literal stays the default (back-compat);
+// a passed group `chat` + a mention/bot_command entity + a reply_to_message +
+// a message_thread_id are exactly what detectBotAddressing + the thread
+// resolver read (message-mapper.ts:40-104,147-150).
+// ---------------------------------------------------------------------------
+
+describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/messageThreadId, GROUP-01/02)", () => {
+  it("with no chat override the DM `private` literal is preserved (back-compat — the DM path is unbroken)", () => {
+    const from = makeUser({ id: 1, firstName: "dm" });
+    const update = makeMessageUpdate({ updateId: 1, messageId: 1, from, chatId: 424242, text: "hi" });
+    // The default chat is the private literal — exactly the pre-208 behaviour.
+    expect(update.message?.chat.type).toBe("private");
+    expect(update.message?.chat.id).toBe(424242);
+    // No entities/reply/thread when not supplied (exactOptional — never `: undefined`).
+    expect("entities" in (update.message as object)).toBe(false);
+    expect("reply_to_message" in (update.message as object)).toBe(false);
+    expect("message_thread_id" in (update.message as object)).toBe(false);
+  });
+
+  it("a group `chat` override → the message carries that chat (the group/forum shape, not the private literal)", () => {
+    const from = makeUser({ id: 2, firstName: "alice", username: "alice" });
+    const groupChat = makeGroupChat({ id: -100111, type: "supergroup", isForum: true });
+    const update = makeMessageUpdate({
+      updateId: 2,
+      messageId: 50,
+      from,
+      chatId: -100111,
+      text: "hello group",
+      chat: groupChat,
+    });
+    expect(update.message?.chat.type).toBe("supergroup");
+    expect(update.message?.chat.id).toBe(-100111);
+    expect((update.message?.chat as { is_forum?: boolean }).is_forum).toBe(true);
+  });
+
+  it("a `mention` entity → message.entities carries it (detectBotAddressing reads mention/text_mention/bot_command)", () => {
+    const from = makeUser({ id: 3, firstName: "bob" });
+    const text = "@test_bot help";
+    const update = makeMessageUpdate({
+      updateId: 3,
+      messageId: 51,
+      from,
+      chatId: -100111,
+      text,
+      entities: [{ type: "mention", offset: 0, length: "@test_bot".length }],
+    });
+    const entities = update.message?.entities;
+    expect(Array.isArray(entities)).toBe(true);
+    expect(entities?.[0]?.type).toBe("mention");
+    expect(entities?.[0]?.offset).toBe(0);
+    expect(entities?.[0]?.length).toBe("@test_bot".length);
+  });
+
+  it("a `bot_command` entity → message.entities carries it (the /cmd@bot addressing path)", () => {
+    const from = makeUser({ id: 4, firstName: "carol" });
+    const update = makeMessageUpdate({
+      updateId: 4,
+      messageId: 52,
+      from,
+      chatId: -100111,
+      text: "/reset@test_bot",
+      entities: [{ type: "bot_command", offset: 0, length: "/reset@test_bot".length }],
+    });
+    expect(update.message?.entities?.[0]?.type).toBe("bot_command");
+  });
+
+  it("a `replyToMessage` → message.reply_to_message is set (detectBotAddressing reads reply_to_message.from.id)", () => {
+    const from = makeUser({ id: 5, firstName: "dave" });
+    const botUser = makeBotUser({ id: 12345, firstName: "TestBot", username: "test_bot" });
+    const botReply = makeBotMessage({ messageId: 40, chatId: -100111, botUser, text: "earlier bot reply" });
+    const update = makeMessageUpdate({
+      updateId: 5,
+      messageId: 53,
+      from,
+      chatId: -100111,
+      text: "thanks",
+      replyToMessage: botReply,
+    });
+    const replyTo = update.message?.reply_to_message;
+    expect(replyTo?.message_id).toBe(40);
+    expect(replyTo?.from?.id).toBe(12345);
+    expect(replyTo?.from?.is_bot).toBe(true);
+  });
+
+  it("a `messageThreadId` → message.message_thread_id is set (the forum topic id the thread resolver reads)", () => {
+    const from = makeUser({ id: 6, firstName: "erin" });
+    const update = makeMessageUpdate({
+      updateId: 6,
+      messageId: 54,
+      from,
+      chatId: -100111,
+      text: "in a topic",
+      chat: makeGroupChat({ id: -100111, type: "supergroup", isForum: true }),
+      messageThreadId: 7,
+    });
+    expect(update.message?.message_thread_id).toBe(7);
+  });
+
+  it("imports grammy's OWN Chat/MessageEntity types (I4) — drift fails the compile", () => {
+    const src = readFileSync(PAYLOADS_SOURCE, "utf8");
+    // The addressing extensions reference grammy's Chat + MessageEntity types.
+    expect(src).toMatch(/import type \{[^}]*Chat[^}]*\} from ["']grammy\/types["']/);
+    expect(src).toMatch(/import type \{[^}]*MessageEntity[^}]*\} from ["']grammy\/types["']/);
   });
 });

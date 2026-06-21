@@ -908,3 +908,133 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
     });
   });
 });
+
+// ===========================================================================
+// GROUP-01/02 — createGroupChat / createForumTopic + InjectOpts-aware
+// injectMessage (Phase 208). The emulator must mint group/supergroup/forum
+// chats, forum topics, and addressing-bearing message updates so the rig can
+// drive the group surface the chat API can't reach.
+// ===========================================================================
+
+describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", () => {
+  let emu: TgEmulator;
+  let apiRoot: string;
+
+  beforeEach(async () => {
+    resetUpdateIdCounter();
+    emu = createTgEmulator({ botToken: TOKEN });
+    const handle = await emu.start();
+    apiRoot = handle.apiRoot;
+    // Confirm the loopback bind (the emulator is the fake api.telegram.org).
+    expect(apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  afterEach(async () => {
+    await emu.stop();
+  });
+
+  /** Long-poll once and return the served updates (the grammy-runner path). */
+  async function pollUpdates(offset?: number): Promise<Array<Record<string, unknown>>> {
+    const res = await fetch(`${apiRoot}/bot${TOKEN}/getUpdates`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ timeout: 0, ...(offset !== undefined ? { offset } : {}) }),
+    });
+    const env = (await res.json()) as { ok: boolean; result: Array<Record<string, unknown>> };
+    expect(env.ok).toBe(true);
+    return env.result;
+  }
+
+  describe("createGroupChat / createForumTopic", () => {
+    it("createGroupChat({supergroup,forum}) → a ChatRef with a NEGATIVE supergroup id and the forum/admins seed recorded", () => {
+      const bot = { id: 12345, firstName: "TestBot", username: "test_bot" };
+      const auth = { id: 111, firstName: "auth", username: "auth" };
+      const attacker = { id: 222, firstName: "attacker" };
+      const group = emu.createGroupChat({ members: [auth, attacker], bot, supergroup: true, forum: true, admins: [auth] });
+      // Group chats use a NEGATIVE chat id (the -100… Telegram supergroup form).
+      expect(group.chatId).toBeLessThan(0);
+    });
+
+    it("createForumTopic(chat, name) → a ThreadRef carrying a numeric message_thread_id", () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], supergroup: true, forum: true });
+      const topic = emu.createForumTopic(group, "general-discussion");
+      expect(typeof topic.threadId).toBe("number");
+      expect(topic.threadId).toBeGreaterThan(0);
+    });
+  });
+
+  describe("injectMessage with InjectOpts (mention/command/replyTo/thread)", () => {
+    it("a mention opt → the served update carries a `mention` entity over @<bot> (isBotMentioned source)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a", username: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
+      emu.injectMessage(group, { id: 111, firstName: "a", username: "a" }, "@test_bot help", { mention: true });
+      const updates = await pollUpdates();
+      expect(updates.length).toBe(1);
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      // The group chat shape (not the private literal).
+      expect((msg["chat"] as Record<string, unknown>)["type"]).toBe("supergroup");
+      const entities = msg["entities"] as Array<Record<string, unknown>> | undefined;
+      expect(Array.isArray(entities)).toBe(true);
+      expect(entities?.[0]?.["type"]).toBe("mention");
+    });
+
+    it("a command opt → the served update carries a `bot_command` entity (the /cmd@bot path)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "/reset@test_bot", { command: true });
+      const updates = await pollUpdates();
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      const entities = msg["entities"] as Array<Record<string, unknown>> | undefined;
+      expect(entities?.[0]?.["type"]).toBe("bot_command");
+    });
+
+    it("a replyTo opt → the served update carries a reply_to_message authored by the bot (replyToBot source)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "thanks", { replyTo: 40 });
+      const updates = await pollUpdates();
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      const replyTo = msg["reply_to_message"] as Record<string, unknown> | undefined;
+      expect(replyTo?.["message_id"]).toBe(40);
+      // The replied-to message is authored by the bot (so detectBotAddressing flips replyToBot).
+      expect((replyTo?.["from"] as Record<string, unknown>)?.["is_bot"]).toBe(true);
+    });
+
+    it("a thread opt → the served update carries message_thread_id (the forum topic routing)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], supergroup: true, forum: true });
+      const topic = emu.createForumTopic(group, "topic-1");
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "in topic", { thread: topic.threadId });
+      const updates = await pollUpdates();
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      expect(msg["message_thread_id"]).toBe(topic.threadId);
+    });
+
+    it("distinct senders cross-talk: two injectMessage calls carry their own `from` (group multi-user)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }, { id: 222, firstName: "b" }], supergroup: true });
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "from a");
+      emu.injectMessage(group, { id: 222, firstName: "b" }, "from b");
+      const updates = await pollUpdates();
+      expect(updates.length).toBe(2);
+      const senders = updates.map((u) => ((u["message"] as Record<string, unknown>)["from"] as Record<string, unknown>)["id"]);
+      expect(senders).toEqual([111, 222]);
+    });
+
+    it("the existing single-arg DM injectMessage(chat, from, text) still works (back-compat — the DM path is unbroken)", async () => {
+      // A plain ChatRef (the DM form) with NO InjectOpts — exactly the pre-208 call.
+      emu.injectMessage({ chatId: 424242 }, { id: 100, firstName: "Tester" }, "dm hello");
+      const updates = await pollUpdates();
+      expect(updates.length).toBe(1);
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      expect((msg["chat"] as Record<string, unknown>)["type"]).toBe("private");
+      expect(msg["text"]).toBe("dm hello");
+      // No addressing fields when none requested.
+      expect(msg["entities"]).toBeUndefined();
+      expect(msg["reply_to_message"]).toBeUndefined();
+    });
+  });
+
+  describe("source-shape guards (createGroupChat/createForumTopic present, grammy-typed)", () => {
+    it("the emulator source exposes createGroupChat + createForumTopic", () => {
+      const src = readFileSync(EMULATOR_SOURCE, "utf8");
+      expect(src).toMatch(/createGroupChat/);
+      expect(src).toMatch(/createForumTopic/);
+    });
+  });
+});
