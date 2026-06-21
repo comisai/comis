@@ -104,6 +104,7 @@ import {
 import { normalizeModelCompat } from "../../provider/model-compat.js";
 import { normalizeModelId } from "../../provider/model-id-normalize.js";
 import { resolveModelProfile } from "../model-profile.js";
+import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
@@ -1373,7 +1374,10 @@ async function runSessionLocked(
     },
     providerHealth: deps.providerHealth,
     onToolExecutionEnd: () => { currentResetTimer?.(); },
-    getCurrentModel: () => session.model?.id ?? config.model,
+    // RECORD-01 (v2.28 260621): when the configured model is unregistered, pi
+    // falls back to its own default model object (e.g. gemini-*); record the
+    // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
+    getCurrentModel: () => observedModelId(resolvedModel, session.model?.id, config.model),
     onCacheReads: capturedBridgeRetention
       ? (tokens: number) => { capturedBridgeRetention.recordCacheReads(tokens); }
       : undefined,

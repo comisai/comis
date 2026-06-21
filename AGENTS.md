@@ -25,6 +25,7 @@ shared        Result type, utilities — zero runtime deps
 core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort (NEW LCD lossless-store port — the deleted DAG one is gone since Phase 126) + SessionStorePort + row DTOs (LcdMessage, LcdMessagePart, LcdPartMetadata, LcdPartKind, LcdRole, ContextStoreScope, AppendMessageInput, SessionData, SessionListEntry, SessionDetailedEntry) + parts-codec (messageToParts/partsToMessage), OAuth helpers, master-key helpers
 infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
 observability Diagnostics substrate: queued writer, payload bounding, sanitization, path guards, cache-trace runtime + EventBus bridge, cache-stats aggregation/RPC
+observability-otel opt-in OTel extension (v2.28): OTLP traces/metrics/logs + a standalone Prometheus /metrics exporter (single MeterProvider, two readers); subscribes the bus, content-free; the ONLY @opentelemetry/*-dependent package; daemon lazy-loads it (dynamic import) only when observability.otel/prometheus is enabled → core/daemon build OTel-free (N2)
 memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
               from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
               CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
@@ -100,6 +101,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 | WARN  | Degraded but functional. Required: `hint`, `errorKind`. |
 | INFO  | Boundary events (request arrived, execution complete) — 2–5/req. Include `durationMs` on operation completion. |
 | DEBUG | Internal steps, individual tool/LLM calls, intermediate state. |
+| AUDIT | Security-decision trail (custom level 35, v2.28): secret access, injection detection, command blocks. Durable scrubbed sink (`obs_audit_events` + `0600` `security-audit.jsonl`) — content-free (name + outcome, never the value). Emit via `logger.audit(...)`. |
 
 - Object-first: `logger.info({ agentId, durationMs }, "Execution complete")`. Never string-interpolate in the message; never pass JSON-stringified objects.
 - Once-per-request → INFO. N-per-request → DEBUG (aggregate count in the INFO summary).

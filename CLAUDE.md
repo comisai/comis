@@ -14,7 +14,7 @@ Keep `docs/**/*.mdx` up to date in the **same change** that alters anything they
 
 ## Project
 
-Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 15 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
+Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 16 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.
 
 ## Build & Test
 
@@ -125,6 +125,8 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 | "Which model/provider actually ran?" / a phantom capability profile | `fleet` → look for `config_posture:chimeric_model` | a NATIVE provider (anthropic/openai/google) paired with a foreign model family — the ffe11736 chimera, named in one look |
 | A **non-default** agent's cron/conversation (multi-agent daemon) | pass an explicit `agentId` (below) | which agent the op acted on (never a silent default) |
 | Recall surfaced the wrong/no memory, or "is this agent- or user-scoped recall?" | trajectory `memory.*` records + `~/.comis/memory.db` (the recall lens is the obs-excellence roadmap — see `.planning/design/observability-excellence.md`) | the ranked set / scope used |
+| Who accessed a secret / what command was blocked / an injection-detection (the security audit) | `security audit-log` | the durable, scrubbed `obs_audit_events` trail (v2.28) — filter by kind/agent/tenant/outcome; also `obs_query {action:"audit"}` + the optional `audit?` IncidentReport section |
+| A spend ceiling tripped / a session killed for cost | `explain "<sessionKey\|traceId>"` | the `spend_exceeded` `likelyRootCause` verdict + the `spend?` section (v2.28); `fleet` surfaces `config_posture:pricing_gap` (unknown-priced spend) |
 
 **Ground-truth read-order (never trust a surface reply alone):** surface reply → the session **trajectory** (`*.jsonl.trajectory.jsonl`, resolved via the `.trajectory-path.json` pointer) + `_session-metadata.json` rollup → offline `obs.explain` (`assembleIncidentReportFromSources`) → `comis fleet` → only then a raw `daemon.log` grep. A false success is the worst outcome — corroborate every claim against the db/trajectory.
 
@@ -188,7 +190,7 @@ git branch -D worktree-<name>
 
 Steps to ship `vX.Y.Z`:
 
-1. **Bump all 15 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
+1. **Bump all 16 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
 
 2. **Update version-pinned docs.** Sweep with:
    ```bash

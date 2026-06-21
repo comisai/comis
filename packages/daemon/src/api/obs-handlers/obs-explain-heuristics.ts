@@ -17,7 +17,15 @@
  *      tripped on the MISCLASSIFIED successes ("DO NOT retry" is present too),
  *      so the misclassification must out-rank the breaker: it is upstream, the
  *      breaker is the downstream symptom.
- *   2. breaker_opened_repeated_failure — the 503 root cause: a real transport
+ *   2. spend_exceeded (LIVE v2.28 260621) — the dollars kill-switch is an
+ *      ADMINISTRATIVE pre-emption that aborts at admission, causally INDEPENDENT
+ *      of tool failures (tool FAILURES return ~0 bytes / ~$0 and cannot drive
+ *      cumulative spend). A live VPS incident showed a spend-killed session
+ *      root-causing to the chronic breaker below — masking the acute kill that
+ *      now blocks every new turn. So it sits ABOVE the breaker/degradation
+ *      heuristics but BELOW #1 (the X3-frozen misclassification). Keyed on
+ *      endReason "spend_exceeded" (frozen fixtures carry it not).
+ *   3. breaker_opened_repeated_failure — the 503 root cause: a real transport
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
@@ -109,7 +117,19 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 2) breaker_opened_repeated_failure (503 — real transport failure cascade).
+  // 2) spend_exceeded (LIVE v2.28 260621 — the dollars kill-switch is an
+  //    ADMINISTRATIVE pre-emption at admission, NOT a downstream symptom of tool
+  //    failures. Tool FAILURES return ~0 bytes / ~$0 and cannot drive cumulative
+  //    spend, so the ceiling is causally INDEPENDENT of them. A live VPS incident
+  //    proved the bug: a long-lived session with chronic exec failures hit the
+  //    ceiling, but the verdict reported breaker_opened_repeated_failure — chronic
+  //    noise masking the acute kill that now blocks EVERY new turn. So it
+  //    out-ranks the breaker/dependency/timeout/degradation heuristics below, but
+  //    stays BELOW #1, the X3-frozen misclassification verdict. Keyed strictly on
+  //    endReason "spend_exceeded" (frozen 678/503 fixtures carry it not).
+  spendExceededVerdict,
+
+  // 3) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
     const tool = breakerTool(s);
@@ -402,11 +422,6 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
-
-  // 9b) spend_exceeded (WR-4, 177-obs-loop — the NAMED terminal SPEND cause, same
-  //     terminal band as #5/#7/#8/#9; keyed on endReason "spend_exceeded", WR-2;
-  //     full rationale in the sibling obs-explain-spend-verdict.ts module doc).
-  spendExceededVerdict,
 
   // 9c) recall_miss (RECALL-01). A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
