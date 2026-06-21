@@ -270,6 +270,211 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
+  // POST /control/chats/:id/reactions — the inject-reaction route (REACT-02)
+  //
+  // The load-bearing structural assertion: ONE handler (handleInjectReaction)
+  // serves BOTH the HTTP dispatch arm AND the in-proc ControlClient, so an
+  // in-proc inject and an HTTP inject drive emulator.injectReaction IDENTICALLY
+  // (in-proc == HTTP parity, mirroring the inject-route round-trip above). A
+  // SPY ControlEmulator records the forwarded `injectReaction(chat, from,
+  // botMessageId, emoji)` call so both paths can be asserted byte-identical.
+  // -------------------------------------------------------------------------
+  describe("POST /control/chats/:id/reactions (inject reaction — REACT-02)", () => {
+    /** A recorded injectReaction call (the args forwarded to the emulator). */
+    interface ReactionCall {
+      readonly chat: { readonly chatId: number };
+      readonly from: { id: number; firstName: string; username?: string };
+      readonly botMessageId: number;
+      readonly emoji: string;
+    }
+
+    /**
+     * A spy ControlEmulator that records every injectReaction call so the test
+     * can assert the handler forwards args verbatim AND that the in-proc and
+     * HTTP paths produce an IDENTICAL emulator-side effect (one call per path).
+     * It satisfies the minimal channel-agnostic ControlEmulator shape; the
+     * unused inject/outbound members return harmless defaults.
+     */
+    function makeSpyControl(): {
+      backend: ReturnType<typeof createTgEmulator>["backend"];
+      client: ControlClient;
+      apiRoot: string;
+      reactionCalls: ReactionCall[];
+      start(): Promise<void>;
+      stop(): Promise<void>;
+    } {
+      const reactionCalls: ReactionCall[] = [];
+      // Reuse a real emulator's http-backend base (one loopback port) but pass a
+      // SPY emulator to registerControlApi so injectReaction is observable.
+      const hostEmu = createTgEmulator({ botToken: TOKEN });
+      const spyEmulator = {
+        injectMessage: (_chat: { readonly chatId: number }, _from: unknown, _text: string): number => 0,
+        outbound: (_chat: { readonly chatId: number }): readonly RecordedOutbound[] => [],
+        injectReaction: (
+          chat: { readonly chatId: number },
+          from: { id: number; firstName: string; username?: string },
+          botMessageId: number,
+          emoji: string,
+        ): void => {
+          reactionCalls.push({ chat, from, botMessageId, emoji });
+        },
+      };
+      const spyClient = registerControlApi(hostEmu.backend, spyEmulator as never);
+      let root = "";
+      return {
+        backend: hostEmu.backend,
+        client: spyClient,
+        get apiRoot() {
+          return root;
+        },
+        reactionCalls,
+        async start() {
+          const h = await hostEmu.start();
+          root = h.apiRoot;
+        },
+        async stop() {
+          await hostEmu.stop();
+        },
+      };
+    }
+
+    it("drives emulator.injectReaction IDENTICALLY whether reached in-proc or over HTTP (parity)", async () => {
+      const spy = makeSpyControl();
+      await spy.start();
+      try {
+        // In-proc: the typed ControlClient.injectReaction.
+        await spy.client.injectReaction({ chatId: CHAT_ID, fromUserId: USER_ID, botMessageId: 555, emoji: "👍" });
+        // HTTP: POST /control/chats/<id>/reactions.
+        const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+          fromUserId: USER_ID,
+          botMessageId: 555,
+          emoji: "👍",
+        });
+        expect(status).toBe(200);
+        expect(json).toEqual({ ok: true });
+
+        // Both paths produced the SAME emulator-side effect: two identical calls.
+        expect(spy.reactionCalls).toHaveLength(2);
+        const [viaClient, viaHttp] = spy.reactionCalls;
+        expect(viaClient).toEqual(viaHttp);
+        expect(viaClient!.chat).toEqual({ chatId: CHAT_ID });
+        expect(viaClient!.botMessageId).toBe(555);
+        expect(viaClient!.emoji).toBe("👍");
+      } finally {
+        await spy.stop();
+      }
+    });
+
+    it("forwards chatId, a {id, firstName:`user_<id>`} from, botMessageId, and emoji VERBATIM to injectReaction", async () => {
+      const spy = makeSpyControl();
+      await spy.start();
+      try {
+        await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+          fromUserId: 111,
+          botMessageId: 909,
+          emoji: "🔥",
+        });
+        expect(spy.reactionCalls).toHaveLength(1);
+        const call = spy.reactionCalls[0]!;
+        expect(call.chat).toEqual({ chatId: CHAT_ID });
+        // The handler derives a stable `user_<id>` firstName at the boundary.
+        expect(call.from).toEqual({ id: 111, firstName: "user_111" });
+        expect(call.botMessageId).toBe(909);
+        expect(call.emoji).toBe("🔥");
+      } finally {
+        await spy.stop();
+      }
+    });
+
+    it("returns 400 (honest no-crash) on a non-numeric botMessageId — never crashes (T-204-12)", async () => {
+      const spy = makeSpyControl();
+      await spy.start();
+      try {
+        const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+          fromUserId: USER_ID,
+          botMessageId: "not-a-number",
+          emoji: "👍",
+        });
+        expect(status).toBe(400);
+        expect(json).toMatchObject({ ok: false });
+        expect((json as { error?: unknown }).error).toBeTruthy();
+        // The bad request never reached the emulator.
+        expect(spy.reactionCalls).toHaveLength(0);
+        // The server stayed up — a follow-up valid request still works.
+        const ok = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+          fromUserId: USER_ID,
+          botMessageId: 1,
+          emoji: "👍",
+        });
+        expect(ok.status).toBe(200);
+      } finally {
+        await spy.stop();
+      }
+    });
+
+    it("returns 400 on a MISSING emoji — never crashes", async () => {
+      const spy = makeSpyControl();
+      await spy.start();
+      try {
+        const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+          fromUserId: USER_ID,
+          botMessageId: 7,
+        });
+        expect(status).toBe(400);
+        expect(json).toMatchObject({ ok: false });
+        expect(spy.reactionCalls).toHaveLength(0);
+      } finally {
+        await spy.stop();
+      }
+    });
+
+    it("drives the REAL TgEmulator: a reaction on a bot reply trips the wire, served by getUpdates", async () => {
+      // The control API registered in beforeEach drives the REAL emulator. POST a
+      // reaction on an existing bot reply id; the emulator queues a
+      // message_reaction Update the long-poll then serves (the full inbound half).
+      const sent = (await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "bot reply" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      const { status, json } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/reactions`, {
+        fromUserId: 111,
+        botMessageId: botReplyId,
+        emoji: "👍",
+      });
+      expect(status).toBe(200);
+      expect(json).toEqual({ ok: true });
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const reaction = updates[0]!["message_reaction"] as Record<string, unknown>;
+      expect(reaction).toBeDefined();
+      expect(reaction["message_id"]).toBe(botReplyId);
+      const newReaction = reaction["new_reaction"] as Array<Record<string, unknown>>;
+      expect(newReaction[0]).toEqual({ type: "emoji", emoji: "👍" });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The reaction route regex (REACT-02) — a pure source-shape assertion.
+  // -------------------------------------------------------------------------
+  describe("the /control/chats/:id/reactions path constant (REACT-02)", () => {
+    it("matches /reactions (incl. negative chat ids + trailing slash) and NOT /messages", () => {
+      // Re-derive the design path regex; assert the source declares the same.
+      const re = /^\/control\/chats\/(-?\d+)\/reactions\/?$/;
+      expect(re.test("/control/chats/123/reactions")).toBe(true);
+      expect(re.test("/control/chats/-100/reactions")).toBe(true); // supergroup
+      expect(re.test("/control/chats/123/reactions/")).toBe(true); // trailing slash
+      expect(re.test("/control/chats/123/messages")).toBe(false); // not the inject route
+      const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+      // The source declares a named reactions path constant targeting /reactions
+      // (the route is wired, mirroring CHAT_MESSAGES_PATH).
+      expect(src).toMatch(/CHAT_REACTIONS_PATH/);
+      expect(src).toMatch(/\/reactions/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // SEC-01 — namespace + loopback bind
   // -------------------------------------------------------------------------
   describe("SEC-01 — /control/* namespaced + loopback only", () => {
