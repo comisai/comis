@@ -57,8 +57,13 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { validateLocalServerUrl } from "@comis/core";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
-import { createTgEmulator, type TgEmulator, type RecordedOutbound, type ChatRef } from "../emulators/telegram/tg-emulator.js";
+import { createTgEmulator, type TgEmulator, type ChatRef } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi, type ControlClient } from "./control-api.js";
+// `RigHandle.waitForReply` is the GENERIC round-trip driver surface (Phase 209
+// channel #2 reuses it), so it surfaces the channel-agnostic outbound subset
+// lifted to harness/ (the foundation-fix, CHAN2-02) — NOT the telegram superset.
+// It delegates to the generic control client, which returns this same subset.
+import type { RecordedOutbound } from "./recorded-outbound.js";
 // TEST-ONLY deep-dist imports. `setupMedia` + `MediaResult` and `fetchPinned` are
 // NOT re-exported from the `@comis/daemon` / `@comis/skills` top barrels (and the
 // vitest live-config alias maps each `@comis/*` to its `dist/index.js` FILE, so a

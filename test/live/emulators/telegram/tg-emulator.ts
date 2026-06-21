@@ -51,6 +51,7 @@ import {
   type RouteResult,
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
+import type { RecordedOutbound as AgnosticRecordedOutbound } from "../../harness/recorded-outbound.js";
 import {
   makeBotMessage,
   makeBotUser,
@@ -112,14 +113,21 @@ export function checkWebhookSecretToken(expected: string, presented: string | un
  * agent pushes to the channel (design §4.4). Later phases assert on the FULL
  * set; the 204 round-trip only needs `text` + `messageId`, but recording
  * everything now avoids a later refactor.
+ *
+ * This is the telegram-specific SUPERSET of the channel-agnostic
+ * {@link AgnosticRecordedOutbound} lifted to `harness/recorded-outbound.ts`
+ * (the foundation-fix, CHAN2-02). It `extends` the lifted subset so the
+ * superset relationship is a compile-time guarantee: the channel-neutral
+ * `method`/`messageId`/`text?` come from the base; the telegram-specific extras
+ * below are additive. The generic `control-api` + the dual oracle consume only
+ * the lifted subset, so they have no edge on these telegram-specific fields.
  */
-export interface RecordedOutbound {
-  /** The Bot-API method, e.g. `"sendMessage"` | `"setMessageReaction"`. */
-  method: string;
-  /** The minted bot message id (on `sendMessage`); the reacted-to id for reactions. */
-  messageId: number;
-  /** Message text (sendMessage). */
-  text?: string;
+export interface RecordedOutbound extends AgnosticRecordedOutbound {
+  // method: string;     — inherited from AgnosticRecordedOutbound (the Bot-API
+  //                       method, e.g. "sendMessage" | "setMessageReaction").
+  // messageId: number;  — inherited (the minted bot message id on sendMessage;
+  //                       the reacted-to id for reactions).
+  // text?: string;      — inherited (message text on sendMessage).
   /** The adapter sends `parse_mode:"HTML"` (telegram-outbound.ts). */
   parseMode?: string;
   /** Inline buttons + callback_data. */

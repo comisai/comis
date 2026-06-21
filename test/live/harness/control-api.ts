@@ -47,8 +47,18 @@ import type {
   HttpBackend,
   RouteResult,
 } from "./backends/http-backend.js";
-import type { FailOpts, MediaMeta, PlaceInput, RecordedOutbound, TgFault } from "../emulators/telegram/tg-emulator.js";
-import type { MediaKind } from "../emulators/telegram/tg-payloads.js";
+// The LIFTED channel-agnostic oracle types come from the harness/ layer (the
+// foundation-fix, CHAN2-02): `RecordedOutbound` (the subset the generic control
+// surface + the dual oracle consume) and `MediaKind` (already shared in
+// channel-emulator.ts). A second channel (Phase 209) feeds these with NO
+// telegram dependency.
+import type { RecordedOutbound } from "./recorded-outbound.js";
+import type { MediaKind } from "./channel-emulator.js";
+// The telegram-ONLY route shapes (media/location/fault) the control-api's
+// Phase-207/208 routes use — these are NOT part of the channel-agnostic oracle
+// surface (the Signal send/react/explain proof does not exercise them), so they
+// stay scoped to the telegram emulator until a second channel needs them.
+import type { FailOpts, MediaMeta, PlaceInput, TgFault } from "../emulators/telegram/tg-emulator.js";
 
 /**
  * The closed media-kind union as a runtime set, so the media route can validate
