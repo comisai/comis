@@ -409,6 +409,35 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (ORCH-OBS)", () =>
   });
 });
 
+describe("toIncidentSignals — spend.exceeded fold (WEBUI-04, 179-04)", () => {
+  it("folds a spend.exceeded record into spend {scope, totalUsd, capUsd} (totalUsd <- spentUsd)", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "spend.exceeded",
+        seq: 7,
+        data: { scope: "agent", spentUsd: 1.25, capUsd: 1.0, estUsd: 0.5 },
+      },
+    ]);
+    expect(s.spend).toEqual({ scope: "agent", totalUsd: 1.25, capUsd: 1.0 });
+  });
+
+  it("keeps the LAST spend.exceeded record (the terminal breach explains the kill)", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "spend.exceeded", seq: 1, data: { scope: "agent", spentUsd: 1.0, capUsd: 1.0 } },
+      { traceSchema: "comis-trajectory", type: "spend.exceeded", seq: 2, data: { scope: "tenant", spentUsd: 9.0, capUsd: 5.0 } },
+    ]);
+    expect(s.spend).toEqual({ scope: "tenant", totalUsd: 9.0, capUsd: 5.0 });
+  });
+
+  it("omits spend (undefined, never {}) when the session had no spend.exceeded record", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "session.started", seq: 0, data: {} },
+    ]);
+    expect(s.spend).toBeUndefined();
+  });
+});
+
 describe("toIncidentSignals — offload pointer edge cases", () => {
   it("collapses an absolute host path that does not pass through .comis to <offloaded>", () => {
     const s = toIncidentSignals([

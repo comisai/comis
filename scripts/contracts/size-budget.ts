@@ -39,7 +39,20 @@ import { gzipSync } from "node:zlib";
 // (+380 B → 126,225) overflowed the prior 126,000. Bumped to 127,000 with
 // headroom; the addition is bounded and gzip-friendly (gzipped total 12,575
 // stays far under the 38 KB gzipped wire budget).
-export const BUDGET_MINIFIED_BYTES = 127_000;
+// 2026-06-20: AUDIT-05 (Phase 176 Plan 05) — the new obs.audit.query contract
+// (+664 B) + the IncidentReport `audit?`/`cacheBreaks?` optional sections
+// (obs.explain +~400 B → total 127,299) overflowed 127,000. Bumped to 128,000
+// with headroom; both are bounded, additive, content-free sections in the proven
+// optional-section family, and the gzipped total (12,703) stays far under the
+// 38 KB gzipped wire budget (the real wire cost).
+// 2026-06-21: WEBUI-02 (Phase 179 Plan 04) — the two new admin RPCs
+// obs.cacheBreaks.byReason (+498 B) + obs.spend.snapshot (+350 B), plus the
+// IncidentReport `spend?` optional section (obs.explain +~200 B → total 128,351)
+// overflowed 128,000. Bumped to 129,000 with headroom; all three are bounded,
+// additive, content-free (the loose ObsRecord/ObsRecordArray response shapes +
+// the proven optional-section family), and the gzipped total (12,779) stays far
+// under the 38 KB gzipped wire budget (the real wire cost).
+export const BUDGET_MINIFIED_BYTES = 129_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

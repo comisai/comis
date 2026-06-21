@@ -290,13 +290,14 @@ describe("activity composition: Echo renderer end-to-end in-memory", () => {
 // drain) are proven deterministically in-memory in Part A above.
 
 describe("activity composition: daemon constructs and drains the ActivityStream", () => {
-  it("returns the ActivityStream from setupObservability and clears its EventBus subscription on dispose", () => {
+  it("returns the ActivityStream from setupObservability and clears its EventBus subscription on dispose", async () => {
     const bus = new TypedEventBus();
     // Pre-wiring baseline: no tool:* handler before setupObservability runs.
     const baseline = bus.listenerCount("tool:executed");
 
-    // The REAL daemon composition-root function.
-    const obs = setupObservability({
+    // The REAL daemon composition-root function (async since Phase 178 — the
+    // config-gated OTel await-import seam).
+    const obs = await setupObservability({
       eventBus: bus,
       _createTokenTracker: createTokenTracker,
       activityLogger: { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } } as never,

@@ -131,7 +131,7 @@ export interface ShutdownDeps {
   /** Lifecycle reactors for cleanup on shutdown */
   lifecycleReactors?: Array<{ destroy: () => void }>;
   /** Observability persistence write buffers for shutdown drain */ obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
-  disposeActivityStream?: () => void; // §17.7: drain + unsubscribe ActivityStream
+  disposeActivityStream?: () => void; otelShutdown?: () => Promise<void>; // §17.7 drain ActivityStream; Phase 178 flush+close OTLP/Prometheus exporter (undefined when disabled)
   /** Context pipeline collector for shutdown cleanup */
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
@@ -231,7 +231,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     lockDataDir,
     continuationTracker,
     lifecycleReactors,
-    obsPersistence, disposeActivityStream,
+    obsPersistence, disposeActivityStream, otelShutdown,
     geminiCacheManager,
     trajectoryRegistry,
     // 9 new teardown handles lifted from system:shutdown subscribers.
@@ -609,13 +609,13 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       // Dispose observability modules (remove EventBus subscriptions).
       {
         const stopMs = systemNowMs();
-        await withStepTimeout(() => {
+        await withStepTimeout(async () => {
           disposeActivityStream?.(); // drain ActivityStream FIRST
           deps.contextPipelineCollector?.dispose();
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();
           deliveryTracer.dispose();
-          daemonLogger.info({ component: "observability", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          await otelShutdown?.(); daemonLogger.info({ component: "observability", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped"); // otelShutdown: Phase 178 flush+close OTLP/Prometheus exporter (timeout-bounded; no-op when disabled)
         }, "observability", daemonLogger);
       }
       // Wait for background embedding indexing to finish (with timeout -- has its own 5s race)

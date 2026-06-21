@@ -34,6 +34,11 @@ import { describe, it, expect } from "vitest";
 import type { IncidentFailure, IncidentSignals } from "@comis/core";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
+// PERSIST-01 + AUDIT-05 (176-05): the cacheBreaks? fold rides toIncidentSignals;
+// the audit? fold rides assembleIncidentReportFromSources (reader-sourced).
+import { toIncidentSignals } from "./obs-explain-signals.js";
+import { assembleIncidentReportFromSources } from "./obs-explain.js";
+import type { IncidentSourceReader } from "./obs-explain-readers.js";
 
 // ---------------------------------------------------------------------------
 // Local factories — synthetic signals/metadata (NO real session data, NO disk).
@@ -776,5 +781,183 @@ describe("assembleIncidentReport — OBS-02 learning section", () => {
   it("omits the learning section when the signals carry no learning data (default-off / no-outcome session)", () => {
     const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
     expect(report.learning).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PERSIST-01 (176-05): the cacheBreaks? section — folded per-reason from the
+// session's `cache.break` trajectory records (Plan 04), content-free + bounded.
+// ---------------------------------------------------------------------------
+
+/** A `cache.break` trajectory record envelope (post-translate-payload shape). */
+function cacheBreakRecord(
+  data: { reason: string; tokenDrop?: number; estCostUsd?: number },
+  seq: number,
+): Record<string, unknown> {
+  return {
+    traceSchema: "comis-trajectory",
+    type: "cache.break",
+    seq,
+    data: {
+      reason: data.reason,
+      tokenDrop: data.tokenDrop ?? 0,
+      tokenDropRelative: 0.5,
+      estCostUsd: data.estCostUsd ?? 0,
+      changedDimsDigest: { added: 1, removed: 0, schemaChanged: 0, systemCharDelta: 10 },
+    },
+  };
+}
+
+describe("assembleIncidentReport — cacheBreaks? (PERSIST-01, 176-05)", () => {
+  it("surfaces cacheBreaks folded per-reason from cache.break trajectory records", () => {
+    const signals = toIncidentSignals([
+      cacheBreakRecord({ reason: "system_changed", estCostUsd: 0.004 }, 1),
+      cacheBreakRecord({ reason: "system_changed", estCostUsd: 0.006 }, 2),
+      cacheBreakRecord({ reason: "tools_changed", estCostUsd: 0 }, 3),
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    expect(report.cacheBreaks).toBeDefined();
+    // count desc, then reason asc (deterministic) → system_changed (2) before tools_changed (1).
+    expect(report.cacheBreaks).toEqual([
+      { reason: "system_changed", count: 2, estCostUsd: 0.01 },
+      { reason: "tools_changed", count: 1, estCostUsd: 0 },
+    ]);
+  });
+
+  it("OMITS cacheBreaks entirely when the trajectory carries no cache.break records (undefined, not [])", () => {
+    const signals = toIncidentSignals([]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
+    expect(report.cacheBreaks).toBeUndefined();
+  });
+
+  it("never carries the changed tool NAMES — only counts + reason + est-$ (content-free)", () => {
+    const signals = toIncidentSignals([cacheBreakRecord({ reason: "tools_changed", estCostUsd: 0.02 }, 1)]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+    const serialized = JSON.stringify(report.cacheBreaks);
+    expect(serialized).not.toMatch(/toolsAdded|toolsRemoved|changedDimsDigest|secret/);
+    expect(report.cacheBreaks?.[0]).toEqual({ reason: "tools_changed", count: 1, estCostUsd: 0.02 });
+  });
+
+  it("caps cacheBreaks at summary depth + records a truncations[] breadcrumb (GBIII I2 bounded)", () => {
+    // 12 distinct reasons > SUMMARY_MAX_CACHE_BREAKS (10) → the bound pass sheds the tail.
+    const records = Array.from({ length: 12 }, (_, i) =>
+      cacheBreakRecord({ reason: `reason_${String(i).padStart(2, "0")}`, estCostUsd: 0.001 }, i + 1),
+    );
+    const signals = toIncidentSignals(records);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 12);
+    const bounded = boundIncidentReport(report, "summary");
+    expect(bounded.cacheBreaks!.length).toBeLessThanOrEqual(10);
+    expect(bounded.truncations.some((t) => t.field === "cacheBreaks")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT-05 (176-05): the audit? section — counts-by-kind from the session's
+// obs_audit_events (Plan 03 persists via SQLite, NOT a trajectory record), read
+// through the IncidentSourceReader's readAuditEvents + filtered to the resolved
+// traceId, content-free.
+// ---------------------------------------------------------------------------
+
+const TRACE_ID = "f942d38c-0000-0000-0000-000000000000";
+
+/** A fixture reader: no trajectory/cache/metadata, the given audit rows. */
+function makeAuditReader(auditRows: Array<Record<string, unknown>>): IncidentSourceReader {
+  return {
+    async readSessionRecords() {
+      return [];
+    },
+    async readCacheTraceRecords() {
+      return [];
+    },
+    async readSessionMetadata() {
+      // Supply the traceId so the resolved report carries it (the audit filter key).
+      return { sessionKey: SESSION_KEY, traceId: TRACE_ID, agentId: "default", channel: { type: "peer", id: "u" } };
+    },
+    async readDiagnosticsRollup() {
+      return null;
+    },
+    async readAuditEvents() {
+      return auditRows;
+    },
+  };
+}
+
+/** A content-free audit row (the obs_audit_events shape) for a given traceId/kind. */
+function auditRow(kind: string, traceId: string | null, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `a-${kind}-${Math.random().toString(36).slice(2)}`,
+    tenantId: "default",
+    agentId: "default",
+    ts: 1000,
+    kind,
+    classification: null,
+    action: null,
+    actor: null,
+    outcome: "success",
+    severity: "info",
+    traceId,
+    refs: null,
+    ...extra,
+  };
+}
+
+describe("assembleIncidentReportFromSources — audit? (AUDIT-05, 176-05)", () => {
+  it("populates audit { total, byKind } from the session's audit events scoped to the resolved traceId", async () => {
+    const reader = makeAuditReader([
+      auditRow("secret_access", TRACE_ID),
+      auditRow("secret_access", TRACE_ID),
+      auditRow("injection_detected", TRACE_ID),
+      // A row from a DIFFERENT session's trace must NOT be counted.
+      auditRow("command_blocked", "other-trace-id"),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+    expect(report.audit).toBeDefined();
+    expect(report.audit).toEqual({ total: 3, byKind: { secret_access: 2, injection_detected: 1 } });
+  });
+
+  it("OMITS audit when the session produced no audit events (undefined, not {})", async () => {
+    const reader = makeAuditReader([auditRow("secret_access", "some-other-session")]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+    expect(report.audit).toBeUndefined();
+  });
+
+  it("is content-free — a planted value field on a row never reaches the audit? section", async () => {
+    const reader = makeAuditReader([auditRow("secret_access", TRACE_ID, { value: "sk-leaked" })]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+    const serialized = JSON.stringify(report.audit);
+    expect(serialized).not.toContain("sk-leaked");
+    expect(serialized).not.toMatch(/"value"|"secret"|"refs"/);
+    expect(report.audit).toEqual({ total: 1, byKind: { secret_access: 1 } });
+  });
+
+  it("OMITS audit when the reader has no readAuditEvents method (pre-176-05 fixture readers unaffected)", async () => {
+    const legacyReader: IncidentSourceReader = {
+      async readSessionRecords() {
+        return [];
+      },
+      async readCacheTraceRecords() {
+        return [];
+      },
+      async readSessionMetadata() {
+        return { sessionKey: SESSION_KEY, traceId: TRACE_ID };
+      },
+      async readDiagnosticsRollup() {
+        return null;
+      },
+    };
+    const report = await assembleIncidentReportFromSources(legacyReader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+    expect(report.audit).toBeUndefined();
   });
 });

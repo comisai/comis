@@ -46,11 +46,11 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
+  it("OBSERVABILITY_CONTRACTS has exactly 29 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
   });
 
-  it("all 26 contracts are admin-scoped", () => {
+  it("all 29 contracts are admin-scoped", () => {
     for (const c of OBSERVABILITY_CONTRACTS) {
       expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
     }
@@ -61,11 +61,15 @@ describe("observability-domain contracts", () => {
     expect(methods).toEqual([
       "agent.cacheStats",
       "memory.embeddingCache",
+      // Durable security-decision audit read surface (AUDIT-05 / Phase 176).
+      "obs.audit.query",
       "obs.billing.byAgent",
       "obs.billing.byProvider",
       "obs.billing.bySession",
       "obs.billing.total",
       "obs.billing.usage24h",
+      // Cache-break rate by reason + $-lost (WEBUI-02 / Phase 179).
+      "obs.cacheBreaks.byReason",
       // Durable cache-stats window aggregator.
       "obs.cacheStats.window",
       "obs.channels.all",
@@ -83,6 +87,8 @@ describe("observability-domain contracts", () => {
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
+      // Live spend snapshot the kill-switch enforces (WEBUI-02 / Phase 179).
+      "obs.spend.snapshot",
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",
@@ -850,8 +856,8 @@ describe("ObsTrace contracts", () => {
   });
 
   // Test 13
-  it("OBSERVABILITY_CONTRACTS has exactly 26 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(26);
+  it("OBSERVABILITY_CONTRACTS has exactly 29 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
   });
 
   // Test 14

@@ -40,7 +40,11 @@ export interface ExecutionResult {
   llmCalls: number;
   // LAT-04 (Phase 177): prompt_timeout is the PromptTimeoutError terminal —
   // END_REASON_MAP translates it to endReason timeout (the named cause).
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "error";
+  // SPEND-02 (Phase 177-01): spend_exceeded is the dollars kill-switch terminal —
+  // a DEDICATED member (not a reuse of budget_exceeded, which is the token cap)
+  // so the dollars-vs-tokens cause stays distinct. SafetyCheckResult.finishReason
+  // (bridge-safety-controls.ts) is typed off this; Plan 03's checkSpendLimit returns it.
+  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "spend_exceeded" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Issue-4 narrate-without-emit nudge outcome (small/nano only). A fired-but-

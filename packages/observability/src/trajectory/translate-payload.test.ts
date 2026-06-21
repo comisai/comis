@@ -484,3 +484,68 @@ describe("translatePayload — OBS-02/03 voice (STT/TTS) signals (content-free +
     });
   });
 });
+
+describe("translatePayload — WR-4 (177-obs-loop) spend kill-switch (content-free: scope/$ numbers only)", () => {
+  it("forwards observability:spend_warning as exactly {scope, spentUsd, capUsd, fraction}, stripping the envelope", () => {
+    const data = translatePayload("observability:spend_warning", {
+      scope: "tenant",
+      spentUsd: 8.4,
+      capUsd: 10,
+      fraction: 0.8,
+      // envelope correlation ids — MUST be stripped:
+      timestamp: 1717171717,
+      agentId: "default",
+      sessionKey: "t1:u1:c1",
+    });
+    expect(data).toEqual({ scope: "tenant", spentUsd: 8.4, capUsd: 10, fraction: 0.8 });
+    expect("agentId" in data).toBe(false);
+    expect("sessionKey" in data).toBe(false);
+    expect("timestamp" in data).toBe(false);
+  });
+
+  it("forwards observability:spend_exceeded as exactly {scope, spentUsd, capUsd, estUsd}, stripping the envelope", () => {
+    const data = translatePayload("observability:spend_exceeded", {
+      scope: "global",
+      spentUsd: 99.5,
+      capUsd: 100,
+      estUsd: 0.75,
+      timestamp: 1717171717,
+      agentId: "default",
+      sessionKey: "t1:u1:c1",
+    });
+    expect(data).toEqual({ scope: "global", spentUsd: 99.5, capUsd: 100, estUsd: 0.75 });
+    expect("agentId" in data).toBe(false);
+    expect("sessionKey" in data).toBe(false);
+  });
+
+  it("forwards observability:spend_unpriceable as exactly {provider, model} (config ids), stripping the envelope", () => {
+    const data = translatePayload("observability:spend_unpriceable", {
+      provider: "anthropic",
+      model: "claude-opus-4",
+      timestamp: 1717171717,
+      agentId: "default",
+      sessionKey: "t1:u1:c1",
+    });
+    expect(data).toEqual({ provider: "anthropic", model: "claude-opus-4" });
+    expect("agentId" in data).toBe(false);
+    expect("sessionKey" in data).toBe(false);
+  });
+
+  it("never forwards a message/prompt body even if hostile extras ride the payload (content-free invariant)", () => {
+    const data = translatePayload("observability:spend_exceeded", {
+      scope: "agent",
+      spentUsd: 5,
+      capUsd: 5,
+      estUsd: 0.1,
+      // hostile extras that MUST NOT cross into the trajectory:
+      prompt: "the secret user prompt body",
+      message: "<<message body>>",
+      apiKey: "sk-proj-supersecret",
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ scope: "agent", spentUsd: 5, capUsd: 5, estUsd: 0.1 });
+    expect("prompt" in data).toBe(false);
+    expect("message" in data).toBe(false);
+    expect("apiKey" in data).toBe(false);
+  });
+});

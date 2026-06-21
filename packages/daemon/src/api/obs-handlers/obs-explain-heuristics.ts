@@ -37,15 +37,13 @@
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
- *   6. prompt_timeout (LAT-04, Phase 177) — the NAMED terminal latency cause,
- *      keyed on endReason "timeout" (alive since the 177-04 END_REASON_MAP
- *      `prompt_timeout → "timeout"` entry). Same terminal band as #5 (the three
- *      endReason keys are mutually exclusive); every tool-failure cause
- *      out-ranks it. Numbers-backed from the enriched execution.prompt_timeout
- *      signal when present (stall names the binding knob, makespan names
- *      stallCeilingMultiplier); pre-extension sessions degrade to a generic
- *      knob suggestion. The frozen 678/503 fixtures carry no prompt_timeout
- *      records and no endReason "timeout" — cannot regress them.
+ *   6. prompt_timeout (LAT-04, Phase 177) / spend_exceeded (WR-4, 177-obs-loop) —
+ *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
+ *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
+ *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
+ *      numbers-backed from the enriched signal when present; spend_exceeded lives
+ *      in the sibling obs-explain-spend-verdict.ts. The frozen 678/503 fixtures
+ *      carry neither endReason — cannot regress them.
  *
  * The two X3-mandated codes are #1 and #2; phase-done gates ONLY on X1/X2/X3.
  *
@@ -63,6 +61,8 @@ import {
 } from "./obs-explain-heuristics-helpers.js";
 // OBS-02 (Phase 201): the two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict, userModelRevisedVerdict } from "./obs-explain-learning-verdicts.js";
+import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // WR-4: NAMED spend verdict (sibling — subdir cap)
+import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // RECALL-01 (sibling — subdir cap)
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -403,35 +403,19 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // 9b) spend_exceeded (WR-4, 177-obs-loop — the NAMED terminal SPEND cause, same
+  //     terminal band as #5/#7/#8/#9; keyed on endReason "spend_exceeded", WR-2;
+  //     full rationale in the sibling obs-explain-spend-verdict.ts module doc).
+  spendExceededVerdict,
+
   // 9c) recall_miss (RECALL-01). A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
   //     cause above — the agent ran with no memory context. Low-noise by
   //     construction: requires EVERY recall to have missed (zeroHits === recalls),
-  //     NO tool failures (so it never steals from the catch-all, which REQUIRES
-  //     failures — the two are mutually exclusive), and the authoritative
-  //     `degraded` flag (a zero-hit recall on a healthy turn is benign — the agent
-  //     simply didn't need memory — and never fires). Grounded in the v2.22 Hebrew
-  //     / LM-3 runs where recall silently missed and `comis explain` root-caused
-  //     nothing, so I hand-queried memory_fts to find the lane/scope gap.
-  (s) => {
-    if (s.recall === undefined) return null;
-    if (s.recall.recalls === 0 || s.recall.zeroHits < s.recall.recalls) return null;
-    if (s.failures.length > 0) return null;
-    if (s.degraded !== true) return null;
-    return {
-      code: "recall_miss",
-      detail:
-        `recall miss — all ${s.recall.recalls} recall query(ies) returned zero injected ` +
-        `memories (terminal lanes=${s.recall.lastLanes}, reranker ` +
-        `${s.recall.rerankerAvailable ? "available" : "absent"}); the turn ran with no memory ` +
-        "context and no tool/context/breaker cause matched",
-      suggestedNextSteps: [
-        "verify the recall SCOPE (agent- vs user-scoped) matches where the memory was written",
-        "for non-Latin queries confirm the trigram-twin lanes fired (comis fleet → health_signal); for weak semantic recall check comis fleet config_posture for the embedder",
-        "obs.explain depth=full for the per-recall lane/candidate counts",
-      ],
-    };
-  },
+  //     NO tool failures (mutually exclusive with the catch-all) + the
+  //     authoritative `degraded` flag (full rationale in the sibling
+  //     obs-explain-recall-verdict.ts module doc).
+  recallMissVerdict,
 
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A

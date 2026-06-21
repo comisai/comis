@@ -18,6 +18,7 @@
     { "path": "../channels" },
     { "path": "../orchestrator" },
     { "path": "../observability" },
+    { "path": "../observability-otel" },
     { "path": "../cli" },
     { "path": "../daemon" }
   ]

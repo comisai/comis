@@ -1,0 +1,226 @@
+---
+title: "Prometheus & Grafana"
+sidebarTitle: "Prometheus & Grafana"
+description: "The opt-in OpenTelemetry/Prometheus export surface — a loopback /metrics endpoint, shipped Grafana dashboards-as-code, recording/alert rules, and a one-command docker-compose stand-up. Off by default and content-free."
+---
+
+Comis ships a **standards-based observability surface** as an opt-in extension
+(`@comis/observability-otel`): an OpenTelemetry exporter that pushes traces,
+metrics, and logs over OTLP **and** serves a Prometheus `/metrics` pull endpoint —
+plus five Grafana dashboards-as-code, recording/alert rules, and a docker-compose
+that stands the whole thing up in one command.
+
+It is **off by default** and **content-free by construction**. This page is the
+complete operator guide; the native [Observe dashboard](/web-dashboard/observability)
+is the complementary zero-dependency lens (no external services required).
+
+<Info>
+**Two lenses, one truth.** The built-in **Observe SPA** reads Comis's in-process
+collectors directly from SQLite — zero external dependencies, always available.
+The **Prometheus/Grafana** surface here is the standards lens for operators who
+already run a Prometheus + Grafana stack (or want long-term retention, alerting,
+and cross-service correlation). Both render the same underlying signals; pick
+whichever fits your environment, or run both.
+</Info>
+
+## Enabling it
+
+The exporter loads only when you turn it on. Both surfaces are independent — you
+can run the Prometheus `/metrics` endpoint **without** an OTLP collector, and vice
+versa. Add to `~/.comis/config.yaml`:
+
+```yaml
+observability:
+  prometheus:
+    enabled: true          # serve /metrics on 127.0.0.1:9464
+    host: "127.0.0.1"      # loopback by default — see the security note below
+    port: 9464
+    path: "/metrics"
+  otel:
+    enabled: false         # OTLP push (traces/metrics/logs) to a collector
+    endpoint: ""           # e.g. "http://localhost:4318" — empty uses the OTel env default
+    protocol: "http/protobuf"
+```
+
+When `prometheus.enabled` or `otel.enabled` is true, the daemon loads the
+extension via a config-gated dynamic import. If the package is somehow
+unavailable, the daemon logs a warning and continues with telemetry disabled — it
+never crashes boot. The full key reference is in
+[Configuration → observability](/reference/config-yaml).
+
+<Note>
+The OTLP transport ships as `http/protobuf` this release. Setting
+`protocol: "grpc"` validates, but the daemon falls back to `http/protobuf` with a
+logged warning (gRPC is a documented later addition — no silent wrong-transport).
+</Note>
+
+## Security posture — trusted-operator, honestly
+
+The Prometheus `/metrics` endpoint has **no built-in authentication**. The OpenTelemetry
+`PrometheusExporter` opens its own HTTP listener; it is **not** mounted on Comis's
+gateway and is **not** gated by the gateway token. The access boundary is:
+
+1. **The loopback bind.** `host` defaults to `127.0.0.1`, so the endpoint is
+   reachable only from the local host. Comis never binds `0.0.0.0` implicitly.
+2. **Your reverse proxy / firewall.** To expose `/metrics` (or let a remote
+   Prometheus scrape it), front it with a reverse proxy that adds TLS and auth, or
+   restrict it at the firewall — exactly as you would any internal metrics
+   endpoint. See [Reverse proxy](/operations/reverse-proxy).
+
+<Warning>
+Do not set `host: "0.0.0.0"` (or a public interface) without a reverse proxy in
+front. The endpoint is content-free — it carries no message bodies, query strings,
+or secrets — but the metric values (costs, error rates, spend) are operational
+data you should not expose to an untrusted network. The `auth: "trusted-operator"`
+config value names this posture; it does **not** add a credential check.
+
+A **non-loopback bind is not rejected** (it is a valid deliberate choice behind a
+reverse proxy), but it is logged loudly: at startup, when `prometheus.enabled` and
+`host` is anything other than `127.0.0.1` / `::1` / `localhost`, the daemon emits a
+`WARN` (`prometheus-non-loopback-bind`) naming the configured host and the
+unauthenticated exposure. Set `host: "127.0.0.1"` to silence it.
+</Warning>
+
+## What's exported (content-free)
+
+Every metric is an id, enum, or count — never message content, never a secret.
+The label set is deliberately **low-cardinality** (`agent`, `tenant`, `provider`,
+`model`, `operation`, `reason`, `state`, `outcome`, `kind`, …); session, trace,
+and user ids are **never** labels (a label-cardinality blowup is a denial-of-service
+and a PII surface). Both label **keys and values** are bounded: the `reason` label
+maps to the closed cache-break-reason set (an unknown reason buckets to `other`),
+`provider`/`model` are the config-resolved ids (not raw request strings), and the
+`cardinalityCap` (default 10 000) is **enforced**, not just warned — once the
+distinct-series estimate reaches the cap, further distinct series collapse into a
+single `_overflow` bucket (and a `WARN` fires), so a label mistake cannot grow the
+series set without bound.
+
+The exporter boundary enforces a **closed attribute allowlist**: only the known
+metric-label keys and the known span/log attribute keys leave the daemon; any
+other key is dropped before it can become a label or span attribute. Allowed
+values are then re-redacted independently of any upstream scrubbing — so nothing
+leaks even with the GenAI semantic-convention attributes enabled, and a future
+careless attribute addition cannot smuggle a high-entropy secret out under a
+benign key.
+
+The exported series cover cost & spend (corrected `comis_cost_usd_total`, the
+spend-vs-ceiling gauges, pricing coverage), cache health (`comis_cache_break_total`
+by reason, savings), fleet health (degraded rate, error kinds, breaker trips,
+turn-duration histograms), security & audit (`comis_audit_events_total`,
+secret-access, injection-detected), and reliability (run-duration histograms,
+offloads). The single source of truth for the metric set is the catalog in
+`@comis/observability-otel`, and every catalogued metric has a live producer
+(an event subscription that increments it, or a registered gauge) — a CI guard
+fails the build if a catalogued metric has no producer, and the dashboard/rule
+drift guard fails if a panel or alert ever references a metric the exporter does
+not actually **produce** (not merely one absent from the catalog). So a shipped
+panel never silently renders "No data" and a shipped alert can always fire.
+
+### GenAI semantic conventions (pre-stable)
+
+Setting `otel.genaiSemconv: true` switches the span attributes to the latest
+OpenTelemetry GenAI convention namespace (the standard
+`OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` gate). That convention
+is still **`Development`** status upstream — it will churn — so the flag is off by
+default and documented as tracking a pre-stable spec. **Content stays off
+regardless:** the three GenAI message-content span attributes are spec-level
+`Opt-In` and are omitted unless you separately set `otel.captureContent: true`,
+and even then the exporter re-redacts at the boundary.
+
+## One-command stand-up (docker-compose)
+
+The repository ships `docker/observability/docker-compose.yml` — Prometheus
+(scraping a Comis daemon's `/metrics`) plus Grafana, auto-provisioned with the
+Comis datasource and all five dashboards:
+
+```bash
+docker compose -f docker/observability/docker-compose.yml up
+# Grafana    → http://localhost:3000  (admin/admin by default — CHANGE IT)
+# Prometheus → http://localhost:9090
+```
+
+**Prerequisite:** a Comis daemon with `observability.prometheus.enabled: true`
+running on the docker host, exposing `/metrics` on `127.0.0.1:9464`. The compose
+stack scrapes it via `host.docker.internal:9464`; it deliberately does **not**
+launch the daemon (the daemon's lifecycle, data directory, and secrets are yours,
+not the stack's).
+
+<Note>
+The Grafana admin credentials in the compose file (`admin`/`admin`) are for a
+local sandbox only. Change them — and do not expose ports `3000`/`9090` to an
+untrusted network without a reverse proxy. The same trusted-operator posture
+applies as for `/metrics`.
+</Note>
+
+### Importing into an existing Grafana
+
+If you already run Grafana, point a file or dashboards provisioner at
+`grafana/dashboards/*.json` (and the datasource at
+`grafana/provisioning/datasources/prometheus.yaml`), or import the dashboard JSON
+files manually. Each dashboard carries template variables for `datasource`,
+`tenant`, `agent`, `provider`, and `model`.
+
+## Chart → `comis explain` drill-down
+
+Every dashboard panel carries a **data link** to Comis's incident report
+(`comis explain`) — the chart-to-root-cause pivot. Click through from a spiking
+series to the deterministic [`IncidentReport`](/reference/cli) for that session
+(outcome, cost, per-tool failures, breaker timeline, and — since the cost/audit
+work — the cache-break and audit sections).
+
+<Note>
+**Exemplar honesty.** OpenMetrics *exemplars* (the trace id riding on a histogram
+sample) are the ideal pivot, but the installed Prometheus exporter
+(`@opentelemetry/exporter-prometheus`) does **not** render exemplars on the
+`/metrics` pull surface. So the drill-down keys on the `comis.trace_id` **span
+attribute** (carried on the OTLP push path) templated into the panel's data-link
+URL instead. The live exemplar-on-the-sample pivot is available when you route
+through an OTLP collector that supports it.
+</Note>
+
+## Recording & alerting rules
+
+`prometheus/rules/comis-recording.yml` pre-computes the derived series (degraded
+rate, cache-break rate by reason, dollars per hour, pricing-gap rate);
+`prometheus/rules/comis-alerts.yml` ships five alerts: spend approaching the
+ceiling, a degraded-rate spike, a breaker-trip burst, a pricing gap, and an
+audit-sink failure.
+
+The **spend-approaching-ceiling** alert fires at the *same* threshold as the
+in-process spend kill-switch — `observability.spend.warnAtFraction` (0.8). They
+are a single source of truth: a test asserts the alert literal equals the config
+default, so the dashboard alert and the kill-switch can never drift apart.
+
+Validate the rules with `promtool` (part of the Prometheus distribution) before
+deploying:
+
+```bash
+promtool check rules prometheus/rules/comis-recording.yml prometheus/rules/comis-alerts.yml
+```
+
+## Environment variables
+
+The exporter honors the **standard** OpenTelemetry SDK environment variables (read
+by the underlying SDK, not stored by Comis; the `config.yaml` values take
+precedence for the keys Comis controls):
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — the OTLP collector endpoint when
+  `otel.endpoint` is empty.
+- `OTEL_SEMCONV_STABILITY_OPT_IN` — set to `gen_ai_latest_experimental` alongside
+  `otel.genaiSemconv: true` to opt into the latest GenAI convention.
+- `OTEL_SERVICE_NAME` — overrides the OTLP service name (defaults to `comis`).
+
+See [Environment variables](/reference/environment-variables#opentelemetry-variables)
+for the full list.
+
+## Operator-verified steps
+
+A few steps need a live Linux host with the running daemon and the docker stack —
+they cannot be validated by Comis's CI (which asserts the artifacts' validity, not
+a live render):
+
+- `docker compose -f docker/observability/docker-compose.yml up` — the live
+  Prometheus + Grafana stand-up (needs a daemon emitting `/metrics`).
+- Opening Grafana and confirming the five dashboards render with live data.
+- Clicking a spiking series through to `comis explain` (the data-link pivot).
+- `promtool check rules prometheus/rules/*.yml` — the semantic PromQL lint.

@@ -414,6 +414,33 @@ describe("AgentEvents payload structure", () => {
     expect(received.nodesSkipped).toBe(1);
   });
 
+  it("graph:completed carries the COST-02 per-node corrected-$ cost ledger (nodeCost) as a typed optional field", () => {
+    // Type contract: nodeCost is part of EventMap["graph:completed"] (the IN-01
+    // nodeTokenSpend mold). This payload assignment would NOT compile on
+    // pre-patch code (excess-property error) — `tsc` is the RED signal for a
+    // type-only field (AGENTS.md §2.10). Content-free: nodeId → dollars only.
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["graph:completed"] = {
+      graphId: "g-cost-02",
+      status: "completed",
+      durationMs: 1000,
+      nodeCount: 3,
+      nodesCompleted: 3,
+      nodesFailed: 0,
+      nodesSkipped: 0,
+      timestamp: Date.now(),
+      nodeTokenSpend: { parent: 20, childA: 100, childB: 50 },
+      nodeCost: { parent: 0.02, childA: 0.10, childB: 0.05 },
+    };
+
+    bus.on("graph:completed", handler);
+    bus.emit("graph:completed", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["graph:completed"];
+    expect(received.nodeCost).toEqual({ parent: 0.02, childA: 0.10, childB: 0.05 });
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 
@@ -1177,6 +1204,191 @@ describe("memory:recall_used optional intent (write bucket)", () => {
       // @ts-expect-error - intent is a closed-union string, never a content-bearing object
       intent: { body: "the recalled memory body" },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEND-05 (Phase 177-01): the 3 counts-only observability:spend_* events.
+//
+// Content-free telemetry (AGENTS.md §2.7): dollar amounts ride as NUMBERS, the
+// scope as the closed SpendScopeKind enum ("agent"|"tenant"|"global"), and only
+// ids (agentId/sessionKey/provider/model) — NEVER a message/prompt/query body.
+// RED on pre-patch: EventMap has no "observability:spend_warning",
+// "observability:spend_exceeded", or "observability:spend_unpriceable" key yet,
+// so the typed payloads below fail to COMPILE (per AGENTS §2.10). The shape
+// assertions double as the no-body invariant (a source-grep test re-proves it).
+// ---------------------------------------------------------------------------
+
+describe("observability:spend_* counts-only events", () => {
+  it("observability:spend_warning delivers scope + spentUsd/capUsd/fraction (numbers) + ids", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["observability:spend_warning"] = {
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scope: "agent",
+      spentUsd: 8.0,
+      capUsd: 10.0,
+      fraction: 0.8,
+    };
+
+    bus.on("observability:spend_warning", handler);
+    bus.emit("observability:spend_warning", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["observability:spend_warning"];
+    expect(r.scope).toBe("agent");
+    expect(r.spentUsd).toBe(8.0);
+    expect(r.capUsd).toBe(10.0);
+    expect(r.fraction).toBe(0.8);
+  });
+
+  it("observability:spend_exceeded delivers scope + spentUsd/capUsd/estUsd (numbers) + ids", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["observability:spend_exceeded"] = {
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      scope: "tenant",
+      spentUsd: 9.9,
+      capUsd: 10.0,
+      estUsd: 0.5,
+    };
+
+    bus.on("observability:spend_exceeded", handler);
+    bus.emit("observability:spend_exceeded", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["observability:spend_exceeded"];
+    expect(r.scope).toBe("tenant");
+    expect(r.spentUsd).toBe(9.9);
+    expect(r.estUsd).toBe(0.5);
+  });
+
+  it("observability:spend_unpriceable delivers provider/model ids only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["observability:spend_unpriceable"] = {
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      provider: "anthropic",
+      model: "qwen3-coder-30b",
+    };
+
+    bus.on("observability:spend_unpriceable", handler);
+    bus.emit("observability:spend_unpriceable", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["observability:spend_unpriceable"];
+    expect(r.provider).toBe("anthropic");
+    expect(r.model).toBe("qwen3-coder-30b");
+  });
+
+  it("scope is the closed SpendScopeKind union (agent|tenant|global) — accepts all three, rejects others", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    for (const scope of ["agent", "tenant", "global"] as const) {
+      const payload: EventMap["observability:spend_warning"] = {
+        timestamp: Date.now(),
+        agentId: "a",
+        sessionKey: "t1:u1:c1",
+        scope,
+        spentUsd: 1,
+        capUsd: 2,
+        fraction: 0.5,
+      };
+      bus.on("observability:spend_warning", handler);
+      bus.emit("observability:spend_warning", payload);
+      bus.removeAllListeners("observability:spend_warning");
+    }
+    expect(handler).toHaveBeenCalledTimes(3);
+
+    bus.emit("observability:spend_warning", {
+      timestamp: 1,
+      agentId: "a",
+      sessionKey: "t1:u1:c1",
+      // @ts-expect-error - "channel" is not a SpendScopeKind member (closed enum)
+      scope: "channel",
+      spentUsd: 1,
+      capUsd: 2,
+      fraction: 0.5,
+    });
+  });
+
+  it("type safety: @ts-expect-error rejects content/message/query bodies + missing required amounts", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("observability:spend_exceeded", {
+      timestamp: 1,
+      agentId: "a",
+      sessionKey: "t1:u1:c1",
+      scope: "agent",
+      spentUsd: 1,
+      capUsd: 2,
+      estUsd: 0.1,
+      // @ts-expect-error - a message body must never ride on the counts-only payload
+      message: "you spent too much on the chat about X",
+    });
+
+    bus.emit("observability:spend_warning", {
+      timestamp: 1,
+      agentId: "a",
+      sessionKey: "t1:u1:c1",
+      scope: "agent",
+      spentUsd: 1,
+      capUsd: 2,
+      fraction: 0.5,
+      // @ts-expect-error - a query string must never ride on the counts-only payload
+      query: "the user prompt that triggered this",
+    });
+
+    // @ts-expect-error - missing required capUsd on observability:spend_exceeded
+    bus.emit("observability:spend_exceeded", {
+      timestamp: 1,
+      agentId: "a",
+      sessionKey: "t1:u1:c1",
+      scope: "agent",
+      spentUsd: 1,
+      estUsd: 0.1,
+    });
+  });
+
+  it("payload types carry no content/message/query/body field (counts-only source invariant)", () => {
+    // Source-grep the three spend event blocks for forbidden privacy-leak keys.
+    // The closed shapes MUST carry numeric amounts + the scope enum + ids only —
+    // never a message body, prompt, or query string (AGENTS.md §2.7).
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    for (const key of [
+      "observability:spend_warning",
+      "observability:spend_exceeded",
+      "observability:spend_unpriceable",
+    ]) {
+      const match = src.match(new RegExp(`"${key}":\\s*\\{[\\s\\S]*?\\n\\s*\\};`));
+      expect(match, `${key} event block must exist`).toBeTruthy();
+      const block = match![0];
+      expect(block, `${key}: no message body field`).not.toMatch(/^\s*message[?]?:/m);
+      expect(block, `${key}: no raw content field`).not.toMatch(/^\s*content[?]?:/m);
+      expect(block, `${key}: no query/queryText field`).not.toMatch(/^\s*query(?:Text)?[?]?:/m);
+      expect(block, `${key}: no prompt field`).not.toMatch(/^\s*prompt[?]?:/m);
+      expect(block, `${key}: no body field`).not.toMatch(/^\s*body[?]?:/m);
+    }
+  });
+
+  it("SpendScopeKind is exported as a shared closed enum (agent|tenant|global)", () => {
+    // The scope enum is a closed-union type that rides the wire (mirrors how
+    // AuditKind rides audit:event). The accumulator (Plan 02) and the abort
+    // wiring (Plan 03) import it. Source-grep proves the exported type alias.
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    const noComments = src
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    expect(noComments, "SpendScopeKind exported").toMatch(
+      /export type SpendScopeKind\s*=\s*"agent"\s*\|\s*"tenant"\s*\|\s*"global";/,
+    );
   });
 });
 

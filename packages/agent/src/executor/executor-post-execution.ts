@@ -650,6 +650,12 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // terminals get the NAMED cause (QT2/QT3 precedent). HARD_FAILURE_END_REASONS and the
   // fleet degradedByCause record are pre-wired for "timeout".
   prompt_timeout: "timeout",
+  // WR-2 (177-obs-loop): the dollars kill-switch abort (bridge-safety-controls sets
+  // finishReason:"spend_exceeded") gets its OWN named cause instead of the `?? "error"`
+  // catch-all — so obs.explain / obs.fleet.health can tell a spend-killed session from
+  // a tool crash (the security-review finding). HARD_FAILURE_END_REASONS (obs-explain-
+  // assemble.ts) carries it so the fleet degradedByCause record attributes the CAUSE.
+  spend_exceeded: "spend_exceeded",
   completed_with_tool_errors: "completed_with_tool_errors",
   // Issue-4: the narrate-without-emit terminal promoted at the chokepoint
   // (see promoteNarrationStall) — a small/nano turn that ended on intent

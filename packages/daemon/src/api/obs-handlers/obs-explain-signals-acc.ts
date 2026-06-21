@@ -52,6 +52,15 @@ export interface Acc {
   recallCount: number;
   recallZeroHits: number;
   lastRecall?: { lanes: number; finalCount: number; rerankerAvailable: boolean };
+  /** PERSIST-01 (176-05): cache breaks folded per-reason from `cache.break` records
+   *  (Plan 04) — `{count, estCostUsd}` summed per closed reason. Counts + a number
+   *  ONLY (never the changed tool names — the trajectory carries only the digest). */
+  cacheBreaksByReason: Map<string, { count: number; estCostUsd: number }>;
+  /** SPEND (WEBUI-04, 179-04): the LAST `spend.exceeded` trajectory record's breach
+   *  (the terminal kill explains the end state — a warn earlier in the session is
+   *  superseded by the breach that actually killed it). `totalUsd` is the record's
+   *  `spentUsd`; `capUsd` its ceiling. Content-free (a scope enum + two numbers). */
+  spend?: { scope: string; totalUsd: number; capUsd: number };
   learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts

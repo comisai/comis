@@ -36,6 +36,7 @@ import { registerSecretsCommand } from "./commands/secrets.js";
 import { registerSignalSetupCommand } from "./commands/signal-setup.js";
 import { registerTraceCommand } from "./commands/trace.js";
 import { registerExplainCommand } from "./commands/explain.js";
+import { registerCostExportCommand } from "./commands/cost-export.js";
 import { registerFleetCommand } from "./commands/fleet.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
@@ -70,6 +71,7 @@ registerSecretsCommand(program);
 registerSignalSetupCommand(program);
 registerTraceCommand(program);
 registerExplainCommand(program);
+registerCostExportCommand(program);
 registerFleetCommand(program);
 registerUninstallCommand(program);
 

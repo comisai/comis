@@ -68,6 +68,11 @@ export interface GraphRunState {
   nodeCacheData: Map<string, { cacheReadTokens: number; cacheWriteTokens: number }>;
   /** Per-node full-run token spend captured from completion events (BUDGET-03). */
   nodeTokenSpend: Map<string, number>;
+  /** Per-node CUMULATIVE corrected-$ cost ledger captured from completion events
+   *  (COST-02). Accumulates event.cost (the same corrected value feeding
+   *  cumulativeCost) per nodeId; the subtree rollup sums a node + its
+   *  descendants over this ledger. (tenant,agent)-scoped (gs IS that scope). */
+  nodeCost: Map<string, number>;
   /** Promise resolving to sorted tool superset for cache prefix sharing. */
   toolSupersetPromise?: Promise<string[]>;
   /** Resolved tool superset names for graph sub-agent spawns. */

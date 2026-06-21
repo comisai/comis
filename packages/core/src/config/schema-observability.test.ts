@@ -220,4 +220,306 @@ describe("ObservabilityConfigSchema", () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // audit key + persistence.cacheBreaks (PERSIST-01 / AUDIT-01).
+  describe("audit + persistence.cacheBreaks", () => {
+    it("parses audit:{persist,sink} + persistence:{cacheBreaks} on the strictObject", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        audit: { persist: true, sink: "both" },
+        persistence: { cacheBreaks: true },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.audit.persist).toBe(true);
+        expect(result.data.audit.sink).toBe("both");
+        expect(result.data.persistence.cacheBreaks).toBe(true);
+      }
+    });
+
+    it("resolves safe defaults: audit deep-equals {persist:true,sink:'both'}; persistence.cacheBreaks===true", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.audit).toEqual({ persist: true, sink: "both" });
+        expect(result.data.persistence.cacheBreaks).toBe(true);
+      }
+    });
+
+    it("rejects a typo'd TOP-LEVEL persist key (strictObject — proves no colliding persist was added)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ persist: true });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid audit.sink enum value", () => {
+      const result = ObservabilityConfigSchema.safeParse({ audit: { sink: "nope" } });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // spend key (SPEND-01) — the kill-switch opt-in surface. Ships OFF: all
+  // three ceilings default null, action 'warn'. Mirrors the audit block's
+  // default + strict-reject + enum-validation shape.
+  describe("spend (SPEND-01)", () => {
+    it("resolves safe defaults: all three ceilings null (off), action 'warn', warnAtFraction 0.8, perTurnMax 0.5, pricingFallback 'snapshot', onUnknownPricing 'warn'", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend).toEqual({
+          perAgentUsd: null,
+          perTenantUsd: null,
+          daemonGlobalUsd: null,
+          perTurnMax: 0.5,
+          action: "warn",
+          warnAtFraction: 0.8,
+          pricingFallback: "snapshot",
+          onUnknownPricing: "warn",
+        });
+      }
+    });
+
+    it("null ceilings = off: the three ceilings each default null (the opt-in invariant)", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend.perAgentUsd).toBeNull();
+        expect(result.data.spend.perTenantUsd).toBeNull();
+        expect(result.data.spend.daemonGlobalUsd).toBeNull();
+      }
+    });
+
+    it("rejects a typo'd key under spend (strictObject)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perAgentUsdd: 5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("parses valid ceilings + actions and round-trips them", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        spend: { perAgentUsd: 10, action: "abort", onUnknownPricing: "abort" },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.spend.perAgentUsd).toBe(10);
+        expect(result.data.spend.action).toBe("abort");
+        expect(result.data.spend.onUnknownPricing).toBe("abort");
+        // unset ceilings stay null (off).
+        expect(result.data.spend.perTenantUsd).toBeNull();
+        expect(result.data.spend.daemonGlobalUsd).toBeNull();
+      }
+    });
+
+    it("rejects a zero ceiling (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perAgentUsd: 0 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a negative ceiling (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { daemonGlobalUsd: -1 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a zero perTurnMax (positive required)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { perTurnMax: 0 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects warnAtFraction above 1 (bounded [0,1])", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { warnAtFraction: 1.5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects warnAtFraction below 0 (bounded [0,1])", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { warnAtFraction: -0.1 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid action enum value", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { action: "kill" } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an invalid pricingFallback enum value (single current member 'snapshot')", () => {
+      const result = ObservabilityConfigSchema.safeParse({ spend: { pricingFallback: "live" } });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // otel key (OTEL-01/02/03) — the OTLP push surface opt-in. Ships OFF
+  // (enabled:false); content-free by default (captureContent:false,
+  // genaiSemconv:false). LOCKED shape: design §9/§14 + 178-RESEARCH §14.
+  describe("otel (OTEL-01/02/03)", () => {
+    it("resolves safe defaults: enabled false, endpoint '', protocol 'http/protobuf', traces/metrics/logs true, genaiSemconv/captureContent false", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.otel).toEqual({
+          enabled: false,
+          endpoint: "",
+          protocol: "http/protobuf",
+          traces: true,
+          metrics: true,
+          logs: true,
+          genaiSemconv: false,
+          captureContent: false,
+        });
+      }
+    });
+
+    it("content-free invariant: captureContent + genaiSemconv each default false (the opt-in content gates)", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.otel.captureContent).toBe(false);
+        expect(result.data.otel.genaiSemconv).toBe(false);
+      }
+    });
+
+    it("parses otel.enabled:true + an endpoint + the semconv/content gates and round-trips them", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        otel: { enabled: true, endpoint: "http://collector:4318", genaiSemconv: true, captureContent: true },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.otel.enabled).toBe(true);
+        expect(result.data.otel.endpoint).toBe("http://collector:4318");
+        expect(result.data.otel.genaiSemconv).toBe(true);
+        expect(result.data.otel.captureContent).toBe(true);
+      }
+    });
+
+    it("accepts protocol 'grpc' (validates; falls back to -proto with a WARN at runtime — a documented later addition)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ otel: { protocol: "grpc" } });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.otel.protocol).toBe("grpc");
+      }
+    });
+
+    it("rejects an invalid protocol enum value", () => {
+      const result = ObservabilityConfigSchema.safeParse({ otel: { protocol: "carrier-pigeon" } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a typo'd key under otel (strictObject)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ otel: { bogus: true } });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // prometheus key (PROM-01) — the standalone /metrics pull surface. INDEPENDENT
+  // of otel.enabled. Ships OFF (enabled:false); loopback-bound (127.0.0.1:9464);
+  // trusted-operator posture. LOCKED shape: design §9/§14 + 178-RESEARCH §14.
+  describe("prometheus (PROM-01)", () => {
+    it("resolves safe defaults: enabled false, host 127.0.0.1, port 9464, path /metrics, auth trusted-operator, exemplars true, cardinalityCap 10000", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.prometheus).toEqual({
+          enabled: false,
+          host: "127.0.0.1",
+          port: 9464,
+          path: "/metrics",
+          auth: "trusted-operator",
+          exemplars: true,
+          cardinalityCap: 10000,
+        });
+      }
+    });
+
+    it("loopback-default invariant: host defaults to 127.0.0.1 (never 0.0.0.0 implicitly)", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.prometheus.host).toBe("127.0.0.1");
+      }
+    });
+
+    it("parses prometheus.enabled:true + host/port and round-trips them (the standalone-/metrics surface)", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        prometheus: { enabled: true, host: "127.0.0.1", port: 19464, cardinalityCap: 5000 },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.prometheus.enabled).toBe(true);
+        expect(result.data.prometheus.host).toBe("127.0.0.1");
+        expect(result.data.prometheus.port).toBe(19464);
+        expect(result.data.prometheus.cardinalityCap).toBe(5000);
+      }
+    });
+
+    it("rejects an invalid auth literal (only 'trusted-operator' — the OTel exporter has no built-in auth)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ prometheus: { auth: "bearer-token" } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a non-integer port", () => {
+      const result = ObservabilityConfigSchema.safeParse({ prometheus: { port: 9464.5 } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a zero/negative cardinalityCap (positive int required)", () => {
+      const zero = ObservabilityConfigSchema.safeParse({ prometheus: { cardinalityCap: 0 } });
+      expect(zero.success).toBe(false);
+      const neg = ObservabilityConfigSchema.safeParse({ prometheus: { cardinalityCap: -1 } });
+      expect(neg.success).toBe(false);
+    });
+
+    it("rejects a typo'd key under prometheus (strictObject)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ prometheus: { bogus: true } });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // COST-01/COST-03 (Phase 179 P3): the two NEW additive config keys this
+  // milestone's P3 owns. costGranularity (WS4) + export (WS6) both ship ON.
+  // Mounted with the spend/prometheus `.default(() => Schema.parse({}))` form so
+  // an absent observability: block still parses; strictObject preserved.
+  describe("costGranularity + export (COST WS4/WS6)", () => {
+    it("defaults: costGranularity {perTool:true, subagentRollup:true} present from an empty object", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.costGranularity.perTool).toBe(true);
+        expect(result.data.costGranularity.subagentRollup).toBe(true);
+      }
+    });
+
+    it("defaults: export {csv:true, quarterHourBuckets:true} present from an empty object", () => {
+      const result = ObservabilityConfigSchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.export.csv).toBe(true);
+        expect(result.data.export.quarterHourBuckets).toBe(true);
+      }
+    });
+
+    it("accepts per-field overrides on both new keys", () => {
+      const result = ObservabilityConfigSchema.safeParse({
+        costGranularity: { perTool: false },
+        export: { quarterHourBuckets: false },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.costGranularity.perTool).toBe(false);
+        // the untouched member keeps its default
+        expect(result.data.costGranularity.subagentRollup).toBe(true);
+        expect(result.data.export.quarterHourBuckets).toBe(false);
+        expect(result.data.export.csv).toBe(true);
+      }
+    });
+
+    it("rejects a typo'd key under costGranularity (strictObject preserved)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ costGranularity: { perTtool: true } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a typo'd key under export (strictObject preserved)", () => {
+      const result = ObservabilityConfigSchema.safeParse({ export: { quarterHour: true } });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a non-boolean perTool", () => {
+      const result = ObservabilityConfigSchema.safeParse({ costGranularity: { perTool: "yes" } });
+      expect(result.success).toBe(false);
+    });
+  });
 });

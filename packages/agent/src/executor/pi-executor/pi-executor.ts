@@ -1316,6 +1316,18 @@ async function runSessionLocked(
     // so recordUsage / the turn-end budget check are scoped to THIS execution.
     budgetGuard: budgetWindow,
     costTracker: deps.costTracker,
+    // Phase 177: the daemon-wide spend accumulator REFERENCE (Pitfall 4 — the
+    // per-agent guards read the SAME instance) + its scope/config. The scope's
+    // tenant is read directly off the structured SessionKey (it already carries
+    // tenantId; the formatted-string parser is only needed on the bus path). When
+    // spendAccumulator is absent the bridge's spend path is a no-op.
+    ...(deps.spendAccumulator && deps.spendConfig
+      ? {
+          spendAccumulator: deps.spendAccumulator,
+          spendConfig: deps.spendConfig,
+          spendScope: { tenantId: sessionKey.tenantId ?? "default", agentId: agentId ?? "default" },
+        }
+      : {}),
     stepCounter: activeStepCounter,
     circuitBreaker: deps.circuitBreaker,
     turnLoopDetector,

@@ -2861,6 +2861,36 @@ Observability persistence layer. Stores channel health snapshots, execution metr
 | `persistence.enabled` | `boolean` | `true` | Enable observability persistence. |
 | `persistence.retentionDays` | `number` | `30` | Days to retain data before pruning (1-365). |
 | `persistence.snapshotIntervalMs` | `number` | `300000` | Interval in ms between channel health snapshots (min 60000). |
+| `persistence.cacheBreaks` | `boolean` | `true` | Persist detected prompt-cache breaks to `obs_diagnostics` (`category:'cache_break'`) + a `cache.break` trajectory record (rate-by-reason + est-$). |
+| `audit.persist` | `boolean` | `true` | Persist security-decision audit events (secret access, injection detection, command blocks, …) to the durable `obs_audit_events` table + `security-audit.jsonl`. Queryable via `comis security audit-log` / `obs.audit.query`. |
+| `audit.sink` | `"sqlite"` \| `"jsonl"` \| `"both"` | `"both"` | Which sink(s) receive audit records. Rotation of the JSONL rides the shared `logRotation` policy (no per-sink rotation knob). |
+| `spend.perAgentUsd` | `number` \| `null` | `null` | Per-agent cumulative USD ceiling. `null` = off (opt-in). |
+| `spend.perTenantUsd` | `number` \| `null` | `null` | Per-tenant cumulative USD ceiling — the cross-tenant isolation dimension; a tenant's breach aborts only that tenant. `null` = off. |
+| `spend.daemonGlobalUsd` | `number` \| `null` | `null` | Daemon-wide cumulative USD ceiling across all agents and tenants. `null` = off. |
+| `spend.action` | `"warn"` \| `"abort"` | `"warn"` | Behaviour on a ceiling breach. `warn` (the shipped default) observes only; `abort` halts subsequent turns. |
+| `spend.warnAtFraction` | `number` | `0.8` | Emit the early `observability:spend_warning` once spend crosses this fraction of a ceiling, before it trips (0–1). |
+| `spend.perTurnMax` | `number` | `0.5` | Conservative per-turn USD reservation held at admission (there is no pre-flight cost estimate), reconciled to the actual billed amount after the turn. Bounds a single in-flight turn's overshoot past a ceiling. |
+| `spend.pricingFallback` | `"snapshot"` | `"snapshot"` | Pricing source for enforcement. Only `snapshot` (the dated model-catalog rate) exists today; a transient pricing-fetch failure falls back to it rather than aborting. No live price fetch is in scope (forward-extensibility placeholder). |
+| `spend.onUnknownPricing` | `"warn"` \| `"abort"` | `"warn"` | Behaviour when a remote model burns tokens with no catalog price. `warn` fails loud (the default); `abort` (with `action: abort`) trips `spend_unpriceable`. |
+| `otel.enabled` | `boolean` | `false` | Enable the OTLP push surface (traces/metrics/logs) via the opt-in `@comis/observability-otel` extension. Ships OFF — the daemon loads the extension only when this or `prometheus.enabled` is true (a config-gated dynamic import; core stays OpenTelemetry-free otherwise). |
+| `otel.endpoint` | `string` | `""` | OTLP collector endpoint URL. `""` uses the standard OTel env/SDK default (`OTEL_EXPORTER_OTLP_ENDPOINT`). |
+| `otel.protocol` | `"http/protobuf"` \| `"grpc"` | `"http/protobuf"` | OTLP transport. Only `http/protobuf` ships today; `grpc` validates but falls back to `http/protobuf` with a WARN (a documented later addition). |
+| `otel.traces` | `boolean` | `true` | Emit OTLP trace spans (per-turn/tool/graph), correlated by the Comis `traceId` carried as the `comis.trace_id` span attribute. Active only when `otel.enabled`. |
+| `otel.metrics` | `boolean` | `true` | Emit OTLP metrics off the single metric catalog. Active only when `otel.enabled`. |
+| `otel.logs` | `boolean` | `true` | Emit bus events as OTLP log records (re-redacted). Active only when `otel.enabled`. |
+| `otel.genaiSemconv` | `boolean` | `false` | Opt into the latest (pre-stable `Development`) GenAI semantic convention (the `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` gate). Default keeps the pre-1.36 shape. Content never leaks regardless — re-redaction is independent. |
+| `otel.captureContent` | `boolean` | `false` | Capture the 3 GenAI content span attributes (input/output messages, system instructions). Spec opt-in → default OFF (omitted). Even when on, `sanitizeForPersistence` re-redacts at the exporter boundary. |
+| `prometheus.enabled` | `boolean` | `false` | Enable the standalone Prometheus `/metrics` pull surface (independent of `otel.enabled` — serves valid exposition with no OTLP collector). Realized by the OTel `PrometheusExporter`, which opens its own loopback HTTP listener (not the gateway). |
+| `prometheus.host` | `string` | `"127.0.0.1"` | Bind host for the `/metrics` listener. Loopback by default — never `0.0.0.0` implicitly. |
+| `prometheus.port` | `number` | `9464` | Bind port for the `/metrics` listener (1–65535). |
+| `prometheus.path` | `string` | `"/metrics"` | The scrape path the exporter serves. |
+| `prometheus.auth` | `"trusted-operator"` | `"trusted-operator"` | Access posture. The OTel exporter has no built-in auth; the posture is realized as the loopback bind + the operator's reverse proxy/firewall (NOT gateway-token-gated). |
+| `prometheus.exemplars` | `boolean` | `true` | Whether exemplars are desired. NOTE: the pinned exporter does not render OpenMetrics exemplars on the pull surface — the `trace_id` rides as a span attribute instead. Forward-looking knob. |
+| `prometheus.cardinalityCap` | `number` | `10000` | Max active series before a WARN-with-hint fires (the label-explosion DoS guard); the `comis_prometheus_series` self-metric exposes the count. |
+| `costGranularity.perTool` | `boolean` | `true` | Tag each `observability:token_usage` row with the distinct tools that fired the turn (persisted as `tool_tag` on `obs_token_usage`). The per-tool $ attribution is **best-effort** — an even split across the turn's tools that conserves the turn total, never exact per-tool accounting. |
+| `costGranularity.subagentRollup` | `boolean` | `true` | Surface the per-subagent corrected-$ rollup (a node + its subtree) on the cost views. |
+| `export.csv` | `boolean` | `true` | Offer CSV (alongside JSON) on the cost-export surface (the `comis cost export` CLI + the SPA billing view). |
+| `export.quarterHourBuckets` | `boolean` | `true` | Expose 15-minute (quarter-hour) cost buckets in addition to the hourly aggregate. |
 
 ```yaml
 observability:
@@ -2868,7 +2898,47 @@ observability:
     enabled: true
     retentionDays: 30
     snapshotIntervalMs: 300000
+    cacheBreaks: true
+  audit:
+    persist: true
+    sink: both
+  spend:                  # cost kill-switch — ships OFF (null ceilings, action 'warn')
+    perAgentUsd: null     # set a number to cap per-agent cumulative USD
+    perTenantUsd: null    # per-tenant cap (cross-tenant isolation)
+    daemonGlobalUsd: null # daemon-wide cap across all agents/tenants
+    action: warn          # 'warn' observes; 'abort' halts subsequent turns
+    warnAtFraction: 0.8   # early warning at 80% of a ceiling
+    perTurnMax: 0.5       # per-turn admission reservation
+    pricingFallback: snapshot
+    onUnknownPricing: warn # 'abort' to refuse unpriced remote spend
+  otel:                   # OTLP push — opt-in extension, ships OFF + content-free
+    enabled: false        # set true to load @comis/observability-otel and export OTLP
+    endpoint: ""          # OTLP collector URL ("" uses the OTel env/SDK default)
+    protocol: http/protobuf # 'grpc' falls back to http/protobuf with a WARN today
+    traces: true
+    metrics: true
+    logs: true
+    genaiSemconv: false   # latest GenAI semconv opt-in (pre-stable, will churn)
+    captureContent: false # capture the 3 GenAI content attrs (re-redacted even if on)
+  prometheus:             # /metrics pull — opt-in, standalone, loopback-bound, ships OFF
+    enabled: false        # set true to serve /metrics (independent of otel.enabled)
+    host: 127.0.0.1       # loopback by default — never 0.0.0.0 implicitly
+    port: 9464
+    path: /metrics
+    auth: trusted-operator # loopback + your reverse proxy/firewall (no built-in auth)
+    exemplars: true
+    cardinalityCap: 10000  # WARN above this many active series (label-explosion guard)
+  costGranularity:        # per-tool + per-subagent cost attribution — ship ON
+    perTool: true         # tag token_usage with the turn's tools (best-effort, even split)
+    subagentRollup: true  # surface the per-subagent corrected-$ rollup
+  export:                 # cost-export surface — ships ON
+    csv: true             # offer CSV (alongside JSON) on `comis cost export` + the SPA
+    quarterHourBuckets: true # expose 15-minute buckets in addition to hourly
 ```
+
+<Info>
+The spend kill-switch is configurable in `config.yaml` only — there is **no** environment-variable form. See [Observability → Spend Governance](/operations/observability#16-spend-governance-cost-kill-switch) for the runtime behaviour (cooperative abort, three-state pricing, the events, and the `pricing_gap` fleet finding).
+</Info>
 
 </Accordion>
 

@@ -104,6 +104,10 @@
     "./observability": {
       "types": "./dist/observability.d.ts",
       "import": "./dist/observability.js"
+    },
+    "./observability-otel": {
+      "types": "./dist/observability-otel.d.ts",
+      "import": "./dist/observability-otel.js"
     }
   },
   "scripts": {
@@ -125,6 +129,7 @@
     "@comis/daemon",
     "@comis/orchestrator",
     "@comis/observability",
+    "@comis/observability-otel",
     "@comis/web",
     "bindings",
     "file-uri-to-path"
@@ -143,6 +148,7 @@
     "@comis/daemon": "workspace:*",
     "@comis/orchestrator": "workspace:*",
     "@comis/observability": "workspace:*",
+    "@comis/observability-otel": "workspace:*",
     "@comis/web": "workspace:*",
     "@agentclientprotocol/sdk": "0.22.1",
     "@clack/core": "1.4.1",
@@ -165,6 +171,17 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/canvas": "0.1.100",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/api-logs": "0.219.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "0.219.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "0.219.0",
+    "@opentelemetry/exporter-prometheus": "0.219.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.219.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-logs": "0.219.0",
+    "@opentelemetry/sdk-metrics": "2.8.0",
+    "@opentelemetry/sdk-trace-node": "2.8.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
     "@peculiar/asn1-cms": "2.7.0",
     "@peculiar/asn1-csr": "2.7.0",
     "@peculiar/asn1-ecc": "2.7.0",

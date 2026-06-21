@@ -198,8 +198,8 @@ export {
   VideoGenerationConfigSchema,
 } from "./schema-integrations.js";
 export { MonitoringConfigSchema } from "./schema-observability.js";
-export { ObservabilityConfigSchema } from "./schema-observability.js";
-export type { ObservabilityConfig, ObservabilityPersistenceConfig, TrajectoryObservabilityConfig } from "./schema-observability.js";
+export { ObservabilityConfigSchema, SpendConfigSchema } from "./schema-observability.js";
+export type { ObservabilityConfig, ObservabilityPersistenceConfig, TrajectoryObservabilityConfig, SpendConfig } from "./schema-observability.js";
 // Orchestration authoring gate (Phase 174 / v2.27 P2) — top-level, default-OFF
 export { OrchestrationConfigSchema, OrchestrationAuthoringConfigSchema } from "./schema-orchestration.js";
 export type { OrchestrationConfig, OrchestrationAuthoringConfig } from "./schema-orchestration.js";

@@ -82,6 +82,10 @@ import {
   LcdSummaryParentRowSchema,
   LcdContextItemRowSchema,
 } from "./row-schemas.js";
+// AuditEventDbRowSchema is co-located with its createRowMapper consumer
+// (audit-mutations.ts), NOT in row-schemas.ts (the 800-line cap) — the
+// SessionSummaryRollupDbRowSchema precedent.
+import { AuditEventDbRowSchema } from "./observability-store/audit-mutations.js";
 
 // =====================================================================
 // 1. Type-equality assertions (compile-time — passes only if z.infer
@@ -222,7 +226,14 @@ describe("row-schemas — internal DB row runtime parses", () => {
       cost_cache_write: 0.0002,
       cache_saved: 0.0001,
       latency_ms: 150,
-      cache_retention: "auto",
+      // PERSIST-02 cost-correctness columns (cache_retention DROPPED).
+      warmup_turn: 1,
+      cache_eligible: 0,
+      cost_correction: 0.0005,
+      pending_cache_investment_usd: 0.001,
+      pricing_state: "priced",
+      // COST-01: the JSON distinct-tool array column (nullable).
+      tool_tag: JSON.stringify(["bash", "read"]),
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(true);
   });
@@ -397,6 +408,61 @@ describe("row-schemas — internal DB row runtime parses", () => {
       report_json: "{}",
     };
     expect(SystemPromptReportDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("AuditEventDbRowSchema parses a complete obs_audit_events row", () => {
+    const sample = {
+      id: "evt-1",
+      tenant_id: "tenant-1",
+      agent_id: "agent-1",
+      ts: 1_700_000_000_000,
+      kind: "secret_access",
+      classification: null,
+      action: "OPENAI_API_KEY",
+      actor: "agent-1",
+      outcome: "denied",
+      severity: "warning",
+      trace_id: "trace-1",
+      refs: '{"secretName":"OPENAI_API_KEY"}',
+    };
+    expect(AuditEventDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("AuditEventDbRowSchema accepts null for the nullable columns (tenant-less, system-scoped)", () => {
+    const sample = {
+      id: "evt-2",
+      tenant_id: "", // the system-scope sentinel (NOT NULL → empty string)
+      agent_id: null,
+      ts: 1,
+      kind: "command_blocked",
+      classification: null,
+      action: null,
+      actor: null,
+      outcome: null,
+      severity: null,
+      trace_id: null,
+      refs: null,
+    };
+    expect(AuditEventDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("AuditEventDbRowSchema rejects an extra column (strictObject invariant)", () => {
+    const sample = {
+      id: "evt-3",
+      tenant_id: "t",
+      agent_id: null,
+      ts: 1,
+      kind: "audit",
+      classification: null,
+      action: null,
+      actor: null,
+      outcome: null,
+      severity: null,
+      trace_id: null,
+      refs: null,
+      extra_column_not_in_schema: "x",
+    };
+    expect(AuditEventDbRowSchema.safeParse(sample).success).toBe(false);
   });
 
   it("OAuthProfileRowSchema parses an encrypted oauth_profiles row with Buffer columns", () => {

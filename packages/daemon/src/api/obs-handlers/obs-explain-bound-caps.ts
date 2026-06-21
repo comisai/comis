@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * X2 report-level bounding caps for `obs.explain` (the numeric constants behind
+ * {@link boundIncidentReport}). Extracted from `obs-explain-bound.ts` to keep
+ * that module under the obs-handlers per-subdirectory file-size cap (the 176-05
+ * cacheBreaks cap pushed it over) — a pure constants module, no behavior change
+ * (the file-size-cap-driven extraction precedent: obs-orchestration-rows.ts,
+ * obs-audit-sink.ts).
+ *
+ * These are DISTINCT from `limitPayloadValue`'s structural `PAYLOAD_BOUNDS` (the
+ * 32 KB / 64-item / depth-6 backstop): these are the report-level, depth-aware
+ * caps whose drops are recorded in the `truncations[]` ledger.
+ *
+ * @module
+ */
+
+/** summary depth: keep at most this many failures (newest-first; drop oldest). */
+export const SUMMARY_MAX_FAILURES = 20;
+/**
+ * summary depth: keep at most this many breaker-timeline entries (newest-first).
+ * A flapping circuit breaker (open/reset/open/reset…) pushes one event per
+ * transition with NO upstream dedup in the EVENT shape, so this array is
+ * reachable at scale (up to MAX_RECORDS). Capped at the same scale as failures
+ * so a worst-case summary report stays comfortably under SUMMARY_MAX_BYTES.
+ */
+export const SUMMARY_MAX_BREAKER = 20;
+/**
+ * summary depth: keep at most this many large-result offloads (newest-first).
+ * A session that offloads many large bodies pushes one entry per offload (the
+ * log shape does NOT dedup), so this array is also reachable at scale.
+ */
+export const SUMMARY_MAX_OFFLOADS = 20;
+/** Per-failure `errorPreview` hard cap (both depths — digest-only is depth-independent). */
+export const SUMMARY_MAX_ERROR_PREVIEW_CHARS = 200;
+/**
+ * The summary hard gate: 6 KB. At the ~4 bytes/token rule of thumb this is the
+ * ~1,500-token proxy. There is no `estimateTokens` util, so the serialized byte
+ * length of the report is the conservative budget.
+ */
+export const SUMMARY_MAX_BYTES = 6 * 1024;
+/** full depth relaxes the array cap (still digest-only, still per-string-capped). */
+export const FULL_MAX_FAILURES = 200;
+/**
+ * full depth relaxes the breaker-timeline cap (lossless-by-design at full, no
+ * byte gate). Still bounded — a pathological multi-thousand-element timeline is
+ * trimmed even at full so the report never becomes truly unbounded.
+ */
+export const FULL_MAX_BREAKER = 200;
+/** full depth relaxes the offload cap (analogue of FULL_MAX_FAILURES). */
+export const FULL_MAX_OFFLOADS = 200;
+/**
+ * Any string field longer than this is collapsed to a `fingerprint` digest by
+ * the defensive sweep — guarantees no 50 KB tool body survives regardless of
+ * upstream. Kept comfortably above the 200-char preview cap so a normal
+ * already-capped preview is never re-digested.
+ */
+export const MAX_INLINE_STRING = 256;
+/**
+ * cacheBreaks cap (PERSIST-01 / GBIII I2): the section is keyed by the closed
+ * CacheBreakReason set (~15), so this rarely fires — but it keeps the byte budget
+ * airtight and records the drop in `truncations[]`. Relaxed at full depth (the
+ * whole closed reason set fits).
+ */
+export const SUMMARY_MAX_CACHE_BREAKS = 10;
+export const FULL_MAX_CACHE_BREAKS = 20;
+/** Bound on the progressive-shed loop — never spin forever. */
+export const MAX_SHED_ITERATIONS = 8;
+/** Short form the shed loop collapses the summary prose to (chars, + ellipsis). */
+export const SHED_SUMMARY_CHARS = 80;

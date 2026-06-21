@@ -4,6 +4,10 @@ import { ok, err } from "@comis/shared";
 import { registerToolMetadata } from "@comis/core";
 import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError } from "../budget/budget-guard.js";
+import { createSpendAccumulator } from "../budget/spend-accumulator.js";
+import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
+import type { SpendConfig } from "@comis/core";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
 import { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
@@ -1127,6 +1131,84 @@ describe("createPiEventBridge", () => {
         cacheReadTokens: 8000,
         cacheWriteTokens: 3000,
       }));
+    });
+
+    // -----------------------------------------------------------------------
+    // COST-01: tag the token_usage emit (best-effort, labeled per N3) with the
+    // DISTINCT tools that fired during the turn (from m.toolCallHistory — the
+    // list already tracked at :557, NOT a new accumulator). The per-tool $ split
+    // is even across the distinct tools (locked decision A5); the test asserts
+    // CONSERVATION (the split sums to the turn total), NEVER exactness. The tag
+    // is content-free — tool NAMES only, never args/output. Absent ⇒ the emit is
+    // byte-identical (no toolTag key), honoring no-backward-compat.
+    // -----------------------------------------------------------------------
+    describe("COST-01 toolTag", () => {
+      function lastTokenUsagePayload(): Record<string, unknown> {
+        const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+          (c) => c[0] === "observability:token_usage",
+        );
+        expect(calls.length).toBeGreaterThan(0);
+        return calls[calls.length - 1]![1] as Record<string, unknown>;
+      }
+
+      it("tags the emit with the DISTINCT tools fired this turn (['bash','read'] from a bash/read/bash sequence)", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        // 3 tool starts, 2 distinct — m.toolCallHistory = ["bash","read","bash"].
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeToolExecutionStartEvent("read", "tc-2") as any);
+        listener(makeToolExecutionStartEvent("bash", "tc-3") as any);
+        listener(makeTurnEndEvent({ input: 100, output: 50, totalTokens: 150 }) as any);
+
+        const payload = lastTokenUsagePayload();
+        expect(payload.toolTag).toEqual(["bash", "read"]);
+      });
+
+      it("conserves the turn $ total: an even split across the distinct tools sums back to cost.total (N3 best-effort, NOT exact)", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        const turnTotal = 0.003; // makeTurnEndEvent default cost.total
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeToolExecutionStartEvent("read", "tc-2") as any);
+        listener(makeToolExecutionStartEvent("bash", "tc-3") as any);
+        listener(makeTurnEndEvent({ cost: { input: 0.001, output: 0.002, total: turnTotal } }) as any);
+
+        const payload = lastTokenUsagePayload();
+        const tools = payload.toolTag as string[];
+        const cost = payload.cost as { total: number };
+        expect(cost.total).toBeCloseTo(turnTotal, 12);
+
+        // The even split the UI will render (cost.total / N per distinct tool) is
+        // the honest default; CONSERVATION is the contract — the per-tool shares
+        // sum to the turn total. Any split that conserves the total passes; this
+        // asserts the SUM, never a per-tool exact amount.
+        const perTool = cost.total / tools.length;
+        const summed = tools.reduce((acc) => acc + perTool, 0);
+        expect(summed).toBeCloseTo(cost.total, 12);
+      });
+
+      it("emits a byte-identical payload (NO toolTag key) when no tool fired this turn — no-backward-compat", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        listener(makeTurnEndEvent({ input: 100, output: 50, totalTokens: 150 }) as any);
+
+        const payload = lastTokenUsagePayload();
+        expect("toolTag" in payload).toBe(false);
+      });
+
+      it("content-free: toolTag carries tool NAMES only — never the tool args from tool_execution_start", () => {
+        const { listener } = createPiEventBridge(deps);
+
+        // makeToolExecutionStartEvent plants args { path: "/tmp/test" } — it must
+        // NOT leak into the tag (the tag is Array.from(new Set(names)) only).
+        listener(makeToolExecutionStartEvent("bash", "tc-1") as any);
+        listener(makeTurnEndEvent() as any);
+
+        const payload = lastTokenUsagePayload();
+        expect(payload.toolTag).toEqual(["bash"]);
+        expect(JSON.stringify(payload.toolTag)).not.toContain("/tmp/test");
+        expect(JSON.stringify(payload.toolTag)).not.toContain("path");
+      });
     });
 
     // B3 (D8): the per-turn token_usage event carries the SDK stop signal so
@@ -6068,5 +6150,125 @@ describe("ATTR-01 skill-use attribution (read-path → skill:prompt_invoked + ca
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
     expect(emit.mock.calls.filter((c) => c[0] === "skill:prompt_invoked")).toHaveLength(0);
     expect([...bridge.getUsedSkillIds()]).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spend kill-switch wiring (Phase 177-03 Task 2): ADMISSION-BOUNDED +
+// COOPERATIVE-ABORT. The bridge reserves a conservative perTurnMax at the
+// post-record check (no pre-flight estimate exists) and reconciles it at the
+// billing point; the live observability:token_usage subscriber is the sole
+// actual-adder (no double-count). The flags-off path (no spendAccumulator) is
+// byte-identical.
+// ---------------------------------------------------------------------------
+describe("createPiEventBridge — spend kill-switch wiring", () => {
+  let deps: PiEventBridgeDeps;
+
+  const SPEND_SCOPE: SpendScope = { tenantId: "t1", agentId: "test-agent" };
+  const baseSpendConfig: SpendConfig = {
+    perAgentUsd: null,
+    perTenantUsd: null,
+    daemonGlobalUsd: 1.0,
+    perTurnMax: 0.5,
+    action: "abort",
+    warnAtFraction: 0.8,
+    pricingFallback: "snapshot",
+    onUnknownPricing: "warn",
+  };
+
+  function makeAcc(nearCeilingUsd: number) {
+    const acc = createSpendAccumulator({
+      clock: createFakeClock(1_000_000),
+      ceilings: {
+        perAgentUsd: baseSpendConfig.perAgentUsd,
+        perTenantUsd: baseSpendConfig.perTenantUsd,
+        daemonGlobalUsd: baseSpendConfig.daemonGlobalUsd,
+        warnAtFraction: baseSpendConfig.warnAtFraction,
+      },
+    });
+    if (nearCeilingUsd > 0) acc.recordSpend(SPEND_SCOPE, nearCeilingUsd);
+    return acc;
+  }
+
+  beforeEach(() => {
+    deps = createMockDeps();
+  });
+
+  it("flags-off (no spendAccumulator) is byte-identical: a normal turn never aborts on spend", () => {
+    const { listener, getResult } = createPiEventBridge(deps);
+    listener(makeTurnEndEvent() as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    // No spend events emitted when the accumulator is absent.
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => String(c[0]).startsWith("observability:spend_"))).toHaveLength(0);
+  });
+
+  it("over-ceiling reservation under action 'abort' routes execution:aborted{reason:spend_exceeded}", () => {
+    // Pre-seed near the $1.0 ceiling so the $0.5 perTurnMax reservation breaches.
+    const acc = makeAcc(0.9);
+    deps = createMockDeps({
+      spendAccumulator: acc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: baseSpendConfig,
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent() as any);
+
+    expect(getResult().finishReason).toBe("spend_exceeded");
+    expect(deps.onAbort).toHaveBeenCalled();
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({
+      reason: "spend_exceeded",
+      agentId: "test-agent",
+    }));
+    expect(emit).toHaveBeenCalledWith("observability:spend_exceeded", expect.objectContaining({
+      scope: "global",
+      agentId: "test-agent",
+    }));
+  });
+
+  it("over-ceiling under action 'warn' (the shipped default) emits spend_exceeded but NEVER aborts", () => {
+    const acc = makeAcc(0.9);
+    deps = createMockDeps({
+      spendAccumulator: acc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: { ...baseSpendConfig, action: "warn" },
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent() as any);
+
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    expect(deps.onAbort).not.toHaveBeenCalled();
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit.mock.calls.filter((c) => c[0] === "observability:spend_exceeded").length).toBeGreaterThan(0);
+  });
+
+  it("cooperative + no double-count: a granted reservation is reconciled (released) so the live subscriber is the sole actual-adder", () => {
+    // A spy accumulator: a clean (well-under-ceiling) turn must checkAndReserve
+    // then reconcile the reservation. The actual cost.total lands via the live
+    // token_usage subscriber (not wired here), so the bridge releases its hold.
+    const reserveResult = { ok: true as const, value: { scopeKey: "t1 test-agent", tenantKey: "t1", reservedUsd: 0.5, warn: false } };
+    const spyAcc: SpendAccumulator = {
+      rehydrate: vi.fn(),
+      recordSpend: vi.fn(),
+      checkAndReserve: vi.fn().mockReturnValue(reserveResult),
+      reconcile: vi.fn(),
+    };
+    deps = createMockDeps({
+      spendAccumulator: spyAcc,
+      spendScope: SPEND_SCOPE,
+      spendConfig: baseSpendConfig,
+    } as Partial<PiEventBridgeDeps>);
+    const { listener } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent({ cost: { input: 0.001, output: 0.002, total: 0.003 } }) as any);
+
+    // The conservative perTurnMax was reserved at admission.
+    expect(spyAcc.checkAndReserve).toHaveBeenCalledWith(SPEND_SCOPE, baseSpendConfig.perTurnMax);
+    // The reservation was reconciled (released) — the bridge does NOT permanently
+    // add cost.total here; the live subscriber is the sole actual-adder.
+    expect(spyAcc.reconcile).toHaveBeenCalledWith(reserveResult.value, 0);
   });
 });

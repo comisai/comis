@@ -95,6 +95,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // enums + booleans — H1); the source/generated body never crosses the bus.
   "memory:generation_quality": "memory.generation_quality",
 
+  // PERSIST-01 (Phase 176 Plan 04, observability-excellence): a detected prompt-cache
+  // break (15 CacheBreakReason values) — emitted in packages/agent but previously
+  // UNMAPPED (allowlisted as a daemon-level rollup), invisible to `comis explain`. Now
+  // bridged so the cost-relevant break shows on the per-session timeline beside the
+  // obs_diagnostics category:'cache_break' row. Content-free (the closed reason + the
+  // tokenDrop/relative counts + a changed-dims DIGEST — H1/I3); the translator drops
+  // the toolsAdded/Removed/SchemaChanged tool-NAME arrays and the system text entirely.
+  "observability:cache_break": "cache.break",
+
   // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
   // counts-only (action / capabilityClass tier / schemaValid / repaired). Mapped
   // here for trajectory-type ARCH closure (every EventMap member is mapped-or-
@@ -363,6 +372,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "media.tts:requested": "media.tts.requested",
   "media.tts:completed": "media.tts.completed",
   "media.tts:failed": "media.tts.failed",
+
+  // WR-4 (177-obs-loop): the spend kill-switch's three signals. AGENT-emitted
+  // (pi-event-bridge.ts), so they ARE arch-scanned — previously allowlisted in
+  // EVENTS_NOT_TRAJECTORY_MAPPED as fleet-only rollups, which made a spend-killed
+  // session UNDIAGNOSABLE via `comis explain` (the security-review WR-4 blind spot
+  // — directly violating this milestone's thesis). Mapped here + REMOVED from the
+  // arch allowlist (the disjoint invariant). The terminal ABORT is ALSO on the
+  // trajectory via execution:aborted(reason:"spend_exceeded"); these carry the
+  // per-scope $ counts the verdict needs. Content-free translators forward the
+  // closed SpendScopeKind enum + dollar NUMBERS + provider/model config ids ONLY
+  // — never a message/prompt/query body (§2.7 / H1; the milestone invariant).
+  "observability:spend_warning": "spend.warning",
+  "observability:spend_exceeded": "spend.exceeded",
+  "observability:spend_unpriceable": "spend.unpriceable",
 } as const satisfies Record<string, TrajectoryEventType>;
 
 /**

@@ -17,7 +17,8 @@
 import type { SessionKey, TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { systemNowMs } from "@comis/core";
-import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
+import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
+import type { SpendWarn } from "../budget/spend-accumulator.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";
 import type { ContextWindowGuard, ContextUsageData } from "../safety/context-window-guard.js";
@@ -205,6 +206,110 @@ export function emitBudgetAbort(
       errorKind: "resource" as const,
     },
     "Budget exceeded, aborting execution",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Spend kill-switch check (Phase 177-03 — the dollars kill-switch routing)
+// ---------------------------------------------------------------------------
+
+/** The three thin emit hooks the bridge binds to the counts-only spend events. */
+export interface SpendEmitHooks {
+  /**
+   * Emit `observability:spend_warning` — fired sub-ceiling at `warnAtFraction`.
+   * WR-1 (177-obs-loop): receives the breaching warn DIMENSION ({@link SpendWarn} —
+   * the crossed scope + its total/cap) so the emitted event is internally
+   * consistent (correct scope + that dimension's total + cap), not a hard-coded
+   * `scope:"agent"` + a session-local amount.
+   */
+  spendWarning: (warn: SpendWarn) => void;
+  /** Emit `observability:spend_exceeded` — the ceiling tripped for this scope. */
+  spendExceeded: () => void;
+  /** Emit `observability:spend_unpriceable` — a remote-unknown model burned tokens. */
+  spendUnpriceable: () => void;
+}
+
+/**
+ * Route a {@link SpendGateOutcome} (already reserved/decided by `checkSpendCeiling`)
+ * into the SINGLE existing `execution:aborted` path — mirroring
+ * {@link checkBudgetLimit} byte-for-byte. The dollars kill-switch is opt-in: under
+ * the shipped `action: "warn"` default it ONLY emits the counts-only spend events
+ * (signal) and NEVER aborts; abort is reserved for `action: "abort"`.
+ *
+ * Cooperative semantics: this decides whether the NEXT admission is halted — the
+ * in-flight LLM call is not cancelled (it completes, bills, and is reconciled).
+ *
+ * @param outcome - the gate outcome from `checkSpendCeiling`.
+ * @param action - `observability.spend.action` (`warn` ships by default).
+ * @param onUnknownPricing - `observability.spend.onUnknownPricing` (`warn` default).
+ * @param aborted - whether the turn is already aborted (no double-abort).
+ * @param emit - thin hooks bound to the three counts-only spend events.
+ */
+export function checkSpendLimit(
+  outcome: SpendGateOutcome,
+  action: "warn" | "abort",
+  onUnknownPricing: "warn" | "abort",
+  aborted: boolean,
+  emit: SpendEmitHooks,
+): SafetyCheckResult {
+  // free → local-first safe: never trips, emits nothing.
+  if (outcome.kind === "free") return { shouldAbort: false };
+
+  // unpriceable → fail LOUD always; abort only when BOTH action and
+  // onUnknownPricing are "abort" (and not already aborted).
+  if (outcome.kind === "unpriceable") {
+    emit.spendUnpriceable();
+    if (action === "abort" && onUnknownPricing === "abort" && !aborted) {
+      return { shouldAbort: true, finishReason: "spend_exceeded", eventReason: "spend_exceeded" };
+    }
+    return { shouldAbort: false };
+  }
+
+  // ok → emit the early warning when sub-ceiling-but-past-warnAtFraction; never abort.
+  // WR-1: forward the breaching warn DIMENSION so the event names the correct scope.
+  if (outcome.kind === "ok") {
+    if (outcome.warn !== null) emit.spendWarning(outcome.warn);
+    return { shouldAbort: false };
+  }
+
+  // exceeded → emit the breach event always; abort only under action:"abort"
+  // (the opt-in invariant: warn-default signals only, never aborts).
+  emit.spendExceeded();
+  if (action === "abort" && !aborted) {
+    return { shouldAbort: true, finishReason: "spend_exceeded", eventReason: "spend_exceeded" };
+  }
+  return { shouldAbort: false };
+}
+
+/**
+ * Emit the spend-exceeded abort events and log a content-free WARN — mirrors
+ * {@link emitBudgetAbort}. Routes through the SINGLE sanctioned
+ * `execution:aborted` path (the spend_exceeded reason); no parallel kill
+ * channel. The WARN carries `hint` + `errorKind` ONLY — never a dollar amount as
+ * a body (§2.7): the dollar amounts ride the counts-only `observability:spend_*`
+ * events. `systemNowMs()` is the established time source for THIS file's emit
+ * functions (bridge-safety-controls is a bridge module, not `budget/`).
+ */
+export function emitSpendAbort(deps: {
+  eventBus: TypedEventBus;
+  sessionKey: SessionKey;
+  agentId: string;
+  logger: ComisLogger;
+  onAbort?: () => void;
+}): void {
+  deps.onAbort?.();
+  deps.eventBus.emit("execution:aborted", {
+    sessionKey: deps.sessionKey,
+    reason: "spend_exceeded",
+    agentId: deps.agentId,
+    timestamp: systemNowMs(),
+  });
+  deps.logger.warn(
+    {
+      hint: "Spend ceiling exceeded; raise observability.spend.* or set action:'warn'",
+      errorKind: "resource" as const,
+    },
+    "Spend ceiling exceeded, aborting execution",
   );
 }
 

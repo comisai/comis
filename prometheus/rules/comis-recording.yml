@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Comis Prometheus RECORDING rules (PROM-02; design §6 WS7).
+#
+# Pre-computes the three derived series the dashboards + alerts consume, so a
+# panel/alert references one recorded series instead of re-deriving a ratio every
+# evaluation. Every `expr` references ONLY a metric the Comis OTel
+# PrometheusExporter emits (the single METRIC_CATALOG → EMITTED_METRIC_NAMES set);
+# `test/architecture/grafana-dashboard-metrics.test.ts` fails CI if a rule drifts
+# to an unemitted metric (the bidirectional drift guard).
+#
+# Operator/CI-deferred: `promtool check rules prometheus/rules/comis-recording.yml`
+# (the semantic PromQL lint) runs on Linux/CI — promtool is not available on the
+# authoring host, so the in-repo guard asserts YAML STRUCTURE validity + the
+# expr↔metric mapping only (NOT the semantic lint). Do NOT fake a promtool run.
+groups:
+  - name: comis_recording
+    interval: 30s
+    rules:
+      # Fleet degraded-rate: degraded sessions as a fraction of all sessions.
+      # Consumed by the Fleet Health dashboard + the degraded-rate-spike alert.
+      - record: comis:sessions_degraded:ratio5m
+        expr: |
+          sum(rate(comis_sessions_degraded_total[5m]))
+            /
+          clamp_min(sum(rate(comis_sessions_total[5m])), 1)
+
+      # Cache-break rate broken out by reason (the standout cache signal).
+      - record: comis:cache_break:rate5m_by_reason
+        expr: sum by (reason) (rate(comis_cache_break_total[5m]))
+
+      # Spend velocity: corrected USD per hour across the fleet.
+      - record: comis:cost_usd:rate1h
+        expr: sum(rate(comis_cost_usd_total[1h]))
+
+      # Pricing-gap rate: turns whose pricing state is unknown, per 15m.
+      # The acute "we are flying blind on cost" signal (E1).
+      - record: comis:pricing_unknown:rate15m
+        expr: sum(rate(comis_pricing_turns_total{state="unknown"}[15m]))

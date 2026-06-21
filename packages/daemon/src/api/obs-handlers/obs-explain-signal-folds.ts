@@ -23,7 +23,7 @@ import type { IncidentSignals } from "@comis/core";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
-import { asStringArray } from "./obs-explain-signals-fields.js";
+import { asStringArray, asString, asNumber } from "./obs-explain-signals-fields.js";
 
 /** Return `v` typed as a `T` iff it is a member of the closed vocabulary, else undefined. */
 function narrow<T extends string>(vocab: readonly T[], v: unknown): T | undefined {
@@ -256,5 +256,31 @@ export function accumulateToolSchemaRecord(
     retried: data.retried === true,
     succeeded: data.succeeded === true,
     ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SPEND (WEBUI-04, 179-04): the spend kill-switch breach fold.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fold one `spend.exceeded` trajectory record (177-obs-loop WR-4
+ * translateSpendPayload → `{scope, spentUsd, capUsd, estUsd}`, content-free) into
+ * the `acc.spend` field. The LAST record wins (the terminal breach explains the
+ * kill); the section's `totalUsd` maps from the record's `spentUsd` (the breaching
+ * scope's spent total). A breach with no `scope` is defensively ignored (acc.spend
+ * stays as-is). Mutates `acc` (the learning-fold delegation mold); `acc` is typed
+ * structurally to avoid importing the internal Acc (no cycle).
+ */
+export function accumulateSpendExceeded(
+  acc: { spend?: { scope: string; totalUsd: number; capUsd: number } },
+  data: Record<string, unknown>,
+): void {
+  const scope = asString(data.scope);
+  if (scope === undefined) return;
+  acc.spend = {
+    scope,
+    totalUsd: asNumber(data.spentUsd) ?? 0,
+    capUsd: asNumber(data.capUsd) ?? 0,
   };
 }

@@ -284,16 +284,39 @@ export type {
   DeliveryRow,
   DiagnosticRow,
   ChannelSnapshotRow,
+  AuditEventRow,
   ProviderAggregation,
   AgentAggregation,
   SessionAggregation,
   HourlyBucket,
+  QuarterHourBucket,
+  CostBucketFilter,
   DeliveryStats,
   ObsTableName,
   ResetResult,
   PruneResult,
   SystemPromptReportRow,
 } from "./observability-store/index.js";
+
+// AUDIT-01: the security-audit sink helpers the daemon's obs-persistence-wiring
+// consumes (the 0600 rotated JSONL writer + the default log basename). The
+// DEFAULT/MAX query-limit constants stay internal to the observability-store
+// barrel (impl detail — not re-surfaced here). `AuditQueryParams` is
+// ahead-of-consumer for Plan 05's obs.audit.query (policy-documented).
+export {
+  appendAuditJsonl,
+  SECURITY_AUDIT_LOG_BASENAME,
+} from "./observability-store/index.js";
+export type { AuditQueryParams } from "./observability-store/index.js";
+
+// PERSIST-01 (Phase 176 Plan 04): the cache-break row-builder + the rate-by-reason
+// analytics query the daemon's obs-persistence-wiring (the cache_break subscriber)
+// and the fleet/explain surfaces consume.
+export {
+  cacheBreakEventToRow,
+  queryCacheBreakRateByReason,
+} from "./observability-store/index.js";
+export type { CacheBreakReasonRate } from "./observability-store/index.js";
 
 // Fleet window-rollup reducer (A2, v2.15 Phase 159). reduceFleetWindow is the
 // PURE cross-session reduce over the A1 SessionSummaryRollup[] (synthetic

@@ -101,6 +101,63 @@ const ObservabilityPersistenceSchema = z.strictObject({
   retentionDays: z.number().int().min(1).max(365).default(30),
   /** Interval in milliseconds between channel health snapshots. */
   snapshotIntervalMs: z.number().int().min(60000).default(300000),
+  /**
+   * Whether detected prompt-cache breaks are persisted to obs_diagnostics
+   * (category 'cache_break') + the trajectory (PERSIST-01). Default on. NOTE:
+   * this lives under `persistence.*` deliberately — there is NO top-level
+   * `persist` key (the schema already owns persistence; a colliding `persist`
+   * would be the anti-pattern, Pitfall 5).
+   */
+  cacheBreaks: z.boolean().default(true),
+});
+
+/**
+ * Security-audit persistence configuration (AUDIT-01). Controls whether
+ * `audit:event`/`secret:accessed`/`security:*` records are durably persisted and
+ * to which sink(s). Rotation is NOT configured here — the audit JSONL is the 6th
+ * stream under the shared `logRotation` policy (no per-sink rotation knob).
+ */
+const AuditConfigSchema = z.strictObject({
+  /** Whether security-audit events are persisted (SQLite + JSONL). Default on. */
+  persist: z.boolean().default(true),
+  /** Which sink(s) receive audit records: the SQLite table, the JSONL file, or both. */
+  sink: z.enum(["sqlite", "jsonl", "both"]).default("both"),
+});
+
+/**
+ * Spend kill-switch configuration (SPEND-01). The operator's opt-in surface for
+ * the daemon-wide cost-enforcement accumulator. Ships OFF: all three ceilings
+ * default `null` (a deployment that does not opt in is never enforced and cannot
+ * be DoSed by a fat-fingered cap), and `action` defaults `warn` (observe-only).
+ * A non-null ceiling on any dimension turns enforcement on for that scope.
+ */
+const SpendConfigSchema = z.strictObject({
+  /** Per-agent cumulative USD ceiling. `null` = off (opt-in). */
+  perAgentUsd: z.number().positive().nullable().default(null),
+  /** Per-tenant cumulative USD ceiling (the cross-tenant isolation dimension). `null` = off. */
+  perTenantUsd: z.number().positive().nullable().default(null),
+  /** Daemon-wide cumulative USD ceiling across all agents/tenants. `null` = off. */
+  daemonGlobalUsd: z.number().positive().nullable().default(null),
+  /**
+   * The conservative per-turn RESERVATION the bridge reserves at admission —
+   * there is no pre-flight cost estimate at that point (Plan 03 Task 2), so a
+   * fixed amount is reserved up front and reconciled to the actual billed amount
+   * post-turn. A sane per-turn cap.
+   */
+  perTurnMax: z.number().positive().default(0.5),
+  /** Behaviour on a ceiling breach: `warn` (observe-only, the shipped default) or `abort`. */
+  action: z.enum(["warn", "abort"]).default("warn"),
+  /** Emit the early `observability:spend_warning` once spend crosses this fraction of a ceiling. */
+  warnAtFraction: z.number().min(0).max(1).default(0.8),
+  /**
+   * Forward-extensibility placeholder with a single current member, `"snapshot"`
+   * (the dated model-catalog snapshot rate). No live price fetch is in scope; a
+   * live HTTP feed would add a member here later. Kept as an enum (not a bare
+   * literal) so that a future member is an additive change, not a shape change.
+   */
+  pricingFallback: z.enum(["snapshot"]).default("snapshot"),
+  /** Behaviour when a remote model's price is unknown while it burns tokens: `warn` (fail loud, the default) or `abort`. */
+  onUnknownPricing: z.enum(["warn", "abort"]).default("warn"),
 });
 
 /**
@@ -122,9 +179,10 @@ const TrajectoryObservabilityConfigSchema = z.strictObject({
 /**
  * Log rotation configuration schema.
  *
- * Cross-stream rotation policy applied to all 5 observability streams:
+ * Cross-stream rotation policy applied to all 6 observability streams:
  * daemon.log, cache-trace.jsonl, config-audit.jsonl,
- * session-index.YYYY-MM-DD.jsonl, and *.trajectory.jsonl.
+ * session-index.YYYY-MM-DD.jsonl, *.trajectory.jsonl, and
+ * security-audit.jsonl (the AUDIT-01 security-audit stream).
  *
  * Defaults: 50 MB max size, 5 files kept, 30 days retention, gzip enabled.
  * Visible via `comis config get observability.logRotation`.
@@ -189,6 +247,116 @@ export const AlertBudgetConfigSchema = z.strictObject({
 });
 
 /**
+ * OpenTelemetry (OTLP push) configuration (OTEL-01/02/03) — the opt-in export
+ * surface for the `@comis/observability-otel` extension. Ships OFF
+ * (`enabled:false`) and CONTENT-FREE by default: the GenAI semconv stays at the
+ * pre-stable shape (`genaiSemconv:false`) and the 3 message/content span
+ * attributes are spec-`Opt-In` and OMITTED (`captureContent:false`) — and even
+ * with both on, `sanitizeForPersistence` re-redacts at the exporter (E3).
+ *
+ * `protocol` ships ONLY `http/protobuf` this phase (the `-proto` exporters are
+ * installed); `grpc` validates but FALLS BACK to `-proto` with a WARN+hint at
+ * runtime (a documented later addition — no silent wrong-transport, T-178-09).
+ * The seam that loads this is the config-gated `await import()` in
+ * `setupObservability` (daemon), gated on `enabled || prometheus.enabled`.
+ */
+const OtelConfigSchema = z.strictObject({
+  /** Master switch for the OTLP push surface (traces/metrics/logs). Default off. */
+  enabled: z.boolean().default(false),
+  /** OTLP collector endpoint URL; `''` means use the OTel env/SDK default. */
+  endpoint: z.string().default(""),
+  /**
+   * OTLP transport. `http/protobuf` ships this phase (the `-proto` exporters);
+   * `grpc` validates but falls back to `-proto` with a WARN+hint at runtime
+   * (documented later addition — T-178-09).
+   */
+  protocol: z.enum(["http/protobuf", "grpc"]).default("http/protobuf"),
+  /** Emit OTLP trace spans (per-turn/tool/graph). Default on (when `enabled`). */
+  traces: z.boolean().default(true),
+  /** Emit OTLP metrics off the single catalog. Default on (when `enabled`). */
+  metrics: z.boolean().default(true),
+  /** Emit bus events as OTLP log records (scrubbed). Default on (when `enabled`). */
+  logs: z.boolean().default(true),
+  /**
+   * Opt into the LATEST (pre-stable `Development`) GenAI semconv shape (the
+   * `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` gate). Default off
+   * (pre-1.36 shape). Content STILL never leaks: re-redaction is independent (E3).
+   */
+  genaiSemconv: z.boolean().default(false),
+  /**
+   * Capture the 3 GenAI content span attributes (input/output messages,
+   * system_instructions). Spec-`Opt-In` → default off (omitted). Even when on,
+   * `sanitizeForPersistence` re-redacts at the exporter boundary (E3).
+   */
+  captureContent: z.boolean().default(false),
+});
+
+/**
+ * Prometheus (`/metrics` pull) configuration (PROM-01) — the standalone scrape
+ * surface, INDEPENDENT of `otel.enabled` (it serves valid exposition with no
+ * OTLP collector). Realized by the OTel `PrometheusExporter`, which opens its OWN
+ * loopback HTTP listener (NOT the gateway). Ships OFF (`enabled:false`) and
+ * LOOPBACK-bound (`host:'127.0.0.1'`) — never `0.0.0.0` implicitly (T-178-08).
+ *
+ * `auth` is the literal `'trusted-operator'`: the OTel exporter has NO built-in
+ * auth, so the posture is realized as the loopback bind + the operator's reverse
+ * proxy/firewall (documented honestly — NOT gateway-token-gated). `cardinalityCap`
+ * (default 10000) WARNs with a hint on breach; the `comis_prometheus_series`
+ * self-metric exposes the active series count (T-178-07).
+ */
+const PrometheusConfigSchema = z.strictObject({
+  /** Master switch for the `/metrics` pull surface (independent of `otel.enabled`). Default off. */
+  enabled: z.boolean().default(false),
+  /** Bind host for the exporter's loopback HTTP listener. Default 127.0.0.1 (never 0.0.0.0 implicitly). */
+  host: z.string().default("127.0.0.1"),
+  /** Bind port for the exporter's HTTP listener. */
+  port: z.number().int().min(1).max(65535).default(9464),
+  /** The scrape path the exporter serves. */
+  path: z.string().default("/metrics"),
+  /**
+   * Access posture. ONLY `'trusted-operator'` — the OTel PrometheusExporter has
+   * no built-in auth; the posture is the loopback bind + the operator's reverse
+   * proxy/firewall (NOT gateway-token-gated; documented honestly).
+   */
+  auth: z.literal("trusted-operator").default("trusted-operator"),
+  /**
+   * Whether exemplars are desired on the pull surface. NOTE: the installed
+   * `@opentelemetry/exporter-prometheus@0.219.0` does NOT render OpenMetrics
+   * exemplars (`PROMETHEUS_EXEMPLARS_SUPPORTED===false`); the `trace_id` rides as
+   * a span attribute instead (Pitfall 4/6). Kept as a forward-looking knob.
+   */
+  exemplars: z.boolean().default(true),
+  /** Max active series before a WARN-with-hint fires (the label-explosion DoS guard). */
+  cardinalityCap: z.number().int().positive().default(10000),
+});
+
+/**
+ * Cost-attribution granularity configuration (COST-01/COST-02, WS4). Controls
+ * whether the per-tool tag (`tool_tag` on `obs_token_usage`) and the per-subagent
+ * corrected-$ rollup are computed/surfaced. Both ship ON. NOTE: the per-tool
+ * attribution is best-effort/labeled (N3) — an even split across the turn's tools
+ * that conserves the total, never exact per-tool accounting.
+ */
+const CostGranularitySchema = z.strictObject({
+  /** Tag each token_usage row with the distinct tools that fired the turn (COST-01). Default on. */
+  perTool: z.boolean().default(true),
+  /** Roll up corrected-$ per subagent node/subtree (COST-02). Default on. */
+  subagentRollup: z.boolean().default(true),
+});
+
+/**
+ * Cost-export configuration (COST-03, WS6). Controls the CSV export surface and
+ * quarter-hour time bucketing for the cost views/CLI. Both ship ON. (These are
+ * NEW names — no collision with the existing `persistence`/`audit` keys, §14.)
+ */
+const ExportConfigSchema = z.strictObject({
+  /** Offer CSV (alongside JSON) on the cost export surface (CLI + SPA). Default on. */
+  csv: z.boolean().default(true),
+  /** Expose 15-minute (quarter-hour) cost buckets in addition to hourly. Default on. */
+  quarterHourBuckets: z.boolean().default(true),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -202,6 +370,18 @@ export const ObservabilityConfigSchema = z.strictObject({
   logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
   /** Alert budget rate-aggregator policy. */
   alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
+  /** Security-audit persistence policy (AUDIT-01). */
+  audit: AuditConfigSchema.default(() => AuditConfigSchema.parse({})),
+  /** Spend kill-switch policy (SPEND-01) — ships off (null ceilings, action 'warn'). */
+  spend: SpendConfigSchema.default(() => SpendConfigSchema.parse({})),
+  /** OpenTelemetry OTLP push policy (OTEL-01/02/03) — opt-in extension, ships off + content-free. */
+  otel: OtelConfigSchema.default(() => OtelConfigSchema.parse({})),
+  /** Prometheus `/metrics` pull policy (PROM-01) — opt-in, standalone, loopback-bound, ships off. */
+  prometheus: PrometheusConfigSchema.default(() => PrometheusConfigSchema.parse({})),
+  /** Cost-attribution granularity (COST-01/02, WS4) — per-tool tag + per-subagent rollup, ship on. */
+  costGranularity: CostGranularitySchema.default(() => CostGranularitySchema.parse({})),
+  /** Cost-export surface (COST-03, WS6) — CSV + quarter-hour bucketing, ship on. */
+  export: ExportConfigSchema.default(() => ExportConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -210,4 +390,18 @@ export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabili
 export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
 export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
 export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
-export { LogRotationConfigSchema };
+export type AuditConfig = z.infer<typeof AuditConfigSchema>;
+export type SpendConfig = z.infer<typeof SpendConfigSchema>;
+export type OtelConfig = z.infer<typeof OtelConfigSchema>;
+export type PrometheusConfig = z.infer<typeof PrometheusConfigSchema>;
+export type CostGranularityConfig = z.infer<typeof CostGranularitySchema>;
+export type ExportConfig = z.infer<typeof ExportConfigSchema>;
+export {
+  LogRotationConfigSchema,
+  AuditConfigSchema,
+  SpendConfigSchema,
+  OtelConfigSchema,
+  PrometheusConfigSchema,
+  CostGranularitySchema,
+  ExportConfigSchema,
+};

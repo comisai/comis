@@ -67,6 +67,17 @@ export function classifyAbortReason(
         hint: "Increase token budget or reduce task scope",
         severity: "actionable",
       };
+    case "spend_exceeded":
+      // WR-3 (177-obs-loop): the dollars kill-switch abort. Reuses the existing
+      // budget category with the actionable observability.spend.* hint emitSpendAbort
+      // (bridge-safety-controls.ts) already uses — NOT the default "check daemon
+      // logs" catch-all (the wrong-way, non-actionable pointer the security review
+      // flagged for a spend-killed sub-agent).
+      return {
+        category: "budget",
+        hint: "Spend ceiling exceeded; raise observability.spend.* (perAgentUsd / perTenantUsd / daemonGlobalUsd) or set observability.spend.action:'warn'",
+        severity: "actionable",
+      };
     case "context_loop":
     case "context_exhausted":
       return {

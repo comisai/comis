@@ -250,55 +250,70 @@ describe("IcSecurityView", () => {
     expect(retryBtn).toBeTruthy();
   });
 
-  // --- Audit tab tests ---
+  // --- Audit tab tests (durable obs.audit.query view; the live SSE feed was
+  //     REPLACED in this tab by ic-durable-audit-log — Plan 179-06 / Pitfall 2) ---
 
-  it("audit tab shows empty state when no events", async () => {
+  it("audit tab renders the durable ic-durable-audit-log (NOT the live SSE feed)", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
 
-    // Default tab is "events" which renders ic-security-event-feed
+    await switchTab(el, "audit");
+
+    // The durable, queryable obs.audit.query view replaces the SSE feed here.
+    const durable = el.shadowRoot?.querySelector("ic-durable-audit-log");
+    expect(durable).toBeTruthy();
+    // The audit tab must NO LONGER render the live SSE feed.
+    const feed = el.shadowRoot?.querySelector("ic-security-event-feed");
+    expect(feed).toBeFalsy();
+  });
+
+  it("audit tab threads the rpcClient into the durable view (the obs.audit.query consumer)", async () => {
+    const rpc = createSecurityMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    await switchTab(el, "audit");
+
+    const durable = el.shadowRoot?.querySelector("ic-durable-audit-log") as any;
+    expect(durable?.rpcClient).toBe(rpc);
+  });
+
+  it("events tab still renders the live SSE feed (UNCHANGED by the audit-tab swap)", async () => {
+    const rpc = createSecurityMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    // Default tab is "events".
+    const feed = el.shadowRoot?.querySelector("ic-security-event-feed") as any;
+    expect(feed).toBeTruthy();
+    expect(feed.activeSubTab).toBe("events");
+    // No durable view on the events tab.
+    expect(el.shadowRoot?.querySelector("ic-durable-audit-log")).toBeFalsy();
+  });
+
+  it("events tab shows empty state when no security events", async () => {
+    const rpc = createSecurityMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    // Default tab is "events" which renders ic-security-event-feed.
     const empty = feedQuery(el, "ic-empty-state");
     expect(empty).toBeTruthy();
   });
 
-  it("receives audit:event via EventDispatcher and renders row", async () => {
+  it("the audit:event SSE still feeds the event-feed instance (the live-feed wiring is intact)", async () => {
+    // The audit:event SSE wiring forwards to the event-feed sub-component; the
+    // event-feed renders on the EVENTS tab. The durable audit tab no longer
+    // consumes the SSE feed, but the wiring (onAuditEvent) is preserved.
     const rpc = createSecurityMockRpcClient();
     const mockDispatcher = createMockEventDispatcher();
     const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
     await flush(el);
-
-    // Switch to audit tab (default is now "events")
-    await switchTab(el, "audit");
-
-    // Fire audit event through the EventDispatcher
-    mockDispatcher._fire("audit:event", {
-      timestamp: Date.now(),
-      agentId: "test-agent",
-      action: "tool.exec",
-      classification: "high",
-      user: "admin",
-    });
-    // Wait for sub-component to re-render
-    const feed = el.shadowRoot?.querySelector("ic-security-event-feed");
-    await (feed as any)?.updateComplete;
-
-    const rows = feedQueryAll(el, "ic-audit-row");
-    expect(rows?.length).toBe(1);
-  });
-
-  it("pause button stops adding new events to display", async () => {
-    const rpc = createSecurityMockRpcClient();
-    const mockDispatcher = createMockEventDispatcher();
-    const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
-    await flush(el);
-
-    // Switch to audit tab (default is now "events")
-    await switchTab(el, "audit");
 
     const feed = el.shadowRoot?.querySelector("ic-security-event-feed") as any;
+    expect(feed).toBeTruthy();
 
-    // Add an event first
     mockDispatcher._fire("audit:event", {
       timestamp: Date.now(),
       agentId: "a",
@@ -307,27 +322,9 @@ describe("IcSecurityView", () => {
       user: "u",
     });
     await feed?.updateComplete;
+
+    // The event-feed received the audit event via onAuditEvent.
     expect(feed.auditEntries.length).toBe(1);
-
-    // Click pause (button is in event-feed sub-component)
-    const pauseBtn = feedQuery(el, ".pause-btn") as HTMLElement;
-    pauseBtn.click();
-    await feed?.updateComplete;
-    expect(feed.paused).toBe(true);
-
-    // Add another event while paused
-    mockDispatcher._fire("audit:event", {
-      timestamp: Date.now(),
-      agentId: "b",
-      action: "y",
-      classification: "medium",
-      user: "u2",
-    });
-    await feed?.updateComplete;
-
-    // Display should still have 1, pause buffer should have 1
-    expect(feed.auditEntries.length).toBe(1);
-    expect(feed.pauseBuffer.length).toBe(1);
   });
 
   // --- Tokens tab tests ---

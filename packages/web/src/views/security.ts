@@ -70,6 +70,7 @@ import "../components/form/ic-secret-input.js";
 import "./security/token-manager.js";
 import "./security/approval-queue.js";
 import "./security/event-feed.js";
+import "./security/durable-audit-log.js";
 
 import type { IcSecurityEventFeed } from "./security/event-feed.js";
 import type { IcApprovalQueue } from "./security/approval-queue.js";
@@ -747,11 +748,10 @@ export class IcSecurityView extends LitElement {
           .inputGuardSummary=${this._inputGuardSummary}
         ></ic-security-event-feed>`;
       case "audit":
-        return html`<ic-security-event-feed
-          activeSubTab="audit"
-          .securityEvents=${this._securityEvents}
-          .inputGuardSummary=${this._inputGuardSummary}
-        ></ic-security-event-feed>`;
+        // The durable, queryable obs.audit.query view REPLACES the live SSE
+        // feed in this tab (Plan 179-06 / Pitfall 2) — audit history survives a
+        // daemon restart. The live SSE Security Events tab (above) is unchanged.
+        return html`<ic-durable-audit-log .rpcClient=${this.rpcClient}></ic-durable-audit-log>`;
       case "tokens":
         return html`<ic-token-manager .rpc=${this.rpcClient}></ic-token-manager>`;
       case "secrets":

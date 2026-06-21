@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
+    "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
     "@earendil-works/pi-ai": "0.79.3",
     "better-sqlite3": "12.10.0",

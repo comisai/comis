@@ -608,6 +608,107 @@ describe("obs_query tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // audit action (AUDIT-05, the 9th action) — dispatches to obs.audit.query
+  // (admin-guarded; content-free rows)
+  // -----------------------------------------------------------------------
+
+  describe("audit action", () => {
+    it("calls rpcCall('obs.audit.query') with the full filter surface + the ctx trustLevel", async () => {
+      mockRpcCall.mockResolvedValue({ rows: [] });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-au1", {
+          action: "audit",
+          kind: "secret_access",
+          classification: "read",
+          agent_id: "agent-1",
+          tenant: "tenant-a",
+          outcome: "denied",
+          since_ms: 100,
+          until_ms: 200,
+          limit: 50,
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.audit.query", {
+        kind: "secret_access",
+        classification: "read",
+        agentId: "agent-1",
+        tenant: "tenant-a",
+        outcome: "denied",
+        since: 100,
+        until: 200,
+        limit: 50,
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual(expect.objectContaining({ rows: [] }));
+    });
+
+    it("passes the filters undefined when omitted (an absent filter widens the scan)", async () => {
+      mockRpcCall.mockResolvedValue({ rows: [] });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-au2", { action: "audit" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.audit.query", {
+        kind: undefined,
+        classification: undefined,
+        agentId: undefined,
+        tenant: undefined,
+        outcome: undefined,
+        since: undefined,
+        until: undefined,
+        limit: undefined,
+        _trustLevel: "admin",
+      });
+    });
+
+    it("accepts audit as a valid action (no invalid-action error)", async () => {
+      mockRpcCall.mockResolvedValue({ rows: [] });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-au3", { action: "audit" } as never),
+      );
+
+      // A valid action dispatches; the [invalid_value] sentinel must NOT fire.
+      expect(result.details).not.toHaveProperty("error");
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "obs.audit.query",
+        expect.objectContaining({ _trustLevel: "admin" }),
+      );
+    });
+
+    it("throws for guest callers on action=audit (the existing trustGuard covers it)", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("guest"), () =>
+          tool.execute("call-g-au", { action: "audit", kind: "secret_access" } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("throws for non-admin (user) callers on action=audit", async () => {
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("user"), () =>
+          tool.execute("call-u-au", { action: "audit" } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // error handling
   // -----------------------------------------------------------------------
 

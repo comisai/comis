@@ -289,4 +289,6 @@ export type {
   // Orchestration authoring gate (Phase 174 / v2.27 P2)
   OrchestrationConfig,
   OrchestrationAuthoringConfig,
+  // Spend kill-switch config (Phase 177)
+  SpendConfig,
 } from "../config/index.js";

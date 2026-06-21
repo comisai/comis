@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One-command Prometheus + Grafana stand-up for Comis's opt-in /metrics surface
+# (PROM-03; design §6 WS7). Brings up Prometheus (scraping a Comis daemon's
+# /metrics on the docker host) + Grafana (auto-provisioned with the Comis
+# datasource + the 5 dashboards-as-code).
+#
+#   docker compose -f docker/observability/docker-compose.yml up
+#   # Grafana → http://localhost:3000 (admin/admin by default; CHANGE IT)
+#   # Prometheus → http://localhost:9090
+#
+# PREREQUISITE (operator-run, NOT launched here): a Comis daemon with
+# `observability.prometheus.enabled: true` running on the docker HOST, exposing
+# /metrics on 127.0.0.1:9464. The compose stack scrapes it via
+# host.docker.internal:9464 — it deliberately does NOT start the daemon (the
+# daemon's lifecycle, data dir, and secrets are the operator's, not this stack's).
+#
+# DEFERRED (honestly): the LIVE `docker compose up` end-to-end (real Prometheus
+# scraping a real daemon, real Grafana render, the exemplar→`comis explain`
+# click-through) is operator/Linux-verified — it needs a live daemon emitting
+# /metrics. The in-repo test (test/architecture/grafana-dashboard-metrics.test.ts
+# + prometheus-rules.test.ts) asserts the artifact VALIDITY + the expr↔metric
+# mapping only. See docs/operations/prometheus-grafana.mdx.
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: comis-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      # Lets the container reach a daemon's /metrics on the docker host (Linux).
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: comis-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      # CHANGE THESE for anything beyond a local sandbox. Grafana's own auth is the
+      # access boundary here — like the /metrics loopback, this stack is a
+      # trusted-operator posture (do NOT expose 3000/9090 to an untrusted network
+      # without a reverse proxy). See docs/operations/prometheus-grafana.mdx.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:

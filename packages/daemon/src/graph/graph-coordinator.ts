@@ -219,6 +219,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       syntheticRunResults: new Map(),
       nodeCacheData: new Map(),
       nodeTokenSpend: new Map(),
+      nodeCost: new Map(),
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 

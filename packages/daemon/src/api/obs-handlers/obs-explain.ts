@@ -123,6 +123,12 @@ export async function assembleIncidentReportFromSources(
   const cache = await reader.readCacheTraceRecords(sessionKey);
   const metadata = await reader.readSessionMetadata(sessionKey);
   const rollup = await reader.readDiagnosticsRollup(sessionKey);
+  // AUDIT-05 (176-05): the 5th source — the session's audit events (Plan 03
+  // persists them via SQLite, NOT a trajectory record, so they are read HERE,
+  // not folded from the record stream). Tenant-scoped + bounded by the reader;
+  // filtered to the resolved traceId + aggregated counts-by-kind below. Optional
+  // reader method — a fixture reader that omits it simply produces no audit?.
+  const auditRows = reader.readAuditEvents ? await reader.readAuditEvents(sessionKey) : [];
 
   // Normalize both shapes → uniform signals; assemble the §6.3 report;
   // stamp the deterministic root cause (X3); bound to the depth budget (X2).
@@ -172,9 +178,46 @@ export async function assembleIncidentReportFromSources(
   }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
+  // AUDIT-05 (176-05): attach the audit? section AFTER the bound pass (it is
+  // already bounded — counts-by-kind, capped by the distinct AuditKind set). The
+  // rows arrive tenant-scoped; narrow to THIS session's resolved traceId, then
+  // aggregate counts-by-kind (content-free — no actor names beyond ids, no value,
+  // no refs blob). Present only when the session produced ≥1 audit event.
+  const audit = aggregateAuditByKind(auditRows, bounded.traceId);
+  if (audit !== undefined) bounded.audit = audit;
+
   // Step 5: dev-mode response validation (catches field type regressions).
   if (IS_DEV) ObsExplainContract.response.parse(bounded);
   return bounded;
+}
+
+/**
+ * AUDIT-05 (176-05): aggregate the tenant-scoped `obs_audit_events` rows for ONE
+ * session into the content-free `audit?` section — `{ total, byKind }`, counts by
+ * the closed AuditKind discriminator ONLY. The rows arrive scoped by tenant (the
+ * reader; `AuditQueryParams` has no traceId predicate), so this narrows to the
+ * session's resolved `traceId`. Rows whose `traceId` is null/blank (system-scoped
+ * tenant-less events) are EXCLUDED — they belong to no single session. A non-empty
+ * `traceId` with no matching rows ⇒ undefined (the section is omitted, never `{}`).
+ *
+ * Bounded by construction: `byKind` is keyed by the closed AuditKind set, so it is
+ * capped regardless of row volume (no per-row growth) — the GBIII I2 bound holds
+ * without an explicit truncation pass.
+ */
+function aggregateAuditByKind(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): { total: number; byKind: Record<string, number> } | undefined {
+  if (traceId.length === 0) return undefined;
+  const byKind: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    if (row.traceId !== traceId) continue; // narrow tenant-window → THIS session
+    const kind = typeof row.kind === "string" && row.kind.length > 0 ? row.kind : "unknown";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+    total += 1;
+  }
+  return total > 0 ? { total, byKind } : undefined;
 }
 
 /**

@@ -81,7 +81,7 @@ Every agent-driven action is classified by `ActionClassifier` into one of three 
 | `mutate` | Reversible side effects — logged, auto-approved | `file.write`, `message.send`, `memory.store`, `browser.navigate`, `model.switch`, `discord.pin` |
 | `destructive` | Irreversible / high-risk — **requires confirmation** | `file.delete`, `memory.clear`, `system.exec`, `system.shutdown`, `tokens.revoke`, `channels.disable`, `agents.delete`, `discord.ban` |
 
-Confirmation gating for `destructive` actions is described in [`docs/security/approvals.mdx`](./docs/security/approvals.mdx); all classified actions are audit-logged (`docs/security/audit.mdx`).
+Confirmation gating for `destructive` actions is described in [`docs/security/approvals.mdx`](./docs/security/approvals.mdx). Classified `audit:event` actions and the security-decision events (secret access, injection detection, injection-rate breach, canary leaks, implied-tool-call isolation, command blocks, and sandbox-downgrade refusals) are persisted to a durable, queryable audit — the `obs_audit_events` SQLite table plus the `0600` `security-audit.jsonl` — and surfaced via `comis security audit-log` / `obs.audit.query` (`docs/security/audit.mdx`).
 
 ### 5.2 Tool / shell execution confinement
 

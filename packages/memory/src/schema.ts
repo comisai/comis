@@ -16,6 +16,7 @@ import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
 import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
+import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
 // Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (lives in a sibling
 // file to keep schema.ts under the 800-line cap) so existing importers of
@@ -624,13 +625,25 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
       cost_cache_write REAL NOT NULL DEFAULT 0,
       cache_saved REAL NOT NULL DEFAULT 0,
       latency_ms INTEGER NOT NULL,
-      cache_retention TEXT DEFAULT NULL
+      -- PERSIST-02 cost-correctness columns (fresh DB; ensureObsTokenColumns ALTERs an
+      -- existing DB). The dead cache_retention column is intentionally ABSENT (OQ3 DROP).
+      warmup_turn INTEGER,
+      cache_eligible INTEGER,
+      cost_correction REAL,
+      pending_cache_investment_usd REAL,
+      pricing_state TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_obs_token_timestamp ON obs_token_usage(timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_agent ON obs_token_usage(agent_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_provider ON obs_token_usage(provider, timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_token_session ON obs_token_usage(session_key, timestamp);
   `);
+  // PERSIST-02 + AUDIT-01/02 (both in schema-obs-token.ts, 800L cap). Called HERE,
+  // after the obs_token_usage CREATE — NOT in the ensure-call sequence above (runs
+  // first). ensureObsTokenColumns: forward-only EXISTING-DB upgrade (drop dead
+  // cache_retention + add the 5 cols). ensureObsAuditTable: obs_audit_events + indexes.
+  ensureObsTokenColumns(db);
+  ensureObsAuditTable(db);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS obs_delivery (

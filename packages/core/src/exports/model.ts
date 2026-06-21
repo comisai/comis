@@ -3,6 +3,7 @@
 export {
   createModelCatalog,
   resolveModelPricing,
+  resolvePricingState,
   ZERO_COST,
 } from "../model/model-catalog.js";
 export type {

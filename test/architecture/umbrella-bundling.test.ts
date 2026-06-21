@@ -80,7 +80,10 @@ const { namespaced: NAMESPACED_PACKAGES, all: ALL_BUNDLED_PACKAGES } =
 function readIndexNamespaces(): string[] {
   const path = resolve(REPO_ROOT, "packages/comis/src/index.ts");
   const content = readFileSync(path, "utf8");
-  const importRegex = /import\s+\*\s+as\s+(\w+)\s+from\s+"@comis\/(\w+)"/g;
+  // Package names may contain hyphens (e.g. `observability-otel`), so the
+  // specifier capture is `[\w-]+`, not `\w+` (which stops at the first hyphen
+  // and would silently miss a hyphenated namespace import).
+  const importRegex = /import\s+\*\s+as\s+(\w+)\s+from\s+"@comis\/([\w-]+)"/g;
   const found: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = importRegex.exec(content)) !== null) {

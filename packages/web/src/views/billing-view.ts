@@ -5,15 +5,31 @@ import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
-import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
+import { systemClearInterval, systemClearTimeout, systemNowDate, systemSetInterval, systemSetTimeout } from "@comis/core";
 import type {
   BillingDrillLevel,
   BillingByProvider,
   BillingByAgent,
   BillingBySession,
-  AgentInfo,
   CostSegment,
+  ToolCostBreakdown,
+  SubagentCostBreakdown,
 } from "../api/types/index.js";
+import {
+  createBillingViewController,
+  billingRowsToCsv,
+  billingRowsToJson,
+  type BillingViewController,
+  type BillingTotalData,
+  type BillingExportRow,
+} from "./billing-view-controller.js";
+import {
+  parseBillingQuery,
+  applyBillingFilter,
+  isBillingFilterActive,
+  describeUnknownKeys,
+} from "./billing-query.js";
+import { renderToolCosts, renderSubagentCosts, renderFilterBar, downloadBlob } from "./billing-view-render.js";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-stat-card.js";
@@ -42,13 +58,6 @@ const PROVIDER_COLORS = [
   "#f472b6",
   "#34d399",
 ];
-
-/** Billing total shape returned by obs.billing.total RPC. */
-interface BillingTotalData {
-  totalCost: number;
-  totalTokens: number;
-  callCount: number;
-}
 
 /**
  * Standalone billing view with 4-level cost attribution drill-down.
@@ -162,9 +171,37 @@ export class IcBillingView extends LitElement {
       .grid-row.clickable > .cell { cursor: pointer; }
       .grid-row.clickable:hover > .cell { background: var(--ic-surface-2, #1f2937); }
 
-      .provider-table, .model-table, .agent-table, .session-table {
+      .provider-table, .model-table, .agent-table, .session-table, .tool-table {
         grid-template-columns: 1fr repeat(3, auto);
       }
+
+      .subagent-table {
+        grid-template-columns: 1fr repeat(2, auto);
+      }
+
+      .caveat { font-weight: 400; font-size: var(--ic-text-xs); color: var(--ic-text-dim); }
+
+      .filter-bar {
+        display: flex;
+        gap: var(--ic-space-sm);
+        margin-bottom: var(--ic-space-sm);
+        flex-wrap: wrap;
+      }
+
+      .filter-input, .export-btn {
+        padding: 0.5rem 0.75rem;
+        background: var(--ic-surface);
+        border: 1px solid var(--ic-border);
+        border-radius: 0.375rem;
+        color: var(--ic-text);
+        font-size: var(--ic-text-sm);
+      }
+
+      .filter-input { flex: 1; min-width: 240px; font-family: var(--ic-font-mono, ui-monospace, monospace); }
+      .export-btn { cursor: pointer; font-family: inherit; white-space: nowrap; }
+      .export-btn:hover { background: var(--ic-surface-alt, #374151); }
+
+      .filter-hint { font-size: var(--ic-text-xs); color: var(--ic-warning); margin-bottom: var(--ic-space-sm); }
 
       .pct-bar {
         display: inline-block;
@@ -207,6 +244,8 @@ export class IcBillingView extends LitElement {
 
   private _sse: SseController | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** RPC orchestration + wire shaping (the file-size split — see billing-view-controller.ts). */
+  private _controller: BillingViewController | null = null;
 
   /* ---- Internal state ---- */
 
@@ -220,6 +259,10 @@ export class IcBillingView extends LitElement {
   @state() private _providers: BillingByProvider[] = [];
   @state() private _agentBillings: BillingByAgent[] = [];
   @state() private _sessionBillings: BillingBySession[] = [];
+  // COST-01/02 granularity (agent level) + the typed-query DSL filter state.
+  @state() private _toolCosts: ToolCostBreakdown[] = [];
+  @state() private _subagentCosts: SubagentCostBreakdown[] = [];
+  @state() private _filterQuery = "";
 
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
@@ -297,6 +340,10 @@ export class IcBillingView extends LitElement {
       this._loadState = "loaded";
       return;
     }
+    // Create the controller once the rpcClient is present (the setup-wizard mold).
+    if (!this._controller) {
+      this._controller = createBillingViewController(this.rpcClient);
+    }
     this._rpcStatusUnsub?.();
     if (this.rpcClient.status === "connected") {
       this._startLoading();
@@ -318,147 +365,42 @@ export class IcBillingView extends LitElement {
     }
   }
 
-  /* ---- Data loading ---- */
+  /* ---- Data loading (delegated to the controller) ---- */
 
   private async _loadData(): Promise<void> {
-    if (!this.rpcClient || this.rpcClient.status !== "connected") {
+    if (!this.rpcClient || this.rpcClient.status !== "connected" || !this._controller) {
       this._loadState = "loaded";
       return;
     }
 
-    const rpc = this.rpcClient;
+    const ctrl = this._controller;
 
     try {
       switch (this._drillLevel) {
-        case "total":
-          await this._loadTotalLevel(rpc);
+        case "total": {
+          this._billingTotal = await ctrl.loadTotalLevel(this._sinceMs, (partial) => {
+            if (partial.previousTotal !== undefined) this._previousTotal = partial.previousTotal;
+            if (partial.providers !== undefined) this._providers = partial.providers;
+          });
           break;
+        }
         case "provider":
-          await this._loadProviderLevel(rpc);
+          this._providers = await ctrl.loadProviderLevel(this._sinceMs);
           break;
-        case "agent":
-          await this._loadAgentLevel(rpc);
+        case "agent": {
+          const agentData = await ctrl.loadAgentLevel(this._sinceMs);
+          this._agentBillings = agentData.agents;
+          this._toolCosts = agentData.toolCosts;
+          this._subagentCosts = agentData.subagentCosts;
           break;
+        }
         case "session":
-          await this._loadSessionLevel(rpc);
+          this._sessionBillings = await ctrl.loadSessionLevel(this._sinceMs, this._drillContext.agentId);
           break;
       }
       this._loadState = "loaded";
     } catch {
       this._loadState = "error";
-    }
-  }
-
-  private async _loadTotalLevel(rpc: RpcClient): Promise<void> {
-    // Load current billing first (primary data for stat cards)
-    const raw = await rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: this._sinceMs });
-    this._billingTotal = {
-      totalCost: Number(raw.totalCost ?? 0),
-      totalTokens: Number(raw.totalTokens ?? 0),
-      callCount: Number(raw.callCount ?? 0),
-    };
-
-    // Load cumulative (for deltas) and provider breakdown in the background
-    Promise.allSettled([
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: this._sinceMs * 2 }),
-      rpc.call<unknown>("obs.billing.byProvider", { sinceMs: this._sinceMs }),
-    ]).then(([cumulativeResult, providersResult]) => {
-      if (cumulativeResult.status === "fulfilled" && this._billingTotal) {
-        const cumRaw = cumulativeResult.value;
-        const cumulative: BillingTotalData = {
-          totalCost: Number(cumRaw.totalCost ?? 0),
-          totalTokens: Number(cumRaw.totalTokens ?? 0),
-          callCount: Number(cumRaw.callCount ?? 0),
-        };
-        this._previousTotal = {
-          totalCost: cumulative.totalCost - this._billingTotal.totalCost,
-          totalTokens: cumulative.totalTokens - this._billingTotal.totalTokens,
-          callCount: cumulative.callCount - this._billingTotal.callCount,
-        };
-      }
-
-      if (providersResult.status === "fulfilled") {
-        const provRaw = providersResult.value;
-        if (Array.isArray(provRaw)) {
-          this._providers = provRaw;
-        } else {
-          const wrapped = provRaw as Record<string, unknown>;
-          this._providers = Array.isArray(wrapped.providers) ? wrapped.providers as BillingByProvider[] : [];
-        }
-      }
-    });
-  }
-
-  private async _loadProviderLevel(rpc: RpcClient): Promise<void> {
-    const raw = await rpc.call<unknown>("obs.billing.byProvider", { sinceMs: this._sinceMs });
-    if (Array.isArray(raw)) {
-      this._providers = raw;
-    } else {
-      const wrapped = raw as Record<string, unknown>;
-      this._providers = Array.isArray(wrapped.providers) ? wrapped.providers as BillingByProvider[] : [];
-    }
-  }
-
-  private async _loadAgentLevel(rpc: RpcClient): Promise<void> {
-    const listResult = await rpc.call<Record<string, unknown>>("agents.list");
-    const agentData = Array.isArray(listResult)
-      ? listResult
-      : Array.isArray((listResult as Record<string, unknown>).agents)
-        ? (listResult as { agents: AgentInfo[] | string[] }).agents
-        : [];
-
-    const agentIds = agentData.map((a: AgentInfo | string) =>
-      typeof a === "string" ? a : a.id,
-    );
-
-    if (agentIds.length === 0) {
-      this._agentBillings = [];
-      return;
-    }
-
-    const results = await Promise.allSettled(
-      agentIds.map((id) =>
-        rpc.call<Record<string, unknown>>("obs.billing.byAgent", { agentId: id, sinceMs: this._sinceMs }),
-      ),
-    );
-
-    this._agentBillings = results
-      .map((r, i) => {
-        if (r.status !== "fulfilled") return null;
-        const raw = r.value;
-        return {
-          agentId: agentIds[i]!,
-          totalTokens: Number(raw.tokensToday ?? raw.totalTokens ?? 0),
-          percentOfTotal: Number(raw.percentOfTotal ?? 0),
-          cost: Number(raw.costToday ?? raw.cost ?? 0),
-        };
-      })
-      .filter((a): a is BillingByAgent => a !== null)
-      .sort((a, b) => b.cost - a.cost);
-  }
-
-  private async _loadSessionLevel(rpc: RpcClient): Promise<void> {
-    const agentId = this._drillContext.agentId;
-    if (!agentId) {
-      this._sessionBillings = [];
-      return;
-    }
-
-    try {
-      const raw = await rpc.call<unknown>("obs.billing.bySession", {
-        sessionKey: "all",
-        agentId,
-        sinceMs: this._sinceMs,
-      });
-
-      if (Array.isArray(raw)) {
-        this._sessionBillings = raw;
-      } else {
-        const wrapped = raw as Record<string, unknown>;
-        this._sessionBillings = Array.isArray(wrapped.sessions) ? wrapped.sessions as BillingBySession[] : [];
-      }
-    } catch {
-      this._sessionBillings = [];
     }
   }
 
@@ -480,6 +422,12 @@ export class IcBillingView extends LitElement {
       this._drillContext = { provider: this._drillContext.provider, agentId: this._drillContext.agentId };
     }
     this._loadData();
+  }
+
+  /** 179-08: drill a session row to the native Incident view (the E7 twin) —
+   *  obs.explain keyed on this session's sessionKey (a valid obs.explain ref). */
+  private _explainSession(sessionKey: string): void {
+    window.location.hash = `#/observe/incident?ref=${encodeURIComponent(sessionKey)}`;
   }
 
   private _onTimeRangeChange(e: CustomEvent<{ sinceMs: number; label: string }>): void {
@@ -669,12 +617,59 @@ export class IcBillingView extends LitElement {
       </div>
 
       <div class="section">
-        <button
-          class="breadcrumb-link"
-          @click=${() => this._drillDown("agent", {})}
-        >View agent breakdown</button>
+        <button class="breadcrumb-link" @click=${() => this._drillDown("agent", {})}>View agent breakdown</button>
       </div>
     `;
+  }
+
+  /* ---- DSL filter + export ---- */
+
+  /**
+   * The agent rows after applying the typed-query DSL. Mapped to the filterable
+   * shape (content-free ids/numbers); a body field is never an axis.
+   */
+  private get _filteredAgentBillings(): BillingByAgent[] {
+    const filter = parseBillingQuery(this._filterQuery);
+    if (!isBillingFilterActive(filter)) return this._agentBillings;
+    // Map to the DSL's filterable shape: `agent` is the row's agentId; `tokens`
+    // and `cost` are the numeric axes (content-free ids/numbers only).
+    const filterable = this._agentBillings.map((a) => ({
+      agentId: a.agentId,
+      agent: a.agentId,
+      tokens: a.totalTokens,
+      cost: a.cost,
+    }));
+    const kept = new Set(applyBillingFilter(filterable, filter).map((r) => r.agentId));
+    return this._agentBillings.filter((a) => kept.has(a.agentId));
+  }
+
+  /** Honest hint when the DSL query contains a key outside the closed set. */
+  private get _filterHint(): string {
+    return describeUnknownKeys(this._filterQuery);
+  }
+
+  private _onFilterInput(e: Event): void {
+    this._filterQuery = (e.target as HTMLInputElement).value;
+  }
+
+  /**
+   * Build the content-free export rows from the CURRENTLY-FILTERED agent rows
+   * and download them as CSV or JSON via the `<a download>` blob mechanism
+   * (the diagnostics-view.ts twin). Columns are an explicit allowlist — no
+   * body/secret can leak (T-179-14).
+   */
+  private _exportBilling(format: "csv" | "json"): void {
+    const rows: BillingExportRow[] = this._filteredAgentBillings.map((a) => ({
+      agentId: a.agentId,
+      totalTokens: a.totalTokens,
+      percentOfTotal: a.percentOfTotal,
+      cost: a.cost,
+    }));
+    if (rows.length === 0) return;
+    const isCsv = format === "csv";
+    const body = isCsv ? billingRowsToCsv(rows) : billingRowsToJson(rows);
+    const filename = `billing-${systemNowDate().toISOString().slice(0, 10)}.${format}`;
+    downloadBlob(body, filename, isCsv ? "text/csv" : "application/json");
   }
 
   private _renderAgentLevel() {
@@ -682,7 +677,19 @@ export class IcBillingView extends LitElement {
       return html`<ic-empty-state icon="users" message="No agent billing data available"></ic-empty-state>`;
     }
 
+    const rows = this._filteredAgentBillings;
+    const renderDeps = {
+      formatCost: (n: number) => this._formatCost(n),
+      formatNumber: (n: number) => this._formatNumber(n),
+    };
+
     return html`
+      ${renderFilterBar({
+        query: this._filterQuery,
+        hint: this._filterHint,
+        onInput: (e) => this._onFilterInput(e),
+        onExport: (format) => this._exportBilling(format),
+      })}
       <div class="section">
         <div class="section-title">Agent Billing</div>
         <div class="card">
@@ -693,7 +700,7 @@ export class IcBillingView extends LitElement {
               <div class="cell cell-right" role="columnheader">% of Total</div>
               <div class="cell cell-right" role="columnheader">Cost</div>
             </div>
-            ${this._agentBillings.map(
+            ${rows.map(
               (a) => html`
                 <div
                   class="grid-row clickable"
@@ -710,6 +717,8 @@ export class IcBillingView extends LitElement {
           </div>
         </div>
       </div>
+      ${renderToolCosts(this._toolCosts, renderDeps)}
+      ${renderSubagentCosts(this._subagentCosts, renderDeps)}
     `;
   }
 
@@ -734,7 +743,7 @@ export class IcBillingView extends LitElement {
             ${sorted.map(
               (s) => html`
                 <div class="grid-row" role="row">
-                  <div class="cell cell-mono" role="cell">${s.sessionKey}</div>
+                  <div class="cell cell-mono" role="cell"><button class="breadcrumb-link" title="Explain incident" @click=${() => this._explainSession(s.sessionKey)}>${s.sessionKey}</button></div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatNumber(s.totalTokens)}</div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatCost(s.totalCost)}</div>
                   <div class="cell cell-mono cell-right" role="cell">${this._formatNumber(s.callCount)}</div>

@@ -39,7 +39,7 @@
  * @module
  */
 import type { ClockPort } from "@comis/core";
-import { isProviderModelChimera } from "@comis/core";
+import { isProviderModelChimera, resolvePricingState } from "@comis/core";
 import type { ObservabilityStore } from "@comis/memory";
 import type { StrandedFinding } from "../wiring/setup-storage-mismatch-warn.js";
 
@@ -55,6 +55,28 @@ export function countChimericModels(
 ): number {
   return Object.values(agents).filter(
     (a) => typeof a.provider === "string" && typeof a.model === "string" && isProviderModelChimera(a.provider, a.model),
+  ).length;
+}
+
+/**
+ * SPEND-05: count configured agents burning tokens on remote-unknown-priced models
+ * — those whose configured `provider`+`model` resolves to the `"unknown"` pricing
+ * state (a NATIVE single-family provider with NO catalog rate — the `ffe11736`
+ * fail-open where `resolveModelPricing` silently returns $0, masking a phantom cost
+ * as free). A `"free"` local/gateway provider (honest $0) and a `"priced"` agent are
+ * NOT counted — so a local-first deployment is never false-flagged. Consumes the
+ * shipped 3-state {@link resolvePricingState} directly, NEVER a catalog-presence
+ * boolean. Lives here (not inline in daemon.ts) to keep daemon.ts under its 3000-line
+ * cap. Count only — the caller persists the COUNT, never agent ids/model names (I3).
+ */
+export function countPricingGaps(
+  agents: Readonly<Record<string, { provider?: string; model?: string }>>,
+): number {
+  return Object.values(agents).filter(
+    (a) =>
+      typeof a.provider === "string" &&
+      typeof a.model === "string" &&
+      resolvePricingState(a.provider, a.model) === "unknown",
   ).length;
 }
 
@@ -89,6 +111,15 @@ export interface ConfigPostureInputs {
    * Optional (defaults to 0 in the record) so existing callers/tests need no change.
    */
   chimericModelCount?: number;
+  /**
+   * SPEND-05 (observability-excellence): number of configured agents burning tokens
+   * on remote-unknown-priced models (`resolvePricingState == "unknown"` — a NATIVE
+   * provider with no catalog rate, the `ffe11736` fail-open where spend is silently
+   * under-counted as $0). A COUNT, never agent ids or model names (the no-free-text
+   * contract). Computed in daemon.ts via `countPricingGaps` over the configured
+   * agents at boot. Optional (defaults to 0 in the record).
+   */
+  pricingGapCount?: number;
 }
 
 /**
@@ -107,12 +138,14 @@ export function buildConfigPostureRecord(
   clock: ClockPort,
 ): void {
   const chimericModelCount = inputs.chimericModelCount ?? 0;
+  const pricingGapCount = inputs.pricingGapCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
     inputs.canaryFallbackActive ||
     inputs.servedBelowConfiguredCount > 0 ||
-    chimericModelCount > 0;
+    chimericModelCount > 0 ||
+    pricingGapCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -128,6 +161,9 @@ export function buildConfigPostureRecord(
       // RESOLVE-01: agents booted with a NATIVE provider + a foreign model family
       // (the ffe11736 chimera). A COUNT, never agent ids/model names (no free text).
       chimericModelCount,
+      // SPEND-05: agents burning tokens on remote-unknown-priced models
+      // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
+      pricingGapCount,
     }),
   });
 }

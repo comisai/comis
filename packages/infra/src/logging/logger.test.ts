@@ -323,6 +323,55 @@ describe("createLogger", () => {
       expect(levelValue).toBeGreaterThan(30);
       expect(levelValue).toBeLessThan(40);
     });
+
+    // AUDIT-03: the dormant `.audit()` level (35) must be callable through the
+    // PRODUCTION `createLogger` factory (the typed ComisLogger surface), not
+    // just the hand-rolled test pino above. Plan 03's audit subscriber calls
+    // `logger.audit(scrubbedRecord, "…")`; this proves the production wrapper
+    // routes it to level 35 end-to-end (captured via a file transport, the
+    // proven in-file poll pattern, since createLogger owns its pino instance).
+    it("createLogger().audit(...) emits a record at level 35 (production factory path)", async () => {
+      const tmpDir = await mkdtemp(join(tmpdir(), "comis-audit-level-"));
+      const auditFile = join(tmpDir, "audit.log");
+      try {
+        const logger = createLogger({
+          name: "audit-level-prod",
+          // Explicit file transport so we can read the bytes the production
+          // factory actually wrote (skips the worker-thread redact transport).
+          transport: {
+            targets: [{ target: "pino/file", options: { destination: auditFile } }],
+          },
+        });
+
+        // The typed ComisLogger surface exposes `.audit(obj, msg)`.
+        logger.audit({ kind: "secret_access" }, "audit");
+
+        // Poll until the worker thread flushes the line to disk.
+        const deadline = Date.now() + 8000;
+        let content = "";
+        while (Date.now() < deadline) {
+          try {
+            content = await readFile(auditFile, "utf8");
+            if (content.trim().length > 0) break;
+          } catch {
+            // file not yet created by the transport worker — keep polling
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+
+        const lines = content
+          .split("\n")
+          .filter((l) => l.trim().length > 0)
+          .map((l) => JSON.parse(l) as Record<string, unknown>);
+        expect(lines).toHaveLength(1);
+        // Pino's file transport emits the numeric level; audit === 35.
+        expect(lines[0]!.level).toBe(35);
+        expect(lines[0]!.msg).toBe("audit");
+        expect(lines[0]!.kind).toBe("secret_access");
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("child logger", () => {

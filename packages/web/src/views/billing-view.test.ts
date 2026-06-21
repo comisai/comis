@@ -49,10 +49,27 @@ const MOCK_PROVIDERS = {
 
 const MOCK_AGENTS = { agents: ["default", "researcher"] };
 
+/** A planted body/secret marker — must never reach the DOM or the export. */
+const BODY_MARKER = "SECRET_MESSAGE_BODY_DO_NOT_LEAK";
+
+// The REAL obs.billing.byAgent wire shape (179-wiring): the handler projects
+// `tools[]` (CR-01 per-tool even-split, the HG-01 producer) — content-free names
+// + numbers. It does NOT carry `subagents[]`: COST-02's gs.nodeCost is per-graph
+// -run (in-memory, surfaced on graph:completed / the Incident view), NOT persisted
+// to obs_token_usage, so the per-agent billing aggregate has no honest per-subagent
+// source. This mock therefore mirrors the handler exactly — `tools[]` present, NO
+// fabricated `subagents[]` (the fabrication is what hid 179's CR-01 gap).
 const MOCK_AGENT_BILLING = {
   tokensToday: 80_000,
   costToday: 28.5,
   percentOfTotal: 67.1,
+  // CR-01 per-tool (tool_tag, best-effort even-split) — sums to the turn.
+  tools: [
+    { tool: "bash", cost: 18.0, tokens: 50_000, calls: 30 },
+    { tool: "read", cost: 10.5, tokens: 30_000, calls: 20 },
+  ],
+  // A body field the view must ignore (content-free).
+  message: BODY_MARKER,
 };
 
 const MOCK_SESSION_BILLING = {
@@ -292,5 +309,199 @@ describe("IcBillingView", () => {
 
     const retryBtn = shadow.querySelector(".retry-btn");
     expect(retryBtn).not.toBeNull();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  COST-01/02 granularity + export + DSL (Task 3)                   */
+  /* ---------------------------------------------------------------- */
+
+  /** Access private fields for direct drill/filter manipulation. */
+  function priv(e: IcBillingView) {
+    return e as unknown as {
+      _drillLevel: string;
+      _filterQuery: string;
+      _loadData: () => Promise<void>;
+      _exportBilling: (format: "csv" | "json") => void;
+    };
+  }
+
+  async function drillToAgentLevel(e: IcBillingView): Promise<void> {
+    priv(e)._drillLevel = "agent";
+    await priv(e)._loadData();
+    await e.updateComplete;
+  }
+
+  it("renders per-tool cost labeled (best-effort) at the agent level", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+
+    await drillToAgentLevel(el);
+
+    const shadow = el.shadowRoot!;
+    const text = shadow.textContent ?? "";
+    // per-tool section present + the best-effort label (N3)
+    expect(text).toMatch(/per-tool/i);
+    expect(text.toLowerCase()).toContain("best-effort");
+    // the distinct tools render
+    expect(text).toContain("bash");
+    expect(text).toContain("read");
+  });
+
+  it("per-subagent section degrades HONESTLY (per-graph-run → Incident view), not a fabricated empty (179-wiring CR-01)", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+
+    await drillToAgentLevel(el);
+
+    const shadow = el.shadowRoot!;
+    const text = shadow.textContent ?? "";
+    // The per-subagent section is present + names the honest reason: COST-02's
+    // nodeCost is per-graph-run (not in the per-agent billing aggregate), so it
+    // points the operator at the Incident view rather than showing a silent empty
+    // or a fabricated row. (The handler emits no subagents[] — see the mock note.)
+    expect(text).toMatch(/per-subagent|subagent/i);
+    expect(text.toLowerCase()).toContain("incident");
+    expect(text.toLowerCase()).toMatch(/per-graph|graph run|graph execution/);
+  });
+
+  it("export builds a CSV blob with only the allowlisted columns", async () => {
+    const createSpy = vi.fn(() => "blob:mock-url");
+    const revokeSpy = vi.fn();
+    let capturedBlobText = "";
+    const OriginalBlob = globalThis.Blob;
+    vi.stubGlobal("Blob", class MockBlob {
+      constructor(parts: BlobPart[]) {
+        capturedBlobText = parts.map((p) => String(p)).join("");
+      }
+    });
+    vi.stubGlobal("URL", { ...URL, createObjectURL: createSpy, revokeObjectURL: revokeSpy });
+
+    try {
+      el = document.createElement("ic-billing-view") as IcBillingView;
+      el.rpcClient = createBillingMockRpcClient();
+      document.body.appendChild(el);
+      await vi.advanceTimersByTimeAsync(50);
+      await el.updateComplete;
+      await drillToAgentLevel(el);
+
+      priv(el)._exportBilling("csv");
+
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      // header is the explicit allowlist
+      expect(capturedBlobText).toContain("agentId,totalTokens,percentOfTotal,cost");
+      // the planted body marker is ABSENT from the export
+      expect(capturedBlobText).not.toContain(BODY_MARKER);
+    } finally {
+      vi.stubGlobal("Blob", OriginalBlob);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("export builds a JSON blob honoring the active DSL filter", async () => {
+    const createSpy = vi.fn(() => "blob:mock-url");
+    let capturedBlobText = "";
+    const OriginalBlob = globalThis.Blob;
+    vi.stubGlobal("Blob", class MockBlob {
+      constructor(parts: BlobPart[]) {
+        capturedBlobText = parts.map((p) => String(p)).join("");
+      }
+    });
+    vi.stubGlobal("URL", { ...URL, createObjectURL: createSpy, revokeObjectURL: vi.fn() });
+
+    try {
+      el = document.createElement("ic-billing-view") as IcBillingView;
+      el.rpcClient = createBillingMockRpcClient();
+      document.body.appendChild(el);
+      await vi.advanceTimersByTimeAsync(50);
+      await el.updateComplete;
+      await drillToAgentLevel(el);
+
+      // filter to a single agent then export JSON
+      priv(el)._filterQuery = "agent:default";
+      await el.updateComplete;
+      priv(el)._exportBilling("json");
+
+      const parsed = JSON.parse(capturedBlobText) as Array<Record<string, string>>;
+      expect(parsed.every((row) => row.agentId === "default")).toBe(true);
+      expect(parsed.length).toBe(1);
+    } finally {
+      vi.stubGlobal("Blob", OriginalBlob);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("DSL filter narrows the rendered agent rows; unknown key surfaces a hint, no throw", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+    await drillToAgentLevel(el);
+
+    const shadow = el.shadowRoot!;
+    // both agents render before filtering
+    let rows = shadow.querySelectorAll(".agent-table .grid-row");
+    expect(rows.length).toBe(2);
+
+    // a valid filter narrows to one row
+    priv(el)._filterQuery = "agent:researcher";
+    await el.updateComplete;
+    rows = shadow.querySelectorAll(".agent-table .grid-row");
+    expect(rows.length).toBe(1);
+
+    // an unknown-key filter does NOT throw and surfaces a hint
+    priv(el)._filterQuery = "bogus:x";
+    await el.updateComplete;
+    const text = shadow.textContent ?? "";
+    expect(text.toLowerCase()).toContain("unknown");
+    // unknown-only filter => empty filter => all rows still shown
+    rows = shadow.querySelectorAll(".agent-table .grid-row");
+    expect(rows.length).toBe(2);
+  });
+
+  it("content-free: the planted body marker is absent from the rendered DOM", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+    await drillToAgentLevel(el);
+
+    const shadow = el.shadowRoot!;
+    expect(shadow.textContent ?? "").not.toContain(BODY_MARKER);
+  });
+
+  it("a session-billing row drills to the Incident view keyed on that sessionKey (179-08)", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+
+    // Drive to the session level (the bySession table renders the sessionKeys).
+    (el as unknown as { _drillContext: { agentId?: string } })._drillContext = { agentId: "default" };
+    priv(el)._drillLevel = "session";
+    await priv(el)._loadData();
+    await el.updateComplete;
+
+    const shadow = el.shadowRoot!;
+    // The session-key cell is a drill control carrying a VALID obs.explain ref.
+    const drill = Array.from(shadow.querySelectorAll("button, a")).find((n) =>
+      (n.textContent ?? "").includes("sess-1"),
+    );
+    expect(drill).toBeTruthy();
+
+    window.location.hash = "#/observe/billing";
+    (drill as HTMLElement).click();
+    await el.updateComplete;
+
+    expect(window.location.hash).toContain("observe/incident");
+    expect(decodeURIComponent(window.location.hash)).toContain("ref=sess-1");
   });
 });

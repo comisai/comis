@@ -35,16 +35,24 @@ const SRC_ROOT = resolve(here, "..");
 // cli → @comis/agent imports have been retargeted to @comis/core.
 // @comis/agent is now in HARD_FORBIDDEN_PACKAGES (see below).
 
-// L11 re-opened for two sites:
+// L11 re-opened for four sites:
 //   1. util/offline-secrets-store.ts — the CLI's offline secrets adapter (daemon-free bootstrap)
 //   2. doctor/repairs/repair-lcd.ts — the offline LCD repair path (DOC-03, Phase 171-04):
 //      the contentless lcd_messages_fts cannot use the FTS5 'rebuild' idiom; the repair
 //      re-derives FTS content via renderMessageFtsText (same render fn as the lcd-store adapter
 //      populate path). This is the only @comis/memory import in the repair layer.
+//   3. commands/cost-export.ts — the `comis cost export` CLI (179-03): imports the
+//      ObservabilityStore cost-aggregate TYPES (QuarterHourBucket / CostBucketFilter) it
+//      projects offline. Type-only; the data read routes through offline-obs's assemblers.
+//   4. util/offline-obs.ts — the offline obs adapter (already the sole L18 @comis/daemon
+//      site): the same cost-aggregate types ride its `comis cost export --offline` /
+//      `comis fleet --offline` local-read path.
 // All other CLI memory access routes through daemon RPC.
 const L11_ALLOWLIST: readonly string[] = [
   "util/offline-secrets-store.ts",
   "doctor/repairs/repair-lcd.ts",
+  "commands/cost-export.ts",
+  "util/offline-obs.ts",
 ];
 
 // L12 (CLOSED): the previous 3-site allowlist is empty — all
