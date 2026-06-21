@@ -39,6 +39,8 @@
  * @module
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { Bot } from "grammy";
@@ -50,6 +52,10 @@ import {
   buildLoopbackSsrfFetcher,
   buildMediaOverrides,
 } from "./rig.js";
+// The Signal config writer lives in the `@comis/*`-FREE `rig-config.ts` (the
+// detached-tsx constraint). Imported from its HOME module so the CHAN2-02 RED
+// fails purely on the absent function (independent of the rig.ts re-export).
+import { buildSignalConfigYaml } from "./rig-config.js";
 import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 
 /** The fixed args a rig boot passes — an emulator apiRoot, a gateway port, the keyless model. */
@@ -316,5 +322,125 @@ describe("MEDIA-02 / SEC-01 no-widening — production SSRF posture is provably 
     // allowance lives EXCLUSIVELY in the override's validateLocalServerUrl path.
     const blocked = await validateUrl("http://127.0.0.1:65530/file/x.bin");
     expect(blocked.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CHAN2-02 (Plan 209-05, Task 1) — the `@comis/*`-FREE Signal config writer (the
+// `channels.signal.baseUrl` REDIRECT SEAM). `buildSignalConfigYaml` mirrors the
+// telegram `buildConfigYaml` but writes `channels.signal = { enabled:true,
+// baseUrl:<baseUrl> }` (the verified seam — setup-channels-adapters.ts:216-227
+// reads `signal.baseUrl` → validateSignalConnection → createSignalPlugin with
+// ZERO product change; schema-channel.ts already has `signal.baseUrl`). NO
+// `account` → the daemon boot is the GET /api/v1/check health-check only
+// (credential-validator.ts:56 skips listAccounts). The same keyless ollama
+// provider + the ≥32-char LITERAL gateway token block as the telegram writer.
+//
+// The telegram writer stays BYTE-IDENTICAL (the Signal writer is ADDITIVE) — the
+// foundation-fix regression guard (T-209-14). And `rig-config.ts` stays
+// `@comis/*`-import-free (the detached `rig-daemon.ts` imports it under bare
+// `tsx` — a `@comis/*` edge would break that AND is a published-graph concern,
+// T-209-13).
+//
+// Run (Stage-A, offline, deterministic):
+//   pnpm vitest run -c test/live/vitest.config.ts test/live/harness/rig.test.ts -t "Signal config"
+// ---------------------------------------------------------------------------
+
+/** The loopback baseUrl a Signal rig writes (the started SignalEmulator's apiRoot). */
+const SIGNAL_BASE_URL = "http://127.0.0.1:54399";
+
+/** Produce the Signal throwaway YAML the rig writes for a `{channel:"signal"}` boot. */
+function signalYaml(): string {
+  return buildSignalConfigYaml(SIGNAL_BASE_URL, GATEWAY_PORT, "keyless");
+}
+
+/** Parse the raw Signal YAML to a plain doc (PRE schema-default — explicit keys only). */
+function signalRawDoc(): Record<string, unknown> {
+  return parseYaml(signalYaml()) as Record<string, unknown>;
+}
+
+/** Parse + validate the Signal YAML through the real config schema; returns the typed config. */
+function signalValidConfig() {
+  const result = AppConfigSchema.safeParse(signalRawDoc());
+  expect(
+    result.success,
+    result.success
+      ? ""
+      : `the Signal rig config is schema-INVALID: ${JSON.stringify(result.error.issues.slice(0, 5))}`,
+  ).toBe(true);
+  return result.success ? result.data : (undefined as never);
+}
+
+describe("CHAN2-02 Signal config writer — channels.signal.baseUrl is the redirect seam", () => {
+  it("writes channels.signal = { enabled:true, baseUrl:<baseUrl> } (the seam setup-channels-adapters reads)", () => {
+    const channels = signalRawDoc()["channels"] as Record<string, unknown> | undefined;
+    expect(channels, "channels block present in the Signal rig config").toBeDefined();
+    const signal = channels!["signal"] as Record<string, unknown> | undefined;
+    expect(signal, "channels.signal EXPLICITLY present (the seam block)").toBeDefined();
+    expect(signal!["enabled"]).toBe(true);
+    // The redirect seam: baseUrl == the loopback emulator apiRoot (config-only,
+    // ZERO product change — the daemon's createSignalPlugin targets it).
+    expect(signal!["baseUrl"]).toBe(SIGNAL_BASE_URL);
+    // And it validates to the same baseUrl through the real schema.
+    expect(signalValidConfig().channels.signal.baseUrl).toBe(SIGNAL_BASE_URL);
+    expect(signalValidConfig().channels.signal.enabled).toBe(true);
+  });
+
+  it("sets NO `account` (the boot is the GET /api/v1/check health-check only — credential-validator.ts:56)", () => {
+    const channels = signalRawDoc()["channels"] as Record<string, Record<string, unknown>>;
+    const signal = channels["signal"]!;
+    // Absent in the RAW doc — no account key written at all.
+    expect("account" in signal).toBe(false);
+    // The schema default leaves it undefined (optional) — no spoofed account.
+    expect(signalValidConfig().channels.signal.account).toBeUndefined();
+  });
+
+  it("does NOT write a channels.telegram block (the Signal writer is a distinct seam, not the telegram one)", () => {
+    const channels = signalRawDoc()["channels"] as Record<string, unknown>;
+    expect("telegram" in channels).toBe(false);
+  });
+
+  it("carries the SAME keyless ollama provider + the ≥32-char LITERAL gateway token block as the telegram writer", () => {
+    const doc = signalRawDoc();
+    // Keyless provider ($0/offline) — the same models.defaultProvider: ollama.
+    const models = doc["models"] as Record<string, unknown> | undefined;
+    expect(models?.["defaultProvider"]).toBe("ollama");
+    // The ≥32-char LITERAL gateway token (env-refs do NOT resolve for the test
+    // gateway — schema-gateway.ts:45 z.string().min(32)).
+    const cfg = signalValidConfig();
+    const token = cfg.gateway.tokens[0]!.secret;
+    expect(typeof token).toBe("string");
+    expect((token as string).length).toBeGreaterThanOrEqual(32);
+    // The agent runs on the keyless local provider (the same shape as telegram).
+    expect(cfg.agents["default"]!.provider).toBe("keyless-local");
+  });
+
+  it("the produced Signal YAML stays schema-VALID through the real AppConfigSchema (a misplaced key → loud fail)", () => {
+    signalValidConfig();
+  });
+});
+
+describe("CHAN2-02 Signal config writer — rig-config.ts stays @comis/*-free (the detached-tsx + published-graph constraint)", () => {
+  it("rig-config.ts has NO `from \"@comis/...\"` import (the detached rig-daemon imports it under bare tsx)", () => {
+    // T-209-13: a `@comis/*` edge would break the detached rig (bare tsx cannot
+    // resolve the alias) AND is a published-graph concern. Assert the SOURCE has
+    // no such import (the Signal writer is plain-string only).
+    const rigConfigPath = fileURLToPath(new URL("./rig-config.ts", import.meta.url));
+    const source = readFileSync(rigConfigPath, "utf-8");
+    expect(source.includes('from "@comis/')).toBe(false);
+  });
+});
+
+describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICAL (the regression guard, T-209-14)", () => {
+  it("buildConfigYaml still writes channels.telegram with the apiRoot seam (the Signal writer is additive)", () => {
+    // The telegram path is INVIOLATE (205-04). The existing telegram config-shape
+    // assertions above already pin its content; this re-asserts the seam survives
+    // alongside the new Signal writer.
+    const tgYaml = buildConfigYaml(APP_ROOT, GATEWAY_PORT, "keyless");
+    expect(tgYaml.includes("channels:\n  telegram:")).toBe(true);
+    expect(tgYaml.includes(`apiRoot: "${APP_ROOT}"`)).toBe(true);
+    // And the telegram writer does NOT emit a channels.signal block.
+    expect(tgYaml.includes("channels.signal")).toBe(false);
+    expect(tgYaml.includes("\n  signal:")).toBe(false);
   });
 });
