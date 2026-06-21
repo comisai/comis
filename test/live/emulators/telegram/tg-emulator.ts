@@ -182,6 +182,39 @@ export interface ChatRef {
 }
 
 /**
+ * The Telegram error envelope a fault returns (FAULT-01). Mirrors the real Bot
+ * API's failure shape `{ ok:false, error_code, description, parameters? }` —
+ * NOT `okEnvelope`'s `{ ok:true, result }`. The real grammy adapter turns this
+ * into a thrown `GrammyError` (`.error_code`/`.description`/`.parameters`
+ * structural; `.message` = `Call to '<method>' failed! (<code>: <desc>)`), which
+ * the four adapter fallbacks + `classifyTelegramError` key on.
+ */
+export interface TgFault {
+  /** The Telegram error code (e.g. 400/403/429). */
+  readonly error_code: number;
+  /** The error description — the fallbacks match substrings of this (e.g. "VOICE_MESSAGES_FORBIDDEN"). */
+  readonly description: string;
+  /** Optional Telegram parameters (e.g. `{ retry_after }` for a 429 → @grammyjs/auto-retry). */
+  readonly parameters?: Record<string, unknown>;
+}
+
+/**
+ * Options for {@link TgEmulator.fail} (FAULT-01).
+ *   - `once`     — fail only the NEXT matching call, then auto-clear so the
+ *                  adapter's RETRY (the second call) succeeds; the recorded
+ *                  retry outbound is what a fallback assertion reads.
+ *   - `matchChat`— scope the fault to one chat id (read from the request
+ *                  `chat_id`); calls to other chats are unaffected. Unset → the
+ *                  fault applies to every call of the method.
+ */
+export interface FailOpts {
+  /** Fail only the next matching call (then auto-clear) — lets the retry succeed. */
+  readonly once?: boolean;
+  /** Restrict the fault to this chat id (unset → all chats). */
+  readonly matchChat?: number;
+}
+
+/**
  * A group member / sender shape (GROUP-01). The same loose `{ id, firstName,
  * username? }` the inject verbs accept — `createGroupChat` records the member
  * set + the admin subset so COVER-01's `getChatAdministrators` (Plan 03) can
@@ -376,6 +409,18 @@ export interface TgEmulator extends ChannelEmulator {
    * @returns the minted `{ fileId, fileUniqueId, filePath }`.
    */
   storeFile(kind: MediaKind, bytes: Buffer, meta?: MediaMeta): StoredFileHandle;
+  /**
+   * Inject a fault (FAULT-01): make the Bot-API `method` return the Telegram
+   * error envelope `{ ok:false, error_code, description, parameters? }` instead
+   * of its normal `okEnvelope`, so the REAL adapter hits the error and runs its
+   * fallback (parse_mode retry / thread-not-found retry / voice→document /
+   * reaction safe-emoji chain). Honors `once` (fail the next call, then
+   * auto-clear so the retry succeeds) and `matchChat` (scope to one chat).
+   * Setting a fault for a method REPLACES any prior fault for that method.
+   */
+  fail(method: string, error: TgFault, opts?: FailOpts): void;
+  /** Clear ALL injected faults (called between cases, like {@link resetChat}). */
+  clearFaults(): void;
 }
 
 /** Options for {@link createTgEmulator}. */
@@ -608,6 +653,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // Group chat id source (the NEGATIVE `-100…` Telegram supergroup form) when a
   // caller does not pin one. Decrements so successive groups get distinct ids.
   let nextGroupChatSeq = 1;
+  // FAULT-01: per-method fault map. Before a Bot-API method returns its
+  // okEnvelope, `maybeFault` consults this map; a matching fault (honoring
+  // once/matchChat) returns the Telegram error envelope instead so the REAL
+  // adapter runs its fallback. An empty map (the default) leaves every method
+  // unchanged — existing scenarios are unaffected.
+  const faults = new Map<string, { error: TgFault; once?: boolean; matchChat?: number }>();
   // De-risk (RESEARCH A1/A2): optionally log the FIRST getUpdates request once
   // to confirm the offset transport + the runner's timeout by observation. Off
   // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
@@ -798,9 +849,41 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // Bot-API method table (registered on the http-backend native dispatch)
   // -------------------------------------------------------------------------
 
+  /**
+   * FAULT-01 — if a fault is set for `method` and it applies to this call
+   * (`matchChat` unset OR equal to the request `chat_id`), return the Telegram
+   * error envelope `{ ok:false, error_code, description, parameters? }` and, when
+   * `once`, delete the entry so the NEXT call (the adapter's retry) succeeds.
+   * Returns `undefined` when no fault applies (the method proceeds normally).
+   */
+  function maybeFault(method: string, body: Record<string, unknown>): RouteResult | undefined {
+    const fault = faults.get(method);
+    if (fault === undefined) return undefined;
+    if (fault.matchChat !== undefined) {
+      const chatId = Number(body["chat_id"] ?? NaN);
+      if (chatId !== fault.matchChat) return undefined;
+    }
+    if (fault.once) faults.delete(method);
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        error_code: fault.error.error_code,
+        description: fault.error.description,
+        ...(fault.error.parameters !== undefined ? { parameters: fault.error.parameters } : {}),
+      },
+    };
+  }
+
   function dispatch(method: string, ctx: { body: string; query: string }): RouteResult | Promise<RouteResult> {
     const body = parseBody(ctx.body);
     const query = new URLSearchParams(ctx.query);
+
+    // FAULT-01: consult the fault map BEFORE the method runs. A matching fault
+    // returns the Telegram error envelope so the REAL adapter hits the error and
+    // runs its fallback; no fault → the method proceeds to its okEnvelope.
+    const faulted = maybeFault(method, body);
+    if (faulted !== undefined) return faulted;
 
     switch (method) {
       case "getMe":
@@ -1237,6 +1320,20 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
 
     storeFile(kind, bytes, meta) {
       return storeFile(kind, bytes, meta);
+    },
+
+    fail(method, error, opts) {
+      // Replace any prior fault for this method (last-writer-wins). The map is
+      // consulted by `maybeFault` before the method's okEnvelope.
+      faults.set(method, {
+        error,
+        ...(opts?.once !== undefined ? { once: opts.once } : {}),
+        ...(opts?.matchChat !== undefined ? { matchChat: opts.matchChat } : {}),
+      });
+    },
+
+    clearFaults() {
+      faults.clear();
     },
   };
 

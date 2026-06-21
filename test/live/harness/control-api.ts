@@ -47,7 +47,7 @@ import type {
   HttpBackend,
   RouteResult,
 } from "./backends/http-backend.js";
-import type { MediaMeta, PlaceInput, RecordedOutbound } from "../emulators/telegram/tg-emulator.js";
+import type { FailOpts, MediaMeta, PlaceInput, RecordedOutbound, TgFault } from "../emulators/telegram/tg-emulator.js";
 import type { MediaKind } from "../emulators/telegram/tg-payloads.js";
 
 /**
@@ -138,6 +138,16 @@ export interface ControlEmulator {
   ): void;
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: { readonly chatId: number }): readonly RecordedOutbound[];
+  /**
+   * Inject a fault (FAULT-01): make the Bot-API `method` return the Telegram
+   * error envelope on demand so the REAL adapter runs its fallback. Honors
+   * `once` (fail the next call, then auto-clear so the retry succeeds) and
+   * `matchChat` (scope to one chat). The out-of-process `POST /control/faults`
+   * path; the in-process scenario calls this directly.
+   */
+  fail(method: string, error: TgFault, opts?: FailOpts): void;
+  /** Clear ALL injected faults (the `DELETE /control/faults` path). */
+  clearFaults(): void;
 }
 
 /** Parameters for the inject handler / `ControlClient.injectMessage`. */
@@ -316,6 +326,18 @@ export interface ControlClient {
    * `waitForReply` shape the rig surfaces.
    */
   waitForReply(params: WaitForOutboundParams): Promise<RecordedOutbound | undefined>;
+  /**
+   * Inject a fault (FAULT-01) — the in-process equivalent of
+   * `POST /control/faults`. Calls the SAME `handleSetFault` the HTTP route does
+   * (in-proc == HTTP parity); makes the Bot-API `method` return the Telegram
+   * error envelope so the REAL adapter runs its fallback.
+   */
+  setFault(method: string, error: TgFault, opts?: FailOpts): void;
+  /**
+   * Clear ALL injected faults — the in-process equivalent of
+   * `DELETE /control/faults`. Calls the SAME `handleClearFaults`.
+   */
+  clearFaults(): void;
 }
 
 /** A short poll interval (ms) for the reply-wait. Small enough that a block-then-resolve wakes promptly. */
@@ -424,6 +446,8 @@ const CHAT_LOCATION_PATH = /^\/control\/chats\/(-?\d+)\/location\/?$/;
 const CHAT_CALLBACKS_PATH = /^\/control\/chats\/(-?\d+)\/callbacks\/?$/;
 /** The `/control/chats/:id/edits` path → the captured chat id (INTERACT-02, Phase 207). */
 const CHAT_EDITS_PATH = /^\/control\/chats\/(-?\d+)\/edits\/?$/;
+/** The `/control/faults` path — POST sets a fault, DELETE clears all (FAULT-01, Phase 208). */
+const FAULTS_PATH = /^\/control\/faults\/?$/;
 
 /**
  * Register the generic `/control/*` API on the shared http-backend `backend` and
@@ -557,6 +581,24 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       params.newText,
       { id: params.fromUserId, firstName: `user_${params.fromUserId}` },
     );
+    return { ok: true };
+  }
+
+  /**
+   * POST /control/faults — inject a fault on a Bot-API method (FAULT-01). The
+   * ONE handler both the HTTP route and the in-proc client invoke (structural
+   * parity, mirroring handleInject). Makes `method` return the Telegram error
+   * envelope so the REAL adapter runs its fallback (§4.6 row:
+   * `{ method, error, opts? } → { ok }`).
+   */
+  function handleSetFault(method: string, error: TgFault, opts?: FailOpts): { ok: true } {
+    emulator.fail(method, error, opts);
+    return { ok: true };
+  }
+
+  /** DELETE /control/faults — clear ALL injected faults (FAULT-01). */
+  function handleClearFaults(): { ok: true } {
+    emulator.clearFaults();
     return { ok: true };
   }
 
@@ -732,6 +774,54 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectEdit(chatId, { messageId, newText, fromUserId }) };
     }
 
+    // POST /control/faults (inject a fault — FAULT-01) / DELETE (clear all)
+    const faultsMatch = ctx.path.match(FAULTS_PATH);
+    if (faultsMatch && ctx.httpMethod === "POST") {
+      const body = parseControlBody(ctx.body);
+      const method = toStr(body["method"]);
+      // The error envelope is a nested object { error_code, description, parameters? }.
+      const rawError = body["error"];
+      const error =
+        rawError !== undefined && rawError !== null && typeof rawError === "object"
+          ? (rawError as Record<string, unknown>)
+          : undefined;
+      const errorCode = error !== undefined ? toNum(error["error_code"]) : undefined;
+      const description = error !== undefined ? toStr(error["description"]) : undefined;
+      if (method === undefined || error === undefined || errorCode === undefined || description === undefined) {
+        // Bad input → 400 (defensive; never crash — T-204-12 parity).
+        return {
+          status: 400,
+          body: {
+            ok: false,
+            error: "method (string) and error:{ error_code (number), description (string) } are required",
+          },
+        };
+      }
+      // Resolve the optional parameters + opts (matchChat / once).
+      const rawParams = error["parameters"];
+      const fault: TgFault = {
+        error_code: errorCode,
+        description,
+        ...(rawParams !== undefined && rawParams !== null && typeof rawParams === "object"
+          ? { parameters: rawParams as Record<string, unknown> }
+          : {}),
+      };
+      const rawOpts =
+        body["opts"] !== undefined && body["opts"] !== null && typeof body["opts"] === "object"
+          ? (body["opts"] as Record<string, unknown>)
+          : {};
+      const once = rawOpts["once"] === true || rawOpts["once"] === "true";
+      const matchChat = toNum(rawOpts["matchChat"]);
+      const opts: FailOpts = {
+        ...(once ? { once: true } : {}),
+        ...(matchChat !== undefined ? { matchChat } : {}),
+      };
+      return { status: 200, body: handleSetFault(method, fault, opts) };
+    }
+    if (faultsMatch && ctx.httpMethod === "DELETE") {
+      return { status: 200, body: handleClearFaults() };
+    }
+
     // GET /control/chats/:id/outbound?afterMessageId&waitMs (the reply-wait)
     const outboundMatch = ctx.path.match(CHAT_OUTBOUND_PATH);
     if (outboundMatch && ctx.httpMethod === "GET") {
@@ -831,6 +921,14 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
     async waitForReply(params) {
       const outbounds = await handleOutbound(params.chatId, params.afterMessageId, params.waitMs);
       return outbounds[0];
+    },
+    setFault(method, error, opts) {
+      // The SAME handler the HTTP route calls (in-process == HTTP parity).
+      handleSetFault(method, error, opts);
+    },
+    clearFaults() {
+      // The SAME handler the HTTP route calls (in-process == HTTP parity).
+      handleClearFaults();
     },
   };
 
