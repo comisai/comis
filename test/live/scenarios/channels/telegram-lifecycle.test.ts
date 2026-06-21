@@ -118,11 +118,10 @@ describe("AUTO-02 Stage-B — restart() awaits cleanup() before the re-boot (the
 
     await controller.restart();
 
-    // RED (intentional, this commit): the load-bearing ordering is cleanup BEFORE
-    // boot (so the activeHandle double-start guard can never deadlock). This first
-    // asserts the WRONG order so the failing state is reproducible from this commit
-    // alone; GREEN flips it to the correct ['cleanup','boot'].
-    expect(order).toEqual(["boot", "cleanup"]);
+    // The load-bearing ordering: cleanup() resolved BEFORE boot was called (so a
+    // real startTestDaemon would never throw "Test daemon already running" — the
+    // activeHandle double-start guard can never deadlock, Pitfall 1).
+    expect(order).toEqual(["cleanup", "boot"]);
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(bootFn).toHaveBeenCalledTimes(1);
     // The emulator instance is PRESERVED across the re-boot (success-criterion #5).
