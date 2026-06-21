@@ -36,9 +36,11 @@
 
 import type {
   CallbackQuery,
+  Chat,
   Document,
   Location,
   Message,
+  MessageEntity,
   PhotoSize,
   ReactionTypeEmoji,
   Update,
@@ -90,7 +92,54 @@ export function makeBotUser(opts: MakeUserOptions): User {
 }
 
 /**
+ * Options for {@link makeGroupChat} (GROUP-01, Phase 208).
+ */
+export interface MakeGroupChatOptions {
+  /** The Telegram chat id — a NEGATIVE id for groups (the `-100…` supergroup form). */
+  readonly id: number;
+  /** `group` (basic) or `supergroup` (the modern form; forums are always supergroups). */
+  readonly type: "group" | "supergroup";
+  /** When true, set `is_forum: true` — what the mapper reads to derive chatType "forum" (message-mapper.ts:147). */
+  readonly isForum?: boolean;
+}
+
+/**
+ * Build a grammy group/supergroup/forum `Chat` (GROUP-01). Every prior builder
+ * hardcoded `type: "private"`; this is the group/forum seed the addressing +
+ * thread surface needs.
+ *
+ * The return is the grammy `Chat.GroupChat | Chat.SupergroupChat` union (the I4
+ * drift tripwire AND the exact type `Message.chat` accepts — never the wider
+ * `Chat` that also admits a `ChannelChat`). A forum is a `supergroup` carrying
+ * `is_forum: true` (what `message-mapper.ts:147` reads to derive
+ * `chatType: "forum"`). `is_forum` is set only when `isForum` is true
+ * (exactOptionalPropertyTypes — an absent flag is NOT `: undefined`). grammy's
+ * `GroupChat`/`SupergroupChat` require `title`, so a deterministic title is
+ * minted from the id.
+ */
+export function makeGroupChat(opts: MakeGroupChatOptions): Chat.GroupChat | Chat.SupergroupChat {
+  if (opts.type === "group") {
+    return { id: opts.id, type: "group", title: `group ${opts.id}` };
+  }
+  // supergroup (forums are always supergroups).
+  return {
+    id: opts.id,
+    type: "supergroup",
+    title: `supergroup ${opts.id}`,
+    ...(opts.isForum === true ? { is_forum: true } : {}),
+  };
+}
+
+/**
  * Options for {@link makeMessageUpdate}.
+ *
+ * Phase 208 (GROUP-01/02) adds four OPTIONAL addressing fields — each defaults
+ * to the pre-208 behaviour so the DM round-trip is byte-identical:
+ *  - `chat` overrides the default `private` literal with a group/forum `Chat`.
+ *  - `entities` carries `mention`/`text_mention`/`bot_command` entities
+ *    (`detectBotAddressing` reads them → `isBotMentioned`/`isBotCommand`).
+ *  - `replyToMessage` sets `reply_to_message` (→ `replyToBot` when the author is the bot).
+ *  - `messageThreadId` sets `message_thread_id` (the forum topic the thread resolver reads).
  */
 export interface MakeMessageUpdateOptions {
   /** The Update's unique, monotonically-increasing id (the caller owns the counter; see {@link nextUpdateId}). */
@@ -99,10 +148,18 @@ export interface MakeMessageUpdateOptions {
   readonly messageId: number;
   /** The (human) sender — built via {@link makeUser}. */
   readonly from: User;
-  /** The private-chat id this DM belongs to. */
+  /** The chat id this message belongs to (a NEGATIVE id for groups). */
   readonly chatId: number;
   /** The message text. */
   readonly text: string;
+  /** Override the default `private` chat literal with a group/forum chat (GROUP-01; default = DM private). The non-channel chat union grammy's `Update.message.chat` accepts (no `ChannelChat`). */
+  readonly chat?: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat;
+  /** Message entities (mention/text_mention/bot_command) the addressing detector reads (GROUP-02). Omitted when absent. */
+  readonly entities?: MessageEntity[];
+  /** A `reply_to_message` (→ `replyToBot` when its author is the bot, GROUP-02). Omitted when absent. */
+  readonly replyToMessage?: Message;
+  /** A `message_thread_id` (the forum topic id the thread resolver reads, GROUP-01). Omitted when absent. */
+  readonly messageThreadId?: number;
 }
 
 /**
@@ -125,19 +182,35 @@ export interface MakeMessageUpdateOptions {
  * naming a kind is not a false hit.
  */
 export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
+  // GROUP-01: when `chat` is supplied it overrides the DM literal (a group/forum
+  // chat); otherwise the pre-208 `private` literal is preserved verbatim
+  // (grammy's `Chat.PrivateChat` REQUIRES `first_name` — in a DM the chat IS the
+  // sender, so it mirrors `from`; the `: Update` annotation surfaces any drift, I4).
+  const chat: Chat.PrivateChat | Chat.GroupChat | Chat.SupergroupChat =
+    opts.chat ?? { id: opts.chatId, type: "private", first_name: opts.from.first_name };
+  // GROUP-02: the addressing fields, each present ONLY when supplied. grammy
+  // types `Message.reply_to_message` as `ReplyMessage` (a `Message` with the
+  // nested reply forced absent — a reply cannot itself nest a reply); the
+  // builder-supplied non-reply `Message` is exactly that shape, so it is widened
+  // to the field type `Message["reply_to_message"]` for the assignment (no
+  // explicit `: undefined`, which exactOptionalPropertyTypes would reject).
+  const addressing: Partial<Pick<Message, "entities" | "reply_to_message" | "message_thread_id">> = {
+    ...(opts.entities !== undefined ? { entities: opts.entities } : {}),
+    ...(opts.replyToMessage !== undefined
+      ? { reply_to_message: opts.replyToMessage as NonNullable<Message["reply_to_message"]> }
+      : {}),
+    ...(opts.messageThreadId !== undefined ? { message_thread_id: opts.messageThreadId } : {}),
+  };
   return {
     update_id: opts.updateId,
     message: {
       message_id: opts.messageId,
       from: opts.from,
-      // grammy's `Chat.PrivateChat` REQUIRES `first_name` (the other party in a
-      // DM). In a private chat the chat IS the sender, so it mirrors `from`.
-      // (The untyped mock omits this and compiles by accident — exactly the
-      // drift the `: Update` annotation surfaces; I4.)
-      chat: { id: opts.chatId, type: "private", first_name: opts.from.first_name },
+      chat,
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000 (§4.2).
       date: Math.floor(Date.now() / 1000),
       text: opts.text,
+      ...addressing,
     },
   };
 }

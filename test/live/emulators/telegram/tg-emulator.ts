@@ -44,7 +44,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import type { ReactionTypeEmoji, Update, User } from "grammy/types";
+import type { Chat, Message, MessageEntity, ReactionTypeEmoji, Update, User } from "grammy/types";
 import {
   createHttpBackend,
   type HttpBackend,
@@ -56,6 +56,7 @@ import {
   makeBotUser,
   makeCallbackUpdate,
   makeEditUpdate,
+  makeGroupChat,
   makeLocationUpdate,
   makeMediaUpdate,
   makeMessageUpdate,
@@ -181,6 +182,73 @@ export interface ChatRef {
 }
 
 /**
+ * A group member / sender shape (GROUP-01). The same loose `{ id, firstName,
+ * username? }` the inject verbs accept — `createGroupChat` records the member
+ * set + the admin subset so COVER-01's `getChatAdministrators` (Plan 03) can
+ * report the seed and the rig can drive multi-user cross-talk.
+ */
+export interface GroupMember {
+  readonly id: number;
+  readonly firstName: string;
+  readonly username?: string;
+}
+
+/**
+ * Options for {@link TgEmulator.createGroupChat} (GROUP-01). `supergroup`
+ * upgrades the chat to a supergroup; `forum: true` (always a supergroup) sets
+ * the `is_forum` flag the mapper reads. `admins` seeds the admin subset
+ * (recorded for a Plan-03 `getChatAdministrators`); `chatId` pins a specific
+ * NEGATIVE id (else one is minted).
+ */
+export interface CreateGroupChatOptions {
+  /** The chat members (distinct senders for group cross-talk). */
+  readonly members: readonly GroupMember[];
+  /** The bot identity (recorded; the mention/command builders address `@<bot.username>`). */
+  readonly bot?: GroupMember;
+  /** Upgrade to a supergroup (the modern form; forums are always supergroups). */
+  readonly supergroup?: boolean;
+  /** Mark as a forum (sets `is_forum`; implies supergroup). */
+  readonly forum?: boolean;
+  /** The admin subset (recorded for the Plan-03 `getChatAdministrators` seed). */
+  readonly admins?: readonly GroupMember[];
+  /** Pin a specific NEGATIVE chat id (else one is minted in the `-100…` form). */
+  readonly chatId?: number;
+}
+
+/**
+ * A reference to a forum topic (GROUP-01) — the `message_thread_id` an
+ * {@link TgEmulator.injectMessage} `thread` opt routes to.
+ */
+export interface ThreadRef {
+  /** The chat the topic lives in. */
+  readonly chatId: number;
+  /** The forum topic's `message_thread_id`. */
+  readonly threadId: number;
+  /** The topic name (`createForumTopic(chat, name)`). */
+  readonly name: string;
+}
+
+/**
+ * Addressing/threading options for {@link TgEmulator.injectMessage} (GROUP-02).
+ * Every field is OPTIONAL — an empty/absent `InjectOpts` is byte-identical to the
+ * pre-208 single-arg DM call. Mutually composable.
+ */
+export interface InjectOpts {
+  /** Add a `mention` entity over `@<bot.username>` (→ `isBotMentioned`). */
+  readonly mention?: boolean;
+  /** Add a `bot_command` entity over the leading `/cmd[@bot]` token (→ `isBotCommand`). */
+  readonly command?: boolean;
+  /** Set `reply_to_message` to a bot-authored message with this id (→ `replyToBot`). */
+  readonly replyTo?: number;
+  /** Set `reply_to_message` to a message authored by this NON-bot user id (a reply to another member, NOT the bot). */
+  readonly replyToUser?: number;
+  /** Set `message_thread_id` (the forum topic the thread resolver reads). */
+  readonly thread?: number;
+  /** Mark the message text as a spoiler (the inbound spoiler flag). */
+  readonly spoiler?: boolean;
+}
+
+/**
  * `TgEmulator` — `ChannelEmulator` + the Telegram-specific inject/read verbs
  * the rig and scenario tests drive. `start()`/`stop()` (from `ChannelEmulator`)
  * delegate to the http-backend base.
@@ -196,11 +264,37 @@ export interface TgEmulator extends ChannelEmulator {
    */
   readonly backend: HttpBackend;
   /**
+   * Create a group/supergroup/forum chat (GROUP-01) — records the member set +
+   * the admin subset (for a Plan-03 `getChatAdministrators` seed) + the
+   * forum/bot metadata, and returns a {@link ChatRef} carrying a NEGATIVE chat
+   * id (the `-100…` supergroup form). The recorded chat shape is what
+   * {@link injectMessage} stamps onto group message updates.
+   */
+  createGroupChat(opts: CreateGroupChatOptions): ChatRef;
+  /**
+   * Create a forum topic in a (forum) supergroup (GROUP-01) — mints a
+   * `message_thread_id` and returns a {@link ThreadRef} the
+   * {@link injectMessage} `thread` opt routes to.
+   */
+  createForumTopic(chat: ChatRef, name: string): ThreadRef;
+  /**
    * Queue an inbound text message from `from` in `chat` for the next
    * `getUpdates` long-poll (builds a grammy-typed `Update` via `tg-payloads`).
+   *
+   * With no `opts` (or an empty one) this is the pre-208 DM call — the chat is
+   * the `private` literal and no addressing fields are set (back-compat). When
+   * `chat` is a group created via {@link createGroupChat}, the recorded group/
+   * forum chat shape is stamped on; `opts` threads the addressing entities
+   * (mention/command), the `reply_to_message` (replyTo/replyToUser), and the
+   * `message_thread_id` (thread) the mapper's addressing + thread resolvers read.
    * @returns the minted `message_id` of the injected update.
    */
-  injectMessage(chat: ChatRef, from: { id: number; firstName: string; username?: string }, text: string): number;
+  injectMessage(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    text: string,
+    opts?: InjectOpts,
+  ): number;
   /**
    * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`) for
    * the next `getUpdates` long-poll (builds a grammy-typed `message_reaction`
@@ -369,6 +463,87 @@ function readNum(
 const okEnvelope = (result: unknown): RouteResult => ({ status: 200, body: { ok: true, result } });
 
 /**
+ * The emulator's stable bot identity (matches the `getMe` envelope below). Used
+ * to author the `reply_to_message` a `replyTo` opt points at, so the mapper's
+ * `detectBotAddressing` flips `replyToBot` (it compares `reply_to_message.from.id`
+ * to the bot id).
+ */
+const EMULATOR_BOT_IDENTITY = { id: 12345, firstName: "TestBot", username: "test_bot" } as const;
+
+/**
+ * Build the GROUP-02 addressing fields (`entities` + `reply_to_message`) for an
+ * injected group message from its {@link InjectOpts}. Mirrors exactly what the
+ * REAL adapter's `detectBotAddressing` reads (message-mapper.ts:40-104):
+ *  - `mention`     → a `mention` entity spanning `@<bot.username>` in the text.
+ *  - `command`     → a `bot_command` entity spanning the leading `/cmd[@bot]` token.
+ *  - `replyTo`     → a `reply_to_message` authored BY the bot (→ replyToBot).
+ *  - `replyToUser` → a `reply_to_message` authored by a NON-bot member (NOT the bot).
+ *
+ * Returns only the fields that apply (undefined → the builder omits them,
+ * keeping the exactOptionalPropertyTypes discipline). `bot` defaults to the
+ * emulator's identity so a mention/command addresses `@test_bot` even when the
+ * caller did not pass a bot to `createGroupChat`.
+ */
+function buildInjectAddressing(
+  text: string,
+  opts: InjectOpts | undefined,
+  bot: GroupMember | undefined,
+): { entities?: MessageEntity[]; replyToMessage?: Message } {
+  if (opts === undefined) return {};
+  const botUsername = bot?.username ?? EMULATOR_BOT_IDENTITY.username;
+  const entities: MessageEntity[] = [];
+
+  if (opts.mention === true) {
+    // Locate `@<botUsername>` in the text; default to offset 0 / the handle
+    // length when it is not literally present (the caller is responsible for
+    // including it, like a real client, but a missing handle still yields a
+    // well-formed entity the detector compares against).
+    const handle = `@${botUsername}`;
+    const idx = text.indexOf(handle);
+    const offset = idx >= 0 ? idx : 0;
+    const length = idx >= 0 ? handle.length : handle.length;
+    entities.push({ type: "mention", offset, length });
+  }
+
+  if (opts.command === true) {
+    // The leading `/cmd` or `/cmd@bot` token — a bot_command entity from offset 0
+    // spanning the first whitespace-delimited token.
+    const firstToken = text.split(/\s/)[0] ?? text;
+    entities.push({ type: "bot_command", offset: 0, length: firstToken.length });
+  }
+
+  const result: { entities?: MessageEntity[]; replyToMessage?: Message } = {};
+  if (entities.length > 0) result.entities = entities;
+
+  // reply_to_message: replyTo → a bot-authored message (the mapper's
+  // detectBotAddressing flips replyToBot because reply_to_message.from.id === bot
+  // id). The nested chat id is immaterial — only `from.id` is read — so a 0 chat
+  // is fine. replyToUser → a reply to ANOTHER member (a non-bot author), which
+  // must NOT flip replyToBot.
+  if (opts.replyTo !== undefined) {
+    result.replyToMessage = makeBotMessage({
+      messageId: opts.replyTo,
+      chatId: 0,
+      botUser: makeBotUser({
+        id: EMULATOR_BOT_IDENTITY.id,
+        firstName: EMULATOR_BOT_IDENTITY.firstName,
+        username: EMULATOR_BOT_IDENTITY.username,
+      }),
+    });
+  } else if (opts.replyToUser !== undefined) {
+    const replyUser: User = makeUser({ id: opts.replyToUser, firstName: `user_${opts.replyToUser}` });
+    result.replyToMessage = {
+      message_id: 0,
+      from: replyUser,
+      chat: { id: 0, type: "private", first_name: replyUser.first_name },
+      date: Math.floor(Date.now() / 1000),
+    };
+  }
+
+  return result;
+}
+
+/**
  * The per-kind `file_path` segment + default content-type (MEDIA-01). The path
  * is what Telegram's `getFile` returns and the route is keyed on; the
  * content-type is what the binary file route serves (overridable by an explicit
@@ -418,6 +593,21 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   let pending: Update[] = [];
   const waiters: PollWaiter[] = [];
   let nextMessageId = 100;
+  // GROUP-01: per-chat group metadata (the recorded chat shape + members +
+  // admins + bot identity). `injectMessage` stamps the recorded `Chat` onto a
+  // group message so the mapper derives chatType group|forum + reads is_forum;
+  // a chat with no group record is a DM (the `private` literal — back-compat).
+  const groupChats = new Map<
+    number,
+    { chat: Chat.GroupChat | Chat.SupergroupChat; members: GroupMember[]; admins: GroupMember[]; bot?: GroupMember }
+  >();
+  // Forum topic id source — strictly above the General Topic (id=1), so a minted
+  // custom topic never collides with the implicit General topic the mapper
+  // defaults to (thread-context.ts:17,71).
+  let nextThreadId = 2;
+  // Group chat id source (the NEGATIVE `-100…` Telegram supergroup form) when a
+  // caller does not pin one. Decrements so successive groups get distinct ids.
+  let nextGroupChatSeq = 1;
   // De-risk (RESEARCH A1/A2): optionally log the FIRST getUpdates request once
   // to confirm the offset transport + the runner's timeout by observation. Off
   // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
@@ -808,19 +998,31 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       return backend.stop();
     },
 
-    injectMessage(chat, from, text) {
+    injectMessage(chat, from, text, opts) {
       const messageId = nextMessageId++;
       const user: User = makeUser({
         id: from.id,
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
+      // GROUP-01: if this chat was created via createGroupChat, stamp the recorded
+      // group/forum `Chat` so the mapper derives chatType group|forum + reads
+      // is_forum. A chat with no group record is a DM (the builder's `private`
+      // literal default — back-compat).
+      const group = groupChats.get(chat.chatId);
+      // GROUP-02 addressing: build the entities / reply_to_message the mapper's
+      // detectBotAddressing reads, from the InjectOpts.
+      const addressing = buildInjectAddressing(text, opts, group?.bot);
       const update = makeMessageUpdate({
         updateId: nextUpdateId(),
         messageId,
         from: user,
         chatId: chat.chatId,
         text,
+        ...(group !== undefined ? { chat: group.chat } : {}),
+        ...(addressing.entities !== undefined ? { entities: addressing.entities } : {}),
+        ...(addressing.replyToMessage !== undefined ? { replyToMessage: addressing.replyToMessage } : {}),
+        ...(opts?.thread !== undefined ? { messageThreadId: opts.thread } : {}),
       });
       // Ensure the oracle exists for this chat so `outbound()` is never a silent
       // empty for a chat the driver has injected into.
@@ -831,6 +1033,29 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       // Wake a blocked long-poll, if any, so the SAME call resolves.
       wakeWaiters();
       return messageId;
+    },
+
+    createGroupChat(opts) {
+      // Mint a NEGATIVE supergroup-form id (`-100…`) unless the caller pins one.
+      const chatId = opts.chatId ?? -(1_000_000_000_000 + nextGroupChatSeq++);
+      const type: "group" | "supergroup" = opts.supergroup || opts.forum ? "supergroup" : "group";
+      const chat = makeGroupChat({ id: chatId, type, ...(opts.forum === true ? { isForum: true } : {}) });
+      groupChats.set(chatId, {
+        chat,
+        members: [...opts.members],
+        admins: opts.admins !== undefined ? [...opts.admins] : [],
+        ...(opts.bot !== undefined ? { bot: opts.bot } : {}),
+      });
+      // Ensure the oracle exists so outbound()/resetChat() are never silent.
+      chatOracle(chatId);
+      return { chatId };
+    },
+
+    createForumTopic(chat, name) {
+      // A custom forum topic gets a fresh message_thread_id strictly above the
+      // implicit General topic (id=1).
+      const threadId = nextThreadId++;
+      return { chatId: chat.chatId, threadId, name };
     },
 
     injectReaction(chat, from, botMessageId, emoji) {
