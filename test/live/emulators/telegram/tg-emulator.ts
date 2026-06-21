@@ -41,14 +41,14 @@
  * @module
  */
 
-import type { Update, User } from "grammy/types";
+import type { ReactionTypeEmoji, Update, User } from "grammy/types";
 import {
   createHttpBackend,
   type HttpBackend,
   type RouteResult,
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
-import { makeMessageUpdate, makeUser, nextUpdateId } from "./tg-payloads.js";
+import { makeMessageUpdate, makeReactionUpdate, makeUser, nextUpdateId } from "./tg-payloads.js";
 import { tgCaps } from "./tg-caps.js";
 
 /**
@@ -118,6 +118,21 @@ export interface TgEmulator extends ChannelEmulator {
    * @returns the minted `message_id` of the injected update.
    */
   injectMessage(chat: ChatRef, from: { id: number; firstName: string; username?: string }, text: string): number;
+  /**
+   * Queue an inbound reaction-ADD on an EXISTING bot reply (`botMessageId`) for
+   * the next `getUpdates` long-poll (builds a grammy-typed `message_reaction`
+   * `Update` via `tg-payloads`). Unlike {@link injectMessage} it mints NO
+   * `message_id` — the reacted-to message already exists — and returns `void`.
+   * The emitted Update trips the already-wired adapter handler
+   * (telegram-inbound.ts:266): the reactor is ≠ bot and the emoji is in
+   * `new_reaction` but absent from `old_reaction` (an ADD).
+   */
+  injectReaction(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    botMessageId: number,
+    emoji: ReactionTypeEmoji["emoji"],
+  ): void;
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: ChatRef): readonly RecordedOutbound[];
   /** The most-recent recorded outbound for a chat, or `undefined`. */
@@ -554,6 +569,32 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       return messageId;
     },
 
+    injectReaction(chat, from, botMessageId, emoji) {
+      const user: User = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      // NO nextMessageId++ — `botMessageId` is an EXISTING bot reply (the id
+      // recordOutboundMessage keyed the trajectory on); the reaction does not
+      // create a message. The builder emits a fresh ADD ([] → [{emoji}]).
+      const update = makeReactionUpdate({
+        updateId: nextUpdateId(),
+        messageId: botMessageId,
+        chatId: chat.chatId,
+        user,
+        emoji,
+      });
+      // Ensure the oracle exists for this chat (mirrors injectMessage).
+      chatOracle(chat.chatId);
+      pending.push(update);
+      // Keep the bot-global queue strictly ascending by update_id (monotonic).
+      pending.sort((a, b) => a.update_id - b.update_id);
+      // Wake a blocked long-poll, if any, so the SAME call resolves.
+      wakeWaiters();
+      // No message_id minted — the reacted-to message already exists (void).
+    },
+
     outbound(chat) {
       return chats.get(chat.chatId)?.outbound ?? [];
     },
@@ -570,6 +611,12 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     resetChat(chat) {
       chats.delete(chat.chatId);
       // Also drop this chat's pending updates from the bot-global queue.
+      // GOTCHA B (REACT-01): this filter keys on `u.message`. A
+      // `message_reaction` update (from injectReaction) has NO `.message`, so it
+      // is KEPT by the `: true` branch regardless of chat. For the REACT-01
+      // scenarios this is fine — they react then assert BEFORE any reset. If a
+      // future reset-after-reaction test is needed, extend the predicate to also
+      // match `u.message_reaction?.chat.id !== chat.chatId`.
       pending = pending.filter((u) => (u.message ? u.message.chat.id !== chat.chatId : true));
     },
   };
