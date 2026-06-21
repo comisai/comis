@@ -475,6 +475,560 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
   });
 
   // -------------------------------------------------------------------------
+  // POST /control/chats/:id/{media,location,callbacks,edits} — the four §4.6
+  // routes (Phase 207). Each mirrors the 206 reactions trio: ONE shared handler
+  // both the HTTP dispatch arm AND the in-proc ControlClient invoke, so an
+  // in-proc inject and an HTTP inject drive the matching emulator verb
+  // IDENTICALLY (in-proc == HTTP parity). The media byte payload travels as
+  // base64 inside the JSON body (decoded to a Buffer in the handler) — NO
+  // multipart parser (it stays in the existing parseControlBody JSON branch,
+  // AGENTS.md §2.3 stdlib-first). A SPY ControlEmulator records the four verbs'
+  // forwarded args so both paths can be asserted byte-identical and bad input
+  // can be confirmed to never reach the emulator.
+  // -------------------------------------------------------------------------
+  describe("POST /control/chats/:id/{media,location,callbacks,edits} (the four §4.6 routes — Phase 207)", () => {
+    /** A recorded injectMedia call (the args forwarded to the emulator). */
+    interface MediaCall {
+      readonly chat: { readonly chatId: number };
+      readonly from: { id: number; firstName: string; username?: string };
+      readonly kind: string;
+      readonly bytes: Buffer;
+      readonly meta?: Record<string, unknown>;
+    }
+    /** A recorded injectLocation call. */
+    interface LocationCall {
+      readonly chat: { readonly chatId: number };
+      readonly from: { id: number; firstName: string; username?: string };
+      readonly place: Record<string, unknown>;
+    }
+    /** A recorded injectCallback call. */
+    interface CallbackCall {
+      readonly chat: { readonly chatId: number };
+      readonly from: { id: number; firstName: string; username?: string };
+      readonly botMessageId: number;
+      readonly data: string;
+    }
+    /** A recorded injectEdit call. */
+    interface EditCall {
+      readonly chat: { readonly chatId: number };
+      readonly messageId: number;
+      readonly newText: string;
+      readonly from: { id: number; firstName: string; username?: string };
+    }
+
+    /**
+     * A spy ControlEmulator recording every injectMedia/injectLocation/
+     * injectCallback/injectEdit call so the test can assert the handlers forward
+     * args verbatim AND that the in-proc and HTTP paths produce an IDENTICAL
+     * emulator-side effect (one call per path). The media verb mints + returns a
+     * message_id (like injectMessage); the callback/edit verbs mint none (void).
+     */
+    function makeSpyControl(): {
+      client: ControlClient;
+      apiRoot: string;
+      mediaCalls: MediaCall[];
+      locationCalls: LocationCall[];
+      callbackCalls: CallbackCall[];
+      editCalls: EditCall[];
+      start(): Promise<void>;
+      stop(): Promise<void>;
+    } {
+      const mediaCalls: MediaCall[] = [];
+      const locationCalls: LocationCall[] = [];
+      const callbackCalls: CallbackCall[] = [];
+      const editCalls: EditCall[] = [];
+      let nextMessageId = 9000;
+      const hostEmu = createTgEmulator({ botToken: TOKEN });
+      const spyEmulator = {
+        injectMessage: (_chat: { readonly chatId: number }, _from: unknown, _text: string): number => 0,
+        outbound: (_chat: { readonly chatId: number }): readonly RecordedOutbound[] => [],
+        injectReaction: (): void => {},
+        injectMedia: (
+          chat: { readonly chatId: number },
+          from: { id: number; firstName: string; username?: string },
+          kind: string,
+          bytes: Buffer,
+          meta?: Record<string, unknown>,
+        ): number => {
+          mediaCalls.push({ chat, from, kind, bytes, ...(meta !== undefined ? { meta } : {}) });
+          return nextMessageId++;
+        },
+        injectLocation: (
+          chat: { readonly chatId: number },
+          from: { id: number; firstName: string; username?: string },
+          place: Record<string, unknown>,
+        ): number => {
+          locationCalls.push({ chat, from, place });
+          return nextMessageId++;
+        },
+        injectCallback: (
+          chat: { readonly chatId: number },
+          from: { id: number; firstName: string; username?: string },
+          botMessageId: number,
+          data: string,
+        ): void => {
+          callbackCalls.push({ chat, from, botMessageId, data });
+        },
+        injectEdit: (
+          chat: { readonly chatId: number },
+          messageId: number,
+          newText: string,
+          from: { id: number; firstName: string; username?: string },
+        ): void => {
+          editCalls.push({ chat, messageId, newText, from });
+        },
+      };
+      const spyClient = registerControlApi(hostEmu.backend, spyEmulator as never);
+      let root = "";
+      return {
+        client: spyClient,
+        get apiRoot() {
+          return root;
+        },
+        mediaCalls,
+        locationCalls,
+        callbackCalls,
+        editCalls,
+        async start() {
+          const h = await hostEmu.start();
+          root = h.apiRoot;
+        },
+        async stop() {
+          await hostEmu.stop();
+        },
+      };
+    }
+
+    // ---- media -------------------------------------------------------------
+    describe("POST /control/chats/:id/media (inject media — MEDIA-01/03)", () => {
+      it("drives emulator.injectMedia IDENTICALLY whether reached in-proc or over HTTP (parity), base64→Buffer", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const payload = Buffer.from("hello-media-bytes");
+          const fileBase64 = payload.toString("base64");
+          // In-proc: the typed ControlClient.injectMedia.
+          const inProcId = await spy.client.injectMedia({
+            chatId: CHAT_ID,
+            fromUserId: USER_ID,
+            kind: "photo",
+            fileBase64,
+          });
+          expect(typeof inProcId).toBe("number");
+          // HTTP: POST /control/chats/<id>/media.
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: USER_ID,
+            kind: "photo",
+            fileBase64,
+          });
+          expect(status).toBe(200);
+          const body = json as { ok?: boolean; messageId?: number };
+          expect(body.ok).toBe(true);
+          expect(typeof body.messageId).toBe("number");
+
+          // Both paths produced the SAME emulator-side effect: two identical calls.
+          expect(spy.mediaCalls).toHaveLength(2);
+          const [viaClient, viaHttp] = spy.mediaCalls;
+          expect(viaClient!.chat).toEqual({ chatId: CHAT_ID });
+          expect(viaClient!.kind).toBe("photo");
+          // The handler base64-DECODED fileBase64 → the original Buffer (not the string).
+          expect(Buffer.isBuffer(viaClient!.bytes)).toBe(true);
+          expect(viaClient!.bytes.equals(payload)).toBe(true);
+          expect(viaHttp!.bytes.equals(payload)).toBe(true);
+          expect(viaClient!.from).toEqual({ id: USER_ID, firstName: `user_${USER_ID}` });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("forwards the optional meta (fileName/mimeType/durationMs/spoiler) to injectMedia", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const fileBase64 = Buffer.from("doc-bytes").toString("base64");
+          await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: 111,
+            kind: "document",
+            fileBase64,
+            fileName: "report.pdf",
+            mimeType: "application/pdf",
+            durationMs: 4200,
+            spoiler: true,
+          });
+          expect(spy.mediaCalls).toHaveLength(1);
+          const call = spy.mediaCalls[0]!;
+          expect(call.kind).toBe("document");
+          expect(call.meta).toMatchObject({
+            fileName: "report.pdf",
+            mimeType: "application/pdf",
+            spoiler: true,
+          });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("returns 400 on an UNKNOWN media kind — never crashes, never reaches the emulator", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const fileBase64 = Buffer.from("x").toString("base64");
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: USER_ID,
+            kind: "hologram", // not in the closed MediaKind union
+            fileBase64,
+          });
+          expect(status).toBe(400);
+          expect(json).toMatchObject({ ok: false });
+          expect((json as { error?: unknown }).error).toBeTruthy();
+          expect(spy.mediaCalls).toHaveLength(0);
+          // The server stayed up — a follow-up valid request still works.
+          const ok = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: USER_ID,
+            kind: "voice",
+            fileBase64,
+          });
+          expect(ok.status).toBe(200);
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("returns 400 on a MISSING/NON-STRING fileBase64 — never crashes", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          // Missing fileBase64.
+          const missing = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: USER_ID,
+            kind: "photo",
+          });
+          expect(missing.status).toBe(400);
+          expect(missing.json).toMatchObject({ ok: false });
+          // Non-string fileBase64.
+          const nonString = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/media`, {
+            fromUserId: USER_ID,
+            kind: "photo",
+            fileBase64: 12345,
+          });
+          expect(nonString.status).toBe(400);
+          expect(spy.mediaCalls).toHaveLength(0);
+        } finally {
+          await spy.stop();
+        }
+      });
+    });
+
+    // ---- location ----------------------------------------------------------
+    describe("POST /control/chats/:id/location (inject location/venue — MEDIA-01)", () => {
+      it("drives emulator.injectLocation IDENTICALLY in-proc and over HTTP (parity), plain point", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const inProcId = await spy.client.injectLocation({
+            chatId: CHAT_ID,
+            fromUserId: USER_ID,
+            latitude: 51.5,
+            longitude: -0.12,
+            horizontalAccuracy: 8,
+          });
+          expect(typeof inProcId).toBe("number");
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/location`, {
+            fromUserId: USER_ID,
+            latitude: 51.5,
+            longitude: -0.12,
+            horizontalAccuracy: 8,
+          });
+          expect(status).toBe(200);
+          expect(json).toMatchObject({ ok: true });
+          expect(typeof (json as { messageId?: number }).messageId).toBe("number");
+
+          expect(spy.locationCalls).toHaveLength(2);
+          const [viaClient, viaHttp] = spy.locationCalls;
+          expect(viaClient!.place).toEqual(viaHttp!.place);
+          // The plain-point branch: a `location` PlaceInput, NO venue.
+          expect(viaClient!.place).toEqual({
+            location: { latitude: 51.5, longitude: -0.12, horizontalAccuracy: 8 },
+          });
+          expect(viaClient!.from).toEqual({ id: USER_ID, firstName: `user_${USER_ID}` });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("forwards a venue body as a `venue` PlaceInput (venue wins)", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/location`, {
+            fromUserId: USER_ID,
+            venue: { latitude: 48.85, longitude: 2.35, title: "Eiffel Tower", address: "Champ de Mars" },
+          });
+          expect(spy.locationCalls).toHaveLength(1);
+          expect(spy.locationCalls[0]!.place).toEqual({
+            venue: { latitude: 48.85, longitude: 2.35, title: "Eiffel Tower", address: "Champ de Mars" },
+          });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("returns 400 on a body that is neither a valid location nor venue — never crashes", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          // No latitude/longitude and no venue.
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/location`, {
+            fromUserId: USER_ID,
+          });
+          expect(status).toBe(400);
+          expect(json).toMatchObject({ ok: false });
+          expect(spy.locationCalls).toHaveLength(0);
+        } finally {
+          await spy.stop();
+        }
+      });
+    });
+
+    // ---- callbacks ---------------------------------------------------------
+    describe("POST /control/chats/:id/callbacks (inject callback — INTERACT-01)", () => {
+      it("drives emulator.injectCallback IDENTICALLY in-proc and over HTTP (parity)", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          await spy.client.injectCallback({
+            chatId: CHAT_ID,
+            fromUserId: USER_ID,
+            botMessageId: 321,
+            data: "vote:yes",
+          });
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/callbacks`, {
+            fromUserId: USER_ID,
+            botMessageId: 321,
+            data: "vote:yes",
+          });
+          expect(status).toBe(200);
+          // A callback mints no id — the §4.6 shape is `{ ok: true }`.
+          expect(json).toEqual({ ok: true });
+
+          expect(spy.callbackCalls).toHaveLength(2);
+          const [viaClient, viaHttp] = spy.callbackCalls;
+          expect(viaClient).toEqual(viaHttp);
+          expect(viaClient!.chat).toEqual({ chatId: CHAT_ID });
+          expect(viaClient!.botMessageId).toBe(321);
+          expect(viaClient!.data).toBe("vote:yes");
+          expect(viaClient!.from).toEqual({ id: USER_ID, firstName: `user_${USER_ID}` });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("returns 400 on a non-numeric botMessageId / missing data — never crashes", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const badId = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/callbacks`, {
+            fromUserId: USER_ID,
+            botMessageId: "nope",
+            data: "x",
+          });
+          expect(badId.status).toBe(400);
+          const missingData = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/callbacks`, {
+            fromUserId: USER_ID,
+            botMessageId: 5,
+          });
+          expect(missingData.status).toBe(400);
+          expect(spy.callbackCalls).toHaveLength(0);
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("the JSON parseBody branch handles the callback body (IN-04: scalar data, NO form-parser change)", async () => {
+        // grammy sends inline-keyboard/callback bodies as JSON; the control route
+        // uses a JSON body with a scalar `data` string, which parseControlBody's
+        // JSON branch handles. The `&`-split form parser is never relied on for
+        // callbacks. (CF-1 — confirm the JSON path, do NOT array-decode the form.)
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          const { status } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/callbacks`, {
+            fromUserId: USER_ID,
+            botMessageId: 77,
+            data: "page=2&sort=asc", // a value that WOULD confuse a naive form parser — but it's JSON here
+          });
+          expect(status).toBe(200);
+          expect(spy.callbackCalls).toHaveLength(1);
+          // The scalar `data` survives verbatim through the JSON branch.
+          expect(spy.callbackCalls[0]!.data).toBe("page=2&sort=asc");
+        } finally {
+          await spy.stop();
+        }
+      });
+    });
+
+    // ---- edits -------------------------------------------------------------
+    describe("POST /control/chats/:id/edits (inject edit — INTERACT-02)", () => {
+      it("drives emulator.injectEdit IDENTICALLY in-proc and over HTTP (parity)", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          await spy.client.injectEdit({
+            chatId: CHAT_ID,
+            messageId: 654,
+            newText: "edited text",
+            fromUserId: USER_ID,
+          });
+          const { status, json } = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/edits`, {
+            messageId: 654,
+            newText: "edited text",
+            fromUserId: USER_ID,
+          });
+          expect(status).toBe(200);
+          expect(json).toEqual({ ok: true });
+
+          expect(spy.editCalls).toHaveLength(2);
+          const [viaClient, viaHttp] = spy.editCalls;
+          expect(viaClient).toEqual(viaHttp);
+          expect(viaClient!.chat).toEqual({ chatId: CHAT_ID });
+          expect(viaClient!.messageId).toBe(654);
+          expect(viaClient!.newText).toBe("edited text");
+          expect(viaClient!.from).toEqual({ id: USER_ID, firstName: `user_${USER_ID}` });
+        } finally {
+          await spy.stop();
+        }
+      });
+
+      it("defaults the editor (fromUserId optional) and 400s on missing messageId/newText", async () => {
+        const spy = makeSpyControl();
+        await spy.start();
+        try {
+          // fromUserId omitted → the handler supplies a stable default editor.
+          const ok = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/edits`, {
+            messageId: 12,
+            newText: "no editor id",
+          });
+          expect(ok.status).toBe(200);
+          expect(spy.editCalls).toHaveLength(1);
+          expect(typeof spy.editCalls[0]!.from.id).toBe("number");
+
+          // Missing messageId → 400.
+          const noId = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/edits`, {
+            newText: "x",
+          });
+          expect(noId.status).toBe(400);
+          // Missing newText → 400.
+          const noText = await postControl(spy.apiRoot, `/control/chats/${CHAT_ID}/edits`, {
+            messageId: 9,
+          });
+          expect(noText.status).toBe(400);
+          expect(spy.editCalls).toHaveLength(1); // only the valid call landed
+        } finally {
+          await spy.stop();
+        }
+      });
+    });
+
+    // ---- the REAL TgEmulator wire (the four verbs trip the long-poll) -------
+    describe("the four routes drive the REAL TgEmulator (served by getUpdates)", () => {
+      it("media: a media route post queues a media `message` update with a resolvable file_id", async () => {
+        const fileBase64 = Buffer.from("real-photo-bytes").toString("base64");
+        const { status, json } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/media`, {
+          fromUserId: 111,
+          kind: "photo",
+          fileBase64,
+        });
+        expect(status).toBe(200);
+        expect((json as { ok?: boolean }).ok).toBe(true);
+
+        const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+        const updates = env.result as Array<Record<string, unknown>>;
+        expect(updates.length).toBe(1);
+        const msg = updates[0]!["message"] as Record<string, unknown>;
+        const photo = msg["photo"] as Array<Record<string, unknown>>;
+        expect(Array.isArray(photo)).toBe(true);
+        const fileId = photo[photo.length - 1]!["file_id"] as string;
+        // The stored file resolves via getFile with the REAL byte length.
+        const fileEnv = await callBotMethod(apiRoot, "getFile", { file_id: fileId });
+        expect(fileEnv.ok).toBe(true);
+        expect((fileEnv.result as { file_size?: number }).file_size).toBe(
+          Buffer.from("real-photo-bytes").length,
+        );
+      });
+
+      it("callback: a callbacks route post queues a callback_query tapping the bot reply", async () => {
+        const sent = (await callBotMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "bot reply" }))
+          .result as Record<string, unknown>;
+        const botReplyId = sent["message_id"] as number;
+
+        const { status } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/callbacks`, {
+          fromUserId: 111,
+          botMessageId: botReplyId,
+          data: "tap-1",
+        });
+        expect(status).toBe(200);
+
+        const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+        const updates = env.result as Array<Record<string, unknown>>;
+        expect(updates.length).toBe(1);
+        const cq = updates[0]!["callback_query"] as Record<string, unknown>;
+        expect(cq).toBeDefined();
+        expect(cq["data"]).toBe("tap-1");
+        expect((cq["message"] as Record<string, unknown>)["message_id"]).toBe(botReplyId);
+      });
+
+      it("edit: an edits route post queues an edited_message for the existing id", async () => {
+        const { status } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/edits`, {
+          messageId: 4242,
+          newText: "the edited body",
+          fromUserId: 111,
+        });
+        expect(status).toBe(200);
+
+        const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+        const updates = env.result as Array<Record<string, unknown>>;
+        expect(updates.length).toBe(1);
+        const edited = updates[0]!["edited_message"] as Record<string, unknown>;
+        expect(edited).toBeDefined();
+        expect(edited["message_id"]).toBe(4242);
+        expect(edited["text"]).toBe("the edited body");
+      });
+    });
+
+    // ---- the four route regexes (pure source-shape assertions) -------------
+    describe("the four §4.6 path constants are declared (Phase 207)", () => {
+      it("declares CHAT_MEDIA/LOCATION/CALLBACKS/EDITS path constants targeting the right segments", () => {
+        const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+        expect(src).toMatch(/CHAT_MEDIA_PATH/);
+        expect(src).toMatch(/CHAT_LOCATION_PATH/);
+        expect(src).toMatch(/CHAT_CALLBACKS_PATH/);
+        expect(src).toMatch(/CHAT_EDITS_PATH/);
+        expect(src).toMatch(/\/media/);
+        expect(src).toMatch(/\/location/);
+        expect(src).toMatch(/\/callbacks/);
+        expect(src).toMatch(/\/edits/);
+        // The base64 decode is present (JSON+base64 transport, no multipart).
+        expect(src).toMatch(/Buffer\.from\([^)]*base64/);
+        // NO multipart parser (stdlib-first — the bytes ride the JSON body).
+        expect(src).not.toMatch(/multipart/);
+      });
+
+      it("each route regex matches its segment (incl. negative chat ids + trailing slash) and NOT /messages", () => {
+        const media = /^\/control\/chats\/(-?\d+)\/media\/?$/;
+        const location = /^\/control\/chats\/(-?\d+)\/location\/?$/;
+        const callbacks = /^\/control\/chats\/(-?\d+)\/callbacks\/?$/;
+        const edits = /^\/control\/chats\/(-?\d+)\/edits\/?$/;
+        expect(media.test("/control/chats/-100/media")).toBe(true);
+        expect(media.test("/control/chats/123/media/")).toBe(true);
+        expect(media.test("/control/chats/123/messages")).toBe(false);
+        expect(location.test("/control/chats/123/location")).toBe(true);
+        expect(callbacks.test("/control/chats/123/callbacks")).toBe(true);
+        expect(edits.test("/control/chats/123/edits")).toBe(true);
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // SEC-01 — namespace + loopback bind
   // -------------------------------------------------------------------------
   describe("SEC-01 — /control/* namespaced + loopback only", () => {
