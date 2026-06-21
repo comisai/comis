@@ -232,10 +232,12 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /observability\.spend\./.test(s))).toBe(true);
   });
 
-  it("WR-4: a tool-failure cause OUT-RANKS the spend_exceeded endReason cause (terminal band is lowest priority)", () => {
-    // A spend-killed session that ALSO had a misclassified-tool failure must still
-    // report the upstream tool cause — the spend_exceeded verdict is terminal-band,
-    // out-ranked by every tool-failure cause (the QT2/QT3 placement contract).
+  it("WR-4: the X3-frozen misclassification verdict OUT-RANKS the spend_exceeded cause (the one signal above spend)", () => {
+    // A spend-killed session that ALSO carries the content_heuristic_misclassification
+    // signal still reports misclassification: spend_exceeded was promoted above the
+    // breaker/dependency/timeout tool-failure heuristics (LIVE v2.28 260621 — see
+    // test above) but stays BELOW the single X3-frozen misclassification verdict,
+    // the one specific Comis-defect indicator that keeps top billing.
     const r = rootCause(
       makeSignals({
         endReason: "spend_exceeded",
@@ -245,6 +247,31 @@ describe("obs-explain-heuristics", () => {
       }),
     );
     expect(r!.code).toBe("content_heuristic_misclassification");
+  });
+
+  it("when the spend kill-switch aborts at admission it out-ranks chronic breaker noise (live v2.28 260621)", () => {
+    // Live VPS incident: a long-lived chat-API session carried 8 chronic exec
+    // failures from PRIOR turns (the per-tool breaker had tripped). It then hit
+    // the configured spend ceiling, so the kill-switch aborted the turn at
+    // ADMISSION (endReason spend_exceeded). `comis explain` reported
+    // breaker_opened_repeated_failure — the chronic noise — masking the
+    // administrative kill that is now blocking EVERY new turn (the operator
+    // would chase exec failures and never learn their ceiling fired). Tool
+    // FAILURES (~0 bytes, ~$0) cannot drive cumulative spend; the ceiling is
+    // causally INDEPENDENT of them, so the kill-switch is the acute terminal
+    // cause and must out-rank the breaker/dependency/timeout tool-failure
+    // heuristics (it still defers to the single X3-frozen misclassification
+    // verdict — the one specific Comis-defect indicator; see test above).
+    const r = rootCause(
+      makeSignals({
+        endReason: "spend_exceeded",
+        hasDoNotRetrySignal: true,
+        breakerOpenedTool: "exec",
+        repeatedFailureCount: { exec: 8 },
+        mostFailedTool: "exec",
+      }),
+    );
+    expect(r!.code).toBe("spend_exceeded");
   });
 
   it("a tool-failure cause OUT-RANKS the endReason cause (the new heuristics are lowest priority)", () => {

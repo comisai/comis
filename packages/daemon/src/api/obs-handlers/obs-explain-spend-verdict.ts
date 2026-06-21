@@ -8,14 +8,21 @@
  * cap. PURE: no LLM, no I/O, no globals — same signals ⇒ same verdict forever
  * (the Glass Box determinism invariant).
  *
- * Ordering contract (the registry splices this in the TERMINAL band alongside
- * context_exhausted / output_starved / prompt_timeout — after every tool-failure
- * cause, before the catch-all): the four endReason keys are mutually exclusive,
- * and every tool-failure cause out-ranks the terminal label. Before this fix the
- * deterministic verdict had NO spend case, so a spend-killed session root-caused
- * to NOTHING — the platform could not diagnose its own dollars kill-switch firing
- * in one `comis explain` call (the security-review WR-4 finding; directly
- * violating this milestone's thesis + CLAUDE.md's troubleshooting feedback loop).
+ * Ordering contract (registry position #2 — LIVE v2.28 260621): the dollars
+ * kill-switch is an ADMINISTRATIVE pre-emption that aborts at admission, causally
+ * INDEPENDENT of tool failures (a failed tool returns ~0 bytes / ~$0 and cannot
+ * drive cumulative spend). It is therefore NOT a downstream terminal label like
+ * context_exhausted / output_starved / prompt_timeout (which a runaway tool CAN
+ * cause) — it out-ranks the breaker/dependency/timeout/degradation heuristics and
+ * sits directly below the single X3-frozen content_heuristic_misclassification
+ * verdict (the one specific Comis-defect indicator). It was originally spliced
+ * into the terminal band below every tool-failure cause; a live VPS incident
+ * proved that masked the kill-switch behind chronic breaker noise — a spend-killed
+ * session root-caused to breaker_opened_repeated_failure while the operator's
+ * turns were all blocked by the ceiling. Before the verdict existed at all a
+ * spend-killed session root-caused to NOTHING (the security-review WR-4 finding);
+ * both gaps directly violated this milestone's thesis + CLAUDE.md's troubleshooting
+ * feedback loop ("verdict ranked chronic noise over the acute event").
  *
  * Keys on the metadata-derived endReason (END_REASON_MAP spend_exceeded →
  * "spend_exceeded", WR-2). The frozen 678/503 fixtures carry no endReason
