@@ -465,13 +465,52 @@ interface ChatOracle {
 const DEFAULT_MAX_POLL_MS = 10_000;
 
 /**
+ * Extract the simple (non-file) text fields from a multipart/form-data body.
+ * grammy sends file methods (`sendVoice`/`sendDocument`/…) as multipart: each
+ * `name="<field>"` part carries either a scalar value (e.g. `chat_id`,
+ * `caption`) or an `attach://…` reference / the file bytes. We read ONLY the
+ * scalar text fields (the ones the oracle records — `chat_id`, `caption`) and
+ * skip the binary file part (FAULT-01 (c): the voice→document fallback's caption
+ * "Voice message (sent as file)" rides as a `caption` field). A field whose
+ * value is an `attach://…` reference is a file pointer, not a scalar — skipped.
+ */
+function parseMultipart(body: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  // Split on the part separator (grammy uses `------------<rand>` boundaries);
+  // each part starts with a `content-disposition` line naming the field.
+  const partRe = /content-disposition:\s*form-data;\s*name="([^"]+)"([^]*?)(?=\r?\n--|\s*--\s*$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = partRe.exec(body)) !== null) {
+    const name = m[1];
+    if (name === undefined) continue;
+    // A part carrying `filename=` or a `content-type` header is the file body —
+    // skip it (we only record the scalar fields). The value follows the blank
+    // line after the header(s).
+    const rest = m[2] ?? "";
+    if (/filename=|content-type:/i.test(rest.split(/\r?\n\r?\n/)[0] ?? "")) continue;
+    const blank = rest.search(/\r?\n\r?\n/);
+    if (blank < 0) continue;
+    const value = rest.slice(blank).replace(/^\r?\n\r?\n/, "").replace(/\r?\n$/, "").trim();
+    // `attach://…` is grammy's file-pointer placeholder, not a scalar value.
+    if (value.startsWith("attach://")) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+/**
  * Parse a Bot-API request body. grammy's HTTP client sends method args as a
- * JSON body OR form-encoded; read defensively from both (mock-telegram-server
- * dual parse). A malformed body yields `{}` (the base already guarantees the
- * server stays up).
+ * JSON body, form-encoded, OR (for file methods) multipart/form-data; read
+ * defensively from all three (mock-telegram-server dual parse + the multipart
+ * extension for FAULT-01 (c)). A malformed body yields `{}` (the base already
+ * guarantees the server stays up).
  */
 function parseBody(body: string): Record<string, unknown> {
   if (body.length === 0) return {};
+  // multipart/form-data (file sends): extract the scalar fields (chat_id/caption).
+  if (/content-disposition:\s*form-data/i.test(body)) {
+    return parseMultipart(body);
+  }
   try {
     return JSON.parse(body) as Record<string, unknown>;
   } catch {
@@ -928,6 +967,14 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // return type is Message-or-true).
         return editMessageText(body);
 
+      case "sendVoice":
+      case "sendDocument":
+        // FAULT-01 (c) — the voice→document fallback. RECORD both so the
+        // fallback's recorded sendDocument outbound (caption "Voice message
+        // (sent as file)") is assertable on the oracle. grammy sends these as
+        // multipart; `parseBody` extracted the scalar caption/chat_id fields.
+        return sendMediaMethod(method, body);
+
       default:
         // Unknown method — accept-and-record so an unrelated adapter call does
         // not fail the boot (mirrors the mock's generic fallback).
@@ -1023,6 +1070,29 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       date: Math.floor(Date.now() / 1000),
       chat: { id: chatId, type: "private" },
       ...(text !== undefined ? { text } : {}),
+    });
+  }
+
+  function sendMediaMethod(method: string, body: Record<string, unknown>): RouteResult {
+    // FAULT-01 (c) — sendVoice / sendDocument. Mint a message_id + RECORD the
+    // outbound (method + caption) so the voice→document fallback's recorded
+    // sendDocument (caption "Voice message (sent as file)") is assertable on the
+    // chat oracle. The bytes themselves are not stored (the fallback only needs
+    // the recorded method + caption); chat_id/caption came from the multipart
+    // scalar fields `parseBody` extracted.
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const messageId = nextMessageId++;
+    const ro: RecordedOutbound = {
+      method,
+      messageId,
+      raw: body,
+    };
+    if (typeof body["caption"] === "string") ro.caption = body["caption"];
+    record(chatId, ro);
+    return okEnvelope({
+      message_id: messageId,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: chatId, type: "private" },
     });
   }
 
