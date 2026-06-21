@@ -91,6 +91,31 @@ function endedRow(
   };
 }
 
+/** Build a turn_completed JSONL object (one completed LLM turn). */
+function turnRow(
+  overrides: {
+    sessionId: string;
+    inputTokens: number;
+    outputTokens: number;
+    synthetic?: boolean;
+  },
+): Record<string, unknown> {
+  return {
+    traceSchema: "comis-session-index",
+    schemaVersion: 1,
+    ts: new Date(systemNowMs()).toISOString(),
+    event: "turn_completed",
+    sessionId: overrides.sessionId,
+    traceId: "trace-1",
+    durationMs: 1000,
+    inputTokens: overrides.inputTokens,
+    outputTokens: overrides.outputTokens,
+    stopReason: "stop",
+    lastError: null,
+    ...(overrides.synthetic === true ? { synthetic: true } : {}),
+  };
+}
+
 /**
  * Create a fresh tmp dataDir and write `<tmp>/logs/session-index.<dayKey>.jsonl`
  * for each supplied (dayKey → rows) entry. Each row is JSON.stringify'd one per
@@ -183,6 +208,56 @@ describe("readSessionIndexWindow", () => {
 
     expect(result.turnTotal).toBe(7);
     expect(result.tokenTotal).toBe(350);
+  });
+
+  it("sums turn_completed rows for an IN-FLIGHT session that has not emitted session_ended yet", () => {
+    // The dominant live case (e.g. a long-lived OpenAI chat-API session): turns
+    // complete but the session never `session_ended`s, so the authoritative
+    // session-level totals never land. Pre-fix this reported 0 turns / 0 tokens
+    // for the busiest session on the fleet. Per-session dedup now sums the
+    // `turn_completed.inputTokens + outputTokens` for sessions with no end row.
+    const today = dayKeyForMs(systemNowMs());
+    const dataDir = makeDataDirWithDayFiles([
+      {
+        dayKey: today,
+        lines: [
+          JSON.stringify(
+            startedRow({ agentId: "a", channelType: "openai", channelId: "openai", sessionId: "live1" }),
+          ),
+          JSON.stringify(turnRow({ sessionId: "live1", inputTokens: 29953, outputTokens: 22 })),
+          JSON.stringify(turnRow({ sessionId: "live1", inputTokens: 1659, outputTokens: 8 })),
+        ],
+      },
+    ]);
+
+    const result = readSessionIndexWindow(dataDir, systemNowMs());
+
+    expect(result.turnTotal).toBe(2);
+    expect(result.tokenTotal).toBe(29953 + 22 + 1659 + 8);
+  });
+
+  it("does NOT double-count a session that has BOTH turn_completed rows and a session_ended (authoritative wins)", () => {
+    // The reason turn_completed was a v1 no-op: a session that DOES end carries
+    // its whole-session totals on the ended row, so summing the per-turn rows too
+    // would double-count. Per-session dedup uses the authoritative ended totals
+    // for any session that has an end row, and the live turn sum only otherwise.
+    const today = dayKeyForMs(systemNowMs());
+    const dataDir = makeDataDirWithDayFiles([
+      {
+        dayKey: today,
+        lines: [
+          JSON.stringify(turnRow({ sessionId: "s1", inputTokens: 100, outputTokens: 10 })),
+          JSON.stringify(turnRow({ sessionId: "s1", inputTokens: 200, outputTokens: 20 })),
+          JSON.stringify(endedRow({ exitReason: "success", turnCount: 2, totalTokens: 330, sessionId: "s1" })),
+        ],
+      },
+    ]);
+
+    const result = readSessionIndexWindow(dataDir, systemNowMs());
+
+    // Authoritative ended totals (2 / 330), NOT 4 / 660 (live + ended).
+    expect(result.turnTotal).toBe(2);
+    expect(result.tokenTotal).toBe(330);
   });
 
   it("excludes a synthetic:true row by default but includes it under includeSynthetic (a REAL filter, not a no-op)", () => {

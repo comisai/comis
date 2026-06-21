@@ -13,17 +13,21 @@
  *   - active agents              ← distinct `agentId` from `session_started`
  *   - active channels            ← distinct `channelType:channelId` from `session_started`
  *   - exit-reason distribution   ← histogram of `exitReason` from `session_ended`
- *   - turn / token totals        ← summed `turnCount` / `totalTokens` from `session_ended`
+ *   - turn / token totals        ← per-session dedup of `session_ended` (authoritative)
+ *                                    + `turn_completed` (in-flight fallback)
  *
  * Source of the totals (the note for the Phase-161 FleetHealthReport handler):
- * the reader uses the `session_ended` rows as the AUTHORITATIVE session-level
+ * the reader prefers the `session_ended` rows as the AUTHORITATIVE session-level
  * totals (one ended row carries the whole session's `turnCount`/`totalTokens`).
- * The per-turn `turn_completed.inputTokens + outputTokens` is the natural
- * fallback for a session that has no end row yet (an in-flight session) — A3
- * does NOT sum it for v1 (it would double-count any session that DOES have an
- * end row, and de-duping per-session is the Phase-161 coverage handler's job).
- * The reader exposes `daysRead` / `daysMissing` so the R1 coverage block can
- * report an honest partial read.
+ * For a session that has NO end row yet (an in-flight session — the dominant
+ * live case, e.g. a long-lived chat-API session that never destroys), it sums
+ * the per-turn `turn_completed.inputTokens + outputTokens` instead. The two are
+ * de-duped PER sessionId: a session that DOES have an end row uses the ended
+ * totals only (never the live sum), so neither path double-counts. The v1 reader
+ * summed only `session_ended` and silently reported 0 turns / 0 tokens for every
+ * still-open session — including the busiest one on most fleets. The reader
+ * exposes `daysRead` / `daysMissing` so the R1 coverage block can report an
+ * honest partial read.
  *
  * Provenance: `synthetic === true` rows (D9 harness/bench/test sessions) are
  * excluded by default — a REAL filter (the field IS present on session-index
@@ -171,8 +175,19 @@ export function readSessionIndexWindow(
   const agents = new Set<string>();
   const channels = new Set<string>();
   const exitReasons = new Map<string, number>();
-  let turnTotal = 0;
-  let tokenTotal = 0;
+  // Per-session dedup of turn/token totals. A session that has ENDED carries its
+  // whole-session totals on the `session_ended` row (authoritative); an IN-FLIGHT
+  // session (no end row yet — the dominant live case, e.g. a long-lived chat-API
+  // session) only ever emits `turn_completed` rows. We accumulate BOTH per
+  // sessionId and, at the end, prefer the authoritative ended totals when present
+  // and fall back to the summed live turns otherwise — so neither is dropped nor
+  // double-counted (the v1 reader summed only ended rows, silently reporting 0
+  // turns / 0 tokens for every still-open session).
+  const endedSessions = new Set<string>();
+  const endedTurns = new Map<string, number>();
+  const endedTokens = new Map<string, number>();
+  const liveTurns = new Map<string, number>();
+  const liveTokens = new Map<string, number>();
   let daysRead = 0;
   let daysMissing = 0;
   let linesRead = 0;
@@ -229,17 +244,40 @@ export function readSessionIndexWindow(
         if (typeof r.exitReason === "string" && r.exitReason.length > 0) {
           exitReasons.set(r.exitReason, (exitReasons.get(r.exitReason) ?? 0) + 1);
         }
+        const sid = typeof r.sessionId === "string" ? r.sessionId : "";
+        endedSessions.add(sid);
         if (typeof r.turnCount === "number" && Number.isFinite(r.turnCount)) {
-          turnTotal += r.turnCount;
+          endedTurns.set(sid, (endedTurns.get(sid) ?? 0) + r.turnCount);
         }
         if (typeof r.totalTokens === "number" && Number.isFinite(r.totalTokens)) {
-          tokenTotal += r.totalTokens;
+          endedTokens.set(sid, (endedTokens.get(sid) ?? 0) + r.totalTokens);
         }
+      } else if (event === "turn_completed") {
+        // Per-turn rows of an IN-FLIGHT session. Counted only for sessions with
+        // no `session_ended` row (resolved below) so a session that DOES end
+        // uses its authoritative whole-session totals instead — no double-count.
+        const r = rec as Partial<Extract<SessionIndexEvent, { event: "turn_completed" }>>;
+        const sid = typeof r.sessionId === "string" ? r.sessionId : "";
+        const inTok = typeof r.inputTokens === "number" && Number.isFinite(r.inputTokens) ? r.inputTokens : 0;
+        const outTok = typeof r.outputTokens === "number" && Number.isFinite(r.outputTokens) ? r.outputTokens : 0;
+        liveTurns.set(sid, (liveTurns.get(sid) ?? 0) + 1);
+        liveTokens.set(sid, (liveTokens.get(sid) ?? 0) + inTok + outTok);
       }
-      // `turn_completed` (and any unknown event) is a deliberate no-op for v1:
-      // session_ended carries the authoritative session-level totals (see the
-      // module note); summing turn_completed here would double-count.
+      // Any unknown event is a deliberate no-op.
     }
+  }
+
+  // Resolve per-session: authoritative ended totals win; live turn sums fill in
+  // only for sessions that never emitted an end row (still open in the window).
+  let turnTotal = 0;
+  let tokenTotal = 0;
+  for (const turns of endedTurns.values()) turnTotal += turns;
+  for (const tokens of endedTokens.values()) tokenTotal += tokens;
+  for (const [sid, turns] of liveTurns) {
+    if (!endedSessions.has(sid)) turnTotal += turns;
+  }
+  for (const [sid, tokens] of liveTokens) {
+    if (!endedSessions.has(sid)) tokenTotal += tokens;
   }
 
   return {
