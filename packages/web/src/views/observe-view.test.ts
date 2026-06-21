@@ -237,7 +237,7 @@ describe("IcObserveView", () => {
     expect(errMsg?.textContent).toContain("Connection lost");
   });
 
-  it("3 - renders 5 tabs after successful load", async () => {
+  it("3 - renders 7 tabs after successful load (5 inline + 2 nav-only: cache, spend)", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -245,10 +245,31 @@ describe("IcObserveView", () => {
     const tabs = el.shadowRoot?.querySelector("ic-tabs");
     expect(tabs).toBeTruthy();
     const tabDefs = (tabs as any).tabs;
-    expect(tabDefs).toHaveLength(5);
+    expect(tabDefs).toHaveLength(7);
     expect(tabDefs.map((t: { id: string }) => t.id)).toEqual([
       "overview", "billing", "delivery", "channels", "diagnostics",
+      // 179-07: nav-only tabs that route to the standalone Cache Health / Spend
+      // & Governance views (NOT inline render bodies — observe-view is over-cap).
+      "cache", "spend",
     ]);
+  });
+
+  it("3b - selecting a nav-only tab (cache/spend) dispatches a bubbling navigate event, not an inline render (179-07)", async () => {
+    const rpc = createObserveMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const navigated: string[] = [];
+    el.addEventListener("navigate", (e) => navigated.push((e as CustomEvent<string>).detail));
+
+    // Drive the tab-change handler directly (the ic-tabs @tab-change seam).
+    const tabs = el.shadowRoot?.querySelector("ic-tabs");
+    tabs?.dispatchEvent(new CustomEvent("tab-change", { detail: "cache" }));
+    tabs?.dispatchEvent(new CustomEvent("tab-change", { detail: "spend" }));
+
+    expect(navigated).toEqual(["observe/cache", "observe/spend"]);
+    // The active tab stays put — the view routes away rather than rendering inline.
+    expect((el as unknown as { _activeTab: string })._activeTab).toBe("overview");
   });
 
   it("4 - overview tab shows 6 stat cards", async () => {
