@@ -53,9 +53,22 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
+import { validateLocalServerUrl } from "@comis/core";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
 import { createTgEmulator, type TgEmulator, type RecordedOutbound, type ChatRef } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi, type ControlClient } from "./control-api.js";
+// TEST-ONLY deep-dist imports. `setupMedia` + `MediaResult` and `fetchPinned` are
+// NOT re-exported from the `@comis/daemon` / `@comis/skills` top barrels (and the
+// vitest live-config alias maps each `@comis/*` to its `dist/index.js` FILE, so a
+// subpath like `@comis/daemon/wiring` does not resolve through it). The override
+// MUST delegate to the REAL `setupMedia` — `MediaResult` carries ~15 internally-
+// constructed fields (linkRunner, mediaTempManager, visionRegistryHolder, …) that
+// cannot be reconstructed by hand — so a relative `dist/` import is the sanctioned
+// escape hatch (the SAME staleness contract as the alias: `pnpm build` first). This
+// keeps the SSRF allowance entirely test-scoped — ZERO `packages/*/src/**` change
+// (no barrel edit, no resolver/validateUrl edit). See 207-05-PLAN.md SEC-01 / I1.
+import { setupMedia, type MediaResult } from "../../../packages/daemon/dist/wiring/index.js";
+import { fetchPinned } from "../../../packages/skills/dist/tools/integrations/pinned-fetch.js";
 import {
   writeHandle,
   readHandle,
@@ -96,6 +109,14 @@ const FAKE_BOT_TOKEN = "1234567:emulator-fake-token";
  */
 const MEMORY_DB_FILE = "test-memory-channel-emu.db";
 
+/**
+ * The body-size cap the loopback SSRF fetcher enforces (MEDIA-02, a second-line
+ * guard behind the resolver's pre-download `file_size > maxBytes` check). 50 MiB —
+ * generous enough for any driver-injected fixture, far below an OOM risk; the
+ * emulator only ever serves loopback fixtures the driver itself supplied (T-207-13).
+ */
+const RIG_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+
 /** Options for {@link startRig}. */
 export interface StartRigOptions {
   /** The channel to emulate. Phase 204 ships Telegram; channel #2 is Phase 209. */
@@ -108,6 +129,15 @@ export interface StartRigOptions {
   readonly model: "keyless" | string;
   /** Reserved for a future group/forum round-trip (Phase 206+); unused in 204. */
   readonly group?: boolean;
+  /**
+   * MEDIA-02 / SEC-01 (Plan 207-05): opt into the test-scoped SSRF-loopback
+   * allowance — the daemon boots with a {@link buildLoopbackMediaOverride}
+   * `setupMedia` override so the real SSRF-guarded byte download reaches the
+   * loopback emulator (the Stage-C byte-download leg). DEFAULT falsy → NO
+   * `setupMedia` override (a standard rig boot is byte-identical; production
+   * `validateUrl` posture is untouched). Loopback-ONLY, never a production change.
+   */
+  readonly mediaLoopbackOverride?: boolean;
 }
 
 /**
@@ -354,6 +384,169 @@ monitoring:
 `;
 }
 
+// ---------------------------------------------------------------------------
+// MEDIA-02 / SEC-01 — the test-scoped SSRF-loopback allowance (Plan 207-05).
+//
+// The Telegram byte-download has TWO INDEPENDENT blocks (Pitfall 1), and BOTH
+// must be addressed for the real SSRF-guarded download to reach the loopback
+// emulator:
+//   #1 the resolver's download URL is HARDCODED to
+//      `https://api.telegram.org/file/bot<tok>/<path>` (telegram-resolver.ts:95) —
+//      it does NOT derive from apiRoot, so getFile reaches the emulator but the
+//      byte download targets the real (public) Telegram host;
+//   #2 the injected `ssrfFetcher` runs production `validateUrl` (ssrf-fetcher.ts)
+//      whose `BLOCKED_RANGES` includes "loopback" → a 127.0.0.1 download is denied.
+//
+// The override is a THIN wrapper (decision A2): call the REAL `setupMedia(deps)`,
+// then return `{ ...result, ssrfFetcher: <loopbackFetcher> }`. `ssrfFetcher` is the
+// ONLY download dependency the Telegram resolver receives
+// (setup-channels-media.ts:221 `tgPlugin.createResolver({ ssrfFetcher })`), so the
+// single swap addresses both blocks: the loopback fetcher (a) HOST-REWRITES the
+// hardcoded `api.telegram.org` origin → the emulator host (#1), then (b) validates
+// via `validateLocalServerUrl(rewritten, [host])` — the INVERSE primitive that
+// ALLOWS loopback while KEEPING the cloud-metadata DENY (#2) — and downloads via
+// the SAME DNS-pinned `fetchPinned` production uses.
+//
+// SECURITY (SEC-01 / I1 / T-207-11): this is TEST-SCOPED. Production `validateUrl`,
+// `setupMedia`, and the hardcoded resolver URL are NOT edited (the hardcoded URL is
+// correct for production where Telegram serves from api.telegram.org). The override
+// is OPT-IN (`mediaLoopbackOverride`), OFF by default, and the loopback fetcher
+// allows loopback ONLY — a non-loopback / non-allowlisted host (incl. a cloud-
+// metadata IP) STILL fails (T-207-12). The Plan-05 rig.test.ts no-widening assertion
+// HARD-proves production `validateUrl(loopbackUrl)` still returns `!ok`.
+// ---------------------------------------------------------------------------
+
+/** Args for {@link buildLoopbackSsrfFetcher} / {@link buildLoopbackMediaOverride}. */
+export interface LoopbackMediaOverrideOptions {
+  /**
+   * The emulator's loopback host as `host:port` (e.g. `127.0.0.1:54321`, from
+   * `new URL(apiRoot).host`). Block #1 rewrites the hardcoded
+   * `https://api.telegram.org` origin → `http://<emulatorHost>`; block #2 derives
+   * the allowlist HOSTNAME (the bare `127.0.0.1`, matched against the URL's literal
+   * `hostname` per validateLocalServerUrl's IN-01 contract — though a loopback IP
+   * already passes via the isLoopback branch, so the allowlist is belt-and-braces).
+   */
+  readonly emulatorHost: string;
+  /** Max download size — mirrors the production fetcher's body cap (Content-Length + streamed). */
+  readonly maxBytes: number;
+}
+
+/** The hardcoded origin (telegram-resolver.ts:95) the loopback fetcher rewrites — block #1. */
+const TELEGRAM_FILE_ORIGIN = "https://api.telegram.org";
+
+/**
+ * Build the loopback-permitting `SsrfGuardedFetcher` the {@link
+ * buildLoopbackMediaOverride} swaps in (MEDIA-02 / SEC-01). It mirrors the
+ * production `createSsrfGuardedFetcher` post-validate fetch shape EXACTLY
+ * (`fetch(url) → Result<{ buffer, mimeType, sizeBytes, resolvedIp }, Error>`) but:
+ *   1. HOST-REWRITES a `https://api.telegram.org/...` URL → `http://<host>/...`
+ *      (block #1 — the resolver URL is hardcoded, so the redirect happens here);
+ *   2. validates the rewritten URL with `validateLocalServerUrl(url, [hostname])`
+ *      (block #2 — ALLOWS loopback, KEEPS the cloud-metadata DENY) instead of the
+ *      production `validateUrl` (which blocks loopback);
+ *   3. downloads via the SAME DNS-pinned `fetchPinned(url, validated.ip)` the
+ *      production fetcher uses (no DNS-rebind window).
+ *
+ * A URL whose host is NOT `api.telegram.org` is left un-rewritten and then must
+ * pass `validateLocalServerUrl` on its OWN merits — so a public/private host that
+ * is neither loopback nor the allowlisted emulator host STILL fails (loopback-only,
+ * not an arbitrary-URL hole — T-207-12).
+ *
+ * EXPORTED so the Plan-05 rig.test.ts can drive the fetcher directly (the rewrite +
+ * validate + loopback-download proof) without a daemon.
+ */
+export function buildLoopbackSsrfFetcher(
+  opts: LoopbackMediaOverrideOptions,
+): MediaResult["ssrfFetcher"] {
+  const { emulatorHost, maxBytes } = opts;
+  // The allowlist matches the URL's literal `hostname` (IN-01), so strip the port.
+  const allowedHostname = emulatorHost.split(":")[0] ?? emulatorHost;
+  return {
+    async fetch(url: string) {
+      try {
+        // Block #1 — rewrite the hardcoded api.telegram.org origin to the emulator
+        // host (a surgical origin-prefix replace; a non-telegram URL is untouched).
+        const rewritten = url.startsWith(`${TELEGRAM_FILE_ORIGIN}/`)
+          ? `http://${emulatorHost}${url.slice(TELEGRAM_FILE_ORIGIN.length)}`
+          : url;
+
+        // Block #2 — the INVERSE SSRF guard: ALLOWS loopback (+ the allowlisted
+        // host), DENIES every other range and the cloud-metadata IPs. This is the
+        // ONLY relaxation vs production, and it is loopback-scoped.
+        const validated = await validateLocalServerUrl(rewritten, [allowedHostname]);
+        if (!validated.ok) {
+          return { ok: false as const, error: validated.error };
+        }
+
+        // Download via the SAME DNS-pinned primitive production uses (TOCTOU-safe).
+        const response = await fetchPinned(rewritten, validated.value.ip, {
+          signal: AbortSignal.timeout(30_000),
+          redirect: "error",
+        });
+        if (!response.ok) {
+          return { ok: false as const, error: new Error(`HTTP ${response.status} fetching ${rewritten}`) };
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        if (buffer.length > maxBytes) {
+          return {
+            ok: false as const,
+            error: new Error(`Response body exceeded limit of ${maxBytes} bytes (read ${buffer.length})`),
+          };
+        }
+        const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
+        return {
+          ok: true as const,
+          value: { buffer, mimeType, sizeBytes: buffer.length, resolvedIp: validated.value.ip },
+        };
+      } catch (error) {
+        return { ok: false as const, error: error instanceof Error ? error : new Error(String(error)) };
+      }
+    },
+  };
+}
+
+/**
+ * Build the OPT-IN `DaemonOverrides.setupMedia` wrapper (MEDIA-02 / SEC-01). It is a
+ * `typeof setupMedia` function the daemon awaits at boot
+ * (`_setupMedia = overrides.setupMedia ?? setupMedia`, daemon.ts:1742,2004): it
+ * delegates to the REAL `setupMedia(deps)` then returns `{ ...result, ssrfFetcher }`
+ * with the swapped {@link buildLoopbackSsrfFetcher} — addressing BOTH SSRF blocks
+ * via the single dependency the resolver consumes. Every other MediaResult field
+ * (transcriber, fileExtractor, linkRunner, …) is the real one, so the rest of the
+ * media stack is byte-identical to production.
+ */
+export function buildLoopbackMediaOverride(opts: LoopbackMediaOverrideOptions): typeof setupMedia {
+  const loopbackFetcher = buildLoopbackSsrfFetcher(opts);
+  return async (deps) => {
+    const result = await setupMedia(deps);
+    return { ...result, ssrfFetcher: loopbackFetcher };
+  };
+}
+
+/** Args for {@link buildMediaOverrides} — the opt-in flag + the loopback override inputs. */
+export interface MediaOverridesOptions extends LoopbackMediaOverrideOptions {
+  /**
+   * Opt into the test-scoped SSRF-loopback allowance (the Stage-C byte-download
+   * leg). DEFAULT falsy → an EMPTY overrides bag (a standard rig boot is byte-
+   * identical; the override is OFF by default).
+   */
+  readonly mediaLoopbackOverride?: boolean;
+}
+
+/**
+ * Compute the `startTestDaemon({ overrides })` bag for the media-loopback allowance.
+ * When `mediaLoopbackOverride` is set → `{ setupMedia: <override> }`; otherwise →
+ * `{}` (NO `setupMedia` key, so the daemon falls back to production `setupMedia` and
+ * the boot is unchanged). Pure + EXPORTED so the off-by-default threading is
+ * deterministically testable without booting a daemon.
+ */
+export function buildMediaOverrides(opts: MediaOverridesOptions): { setupMedia?: typeof setupMedia } {
+  if (!opts.mediaLoopbackOverride) return {};
+  return { setupMedia: buildLoopbackMediaOverride({ emulatorHost: opts.emulatorHost, maxBytes: opts.maxBytes }) };
+}
+
 /**
  * Build the walking-skeleton rig and return the FULL {@link BuiltRig} (the public
  * round-trip driver PLUS the internals the standalone launcher / rig-control owner
@@ -404,9 +597,21 @@ export async function buildRig(opts: StartRigOptions): Promise<BuiltRig> {
 
   // 5. Boot the daemon (REUSED directly — A4: inherits process.exit→throw, the
   //    /health poll, the double-start guard, and per-fork isolation).
+  //
+  //    MEDIA-02 / SEC-01: when `mediaLoopbackOverride` is set, thread the
+  //    test-scoped SSRF-loopback `setupMedia` override into `startTestDaemon`'s
+  //    `overrides` bag (which daemon-harness.ts:286-287 spreads into `main()`).
+  //    `buildMediaOverrides` returns `{}` when the flag is off, so a standard boot
+  //    passes NO `setupMedia` override (byte-identical; production posture intact).
+  const emulatorHost = new URL(apiRoot).host; // 127.0.0.1:<port> — the rewrite target + allowlist source.
+  const mediaOverrides = buildMediaOverrides({
+    ...(opts.mediaLoopbackOverride !== undefined ? { mediaLoopbackOverride: opts.mediaLoopbackOverride } : {}),
+    emulatorHost,
+    maxBytes: RIG_MEDIA_MAX_BYTES,
+  });
   let daemonHandle: TestDaemonHandle;
   try {
-    daemonHandle = await startTestDaemon({ configPath, gatewayPort });
+    daemonHandle = await startTestDaemon({ configPath, gatewayPort, overrides: mediaOverrides });
   } catch (err) {
     // Boot failed — restore the env + remove the throwaway dirs before rethrowing.
     if (hadDataDirEnv) process.env["COMIS_DATA_DIR"] = priorDataDir;
