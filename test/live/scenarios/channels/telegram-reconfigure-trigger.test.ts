@@ -125,10 +125,7 @@ describe("AUTO-04 Stage-B — reconfigure rewrites the throwaway config to name 
     // The rewritten config names the NEW model and not the OLD one — proving a
     // reconfigure swap is a real replacement, not an append (no-false-success).
     expect(newYaml).toContain("llama3.2:3b");
-    // RED (Pitfall 2): assert the WRONG value first — the rewritten config STILL
-    // names the OLD model. This RUNS-and-FAILS (the sweep replaced it), proving
-    // the test exercises a real replacement; flipped to the correct GREEN below.
-    expect(newYaml).toContain("qwen3.6:35b");
+    expect(newYaml).not.toContain("qwen3.6:35b");
   });
 });
 
