@@ -1000,4 +1000,33 @@ describe("ObservabilityStore — aggregateQuarterHourly (COST-03, the 900000-ms 
     expect(quarter[0]!.missingPricingCount).toBe(1);
     expect(quarter[0]!.totalCost).toBeCloseTo(0.5, 10);
   });
+
+  it("honors the agent/provider/model filter as BOUND parameters (the export's SPA-equivalent filters)", () => {
+    const hourStart = 16 * ONE_HOUR_MS;
+    // Two agents, two providers in the same bucket; the filter must isolate one.
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 1_000, agentId: "agent-a", provider: "anthropic", model: "claude-x", costTotal: 0.10 }),
+    );
+    store.insertTokenUsage(
+      makeTokenRow({ timestamp: hourStart + 2_000, agentId: "agent-b", provider: "openai", model: "gpt-x", costTotal: 0.90 }),
+    );
+
+    // No filter → both rows in the bucket (0.10 + 0.90 = 1.0).
+    const all = store.aggregateQuarterHourly(hourStart);
+    expect(all).toHaveLength(1);
+    expect(all[0]!.totalCost).toBeCloseTo(1.0, 10);
+
+    // Agent filter → only agent-a's 0.10.
+    const onlyA = store.aggregateQuarterHourly(hourStart, { agent: "agent-a" });
+    expect(onlyA).toHaveLength(1);
+    expect(onlyA[0]!.totalCost).toBeCloseTo(0.10, 10);
+
+    // Provider + model filter → only the openai/gpt-x row's 0.90.
+    const onlyOpenai = store.aggregateQuarterHourly(hourStart, { provider: "openai", model: "gpt-x" });
+    expect(onlyOpenai).toHaveLength(1);
+    expect(onlyOpenai[0]!.totalCost).toBeCloseTo(0.90, 10);
+
+    // A filter that matches nothing → an empty result (no crash, no full-scan leak).
+    expect(store.aggregateQuarterHourly(hourStart, { agent: "nobody" })).toEqual([]);
+  });
 });
