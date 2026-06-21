@@ -84,6 +84,20 @@ const SESSION_INDEX_REASON =
   PARTIAL_REASON +
   "; NOTE: the pi-event-bridge writes session-index to ~/.comis ignoring COMIS_DATA_DIR (todo 260606-pi-event-bridge-sessionindex-datadir, a real packages/agent product bug deferred to a dedicated post-milestone product phase) — the deterministic obs-meta + soak assert what IS deterministic and skip/document the daemon-written-index parts; no assertion weakened";
 
+// Cat K (Channels) — the v2.28 channel-emulation milestone certifies the channel
+// surface STAGE-B (deterministic, offline, no model): the harness drives the REAL
+// adapter/product seams (group/forum mapping + the General-Topic id=1 asymmetry, the
+// four outbound fallbacks under fault injection, error classification, Tier-3
+// platformActions + slash-commands, the forum-service negative, reconfigure/trigger)
+// and they are green. This is an HONEST MIDDLE verdict — distinct from the generic
+// PARTIAL (which means only "Stage-C deferred") — yet it is NEVER a faked full
+// CERTIFIED: the keyless build cannot claim CERTIFIED (the !isLive honesty gate
+// below), so Cat K's VERDICT stays PARTIAL while its REASON carries the Stage-B
+// certification. Real-keyless Stage-C (a full-daemon group reply, the VL A→B loop,
+// the DAG, the injection gauntlet) stays operator-gated (COMIS_LIVE + ollama).
+const CHANNELS_STAGE_B_REASON =
+  "channel surface Stage-B certified: group/forum + addressing + the four outbound fallbacks + error classification + Tier-3 platformActions + slash-commands + the forum-service negative + reconfigure/trigger deterministic green (the harness drives the real adapter/product seams); real-keyless Stage-C (full-daemon group reply, the VL A→B loop, the DAG pipeline, the injection-gauntlet residency sweep) operator-gated (COMIS_LIVE + keyless ollama, §20). NOT a faked CERTIFIED — the keyless build is honest-by-construction (the !isLive gate)";
+
 // ---------------------------------------------------------------------------
 // buildReadinessRecord
 // ---------------------------------------------------------------------------
@@ -114,6 +128,10 @@ export function buildReadinessRecord(opts: ReadinessOptions): {
     categories[cat] = "PARTIAL";
     if (cat === "A" || cat === "J") {
       reasons[cat] = SESSION_INDEX_REASON;
+    } else if (cat === "K") {
+      // Cat K (Channels) — the v2.28 milestone certifies it Stage-B (the HONEST
+      // middle reason); the verdict stays PARTIAL (never a faked CERTIFIED).
+      reasons[cat] = CHANNELS_STAGE_B_REASON;
     } else {
       reasons[cat] = PARTIAL_REASON;
     }
