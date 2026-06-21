@@ -51,6 +51,8 @@ import {
   buildLoopbackMediaOverride,
   buildLoopbackSsrfFetcher,
   buildMediaOverrides,
+  RIG_CHANNELS,
+  type RigChannel,
 } from "./rig.js";
 // The Signal config writer lives in the `@comis/*`-FREE `rig-config.ts` (the
 // detached-tsx constraint). Imported from its HOME module so the CHAN2-02 RED
@@ -442,5 +444,98 @@ describe("CHAN2-02 Signal config writer — the telegram writer is BYTE-IDENTICA
     // And the telegram writer does NOT emit a channels.signal block.
     expect(tgYaml.includes("channels.signal")).toBe(false);
     expect(tgYaml.includes("\n  signal:")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CHAN2-01 + CHAN2-02 (Plan 209-05, Task 2) — the channel→{emulator-factory,
+// config-writer} dispatch MAP + the ONE-LINE signal registration.
+//
+// The foundation-fix: `rig.ts` was telegram-hard-coded (a `channel:"telegram"`
+// literal type, a `buildRig` THROW on non-telegram, a hard-constructed
+// `createTgEmulator`, a hard-coded `buildConfigYaml`). This earns the
+// generalization: `RIG_CHANNELS[opts.channel] = { make, writeConfig }`. The
+// `signal:` entry IS the one-line registration (createSignalEmulator +
+// buildSignalConfigYaml). `buildRig`/`startStandaloneRig` look up by channel; the
+// daemon-boot/isolation/cleanup machinery is channel-agnostic + reused unchanged.
+//
+// These tests drive the MAP directly (deterministic, NO daemon): the factory
+// produces the right emulator, the config-writer wires the right seam, and the
+// telegram entry is byte-identical (the regression guard). The real
+// `buildRig({channel:"signal"})` daemon boot is the COMIS_LIVE Stage-C leg of the
+// 209-06/07 scenario (skip≠fail offline) — this plan proves the DISPATCH.
+//
+// Run (Stage-A, offline, deterministic):
+//   pnpm vitest run -c test/live/vitest.config.ts test/live/harness/rig.test.ts -t "dispatch map"
+// ---------------------------------------------------------------------------
+
+describe("CHAN2-01/02 channel dispatch map — the factory + config-writer registry", () => {
+  it("has a `telegram` AND a `signal` entry (the one-line signal registration)", () => {
+    // The channel literal is generalized to the union — both channels register.
+    const channels = Object.keys(RIG_CHANNELS).sort();
+    expect(channels).toContain("telegram");
+    expect(channels).toContain("signal");
+    // Each entry carries the factory + the config-writer (the dispatch shape).
+    expect(typeof RIG_CHANNELS.telegram.make).toBe("function");
+    expect(typeof RIG_CHANNELS.telegram.writeConfig).toBe("function");
+    expect(typeof RIG_CHANNELS.signal.make).toBe("function");
+    expect(typeof RIG_CHANNELS.signal.writeConfig).toBe("function");
+    // A compile-time witness that RigChannel is the union (not the bare literal).
+    const sig: RigChannel = "signal";
+    const tg: RigChannel = "telegram";
+    expect([tg, sig]).toEqual(["telegram", "signal"]);
+  });
+
+  it("the signal factory makes a SignalEmulator (caps.channel === 'signal'), NOT a TgEmulator", async () => {
+    const emulator = RIG_CHANNELS.signal.make({ channel: "signal", model: "keyless" });
+    try {
+      // The Signal emulator self-describes via its flat caps (signalCaps).
+      expect(emulator.caps.channel).toBe("signal");
+      // It boots a loopback wire surface (the GET /api/v1/check the adapter awaits).
+      const { apiRoot } = await emulator.start();
+      expect(apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    } finally {
+      await emulator.stop();
+    }
+  });
+
+  it("the telegram factory still makes a TgEmulator (caps.channel === 'telegram') — the regression guard", async () => {
+    const emulator = RIG_CHANNELS.telegram.make({ channel: "telegram", model: "keyless" });
+    try {
+      expect(emulator.caps.channel).toBe("telegram");
+      const { apiRoot } = await emulator.start();
+      expect(apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    } finally {
+      await emulator.stop();
+    }
+  });
+
+  it("the signal config-writer wires channels.signal.baseUrl == the started emulator's apiRoot (the seam)", async () => {
+    // The BOOT PROOF (deterministic, no daemon): start the Signal emulator via the
+    // map factory, write its config via the map writer, and assert the seam wires
+    // the emulator's loopback apiRoot — exactly what buildRig({channel:'signal'})
+    // does before startTestDaemon.
+    const emulator = RIG_CHANNELS.signal.make({ channel: "signal", model: "keyless" });
+    try {
+      const { apiRoot } = await emulator.start();
+      const cfg = RIG_CHANNELS.signal.writeConfig(apiRoot, GATEWAY_PORT, "keyless");
+      const doc = parseYaml(cfg) as Record<string, unknown>;
+      const channels = doc["channels"] as Record<string, Record<string, unknown>>;
+      expect(channels["signal"]).toBeDefined();
+      expect(channels["signal"]!["baseUrl"]).toBe(apiRoot);
+      expect(channels["signal"]!["enabled"]).toBe(true);
+      // The Signal writer never emits a telegram block.
+      expect("telegram" in channels).toBe(false);
+    } finally {
+      await emulator.stop();
+    }
+  });
+
+  it("the telegram config-writer is byte-identical to buildConfigYaml (the regression guard)", () => {
+    // The telegram entry MUST produce the SAME apiRoot YAML the public surface
+    // (205-04) depends on — the map dispatch is additive, telegram is one entry.
+    const viaMap = RIG_CHANNELS.telegram.writeConfig(APP_ROOT, GATEWAY_PORT, "keyless");
+    const direct = buildConfigYaml(APP_ROOT, GATEWAY_PORT, "keyless");
+    expect(viaMap).toBe(direct);
   });
 });
