@@ -61,6 +61,14 @@ function fullPolicyDeps(allToolNames: string[]) {
   return {
     allTools: allToolNames.map(tool),
     policy: { profile: "full", allow: [] as string[], deny: [] as string[] },
+    // Force the dynamic replay to degrade to static-only so these STATIC-validation
+    // tests NEVER spawn a real bwrap jail. Without this, a candidate WITH scripts
+    // triggers a real bwrap replay on Linux (the default detectProvider finds the
+    // host bwrap), which hangs ~5s on a CI runner → vitest's 5000ms timeout →
+    // a DETERMINISTIC CI failure (passes on macOS only because there is no bwrap).
+    // The DYNAMIC suite injects its own provider via fullDynamicDeps, which
+    // overrides this after the spread (so dynamic coverage is still exercised).
+    detectProvider: () => undefined,
   };
 }
 
