@@ -53,11 +53,13 @@
  * @module
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { assertChannelTrace, readMirrorText } from "../../assert/channel-trace.js";
 import { createSignalEmulator } from "../../emulators/signal/signal-emulator.js";
 import { signalCaps, SIGNAL_MAX_MESSAGE_CHARS } from "../../emulators/signal/signal-caps.js";
@@ -70,6 +72,7 @@ import {
   type ChanliveHandle,
   type VerbContext,
 } from "../../bin/chan.js";
+import type { RigHandle } from "../../harness/rig.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
 
@@ -423,10 +426,293 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
   });
 });
 
-// Stage-C (the COMIS_LIVE agent round-trip) is added in Task 2. The split anchor
-// is asserted here so the file always declares both stages (skip != fail).
-describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip (COMIS_LIVE)", () => {
-  it("placeholder until Task 2 wires startRig({channel:'signal'}) — skipped offline (skip != fail)", () => {
-    expect(isLive).toBe(true);
+// ---------------------------------------------------------------------------
+// Stage-B — THE ZERO-CHANGE PROOF (the load-bearing CHAN2-02 evidence) + the
+// zero-production-change proof + the SEC-02 re-verify.
+// ---------------------------------------------------------------------------
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, "../../../..");
+
+/** Run a git command in the repo root and return trimmed stdout. */
+function git(args: string[]): string {
+  return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf-8" }).trim();
+}
+
+/**
+ * The Phase-209 BASE commit (the parent of the EARLIEST commit whose subject
+ * names a 209-NN plan), computed from `git log` so the proof does NOT depend on a
+ * hard-coded SHA. The whole-phase diff (`<base>..HEAD`) is what the zero-change /
+ * zero-production-change proofs assert against — exactly the surface this phase
+ * added.
+ */
+function phaseBase(): string {
+  const log = git(["log", "--reverse", "--format=%H %s"]);
+  const first = log
+    .split("\n")
+    .find((line) => /\(209-\d+\)/.test(line));
+  if (first === undefined) {
+    throw new Error("could not locate the earliest 209-NN commit to derive the phase base");
+  }
+  const sha = first.split(" ")[0]!;
+  return git(["rev-parse", `${sha}^`]);
+}
+
+/**
+ * The whole-phase diff name list. Uses `git diff <base>` (NO `..HEAD`) so it
+ * compares the phase base to the WORKING TREE — catching BOTH committed phase
+ * changes AND any uncommitted edit to a tracked file (so a PASS file edited but
+ * not yet committed during the phase is still caught — the proof has teeth on
+ * the live working tree, not just the committed history).
+ */
+function phaseDiffFiles(): string[] {
+  return git(["diff", "--name-only", phaseBase()])
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+describe("CHAN2-02 Stage-B — THE ZERO-CHANGE PROOF + zero-production-change + SEC-02 (no COMIS_LIVE)", () => {
+  it("the foundation-proof PASS: assert/channel-trace.ts AND harness/chanlive-handle.ts are UNCHANGED across the whole phase diff (the expensive parts already generalized)", () => {
+    // The strongest CHAN2-02 evidence: the EXPENSIVE parts of the foundation —
+    // the channel-agnostic dual oracle (assert/channel-trace.ts) and the
+    // per-channel handle (harness/chanlive-handle.ts) — needed ZERO change to
+    // accept a SECOND channel. They are NOT in the phase diff.
+    const diff = phaseDiffFiles();
+    const zeroChangeTargets = diff.filter(
+      (f) =>
+        f.endsWith("test/live/assert/channel-trace.ts") ||
+        f.endsWith("test/live/harness/chanlive-handle.ts"),
+    );
+    // RED: this assertion is intentionally inverted until GREEN — the
+    // foundation-proof PASS files are UNCHANGED (the expensive parts already
+    // generalized), so zeroChangeTargets is [] and this .not.toEqual([]) FAILS.
+    // GREEN flips it to the correct .toEqual([]) (the real zero-change proof).
+    expect(
+      zeroChangeTargets,
+      "RED placeholder — GREEN asserts the PASS files are UNCHANGED (.toEqual([]))",
+    ).not.toEqual([]);
+
+    // And they DO carry the channel-agnostic surface the proof rests on (a
+    // content check that they hold the structural subset + the per-channel key,
+    // i.e. they did NOT need a signal-specific edit).
+    const dualOracle = readFileSync(
+      resolve(REPO_ROOT, "test/live/assert/channel-trace.ts"),
+      "utf-8",
+    );
+    // The structural subset the dual oracle accepts (channel-agnostic, not bound
+    // to TgEmulator) — `lastBotReply(chat): { text? }`.
+    expect(dualOracle).toMatch(/lastBotReply\(chat:\s*\{\s*chatId:\s*number\s*\}\)/);
+    // The channel-neutral delivery_mirror read (keyed on session_key only).
+    expect(dualOracle).toMatch(/SELECT text FROM delivery_mirror WHERE session_key/);
+
+    const handle = readFileSync(
+      resolve(REPO_ROOT, "test/live/harness/chanlive-handle.ts"),
+      "utf-8",
+    );
+    // The per-channel key (`<channel>.json`) — already channel-keyed (no edit needed).
+    expect(handle).toMatch(/readonly channel:\s*string/);
+    expect(handle).toMatch(/\$\{channel\}\.json/);
   });
+
+  it("the zero-production-change proof: the whole phase diff is test/-only EXCEPT the documented I1 type-only @comis/channels barrel re-export", () => {
+    // The milestone premise: the redirect seam is config-only, so a SECOND
+    // channel reaches the daemon with NO product behavior change. The ONLY
+    // permitted production-source touch is the documented I1 type-only barrel
+    // re-export (packages/channels/src/index.ts) + its test (a test file, stripped
+    // from the published tarball). Anything else under packages/*/src is a STOP.
+    const productSrc = phaseDiffFiles().filter((f) => /(^|\/)packages\/[^/]+\/src\//.test(f));
+    const I1_BARREL = "packages/channels/src/index.ts";
+    const I1_BARREL_TEST = "packages/channels/src/index.test.ts";
+    const offending = productSrc.filter(
+      (f) => !f.endsWith(I1_BARREL) && !f.endsWith(I1_BARREL_TEST),
+    );
+    expect(
+      offending,
+      `unexpected production source changed this phase (only the I1 type-only barrel ` +
+        `re-export is allowed): ${offending.join(", ")}`,
+    ).toEqual([]);
+
+    // And the I1 barrel change is a TYPE-ONLY re-export (erased at build — no
+    // runtime @comis/* edge into the never-published harness), not a behavior
+    // change: the diff hunk for index.ts adds an `export type { ... }` line only.
+    if (productSrc.some((f) => f.endsWith(I1_BARREL))) {
+      const barrelDiff = git(["diff", `${phaseBase()}..HEAD`, "--", I1_BARREL]);
+      // Every ADDED non-comment, non-context code line must be an `export type` re-export.
+      const addedCode = barrelDiff
+        .split("\n")
+        .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
+        .map((l) => l.slice(1).trim())
+        .filter((l) => l.length > 0 && !l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"));
+      expect(addedCode.length, "the I1 barrel hunk added at least one line").toBeGreaterThan(0);
+      for (const line of addedCode) {
+        expect(
+          line,
+          `the I1 barrel must add TYPE-ONLY re-exports (erased at build); found a non-type line: ${line}`,
+        ).toMatch(/^export type \{/);
+      }
+      // Specifically the SignalEnvelope/SignalAttachment wire types (the I4 seam).
+      expect(barrelDiff).toMatch(/export type \{ SignalEnvelope, SignalAttachment \}/);
+    }
+  });
+
+  it("SEC-02 re-verify: the harness-never-published guard passes with the new Signal files present (no @comis/* runtime edge, no package.json under test/live, no comis subcommand)", () => {
+    // The SEC-02 guard runs under the ARCHITECTURE vitest project (pure
+    // filesystem + string assertions, no daemon) — it is invoked as a phase-gate
+    // run here (it cannot run under the live config). This test re-asserts the
+    // load-bearing SEC-02 invariants directly against the published surface with
+    // the new emulators/signal/* + harness/* files present, so the scenario
+    // itself proves the boundary holds (the full guard is run at the phase gate:
+    // `pnpm vitest run test/architecture/harness-never-published.test.ts`).
+
+    // (1) No package.json under any harness dir (a workspace member would publish).
+    for (const dir of ["test/live/harness", "test/live/emulators", "test/live/scenarios"]) {
+      const found = git(["ls-files", `${dir}/**/package.json`]);
+      expect(found, `a package.json under ${dir} would make the harness publishable`).toBe("");
+    }
+
+    // (2) The new Signal emulator imports @comis/channels TYPE-ONLY (erased — no
+    // runtime edge into the never-published harness).
+    const sigEmu = readFileSync(
+      resolve(REPO_ROOT, "test/live/emulators/signal/signal-emulator.ts"),
+      "utf-8",
+    );
+    // The only @comis/* import is `import type { SignalEnvelope } from "@comis/channels"`.
+    const comisImports = sigEmu
+      .split("\n")
+      .filter((l) => /from\s+["']@comis\//.test(l));
+    for (const imp of comisImports) {
+      expect(imp, `the Signal emulator must import @comis/* TYPE-ONLY: ${imp}`).toMatch(
+        /import\s+type\s/,
+      );
+    }
+
+    // (3) No comis subcommand for the harness CLI (chan/tg live under test/live/bin).
+    const cliEntry = readFileSync(resolve(REPO_ROOT, "packages/cli/src/cli.ts"), "utf-8");
+    expect(cliEntry).not.toMatch(/\.command\(\s*["'`](chan|tg)[\s"'`]/);
+    expect(cliEntry).not.toMatch(/register(Chan|Tg)Command\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage-C — the AGENT-AUTHORED Signal round-trip via the full daemon (COMIS_LIVE)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + explain (COMIS_LIVE)", () => {
+  let rig: RigHandle | undefined;
+  // buildRig exposes memoryDbPath (the RigHandle projection hides it); the
+  // round-trip surface (send/waitForReply/emulator/chat) is identical.
+  let memoryDbPath: string | undefined;
+
+  beforeAll(async () => {
+    // PRECONDITION: `pnpm build` first — the live alias reads dist/; a stale
+    // dist/ masks src/. buildRig({channel:"signal"}) boots an isolated daemon
+    // pointed at the SignalEmulator via channels.signal.baseUrl (the 209-05
+    // dispatch map + the verified config-only redirect seam).
+    const { buildRig } = await import("../../harness/rig.js");
+    const built = await buildRig({ channel: "signal", model: "keyless" });
+    memoryDbPath = built.memoryDbPath;
+    rig = {
+      emulator: built.emulator,
+      controlClient: built.controlClient,
+      chat: built.chat,
+      gatewayUrl: built.gatewayUrl,
+      authToken: built.authToken,
+      send: built.send.bind(built),
+      waitForReply: built.waitForReply.bind(built),
+      cleanup: built.cleanup.bind(built),
+    };
+  });
+
+  afterAll(async () => {
+    if (rig) await rig.cleanup();
+    rig = undefined;
+    memoryDbPath = undefined;
+  });
+
+  /** Bounded poll for the single delivery_mirror.session_key (the after_delivery hook is async). */
+  async function pollForSessionKey(dbPath: string, timeoutMs = 5000): Promise<string | undefined> {
+    const start = Date.now();
+    const read = (): string | undefined => {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db
+          .prepare("SELECT session_key FROM delivery_mirror ORDER BY created_at DESC LIMIT 1")
+          .get() as { session_key?: string } | undefined;
+        return row?.session_key;
+      } finally {
+        db.close();
+      }
+    };
+    let key = read();
+    while (key === undefined && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 100));
+      key = read();
+    }
+    return key;
+  }
+
+  it(
+    "a send round-trips through the real Signal adapter, the dual-oracle cross-check holds (wire==mirror.text), and explain works channel-agnostically",
+    async () => {
+      const r = rig;
+      const dbPath = memoryDbPath;
+      expect(r, "Signal rig booted").toBeDefined();
+      expect(dbPath, "memoryDbPath resolved").toBeDefined();
+      if (r === undefined || dbPath === undefined) return;
+
+      // Drive a real inbound -> the agent authors a reply -> the REAL Signal
+      // adapter -> delivery path writes the mirror. waitForReply is the SYNC POINT
+      // (read the mirror only AFTER the outbound landed).
+      const inboundId = await r.send("hello from the Signal foundation-proof");
+      const reply = await r.waitForReply(inboundId, 45_000);
+      // Honest no-reply -> undefined (never fabricated). Needs a reachable keyless model.
+      expect(
+        reply,
+        "no agent reply within 45s — is a keyless model reachable (ollama on localhost:11434 / live.env)? (honest no-reply, never fabricated)",
+      ).toBeDefined();
+      if (reply === undefined) return;
+
+      // Resolve the session key from the single mirror row (bounded poll).
+      const sessionKey = await pollForSessionKey(dbPath);
+      expect(
+        sessionKey,
+        "a delivery_mirror row was written for the session (the after_delivery hook fired on the Signal path)",
+      ).toBeDefined();
+      if (sessionKey === undefined) return;
+
+      // THE HARD dual-oracle cross-check on Signal: the SignalEmulator's recorded
+      // wire text == delivery_mirror.text for the session (assertChannelTrace, a
+      // HARD throw on mismatch). REUSED UNCHANGED — the foundation-proof PASS,
+      // now against the LIVE Signal writer.
+      await assertChannelTrace({
+        emulator: r.emulator,
+        chat: r.chat,
+        memoryDbPath: dbPath,
+        sessionKey,
+      });
+
+      // explain works channel-agnostically over the FIXED rpc-over-WS (205-07):
+      // a known sessionKey returns an IncidentReport. (Driven via the chan CLI's
+      // explain verb against the rig's gateway — channel-agnostic obs.)
+      const { runVerb: liveRunVerb } = await import("../../bin/chan.js");
+      const explainHandle: ChanliveHandle = {
+        channel: "signal",
+        controlEndpoint: r.gatewayUrl,
+        rigControlEndpoint: r.gatewayUrl,
+        gatewayUrl: r.gatewayUrl,
+        gatewayToken: r.authToken,
+        chatId: r.chat.chatId,
+        dataDir: dirname(dbPath),
+        memoryDbPath: dbPath,
+      };
+      const report = (await liveRunVerb("explain", [sessionKey], {
+        handle: explainHandle,
+      })) as Record<string, unknown>;
+      // A channel-agnostic IncidentReport came back (not an error shape).
+      expect(report).toBeDefined();
+      expect(typeof report).toBe("object");
+    },
+    180_000,
+  );
 });
