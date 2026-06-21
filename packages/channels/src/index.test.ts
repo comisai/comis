@@ -40,6 +40,12 @@ import {
   buildSendThreadParams,
   buildTypingThreadParams,
   resolveTelegramThreadContext,
+  // Telegram error classifier — the structural GrammyError → ActivityRenderError
+  // mapping (429→rate_limited / 400-not-editable→not_supported{edit} /
+  // 403→permission / default→internal). Surfaced on the public barrel so the
+  // v2.28 channel-emulation harness's FAULT-02 assertion drives the REAL
+  // classifier (not a re-implementation), mirroring the thread-context precedent.
+  classifyTelegramError,
 } from "./index.js";
 import type { TelegramThreadScope } from "./index.js";
 
@@ -103,5 +109,33 @@ describe("@comis/channels barrel exports", () => {
     expect(buildSendThreadParams(1, "forum")).toBeUndefined();
     // TYPING always includes it — the asymmetric counterpart.
     expect(buildTypingThreadParams(1)).toEqual({ message_thread_id: 1 });
+  });
+
+  it("exports the Telegram error classifier (the FAULT-02 classification surface)", () => {
+    // Surfaced on the public barrel so the v2.28 harness's FAULT-02 leg drives
+    // the REAL structural classifier (429/400-edit/403/default) rather than
+    // re-implementing it — the thread-context precedent applied to classification.
+    expect(typeof classifyTelegramError).toBe("function");
+  });
+
+  it("the structural classifier maps the four GrammyError classes through the real public fn", () => {
+    // 429 with a retry_after → rate_limited (retryAfterMs = retry_after * 1000).
+    expect(classifyTelegramError({ error_code: 429, parameters: { retry_after: 5 } })).toEqual({
+      kind: "rate_limited",
+      retryAfterMs: 5000,
+    });
+    // 400 "message can't be edited" → not_supported{edit} (the editable-message regex).
+    expect(classifyTelegramError({ error_code: 400, description: "message can't be edited" })).toEqual({
+      kind: "not_supported",
+      capability: "edit",
+    });
+    // 403 forbidden → permission (carries the description as detail).
+    expect(classifyTelegramError({ error_code: 403, description: "bot was blocked" })).toMatchObject({
+      kind: "permission",
+    });
+    // THE NUANCE: the default (unmatched) is {kind:"internal"}, NOT ok:true.
+    expect(classifyTelegramError({ error_code: 418, description: "teapot" })).toMatchObject({
+      kind: "internal",
+    });
   });
 });
