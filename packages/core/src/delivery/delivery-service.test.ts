@@ -1197,6 +1197,152 @@ describe("DeliveryService — full pipeline behavior", () => {
   });
 
   // -------------------------------------------------------------------------
+  // REACT-04 (206-04): outbound → trajectory binding on the DIRECT ack path
+  // -------------------------------------------------------------------------
+  //
+  // The reaction→trajectory binding (recordOutboundMessage) was wired ONLY into
+  // the recurring delivery-queue DRAIN (setup-delivery.ts:drainDeliveryQueue).
+  // But the PRIMARY inbound-reply path — setup-and-route → executeAndDeliver →
+  // execution-deliver → deliveryService.deliverToChannel — sends via THIS direct
+  // ack path (enqueue in_flight → adapter.sendMessage → ack), which never bound
+  // the minted reply id to the trajectory. So a 👍 on a normal agent reply
+  // map-missed (no ReactionTrajectoryMap entry) and reactions never drove
+  // learning on the common path (the 206-03 Stage-C live finding). These tests
+  // assert the binding fires HERE, on the direct ack, with the SAME fail-closed
+  // scope discipline the drain uses (agentId = the REAL agent, never tenantId;
+  // a null traceId/agentId → no binding). Mirrors the REACT-02 queue-integration
+  // pattern above: createDeliveryService(makeDeps(...)) from SOURCE so the SUT's
+  // tryGetContext() reads the SAME source ALS the test's runWithContext writes.
+
+  describe("REACT-04: outbound → trajectory binding on the direct ack path", () => {
+    let queue: ReturnType<typeof createMockDeliveryQueue>;
+    let eventBus: ReturnType<typeof createMockEventBus>;
+    beforeEach(() => {
+      queue = createMockDeliveryQueue();
+      eventBus = createMockEventBus();
+    });
+
+    it("binds the minted reply messageId → trajectory scope on a successful direct send (the primary reply path)", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-101"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      // The agent's reply is produced INSIDE the agent's request context; the
+      // ALS carries the resolved agentId/traceId/tenantId. This is the common
+      // single-user-DM reply that previously map-missed.
+      await runWithContext(
+        {
+          traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      // The binding MUST fire on the direct ack path (this is the 206-03 gap).
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      const [boundMessageId, boundScope] = recordOutboundMessage.mock.calls[0];
+      // The minted PLATFORM reply id (the same value the ack persisted) is the key.
+      expect(boundMessageId).toBe("reply-msg-101");
+      // The scope is the REAL agent's partition — never the tenantId-as-agentId.
+      expect(boundScope).toMatchObject({
+        traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        tenantId: "default",
+        agentId: "mldag",
+        sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", // session identity falls back to the trajectory id (scope-consistent with the drain)
+      });
+    });
+
+    it("fail-closed: does NOT bind when there is no request context (null traceId — a pre-executor / non-agent send)", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-202"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      // No runWithContext → tryGetContext() is undefined → traceId is null. The
+      // drain fails closed here (it would mis-attribute to the tenantId), so the
+      // direct path must too: record NOTHING rather than bind a bad scope.
+      await service.deliverToChannel(adapter, "chat-1", "system reply", { origin: "system" });
+
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+
+    it("fail-closed: does NOT bind on a failed send (no minted messageId to attribute)", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      await runWithContext(
+        {
+          traceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      // The send failed → no platform messageId → nothing to bind (the binding
+      // only fires on the successful ack branch, mirroring the drain).
+      expect(recordOutboundMessage).not.toHaveBeenCalled();
+    });
+
+    it("binds once per chunk's successful ack — the LAST chunk's id is the reply the user reacts to (multi-chunk reply)", async () => {
+      // A multi-chunk reply acks each chunk; the binding fires per successful
+      // ack so the final chunk's id (the message a reaction targets) is bound.
+      let n = 0;
+      const adapter = createMockAdapter("discord");
+      adapter.sendMessage.mockImplementation(async (): Promise<Result<string, Error>> => ok(`chunk-msg-${n++}`));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage, maxCharsOverride: 150 }),
+      );
+
+      const text = makeLongMarkdown(500);
+      await runWithContext(
+        {
+          traceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          tenantId: "default",
+          agentId: "mldag",
+          sessionKey: "default:user-1:chat-1",
+          startedAt: Date.now(),
+          trustLevel: "admin",
+        },
+        async () => {
+          await service.deliverToChannel(adapter, "chat-1", text, { origin: "agent" });
+        },
+      );
+
+      // One bind per delivered chunk; every bound id is a minted platform id, and
+      // every scope carries the REAL agent (never the tenantId fallback).
+      expect(recordOutboundMessage.mock.calls.length).toBe(adapter.sendMessage.mock.calls.length);
+      expect(recordOutboundMessage.mock.calls.length).toBeGreaterThan(1);
+      for (const [boundMessageId, boundScope] of recordOutboundMessage.mock.calls) {
+        expect(boundMessageId).toMatch(/^chunk-msg-\d+$/);
+        expect(boundScope.agentId).toBe("mldag");
+        expect(boundScope.traceId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Abort signal
   // -------------------------------------------------------------------------
 

@@ -109,6 +109,30 @@ export interface DeliveryServiceDeps {
 
   /** Reply mode for this delivery (off/first/all). OPTIONAL — default: "first". */
   replyMode?: "off" | "first" | "all";
+
+  /**
+   * REACT-04 (Verified Learning, Phase 206-04): OPTIONAL outbound-message →
+   * trajectory binding for the DIRECT ack path. The recurring delivery-queue
+   * DRAIN (setup-delivery.ts:drainDeliveryQueue) already binds; but the PRIMARY
+   * inbound-reply path (setup-and-route → executeAndDeliver → execution-deliver
+   * → this `deliverToChannel`) sends via the direct ack (enqueue in_flight →
+   * adapter.sendMessage → ack) and previously NEVER bound the minted reply id →
+   * trajectory, so a reaction on a normal agent reply map-missed and never drove
+   * learning (the 206-03 Stage-C live finding). Threaded here so the direct ack
+   * binds the SAME (messageId → scope) the drain does. `undefined` when learning-
+   * outcome is disabled for every agent → the direct ack does ZERO extra work
+   * (byte-identity). The same callback instance feeds BOTH the drain and this
+   * path, and `ReactionTrajectoryMap.record` is idempotent by messageId, so a
+   * reply that traverses both (transient-nack → drain retry) cannot double-bind.
+   * Invoked ONLY on a successful ack with a non-null traceId AND a non-null
+   * agentId (the request ALS) — a null traceId/agentId (a pre-executor / non-
+   * agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the tenantId
+   * would corrupt cross-agent isolation (T-198-16), so we record nothing.
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+  ) => void;
 }
 
 /**
