@@ -124,10 +124,10 @@ describe("ACCEPT-01 scenario 2 Stage-B — the DAG structure-scoring contract + 
     };
     const fakeOutputs = { graphId: "g1", outputs: { A: "A", B: "B", C: "AB" }, source: "memory" };
     expect(scoreDagStructure(fakeStatus, fakeOutputs, EXPECTED_NODE_KEYS)).toBe(true);
-    // RED-first (Pitfall 2): assert the WRONG value — a NON-terminal status scores
-    // `true` (it must score `false`; a terminal verdict for an unfinished run is a
-    // faked pass). Confirm RUNS-and-FAILS, commit the RED, then flip to `false`.
-    expect(scoreDagStructure({ ...fakeStatus, isTerminal: false }, fakeOutputs, EXPECTED_NODE_KEYS)).toBe(true);
+    // A non-terminal status is NOT a pass (the loop would keep polling / honestly
+    // find — a terminal verdict for an unfinished run would be a faked pass). (RED
+    // asserted `true`.)
+    expect(scoreDagStructure({ ...fakeStatus, isTerminal: false }, fakeOutputs, EXPECTED_NODE_KEYS)).toBe(false);
     // A missing node key is NOT a pass (a partial DAG is an honest finding, not a faked pass — A3).
     expect(
       scoreDagStructure(fakeStatus, { ...fakeOutputs, outputs: { A: "A", B: "B" } }, EXPECTED_NODE_KEYS),
