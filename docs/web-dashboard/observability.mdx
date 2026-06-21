@@ -50,17 +50,46 @@ The Overview also includes internal tabs for Billing, Delivery, Channels, and Di
 
 Route: `/observe/billing` (standalone sub-view)
 
-The Billing view breaks down your AI spending into two tables:
+The Billing view breaks down your AI spending across drill-down levels:
 
 - **By Provider** -- one row per AI provider (such as Anthropic, OpenAI, or Google) showing the provider name, total tokens used, number of API calls, cost, and cache savings. The cache savings column shows how much prompt caching has reduced your spending for that provider. A totals row at the bottom sums everything up.
 - **By Agent** -- one row per agent showing the agent name, tokens used, what percentage of total usage that agent accounts for, and cost.
 
 This helps you answer questions like "Which provider is costing the most?" and "Is one agent consuming a disproportionate share of resources?"
 
+#### Per-tool and per-subagent cost
+
+At the agent level, two additional tables surface finer-grained attribution when the data is available:
+
+- **Per-tool cost** (labeled **best-effort**) -- attributes a turn's cost to the tool(s) that triggered it (from the `tool_tag` granularity). The per-tool shares are an even split across the distinct tools that fired in a turn, so they sum to the turn total -- they are a labeled estimate, never an exact per-tool charge.
+- **Per-subagent cost** -- the corrected-dollar cost rolled up per subagent node, showing both the node's own cost and its **subtree cost** (the node plus all its descendants). This is exact within the agent graph.
+
+These sections appear only when the daemon surfaces the granularity (governed by `observability.costGranularity.{perTool, subagentRollup}`); otherwise the view degrades silently rather than showing empty tables.
+
+#### Filter and export
+
+A filter bar at the agent level supports a **typed-query DSL** for narrowing the rows in place. Tokens are `key:value`, space-separated:
+
+| Key | Effect |
+| --- | --- |
+| `agent:<id>` | only the named agent |
+| `provider:<name>` | only the named provider |
+| `model:<id>` | only the named model |
+| `tool:<name>` | only rows attributed to the named tool |
+| `has:errors` | only rows that had errors |
+| `minTokens:<n>` | rows with at least N tokens |
+| `maxCost:<n>` | rows costing at most $N |
+
+Unknown keys are ignored (a hint names them) -- the query never fails. The filter is applied entirely in the browser over already-fetched rows; it is never turned into a database query.
+
+The **Export CSV** and **Export JSON** buttons download the *currently-filtered* rows. The export carries a fixed set of cost columns only (agent id, tokens, percent-of-total, cost) -- never message bodies or any other content.
+
 <Tip>
 The cache savings column helps you see the return on investment from prompt
 caching. Providers with high cache savings ratios indicate effective prompt
 reuse -- your system prompts and repeated context are being cached efficiently.
+The per-tool table's "best-effort" label is a reminder that a turn's cost is
+split across its tools, not measured per tool.
 </Tip>
 
 ### Delivery
