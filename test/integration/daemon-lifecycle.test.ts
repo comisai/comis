@@ -162,6 +162,11 @@ describe("Daemon Lifecycle", () => {
         // correction signal is a no-op until a key is set). The "API key" text lives
         // in the `hint` field (not `msg`), so the "API key" filter above misses it.
         if (msg.includes("correction detector unavailable")) return false;
+        // Exclude the outcome-judge default-deferred notice (the sibling of the
+        // correction detector above — learningOutcome.judge.enabled defaults to
+        // true; with no cheap-model API key the daemon emits one startup WARN that
+        // the conversational-turn fallback is a no-op until a key is set).
+        if (msg.includes("outcome judge unavailable")) return false;
         // Exclude the benign control-plane guard that fires non-deterministically
         // when a heartbeat/continuation injection races channel-adapter registration
         // at startup (channel-manager.injectMessage warns + skips when no adapter is
