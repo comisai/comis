@@ -112,7 +112,7 @@
         "tab": "Developer Guide",
         "groups": [
           { "group": "Architecture", "pages": ["developer-guide/index", "developer-guide/architecture", "developer-guide/packages", "developer-guide/event-bus", "developer-guide/architecture/delivery-pipeline"] },
-          { "group": "Extending", "pages": ["developer-guide/custom-adapters", "developer-guide/plugins", "developer-guide/custom-skills", "developer-guide/pipelines", "developer-guide/contributing"] }
+          { "group": "Extending", "pages": ["developer-guide/custom-adapters", "developer-guide/plugins", "developer-guide/custom-skills", "developer-guide/pipelines", "developer-guide/channel-emulation-harness", "developer-guide/contributing"] }
         ]
       },
       {
