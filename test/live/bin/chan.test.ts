@@ -15,14 +15,86 @@
  *   pnpm vitest run -c test/live/vitest.config.ts test/live/bin/chan.test.ts
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   parseArgs,
   toFailure,
   exitCodeFor,
   tryParseJson,
+  runVerb,
+  VerbFailure,
   type FailureKind,
+  type ChanliveHandle,
+  type VerbContext,
 } from "./chan.js";
+
+// ---------------------------------------------------------------------------
+// Test helpers for the runVerb dispatch (Task 2). The seams are injected via
+// `ctx` so the dispatch is unit-testable WITHOUT booting a daemon: a fake `rpc`
+// (a vi.fn() returning a canned result) and a throwaway loopback `/control/*`
+// server that records the POST + returns canned outbound.
+// ---------------------------------------------------------------------------
+
+/** A minimal fake handle (no real rig) for the dispatch units. */
+function fakeHandle(over: Partial<ChanliveHandle> = {}): ChanliveHandle {
+  return {
+    channel: "telegram",
+    controlEndpoint: "http://127.0.0.1:1",
+    rigControlEndpoint: "http://127.0.0.1:1",
+    gatewayUrl: "http://127.0.0.1:1",
+    gatewayToken: "test-token-0000000000000000000000000000",
+    chatId: 424242,
+    dataDir: "/tmp/does-not-exist",
+    memoryDbPath: "/tmp/does-not-exist/memory.db",
+    ...over,
+  };
+}
+
+/**
+ * Stand up a throwaway loopback `/control/*` server. `outbound` is the canned
+ * array the GET /outbound reply-wait returns (empty → honest no-reply). Records
+ * every POST body for assertion. Returns the base URL + a close().
+ */
+async function startControlStub(outbound: Array<{ messageId: number; text?: string }>): Promise<{
+  base: string;
+  posts: Array<{ path: string; body: unknown }>;
+  close(): Promise<void>;
+}> {
+  const posts: Array<{ path: string; body: unknown }> = [];
+  const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const path = req.url ?? "";
+      if (req.method === "POST" && /\/control\/chats\/-?\d+\/messages/.test(path)) {
+        posts.push({ path, body: raw.length > 0 ? JSON.parse(raw) : {} });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ messageId: 1001 }));
+        return;
+      }
+      if (req.method === "GET" && /\/control\/chats\/-?\d+\/outbound/.test(path)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(outbound));
+        return;
+      }
+      res.writeHead(404);
+      res.end("[]");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    base: `http://127.0.0.1:${port}`,
+    posts,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  };
+}
 
 describe("chan/tg CLI — parseArgs (pure)", () => {
   it("extracts an explicit --channel, the verb, positional args, and --json", () => {
@@ -136,5 +208,179 @@ describe("chan/tg CLI — tryParseJson (the rpc bad-json guard, V5)", () => {
       expect(failure.error).toBe("bad_json");
       expect(exitCodeFor("bad_json")).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
+  it("forwards method + params VERBATIM to the injected rpc and returns the result", async () => {
+    const rpc = vi.fn().mockResolvedValue({ ok: true, status: "healthy" });
+    const ctx: VerbContext = { handle: fakeHandle(), rpc };
+    const result = await runVerb("rpc", ["channels.health", '{"detail":true}'], ctx);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "channels.health",
+      { detail: true },
+      "test-token-0000000000000000000000000000",
+    );
+    expect(result).toEqual({ ok: true, status: "healthy" });
+  });
+
+  it("defaults params to {} when no json arg is given", async () => {
+    const rpc = vi.fn().mockResolvedValue({ id: "agt_1" });
+    await runVerb("rpc", ["agents.create"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith("http://127.0.0.1:1", "agents.create", {}, expect.any(String));
+  });
+
+  it("a malformed json arg throws a VerbFailure(bad_json) — validated BEFORE the passthrough", async () => {
+    const rpc = vi.fn();
+    await expect(
+      runVerb("rpc", ["agents.create", "{not json"], { handle: fakeHandle(), rpc }),
+    ).rejects.toMatchObject({ kind: "bad_json" });
+    // The passthrough was NEVER called — V5 validates first.
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("an RPC error throw maps to a VerbFailure(rpc_error) carrying code + message", async () => {
+    const rpc = vi.fn().mockRejectedValue(new Error("RPC error -32601: Method not found"));
+    const err = await runVerb("rpc", ["nope.method"], { handle: fakeHandle(), rpc }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("rpc_error");
+    expect((err as VerbFailure).body["message"]).toContain("Method not found");
+  });
+
+  it("explain is a curated rpc call to obs.explain", async () => {
+    const rpc = vi.fn().mockResolvedValue({ outcome: "ok" });
+    await runVerb("explain", ["sess-key-1"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "obs.explain",
+      expect.objectContaining({ sessionKey: "sess-key-1" }),
+      expect.any(String),
+    );
+  });
+
+  it("fleet is a curated rpc call to obs.fleet.health", async () => {
+    const rpc = vi.fn().mockResolvedValue({ degraded: 0 });
+    await runVerb("fleet", [], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "obs.fleet.health",
+      expect.any(Object),
+      expect.any(String),
+    );
+  });
+});
+
+describe("chan/tg CLI — runVerb: dead handle (CLI-04)", () => {
+  it("a non-up verb with NO resolved handle throws VerbFailure(dead_handle) suggesting tg up", async () => {
+    const err = await runVerb("send", ["hi"], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    // The honest hint points at `tg up` — never a silent spawn.
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
+  });
+
+  it("rpc with no handle is also a dead_handle (it needs the gateway token)", async () => {
+    const err = await runVerb("rpc", ["channels.health"], { handle: undefined }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+  });
+});
+
+describe("chan/tg CLI — runVerb: drive verbs over /control/* (CLI-02)", () => {
+  it("send POSTs the message then returns the reply when outbound is non-empty", async () => {
+    const stub = await startControlStub([{ messageId: 1002, text: "pong" }]);
+    try {
+      const ctx: VerbContext = { handle: fakeHandle({ controlEndpoint: stub.base }) };
+      const result = (await runVerb("send", ["ping"], ctx)) as Record<string, unknown>;
+      // The inbound was POSTed to /control/chats/:id/messages with the text.
+      expect(stub.posts).toHaveLength(1);
+      expect(stub.posts[0]?.body).toMatchObject({ text: "ping" });
+      // The reply was surfaced (honest reply, not fabricated).
+      expect(result["reply"]).toBe("pong");
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("send with an EMPTY outbound throws VerbFailure(no_reply) with waitedMs — no false success", async () => {
+    const stub = await startControlStub([]); // honest no-reply
+    try {
+      const ctx: VerbContext = { handle: fakeHandle({ controlEndpoint: stub.base }) };
+      const err = await runVerb("send", ["ping"], ctx).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(VerbFailure);
+      expect((err as VerbFailure).kind).toBe("no_reply");
+      expect((err as VerbFailure).body).toHaveProperty("waitedMs");
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("last reads the outbound oracle (the most recent recorded reply)", async () => {
+    const stub = await startControlStub([
+      { messageId: 1, text: "older" },
+      { messageId: 2, text: "newest" },
+    ]);
+    try {
+      const ctx: VerbContext = { handle: fakeHandle({ controlEndpoint: stub.base }) };
+      const result = (await runVerb("last", [], ctx)) as Record<string, unknown>;
+      expect(result["text"]).toBe("newest");
+    } finally {
+      await stub.close();
+    }
+  });
+});
+
+describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
+  it("down with an explicit --endpoint REFUSES to wipe (never destroy what you didn't spawn)", async () => {
+    const err = await runVerb("down", [], {
+      handle: fakeHandle(),
+      flagEndpoint: "http://127.0.0.1:9999",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    // A refusal is an honest non-zero exit, reason-coded.
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/refus|endpoint/i);
+  });
+
+  it("up calls the injected discover-or-spawn launcher and reports reused/spawned", async () => {
+    const startStandaloneRigFn = vi.fn().mockResolvedValue({
+      reused: true,
+      handle: fakeHandle(),
+    });
+    const result = (await runVerb("up", [], {
+      handle: undefined,
+      startStandaloneRigFn,
+    })) as Record<string, unknown>;
+    expect(startStandaloneRigFn).toHaveBeenCalledTimes(1);
+    expect(result["reused"]).toBe(true);
+    // The token is NOT surfaced in the up result (no secret leak).
+    expect(JSON.stringify(result)).not.toContain("test-token-0000");
+  });
+});
+
+describe("chan/tg CLI — runVerb: deferred verbs exit honestly (Deferred-Ideas boundary)", () => {
+  it.each([
+    ["send-photo", "207"],
+    ["send-voice", "207"],
+    ["tap", "207"],
+    ["edit", "207"],
+    ["group", "208"],
+  ])("%s throws VerbFailure with not_implemented_in_phase pointing at phase %s", async (verb, phase) => {
+    const err = await runVerb(verb, [], { handle: fakeHandle() }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    const bodyStr = JSON.stringify((err as VerbFailure).body);
+    expect(bodyStr).toMatch(/not_implemented_in_phase/);
+    expect(bodyStr).toContain(phase);
+  });
+});
+
+describe("chan/tg CLI — runVerb: unknown verb", () => {
+  it("an unknown verb throws an honest VerbFailure (never a silent no-op)", async () => {
+    const err = await runVerb("frobnicate", [], { handle: fakeHandle() }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
   });
 });
