@@ -52,11 +52,19 @@ import {
 } from "../../harness/backends/http-backend.js";
 import type { ChannelCaps, ChannelEmulator } from "../../harness/channel-emulator.js";
 import {
+  makeBotMessage,
+  makeBotUser,
+  makeCallbackUpdate,
+  makeEditUpdate,
+  makeLocationUpdate,
+  makeMediaUpdate,
   makeMessageUpdate,
   makeReactionUpdate,
   makeUser,
   nextUpdateId,
+  type LocationInput,
   type MediaKind,
+  type VenueInput,
 } from "./tg-payloads.js";
 import { tgCaps } from "./tg-caps.js";
 
@@ -116,6 +124,15 @@ export interface MediaMeta {
   /** When true, the media `message` carries `has_media_spoiler` (message-mapper.ts:142). */
   readonly spoiler?: boolean;
 }
+
+/**
+ * The {@link TgEmulator.injectLocation} argument — exactly one of `location` /
+ * `venue` (a discriminated either, matching the mapper's venue-WINS `else if`).
+ * `LocationInput`/`VenueInput` are the Plan-01 builder input shapes reused here.
+ */
+export type PlaceInput =
+  | { readonly location: LocationInput; readonly venue?: never }
+  | { readonly venue: VenueInput; readonly location?: never };
 
 /**
  * A file held in the bot-global store (MEDIA-01, Pattern 1). `getFile` is keyed
@@ -198,6 +215,54 @@ export interface TgEmulator extends ChannelEmulator {
     from: { id: number; firstName: string; username?: string },
     botMessageId: number,
     emoji: ReactionTypeEmoji["emoji"],
+  ): void;
+  /**
+   * Store `bytes` (MEDIA-01) and queue an inbound media `message` update of
+   * `kind` carrying the minted `file_id` for the next `getUpdates` poll (builds
+   * a grammy-typed `Update` via `makeMediaUpdate`). Mints a `message_id` like
+   * {@link injectMessage} — a media message IS a new message.
+   * @returns the minted `message_id`.
+   */
+  injectMedia(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    kind: MediaKind,
+    bytes: Buffer,
+    meta?: MediaMeta,
+  ): number;
+  /**
+   * Queue an inbound `location` OR `venue` `message` update (no file store;
+   * `makeLocationUpdate`). Mints a `message_id` like {@link injectMessage}.
+   * @returns the minted `message_id`.
+   */
+  injectLocation(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    place: PlaceInput,
+  ): number;
+  /**
+   * Queue an inbound `callback_query` update tapping the EXISTING bot reply
+   * `botMessageId` (the adapter answers it FIRST + UNCONDITIONALLY,
+   * telegram-inbound.ts:168, then forwards `data` as a synthetic
+   * `isButtonCallback` message). Mints NO `message_id` — the tapped reply
+   * already exists (like {@link injectReaction}).
+   */
+  injectCallback(
+    chat: ChatRef,
+    from: { id: number; firstName: string; username?: string },
+    botMessageId: number,
+    data: string,
+  ): void;
+  /**
+   * Queue an inbound `edited_message` update for the EXISTING `messageId` (the
+   * adapter routes it through the SAME `handleInboundMessage`,
+   * telegram-inbound.ts:117). References the passed id — mints none.
+   */
+  injectEdit(
+    chat: ChatRef,
+    messageId: number,
+    newText: string,
+    from: { id: number; firstName: string; username?: string },
   ): void;
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: ChatRef): readonly RecordedOutbound[];
@@ -579,6 +644,17 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       case "getFile":
         return getFile(body);
 
+      case "answerCallbackQuery":
+        // INTERACT-01 — the adapter answers EVERY callback FIRST +
+        // UNCONDITIONALLY (telegram-inbound.ts:168). RECORD it (Pattern 5) so the
+        // ack is provable on the oracle, then return result:true (A5).
+        return answerCallbackQuery(body);
+
+      case "editMessageText":
+        // INTERACT-02 outbound — RECORD the edit + echo a Message (grammy's
+        // return type is Message-or-true).
+        return editMessageText(body);
+
       default:
         // Unknown method — accept-and-record so an unrelated adapter call does
         // not fail the boot (mirrors the mock's generic fallback).
@@ -634,6 +710,47 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       raw: body,
     });
     return okEnvelope(true);
+  }
+
+  function answerCallbackQuery(body: Record<string, unknown>): RouteResult {
+    // INTERACT-01 — the adapter calls ctx.answerCallbackQuery() FIRST +
+    // UNCONDITIONALLY (telegram-inbound.ts:168). grammy sends ONLY
+    // `callback_query_id` (no chat_id/message_id), so this records on the chat-0
+    // oracle with messageId 0 — but it RECORDS (Pattern 5), so the unconditional
+    // ack is provable on the oracle instead of vanishing into the `default:`.
+    // Tolerates a missing field (the setMessageReaction precedent).
+    record(0, {
+      method: "answerCallbackQuery",
+      messageId: 0,
+      raw: body,
+    });
+    // The adapter awaits the call and grammy expects `result: true` (A5).
+    return okEnvelope(true);
+  }
+
+  function editMessageText(body: Record<string, unknown>): RouteResult {
+    // INTERACT-02 outbound — RECORD the edit, then echo a realistic Message
+    // (grammy's editMessageText return type is Message-or-true). grammy sends
+    // chat_id/message_id positionally as a JSON body.
+    const chatId = Number(body["chat_id"] ?? 0) || 0;
+    const messageId = Number(body["message_id"] ?? 0) || 0;
+    const text = typeof body["text"] === "string" ? body["text"] : undefined;
+
+    const ro: RecordedOutbound = {
+      method: "editMessageText",
+      messageId,
+      raw: body,
+    };
+    if (text !== undefined) ro.text = text;
+    if (typeof body["parse_mode"] === "string") ro.parseMode = body["parse_mode"];
+    record(chatId, ro);
+
+    return okEnvelope({
+      message_id: messageId,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: chatId, type: "private" },
+      ...(text !== undefined ? { text } : {}),
+    });
   }
 
   function getFile(body: Record<string, unknown>): RouteResult {
@@ -742,6 +859,118 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       // No message_id minted — the reacted-to message already exists (void).
     },
 
+    injectMedia(chat, from, kind, bytes, meta) {
+      // MEDIA-01 — store the bytes FIRST so the emitted update's file_id resolves
+      // to real bytes via getFile + the route, then mint a message_id (a media
+      // message IS a new message, like injectMessage — NOT like injectReaction).
+      const handle = storeFile(kind, bytes, meta);
+      const messageId = nextMessageId++;
+      const user = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      const update = makeMediaUpdate({
+        updateId: nextUpdateId(),
+        messageId,
+        chatId: chat.chatId,
+        from: user,
+        kind,
+        fileId: handle.fileId,
+        fileUniqueId: handle.fileUniqueId,
+        // Echo the meta fields the per-kind grammy object carries (each spread
+        // only when defined — the builder is exact-optional-safe).
+        ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+        ...(meta?.duration !== undefined ? { duration: meta.duration } : {}),
+        ...(meta?.width !== undefined ? { width: meta.width } : {}),
+        ...(meta?.height !== undefined ? { height: meta.height } : {}),
+        ...(meta?.length !== undefined ? { length: meta.length } : {}),
+        ...(meta?.fileName !== undefined ? { fileName: meta.fileName } : {}),
+        ...(meta?.spoiler !== undefined ? { spoiler: meta.spoiler } : {}),
+      });
+      chatOracle(chat.chatId);
+      pending.push(update);
+      pending.sort((a, b) => a.update_id - b.update_id);
+      wakeWaiters();
+      return messageId;
+    },
+
+    injectLocation(chat, from, place) {
+      // MEDIA-01 — a location/venue is a `message` update (no file store); mint a
+      // message_id like injectMessage and return it.
+      const messageId = nextMessageId++;
+      const user = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      // The discriminated `place` flows straight into the builder's either-type
+      // (venue WINS; the builder physically cannot set both).
+      const update = makeLocationUpdate(
+        "venue" in place
+          ? { updateId: nextUpdateId(), messageId, chatId: chat.chatId, from: user, venue: place.venue }
+          : { updateId: nextUpdateId(), messageId, chatId: chat.chatId, from: user, location: place.location },
+      );
+      chatOracle(chat.chatId);
+      pending.push(update);
+      pending.sort((a, b) => a.update_id - b.update_id);
+      wakeWaiters();
+      return messageId;
+    },
+
+    injectCallback(chat, from, botMessageId, data) {
+      // INTERACT-01 — a callback taps an EXISTING bot reply: reconstruct that
+      // bot Message (chat.id + message_id) and emit a callback_query. Mints NO
+      // message_id (like injectReaction — the tapped reply already exists).
+      const user = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      const botMessage = makeBotMessage({
+        messageId: botMessageId,
+        chatId: chat.chatId,
+        botUser: makeBotUser({ id: 12345, firstName: "TestBot", username: "test_bot" }),
+      });
+      const update = makeCallbackUpdate({
+        updateId: nextUpdateId(),
+        // The query id — randomBytes hex, like a real Telegram callback id.
+        id: randomBytes(8).toString("hex"),
+        from: user,
+        botMessage,
+        // grammy's CallbackQuery requires a stable per-chat chat_instance string.
+        chatInstance: `ci_${chat.chatId}`,
+        data,
+      });
+      chatOracle(chat.chatId);
+      pending.push(update);
+      pending.sort((a, b) => a.update_id - b.update_id);
+      wakeWaiters();
+      // No message_id minted — the tapped reply already exists (void).
+    },
+
+    injectEdit(chat, messageId, newText, from) {
+      // INTERACT-02 — an edit references the EXISTING messageId (the adapter
+      // routes edited_message through the same handleInboundMessage). No mint.
+      const user = makeUser({
+        id: from.id,
+        firstName: from.firstName,
+        ...(from.username !== undefined ? { username: from.username } : {}),
+      });
+      const update = makeEditUpdate({
+        updateId: nextUpdateId(),
+        messageId,
+        chatId: chat.chatId,
+        from: user,
+        newText,
+      });
+      chatOracle(chat.chatId);
+      pending.push(update);
+      pending.sort((a, b) => a.update_id - b.update_id);
+      wakeWaiters();
+      // References the passed messageId — mints none (void).
+    },
+
     outbound(chat) {
       return chats.get(chat.chatId)?.outbound ?? [];
     },
@@ -758,20 +987,27 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     resetChat(chat) {
       chats.delete(chat.chatId);
       // Also drop this chat's pending updates from the bot-global queue.
-      // WR-02 (206-05 review fix): the filter must clear BOTH update kinds for
-      // the reset chat — a plain `message` update AND a `message_reaction` update
-      // (from injectReaction, which has NO `.message`). The prior predicate keyed
-      // only on `u.message`, so a queued reaction survived a reset regardless of
-      // chat and could bleed into a later test that reuses resetChat (207/208/209
-      // — the reaction scenarios). An update of neither kind (a future
-      // callback/edited-message) is bot-global and is KEPT by the `: true` tail.
-      pending = pending.filter((u) =>
-        u.message
-          ? u.message.chat.id !== chat.chatId
-          : u.message_reaction
-            ? u.message_reaction.chat.id !== chat.chatId
-            : true,
-      );
+      // WR-02 (206-05 review fix, EXTENDED for the Phase-207 inbound kinds): the
+      // filter must clear EVERY update kind keyed to the reset chat —
+      //   - `message`         (text / media / location — `u.message.chat.id`)
+      //   - `message_reaction` (injectReaction — `u.message_reaction.chat.id`)
+      //   - `edited_message`   (injectEdit — `u.edited_message.chat.id`)
+      //   - `callback_query`   (injectCallback — the tapped reply's
+      //                         `u.callback_query.message.chat.id`)
+      // The prior predicate keyed only on `u.message`/`u.message_reaction`, so a
+      // queued edit or callback for the reset chat fell to the `: true` tail and
+      // SURVIVED — bleeding into a later test that reuses resetChat (the 207/208
+      // interactivity scenarios). A bot-global update with no resolvable chat is
+      // still KEPT by the `: true` tail.
+      pending = pending.filter((u) => {
+        if (u.message) return u.message.chat.id !== chat.chatId;
+        if (u.message_reaction) return u.message_reaction.chat.id !== chat.chatId;
+        if (u.edited_message) return u.edited_message.chat.id !== chat.chatId;
+        // A callback_query's message is MaybeInaccessibleMessage — both variants
+        // carry `chat`, so `.message?.chat.id` resolves the tapped chat.
+        if (u.callback_query) return u.callback_query.message?.chat.id !== chat.chatId;
+        return true;
+      });
     },
 
     storeFile(kind, bytes, meta) {
