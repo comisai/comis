@@ -176,6 +176,15 @@ export async function executeLlm(
         traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
+        // REACT-04 (206-04): stamp the RESOLVED agentId onto the request ALS so
+        // the delivery stage (deliverToChannel, which runs inside this context)
+        // reads ctx.agentId and binds the outbound reply → trajectory (the
+        // reaction-attribution keystone). Without this, ctx.agentId is undefined
+        // at delivery → the reply's agentId is never persisted into the queue
+        // optionsJson and BOTH binding paths (the direct ack + the drain)
+        // fail-closed, so a reaction on the reply map-misses (the 206-03 live
+        // finding). agentId is the resolved-agent parameter (non-empty).
+        agentId,
         sessionKey: formatSessionKey(sessionKey),
         startedAt: systemNowMs(),
         trustLevel,
