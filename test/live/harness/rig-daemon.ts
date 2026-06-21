@@ -506,15 +506,22 @@ async function main(): Promise<void> {
   process.on("SIGINT", onSignal);
 
   // 8. Orphan reaping: self-terminate (reaping the daemon first) if the handle file
-  //    DISAPPEARS (a `tg down` that removed it out-of-band) OR the parent (`tg up`)
-  //    is gone AND the handle no longer points at THIS pid (i.e. nothing adopted us)
-  //    — so a crashed / kill -9'd launcher never leaves a zombie daemon.
+  //    DISAPPEARS — the cross-process "no owner" signal. A `tg down` removes the
+  //    handle out-of-band (then we reap ourselves cleanly if the SIGTERM raced), and
+  //    an operator who `rm`s the stale handle gets the daemon reaped too (no zombie).
+  //
+  //    NB: we DELIBERATELY do NOT reap on "parent (`tg up`) gone" — a `--detached`
+  //    rig is BUILT to OUTLIVE its launcher (the cold-shell premise: `tg up` exits,
+  //    the rig keeps running so a SEPARATE-shell `tg send` reaches it). Treating the
+  //    expected parent exit as an orphan signal would tear the rig down the instant
+  //    `tg up` returns — the exact opposite of Option A. The handle-gone signal is
+  //    the correct, sufficient orphan oracle. `env.parentPid` is retained only for
+  //    diagnostics (it identifies which launcher spawned this rig).
+  void env.parentPid;
   const heartbeat = setInterval(() => {
     if (state.tearingDown) return;
     const path = handlePath(env.channel, env.baseDir);
-    const handleGone = !existsSync(path);
-    const parentGone = !isAlive(env.parentPid);
-    if (handleGone || parentGone) {
+    if (!existsSync(path)) {
       void teardown(state, 0);
     }
   }, HEARTBEAT_INTERVAL_MS);
