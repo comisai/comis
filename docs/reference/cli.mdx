@@ -1455,6 +1455,36 @@ comis trace export my-session-id
 
 ---
 
+### `comis cost export`
+
+Export the corrected-cost time buckets as CSV (default) or JSON, honoring agent / provider / model / time-window filters. Each row carries the cost rollup — `totalCost`, `totalTokens`, `callCount`, `totalCacheSaved`, `totalCostCorrection` (the SDK-vs-corrected adjustment) — **plus a pricing-coverage column** so a finance review sees how trustworthy the dollars are: `pricingState` (the bucket's dominant three-state signal — `priced` / `free` / `unknown`) and `missingPricingCount` (how many calls in the bucket had an `unknown` or unset pricing state, i.e. dollars **not** catalog-backed). The export is **content-free** — ids, counts, dollars, and the pricing enum only, never a message body, secret, or query.
+
+Buckets are **hourly** by default; `--quarter-hour` switches to 15-minute buckets (the four quarter-hour buckets inside an hour always sum back to that hour's total).
+
+The command reads the **local `~/.comis` observability store directly** (the telemetry lives on disk) — it contacts no daemon and needs no gateway token. A missing or unreadable store yields an empty export (an honest empty, never a fabricated zero-cost row).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `csv` \| `json` | `csv` | Output format |
+| `--quarter-hour` | `boolean` | `false` | Bucket by 15-minute quarter-hours instead of hours |
+| `--since <ms>` | `number` | all time | Lower time bound (epoch ms); a non-numeric value is ignored (widen rather than crash) |
+| `--agent <id>` | `string` | — | Filter to one agent |
+| `--provider <id>` | `string` | — | Filter to one provider |
+| `--model <id>` | `string` | — | Filter to one model |
+
+```bash
+# Export all corrected-cost hourly buckets as CSV to a file
+comis cost export > cost.csv
+
+# Last 24h, quarter-hour granularity, one agent, as JSON
+comis cost export --quarter-hour --since "$(( $(date +%s000) - 86400000 ))" --agent customer-support --format json
+
+# One provider+model slice
+comis cost export --provider openai --model gpt-4o-mini
+```
+
+---
+
 ### `comis explain`
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
