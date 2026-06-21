@@ -183,11 +183,10 @@ describe("ACCEPT-01 scenario 3 Stage-B — the residency-sweep POSITIVE CONTROL 
     // scanner (a false negative — the worst failure for a leak gate). MANDATORY.
     const dbPath = seedDb([`note: the config secret is ${SECRET_CANARY} keep it safe`, "a clean row"]);
     const found = sweepDbForSecrets(dbPath);
-    // RED-first (Pitfall 2 + the anti-false-oracle proof): assert the WRONG value —
-    // the seeded-canary sweep returns CLEAN (0). It must return >=1 (the sweep
-    // DETECTS the seeded secret — proving it is NOT a no-op false oracle). Confirm
-    // RUNS-and-FAILS, commit the RED, then flip to `toBeGreaterThanOrEqual(1)`.
-    expect(found.length, "the db residency sweep MUST detect the seeded canary (non-no-op)").toBe(0);
+    // The sweep DETECTS the seeded canary (>=1) — proving it is NOT a no-op false
+    // oracle (a sweep that always passes is the worst failure for a leak gate).
+    // (RED asserted CLEAN (0); the sweep found it.)
+    expect(found.length, "the db residency sweep MUST detect the seeded canary (non-no-op)").toBeGreaterThanOrEqual(1);
   });
 
   it("expectNoSecretLeak DETECTS a canary on a seeded log line (the log-oracle sweep fires)", async () => {
