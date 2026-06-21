@@ -17,10 +17,12 @@
  * `test/e2e/mocks/telegram/mock-telegram-server.ts:227-245`. Same runtime
  * shape — now grammy-typed.
  *
- * Scope (Phase 204): only the `message` Update is load-bearing (the DM text
- * round-trip). Reaction (`message_reaction`) and callback builders are deferred
- * (REACT-01 Phase 206 / INTERACT-01 Phase 207) and intentionally NOT built
- * here — the §4.2 scope guard asserts no unhandled-kind literal appears.
+ * Scope (Phase 206): the `message` Update (the DM text round-trip, Phase 204)
+ * AND the `message_reaction` ADD Update (REACT-01, this phase — the inbound
+ * half that trips the already-wired adapter handler at telegram-inbound.ts:266).
+ * Callback / edited-message builders REMAIN deferred (INTERACT-01 Phase 207) and
+ * are intentionally NOT built here — the §4.2 scope guard asserts no
+ * still-deferred-kind literal appears.
  *
  * TEST-HARNESS — lives under `test/`, never `packages`; ZERO production code
  * change. `test/` is outside every `packages` source-tree ESLint/architecture rule.
@@ -28,7 +30,7 @@
  * @module
  */
 
-import type { Update, User } from "grammy/types";
+import type { ReactionTypeEmoji, Update, User } from "grammy/types";
 
 /**
  * Options for {@link makeUser} / {@link makeBotUser}.
@@ -118,6 +120,64 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
       // Telegram unix SECONDS (NOT ms) — the mapper multiplies ×1000 (§4.2).
       date: Math.floor(Date.now() / 1000),
       text: opts.text,
+    },
+  };
+}
+
+/**
+ * Options for {@link makeReactionUpdate}.
+ */
+export interface MakeReactionUpdateOptions {
+  /** The Update's unique, monotonically-increasing id (the caller owns the counter; see {@link nextUpdateId}). */
+  readonly updateId: number;
+  /** The EXISTING bot reply's `message_id` — what `recordOutboundMessage` keyed the trajectory on (NOT a freshly-minted id; REACT-01 reacts to an already-sent message). */
+  readonly messageId: number;
+  /** The private-chat id this reaction belongs to. */
+  readonly chatId: number;
+  /** The reactor — built via {@link makeUser}. Must be ≠ the bot id, or the adapter's own-reaction filter drops it (telegram-inbound.ts:270). */
+  readonly user: User;
+  /**
+   * The reaction emoji, typed as grammy's CLOSED `ReactionTypeEmoji["emoji"]`
+   * union (message.d.ts:1446). The union contains `👍`/`👎`/`❌`/… but NOT `✅`
+   * — even though the PRODUCT `DEFAULT_REACTION_MAP.success` lists `✅`, passing
+   * it here is a COMPILE error (GOTCHA A). Use `👍` for the success path.
+   */
+  readonly emoji: ReactionTypeEmoji["emoji"];
+}
+
+/**
+ * Build a well-formed grammy `message_reaction` ADD `Update` for REACT-01.
+ *
+ * The return annotation IS grammy's `Update` (I4 tripwire) and the inner literal
+ * satisfies `MessageReactionUpdated` (message.d.ts:1468). It models a FRESH ADD:
+ * `old_reaction: []` → `new_reaction: [{ type: "emoji", emoji }]`, which is
+ * exactly the diff the already-wired adapter handler detects
+ * (telegram-inbound.ts:272-273 — an emoji in `new_reaction` absent from
+ * `old_reaction`). `user` is the reactor (≠ bot), so the handler's own-reaction
+ * filter (:270) keeps it; `emojiNames` (:304) narrows on `type === "emoji"`.
+ *
+ * `date` is `Math.floor(Date.now() / 1000)` — Telegram unix SECONDS (same rule
+ * as {@link makeMessageUpdate}); emitting ms would make the mapped timestamp
+ * ~1000× too large.
+ *
+ * Only the `message_reaction` kind is populated — no callback / edited-message
+ * kind (those stay deferred to Phase 207; §4.2 scope guard).
+ */
+export function makeReactionUpdate(opts: MakeReactionUpdateOptions): Update {
+  return {
+    update_id: opts.updateId,
+    message_reaction: {
+      // grammy's `Chat.PrivateChat` REQUIRES `first_name`; in a DM the chat IS
+      // the reactor, so it mirrors `user.first_name` (matches makeMessageUpdate).
+      chat: { id: opts.chatId, type: "private", first_name: opts.user.first_name },
+      message_id: opts.messageId,
+      user: opts.user,
+      // Telegram unix SECONDS (NOT ms), like makeMessageUpdate.
+      date: Math.floor(Date.now() / 1000),
+      // A fresh ADD: [] → [{ emoji }]. The empty old_reaction + single-emoji
+      // new_reaction is exactly an ADD the adapter dispatches.
+      old_reaction: [],
+      new_reaction: [{ type: "emoji", emoji: opts.emoji }],
     },
   };
 }
