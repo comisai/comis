@@ -4,7 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { DataTableColumn } from "../api/types/index.js";
-import { systemClearInterval, systemSetInterval } from "@comis/core";
+import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 // Side-effect imports (register the design-system components used below).
 import "../components/data/ic-stat-card.js";
@@ -353,10 +353,10 @@ export class IcCacheHealthView extends LitElement {
 }
 
 /** Local helper: a millisecond epoch `windowMs` in the past (test-stable via the
- *  same `Date.now` the rest of the SPA uses). Kept inline to avoid a cross-module
- *  import for a one-liner. */
+ *  sanctioned `systemNowMs` the rest of the SPA uses — never raw `Date.now`, the
+ *  globals gate). Kept inline to avoid a cross-module import for a one-liner. */
 function systemNowMinus(windowMs: number): number {
-  return Date.now() - windowMs;
+  return systemNowMs() - windowMs;
 }
 
 declare global {
