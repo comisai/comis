@@ -132,6 +132,10 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // Intentional default-ON operator notice, not a regression. (The "API key" text is
   // in the `hint` field, not `msg`, so the daemon-lifecycle "API key" filter misses it.)
   { level: "warn", msg: /correction detector unavailable \(non-fatal, default-deferred\)/ },
+  // The sibling of the above: learningOutcome.judge.enabled defaults to true; with
+  // no cheap-model API key the daemon emits one startup WARN that the
+  // conversational-turn fallback is a no-op until a key is set. Same posture.
+  { level: "warn", msg: /outcome judge unavailable \(non-fatal, default-deferred\)/ },
 
   // Benign control-plane guard: channel-manager.injectMessage warns + skips when a
   // heartbeat/continuation injection targets a channel type with no registered
