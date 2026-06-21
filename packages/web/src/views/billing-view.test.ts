@@ -470,4 +470,32 @@ describe("IcBillingView", () => {
     const shadow = el.shadowRoot!;
     expect(shadow.textContent ?? "").not.toContain(BODY_MARKER);
   });
+
+  it("a session-billing row drills to the Incident view keyed on that sessionKey (179-08)", async () => {
+    el = document.createElement("ic-billing-view") as IcBillingView;
+    el.rpcClient = createBillingMockRpcClient();
+    document.body.appendChild(el);
+    await vi.advanceTimersByTimeAsync(50);
+    await el.updateComplete;
+
+    // Drive to the session level (the bySession table renders the sessionKeys).
+    (el as unknown as { _drillContext: { agentId?: string } })._drillContext = { agentId: "default" };
+    priv(el)._drillLevel = "session";
+    await priv(el)._loadData();
+    await el.updateComplete;
+
+    const shadow = el.shadowRoot!;
+    // The session-key cell is a drill control carrying a VALID obs.explain ref.
+    const drill = Array.from(shadow.querySelectorAll("button, a")).find((n) =>
+      (n.textContent ?? "").includes("sess-1"),
+    );
+    expect(drill).toBeTruthy();
+
+    window.location.hash = "#/observe/billing";
+    (drill as HTMLElement).click();
+    await el.updateComplete;
+
+    expect(window.location.hash).toContain("observe/incident");
+    expect(decodeURIComponent(window.location.hash)).toContain("ref=sess-1");
+  });
 });

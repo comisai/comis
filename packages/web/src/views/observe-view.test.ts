@@ -237,7 +237,7 @@ describe("IcObserveView", () => {
     expect(errMsg?.textContent).toContain("Connection lost");
   });
 
-  it("3 - renders 7 tabs after successful load (5 inline + 2 nav-only: cache, spend)", async () => {
+  it("3 - renders 8 tabs after successful load (5 inline + 3 nav-only: cache, spend, incident)", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -245,16 +245,16 @@ describe("IcObserveView", () => {
     const tabs = el.shadowRoot?.querySelector("ic-tabs");
     expect(tabs).toBeTruthy();
     const tabDefs = (tabs as any).tabs;
-    expect(tabDefs).toHaveLength(7);
+    expect(tabDefs).toHaveLength(8);
     expect(tabDefs.map((t: { id: string }) => t.id)).toEqual([
       "overview", "billing", "delivery", "channels", "diagnostics",
-      // 179-07: nav-only tabs that route to the standalone Cache Health / Spend
-      // & Governance views (NOT inline render bodies — observe-view is over-cap).
-      "cache", "spend",
+      // 179-07: nav-only tabs -> standalone Cache Health / Spend & Governance.
+      // 179-08: nav-only Incident tab -> the obs.explain drill-down view.
+      "cache", "spend", "incident",
     ]);
   });
 
-  it("3b - selecting a nav-only tab (cache/spend) dispatches a bubbling navigate event, not an inline render (179-07)", async () => {
+  it("3b - selecting a nav-only tab (cache/spend/incident) dispatches a bubbling navigate event, not an inline render (179-07/08)", async () => {
     const rpc = createObserveMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -266,8 +266,9 @@ describe("IcObserveView", () => {
     const tabs = el.shadowRoot?.querySelector("ic-tabs");
     tabs?.dispatchEvent(new CustomEvent("tab-change", { detail: "cache" }));
     tabs?.dispatchEvent(new CustomEvent("tab-change", { detail: "spend" }));
+    tabs?.dispatchEvent(new CustomEvent("tab-change", { detail: "incident" }));
 
-    expect(navigated).toEqual(["observe/cache", "observe/spend"]);
+    expect(navigated).toEqual(["observe/cache", "observe/spend", "observe/incident"]);
     // The active tab stays put — the view routes away rather than rendering inline.
     expect((el as unknown as { _activeTab: string })._activeTab).toBe("overview");
   });
