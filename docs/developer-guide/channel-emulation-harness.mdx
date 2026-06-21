@@ -36,10 +36,10 @@ test/live/
 ```
 
 There are **two ways to drive the rig**: the in-process `startRig` / `buildRig` path (a `vitest`
-scenario boots the emulator and daemon inside the test process — the **certified autonomy
-path**), and the `chan`/`tg` CLI (a thin client that talks to a running rig over its recorded
-endpoints). The CLI's lifecycle verbs against a separate-process rig are bounded today — see
-[Driving from a cold shell](#driving-from-a-cold-shell-the-w1-boundary).
+scenario boots the emulator and daemon inside the test process — the certified default), and the
+`chan`/`tg` CLI (a thin client that talks to a running rig over its recorded endpoints). The CLI
+also drives a **detached** rig **shell-only and unattended across separate processes** — see
+[Driving from a cold shell](#driving-from-a-cold-shell-shell-only-unattended).
 
 ## The in-process path: `startRig` / `buildRig`
 
@@ -171,29 +171,50 @@ receive it. Closing this is a deliberate, test-first product change (mount gramm
 webhook update reaches the agent.
 </Warning>
 
-## Driving from a cold shell (the W1 boundary)
+## Driving from a cold shell (shell-only, unattended)
 
-The **in-process (`vitest`) path is the certified autonomy path** — a scenario boots, drives,
-and tears down the rig with zero human steps, exactly as the acceptance suites run. The
-`chan`/`tg` CLI's **drive** verbs (`send`, `react`, `rpc`, `trigger`, `wait`, `last`, `db`, …)
-work against a running rig from any shell.
+Two autonomy paths, both certified:
 
-What is **bounded today** is the **cold-shell rig lifecycle** across separate processes. The rig
-controller is **in-process**: a daemon spawned in one `tg up` process dies with that process, so
-a second-shell `tg send` cannot reach it. The lifecycle verbs report this **honestly** rather
-than fake it — at HEAD `tg down` returns `down_not_owned_in_process` and
-`tg restart` / `tg reset --deep` / `tg reconfigure` return `lifecycle_in_process_only`, each
-with a hint.
+The **in-process (`vitest`) path** is the certified default — a scenario boots, drives, and
+tears down the rig with zero human steps, exactly as the acceptance suites run. The `chan`/`tg`
+CLI's **drive** verbs (`send`, `react`, `rpc`, `trigger`, `wait`, `last`, `db`, …) work against
+a running rig from any shell.
 
-<Warning>
-**No "shell-only unattended" claim — yet.** A persistent cold-shell rig (so a real
-`tg up` in process 1, then `tg send` / `tg explain` from a separate process 2, then `tg down`
-with no leaked daemon) requires a **detached-subprocess rig** with its own process supervision,
-an HTTP control surface, and orphan reaping. That is built **only if** the optional Option-A
-plan ships **and** its cross-process acceptance test passes green. Until then, the cold-shell
-cross-process lifecycle is a **documented remaining boundary** — the in-process path is the
-certified one. (When Option A ships, this section is updated to match.)
-</Warning>
+The **cold-shell (detached) path** drives the rig **shell-only, unattended, across separate
+processes** — start it with `tg up --detached`:
+
+```bash
+# Process 1 — spawn a DETACHED rig that OUTLIVES this command, then exit.
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram up --detached --json
+# Process 2 — a FRESH shell reaches the surviving rig.
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram send "hi" --json
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.fleet.health '{"since":1}' --json
+# Process 3 — tear it down (SIGTERMs the rig's process group; no leaked daemon).
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram down --json
+```
+
+`tg up --detached` spawns a **detached-subprocess rig** (`harness/rig-daemon.ts`) that survives
+the launching process. It runs its own emulator + a real Comis daemon (booted as a grandchild
+from `packages/daemon/dist/daemon.js`, the production entrypoint) + a loopback-only,
+token-owner-checked **rig-control HTTP surface**, and records a handle carrying a real **`pid`**
+and a dedicated `rigControlEndpoint` (≠ the gateway). A separate-shell `tg send` / `tg rpc`
+reaches the surviving rig via that handle. The cold-shell lifecycle verbs drive it for real:
+`tg down` SIGTERMs the rig's process group (the rig-daemon **and** its daemon grandchild) and
+confirms the process is gone before returning; `tg restart` / `tg reset --deep` /
+`tg reconfigure` POST the owner-checked rig-control endpoint. **Orphan reaping**: the rig
+self-terminates (reaping its daemon) when its handle file disappears, so a `tg down` or a
+stray `rm` of the handle never leaves a zombie daemon.
+
+<Note>
+**The "shell-only, unattended" claim is backed by a green cross-process acceptance test**
+(`scenarios/channels/telegram-cold-shell.test.ts`, Stage-C): a real `tg up --detached` (process 1)
+→ `tg status` / `tg rpc` / `tg send` (process 2) → `tg down` (process 3) sequence runs across
+**separate OS processes**, asserting the rig OUTLIVES `tg up`, a fresh process reaches it, and
+`tg down` leaves **no leaked daemon/port** (the pid is gone, the gateway port is free). A false
+success is a hard fail. Without `--detached`, `tg up` boots an in-process rig (the certified
+default) that the lifecycle verbs honestly reason-code as `lifecycle_in_process_only` /
+`down_not_owned_in_process` from a cold shell — never a faked cross-process success.
+</Note>
 
 ## SEC-02: the harness never ships
 
