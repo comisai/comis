@@ -20,6 +20,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import {
   parseArgs,
+  contextFromParsed,
   toFailure,
   exitCodeFor,
   tryParseJson,
@@ -138,6 +139,99 @@ describe("chan/tg CLI — parseArgs (pure)", () => {
     expect(parsed.verb).toBeUndefined();
     expect(parsed.args).toEqual([]);
     expect(parsed.channel).toBe("telegram");
+  });
+});
+
+describe("chan/tg CLI — parseArgs captures value-bearing + boolean sub-flags", () => {
+  it("captures --event / --tool / --timeout as typed fields (not dropped, not positionals)", () => {
+    const parsed = parseArgs(["wait", "s.jsonl", "--event", "model.completed", "--timeout", "1500"]);
+    expect(parsed.verb).toBe("wait");
+    // The flag VALUES must NOT leak into the positionals — only the trajectory file is.
+    expect(parsed.args).toEqual(["s.jsonl"]);
+    expect(parsed.event).toBe("model.completed");
+    expect(parsed.timeout).toBe(1500);
+    expect(parsed.tool).toBeUndefined();
+  });
+
+  it("captures --tool as a typed field", () => {
+    const parsed = parseArgs(["wait", "s.jsonl", "--tool", "web_search"]);
+    expect(parsed.args).toEqual(["s.jsonl"]);
+    expect(parsed.tool).toBe("web_search");
+    expect(parsed.event).toBeUndefined();
+  });
+
+  it("captures --deep as a typed boolean field (reset --deep is distinguishable)", () => {
+    const parsed = parseArgs(["reset", "--deep"]);
+    expect(parsed.verb).toBe("reset");
+    expect(parsed.deep).toBe(true);
+    // The bare `reset` form leaves deep falsy.
+    expect(parseArgs(["reset"]).deep).toBeFalsy();
+  });
+
+  it("resolves --event/--tool/--timeout regardless of their position relative to the trajectory file", () => {
+    // CR-01 / IN-01: a flag BEFORE the positional must not shadow the trajectory file.
+    const parsed = parseArgs(["wait", "--event", "model.completed", "s.jsonl"]);
+    expect(parsed.args).toEqual(["s.jsonl"]);
+    expect(parsed.event).toBe("model.completed");
+  });
+});
+
+describe("chan/tg CLI — parseArgs → runVerb integration seam (CR-01: the real CLI path)", () => {
+  it("tg wait <file> --event <type> reaches the waiter through the FULL parse→dispatch path", async () => {
+    // Drive the REAL entry path: parseArgs → contextFromParsed → runVerb. The
+    // earlier suite called the waiter in isolation, MASKING the parseArgs flag-strip
+    // that made `tg wait` non-functional through `runMain` (CR-01).
+    const waitFn = vi.fn().mockResolvedValue({ matched: true, type: "model.completed", reason: "matched" });
+    const parsed = parseArgs(["wait", "s.jsonl", "--event", "model.completed"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    const result = (await runVerb(parsed.verb as string, parsed.args, { ...ctx, waitFn })) as Record<
+      string,
+      unknown
+    >;
+    expect(waitFn).toHaveBeenCalledTimes(1);
+    // The waiter is called with the trajectory file AND the event — not "supply exactly one".
+    expect(waitFn).toHaveBeenCalledWith(
+      expect.objectContaining({ trajectoryFile: "s.jsonl", event: "model.completed" }),
+    );
+    expect(result["matched"]).toBe(true);
+  });
+
+  it("tg wait <file> --tool <name> [--timeout ms] threads tool + timeoutMs to the waiter", async () => {
+    const waitFn = vi.fn().mockResolvedValue({ matched: true, type: "tool.result", reason: "matched" });
+    const parsed = parseArgs(["wait", "s.jsonl", "--tool", "web_search", "--timeout", "2000"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    await runVerb(parsed.verb as string, parsed.args, { ...ctx, waitFn });
+    expect(waitFn).toHaveBeenCalledWith(
+      expect.objectContaining({ trajectoryFile: "s.jsonl", tool: "web_search", timeoutMs: 2000 }),
+    );
+  });
+
+  it("tg reset --deep reports the deep verb through the FULL parse→dispatch path", async () => {
+    const parsed = parseArgs(["reset", "--deep"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result["verb"]).toBe("reset --deep");
+  });
+
+  it("tg reset (no --deep) reports the plain verb (distinct from reset --deep)", async () => {
+    const parsed = parseArgs(["reset"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result["verb"]).toBe("reset");
+  });
+
+  it("tg rpc <method> <json> threads the method + params through the full parse→dispatch path", async () => {
+    // A second value-flag-free verb proven end-to-end through the same seam.
+    const rpc = vi.fn().mockResolvedValue({ ok: true });
+    const parsed = parseArgs(["rpc", "channels.health", '{"detail":true}']);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    await runVerb(parsed.verb as string, parsed.args, { ...ctx, rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "channels.health",
+      { detail: true },
+      expect.any(String),
+    );
   });
 });
 

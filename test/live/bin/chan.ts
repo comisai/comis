@@ -54,6 +54,14 @@ export interface ParsedArgs {
   readonly endpoint?: string;
   /** `--model <id>` — the model `tg up` boots the rig with (default keyless). */
   readonly model?: string;
+  /** `--event <type>` — the `tg wait` trajectory event to block on (AUTO-03). */
+  readonly event?: string;
+  /** `--tool <name>` — the `tg wait` tool-result name to block on (AUTO-03). */
+  readonly tool?: string;
+  /** `--timeout <ms>` — the `tg wait` hard ceiling (parsed; non-finite is dropped). */
+  readonly timeout?: number;
+  /** `--deep` — the `tg reset --deep` clean-slate boolean sub-flag. */
+  readonly deep?: boolean;
 }
 
 /** Strip a single pair of surrounding single/double quotes (runner.ts:96-98 shape). */
@@ -67,27 +75,52 @@ function stripQuotes(s: string): string {
   return s;
 }
 
-/** The string-valued flags (consume the NEXT token as their value). */
-const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model"]);
+/**
+ * The string-valued flags (consume the NEXT token as their value). These MUST
+ * be captured into typed {@link ParsedArgs} fields — NOT dropped as "unknown
+ * boolean flags" — or the verb that reads them (e.g. `tg wait --event …`) gets
+ * neither the flag nor its value (CR-01 / WR-01: the masked flag-strip).
+ */
+const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model", "--event", "--tool"]);
+
+/** The boolean sub-flags (presence-only; consume no value). */
+const BOOLEAN_FLAGS = new Set(["--json", "--deep"]);
 
 /**
  * Parse the `chan`/`tg` CLI argv into a {@link ParsedArgs}. PURE — no side
  * effects. The first non-flag token is the verb; the rest are positional args
- * (quote-stripped). `--json` is a boolean flag; `--channel`/`--endpoint`/
- * `--model` consume the next token. The channel defaults to "telegram".
+ * (quote-stripped). `--json`/`--deep` are boolean flags; `--channel`/
+ * `--endpoint`/`--model`/`--event`/`--tool` consume the next token; `--timeout`
+ * consumes a numeric next token (non-finite is dropped). Resolving the value
+ * flags into TYPED fields here (rather than carrying them through as
+ * positionals) keeps a verb's trajectory-file positional unambiguous regardless
+ * of flag order (CR-01 / IN-01). The channel defaults to "telegram".
  */
 export function parseArgs(argv: string[]): ParsedArgs {
   let channel = "telegram";
   let json = false;
+  let deep = false;
   let endpoint: string | undefined;
   let model: string | undefined;
+  let event: string | undefined;
+  let tool: string | undefined;
+  let timeout: number | undefined;
   const positionals: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
     if (tok === undefined) continue;
-    if (tok === "--json") {
-      json = true;
+    if (BOOLEAN_FLAGS.has(tok)) {
+      if (tok === "--json") json = true;
+      else if (tok === "--deep") deep = true;
+      continue;
+    }
+    if (tok === "--timeout") {
+      const value = argv[i + 1];
+      i++; // consume the value token
+      if (value === undefined) continue;
+      const ms = Number(value);
+      if (Number.isFinite(ms)) timeout = ms; // a non-numeric --timeout is dropped, never NaN
       continue;
     }
     if (STRING_FLAGS.has(tok)) {
@@ -97,6 +130,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (tok === "--channel") channel = value;
       else if (tok === "--endpoint") endpoint = value;
       else if (tok === "--model") model = value;
+      else if (tok === "--event") event = value;
+      else if (tok === "--tool") tool = value;
       continue;
     }
     if (tok.startsWith("--")) {
@@ -114,6 +149,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     json,
     ...(endpoint !== undefined ? { endpoint } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(event !== undefined ? { event } : {}),
+    ...(tool !== undefined ? { tool } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+    ...(deep ? { deep } : {}),
   };
 }
 
@@ -304,6 +343,38 @@ export interface VerbContext {
   readonly waitFn?: (opts: WaitSignalOptions) => Promise<WaitSignalResult>;
   /** The mirror reader (default {@link readMirrorText}) — `mirror`. */
   readonly readMirror?: (dbPath: string, sessionKey: string) => string | undefined;
+  /** The `--event <type>` to block on — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  readonly event?: string;
+  /** The `--tool <name>` to block on — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  readonly tool?: string;
+  /** The `--timeout <ms>` hard ceiling — `wait` (AUTO-03). Resolved by {@link parseArgs}. */
+  readonly timeoutMs?: number;
+  /** The `--deep` clean-slate sub-flag — `reset --deep`. Resolved by {@link parseArgs}. */
+  readonly deep?: boolean;
+}
+
+/**
+ * Project a {@link ParsedArgs} into the flag-carrying half of a
+ * {@link VerbContext} (everything but the seam fns + the FS-resolved handle).
+ * This is the SINGLE source of truth for the flag → ctx mapping, so the real
+ * `parseArgs → contextFromParsed → runVerb` path is exercised end-to-end by the
+ * unit tests (closing the CR-01 masking gap) and re-used by `resolveContext`.
+ * The handle is supplied by the caller (the FS read lives in `resolveContext`).
+ */
+export function contextFromParsed(
+  parsed: ParsedArgs,
+  handle?: ChanliveHandle,
+): VerbContext {
+  return {
+    ...(handle !== undefined ? { handle } : {}),
+    ...(parsed.endpoint !== undefined ? { flagEndpoint: parsed.endpoint } : {}),
+    json: parsed.json,
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    ...(parsed.event !== undefined ? { event: parsed.event } : {}),
+    ...(parsed.tool !== undefined ? { tool: parsed.tool } : {}),
+    ...(parsed.timeout !== undefined ? { timeoutMs: parsed.timeout } : {}),
+    ...(parsed.deep === true ? { deep: true } : {}),
+  };
 }
 
 /** The recorded-outbound shape the `/control/*` reply-wait returns (subset). */
@@ -449,9 +520,15 @@ export async function runVerb(
       // `tg restart`/`tg reset --deep` against a separate-process rig is NOT
       // served this phase. Reason-code it; the in-proc scenario (205-06) drives
       // the controller directly.
+      //
+      // WR-01: branch on the TYPED `--deep` flag (resolved by parseArgs into
+      // `ctx.deep`), NOT `args[0]` — parseArgs strips the flag from positionals,
+      // so `args[0] === "--deep"` was ALWAYS false and `reset --deep` was
+      // indistinguishable from a plain `reset` in the reported body.
+      const resetVerb = verb === "reset" && ctx.deep === true ? "reset --deep" : verb;
       return {
         status: "lifecycle_in_process_only",
-        verb: args[0] === "--deep" ? "reset --deep" : verb,
+        verb: resetVerb,
         hint: "a cross-process `tg restart`/`reset --deep` needs the detached-subprocess rig (Phase 208); the in-process controller is driven by the 205-06 scenario.",
       };
     }
@@ -578,13 +655,15 @@ export async function runVerb(
     }
 
     case "wait": {
-      // Resolve `--event <type>` / `--tool <name>` from the remaining args.
-      const eventIdx = args.indexOf("--event");
-      const toolIdx = args.indexOf("--tool");
-      const event = eventIdx !== -1 ? args[eventIdx + 1] : undefined;
-      const tool = toolIdx !== -1 ? args[toolIdx + 1] : undefined;
-      const trajFile = args[0];
-      if (trajFile === undefined || trajFile.startsWith("--")) {
+      // CR-01: `--event`/`--tool`/`--timeout` are resolved by parseArgs into
+      // TYPED ctx fields — NOT re-scraped from `args` (parseArgs strips the flag
+      // tokens from positionals, so the old `args.indexOf("--event")` was always
+      // -1 and the verb could never receive a signal through the real CLI path).
+      const { event, tool, timeoutMs } = ctx;
+      // The trajectory file is the first positional (now unpolluted by flags —
+      // IN-01: resolve the first NON-flag positional so flag order never shadows it).
+      const trajFile = args.find((a) => !a.startsWith("--"));
+      if (trajFile === undefined) {
         throw new VerbFailure("bad_json", { detail: "tg wait <trajectoryFile> --event <type>|--tool <name>" });
       }
       // Lazy import: wait.ts pulls @comis/observability (see the top-of-file note).
@@ -594,6 +673,7 @@ export async function runVerb(
         trajectoryFile: trajFile,
         ...(event !== undefined ? { event } : {}),
         ...(tool !== undefined ? { tool } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       if (!result.matched) {
         // settle_timeout / timeout → honest non-zero exit (no false success).
@@ -644,12 +724,10 @@ async function resolveContext(parsed: ParsedArgs): Promise<VerbContext> {
   // Lazy import so the pure-core unit tests never pull the handle FS layer.
   const { readHandle } = await import("../harness/chanlive-handle.js");
   const handle = readHandle(parsed.channel);
-  return {
-    ...(handle !== undefined ? { handle } : {}),
-    ...(parsed.endpoint !== undefined ? { flagEndpoint: parsed.endpoint } : {}),
-    json: parsed.json,
-    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
-  };
+  // Delegate the flag → ctx projection to the SINGLE source of truth so the real
+  // `runMain` path threads `--event`/`--tool`/`--timeout`/`--deep` exactly as the
+  // unit tests do (CR-01: the live `tg wait`/`reset --deep` now receive them).
+  return contextFromParsed(parsed, handle);
 }
 
 /** Run the CLI: parse → resolve ctx → dispatch → print | honest non-zero exit. */
