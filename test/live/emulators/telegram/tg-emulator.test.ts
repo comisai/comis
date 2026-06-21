@@ -383,6 +383,110 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
+  // REACT-01 — injectReaction (the INBOUND half: queue a reaction-ADD on an
+  // EXISTING bot reply for the next getUpdates poll). The OUTBOUND half
+  // (setMessageReaction / reactionsOn) shipped in 204 above. The emitted
+  // message_reaction Update is what the already-wired adapter handler
+  // (telegram-inbound.ts:266) consumes.
+  // -------------------------------------------------------------------------
+  describe("injectReaction (REACT-01 — getUpdates serves an inbound reaction-ADD)", () => {
+    it("getUpdates serves the injected reaction on an EXISTING bot reply (message_id, emoji, reactor preserved)", async () => {
+      // Send a bot reply to react TO (the id recordOutboundMessage keys on).
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "bot reply" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      // React 👍 on that existing reply.
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "👍");
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      expect(env.ok).toBe(true);
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBeGreaterThanOrEqual(1);
+      const mr = updates[updates.length - 1]!["message_reaction"] as Record<string, unknown>;
+      expect(mr).toBeDefined();
+      expect(mr["message_id"]).toBe(botReplyId);
+      const newReaction = mr["new_reaction"] as Array<Record<string, unknown>>;
+      expect(newReaction[0]!["emoji"]).toBe("👍");
+      expect(mr["old_reaction"]).toEqual([]);
+      expect((mr["user"] as Record<string, unknown>)["id"]).toBe(777);
+    });
+
+    it("returns void and mints NO message_id — a subsequent sendMessage is the NEXT sequential id (not id+2)", async () => {
+      const first = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "first" }))
+        .result as Record<string, unknown>;
+      const firstId = first["message_id"] as number;
+
+      // injectReaction must NOT advance the message-id counter.
+      const ret = emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, firstId, "👍");
+      expect(ret).toBeUndefined();
+
+      const second = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "second" }))
+        .result as Record<string, unknown>;
+      const secondId = second["message_id"] as number;
+      // Exactly the next sequential id — the reaction minted nothing in between.
+      expect(secondId).toBe(firstId + 1);
+    });
+
+    it("emits a reactor (≠ bot, is_bot:false) so the adapter own-filter (:270) does NOT drop it", async () => {
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "r" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 555, firstName: "Bob" }, botReplyId, "👍");
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const mr = updates[updates.length - 1]!["message_reaction"] as Record<string, unknown>;
+      const user = mr["user"] as Record<string, unknown>;
+      expect(user["id"]).toBe(555);
+      expect(user["is_bot"]).toBe(false);
+    });
+
+    it("BLOCK-then-resolve: an empty-queue poll blocks, then an injected reaction resolves the SAME call (wakeWaiters fired)", async () => {
+      // Send the bot reply first (does not enqueue an update; it is outbound).
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "to react" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      // Poll an empty inbound queue — must block (no message/reaction queued yet).
+      const pollPromise = callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      let resolvedEarly = false;
+      void pollPromise.then(() => {
+        resolvedEarly = true;
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(resolvedEarly).toBe(false);
+
+      // Inject the reaction — the blocked poll must resolve on the SAME call.
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "👍");
+      const env = await pollPromise;
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const mr = updates[0]!["message_reaction"] as Record<string, unknown>;
+      expect((mr["new_reaction"] as Array<Record<string, unknown>>)[0]!["emoji"]).toBe("👍");
+    });
+
+    it("bot-global monotonic order: a message then a reaction are served ascending by update_id (reaction's > message's)", async () => {
+      const msgId = emu.injectMessage({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "hi");
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "reply" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+      expect(typeof msgId).toBe("number");
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "👍");
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      // The message and the reaction, in update_id order.
+      expect(updates.length).toBe(2);
+      const ids = updates.map((u) => u["update_id"] as number);
+      expect(ids[1]! > ids[0]!).toBe(true);
+      // The first carries the message; the second carries the reaction.
+      expect(updates[0]!["message"]).toBeDefined();
+      expect(updates[1]!["message_reaction"]).toBeDefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // EMU-05 — getFile method + file route SHAPE (no 404 at boot)
   // -------------------------------------------------------------------------
   describe("getFile + file route shape (EMU-05 — no byte serving in 204)", () => {
@@ -435,6 +539,14 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(src).not.toContain("0.0.0.0");
       // The drain-per-poll anti-pattern must be absent (true long-poll only).
       expect(src).not.toMatch(/queuedUpdates\.length\s*=\s*0/);
+    });
+
+    it("documents GOTCHA B at the resetChat site (a message_reaction update has no .message → kept by the `: true` branch)", () => {
+      const src = readFileSync(EMULATOR_SOURCE, "utf8");
+      // The resetChat pending-filter keys on `u.message`; a reaction update has
+      // no `.message`, so it survives a reset. The site must flag this so a
+      // future reaction-after-reset test extends the filter to message_reaction.
+      expect(src).toMatch(/message_reaction/);
     });
   });
 });
