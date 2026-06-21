@@ -31,6 +31,8 @@ import { describe, it, expect } from "vitest";
 import type { Message, MessageReactionUpdated, Update } from "grammy/types";
 import {
   makeBotUser,
+  makeLocationUpdate,
+  makeMediaUpdate,
   makeMessageUpdate,
   makeReactionUpdate,
   makeUser,
@@ -300,6 +302,288 @@ describe("makeReactionUpdate grammy-type fidelity (I4 — compile-level drift tr
     expect(u.update_id).toBe(3);
     expect(mr.message_id).toBe(30);
     expect(mr.new_reaction[0]).toEqual({ type: "emoji", emoji: "👍" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeMediaUpdate — runtime shape buildAttachments parses (MEDIA-03, Phase 207)
+// (the inbound media half: a `message` Update carrying exactly the per-kind
+// grammy field buildAttachments reads (media-handler.ts:84-108), each via a
+// caller-supplied file_id. The keyless handler short-circuits BEFORE download,
+// so these Stage-B units pin the SHAPE the adapter parses, not a transcript.)
+// ---------------------------------------------------------------------------
+
+describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", () => {
+  it("kind:'voice' → message.voice = { file_id, file_unique_id, duration, mime_type }", () => {
+    const from = makeUser({ id: 200, firstName: "alice", username: "alice" });
+    const update = makeMediaUpdate({
+      updateId: 1,
+      messageId: 100,
+      chatId: 555,
+      from,
+      kind: "voice",
+      fileId: "file_voice_1",
+      fileUniqueId: "uniq_voice_1",
+      duration: 7,
+      mimeType: "audio/ogg",
+    });
+    expect(update.update_id).toBe(1);
+    const message = update.message;
+    expect(message?.message_id).toBe(100);
+    expect(message?.chat.id).toBe(555);
+    expect(message?.chat.type).toBe("private");
+    // buildAttachments reads msg.voice.file_id (media-handler.ts:95,extractVoice:41).
+    expect(message?.voice?.file_id).toBe("file_voice_1");
+    expect(message?.voice?.file_unique_id).toBe("uniq_voice_1");
+    expect(message?.voice?.duration).toBe(7);
+    expect(message?.voice?.mime_type).toBe("audio/ogg");
+    // ONLY the requested kind is set — a voice update carries no photo/document/…
+    expect(message?.photo).toBeUndefined();
+    expect(message?.document).toBeUndefined();
+    expect(message?.video).toBeUndefined();
+    expect(message?.video_note).toBeUndefined();
+  });
+
+  it("kind:'photo' → message.photo = [{ file_id, file_unique_id, width, height, file_size }] (a PhotoSize[])", () => {
+    const from = makeUser({ id: 1, firstName: "p" });
+    const update = makeMediaUpdate({
+      updateId: 2,
+      messageId: 101,
+      chatId: 7,
+      from,
+      kind: "photo",
+      fileId: "file_photo_1",
+      fileUniqueId: "uniq_photo_1",
+      width: 640,
+      height: 480,
+      fileSize: 2048,
+    });
+    const photo = update.message?.photo;
+    // buildAttachments takes the LARGEST = photos[len-1] (media-handler.ts:18).
+    expect(Array.isArray(photo)).toBe(true);
+    expect(photo).toHaveLength(1);
+    expect(photo?.[photo.length - 1]?.file_id).toBe("file_photo_1");
+    expect(photo?.[0]?.file_unique_id).toBe("uniq_photo_1");
+    expect(photo?.[0]?.width).toBe(640);
+    expect(photo?.[0]?.height).toBe(480);
+    expect(photo?.[0]?.file_size).toBe(2048);
+    expect(update.message?.voice).toBeUndefined();
+  });
+
+  it("kind:'document' → message.document = { file_id, file_unique_id, file_name?, mime_type?, file_size? }", () => {
+    const from = makeUser({ id: 1, firstName: "d" });
+    const update = makeMediaUpdate({
+      updateId: 3,
+      messageId: 102,
+      chatId: 7,
+      from,
+      kind: "document",
+      fileId: "file_doc_1",
+      fileUniqueId: "uniq_doc_1",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+      fileSize: 4096,
+    });
+    const doc = update.message?.document;
+    // buildAttachments reads file_id (+ optional mime_type/file_name/file_size); extractDocument:28.
+    expect(doc?.file_id).toBe("file_doc_1");
+    expect(doc?.file_unique_id).toBe("uniq_doc_1");
+    expect(doc?.file_name).toBe("report.pdf");
+    expect(doc?.mime_type).toBe("application/pdf");
+    expect(doc?.file_size).toBe(4096);
+  });
+
+  it("kind:'video' → message.video = { file_id, file_unique_id, width, height, duration }", () => {
+    const from = makeUser({ id: 1, firstName: "v" });
+    const update = makeMediaUpdate({
+      updateId: 4,
+      messageId: 103,
+      chatId: 7,
+      from,
+      kind: "video",
+      fileId: "file_video_1",
+      fileUniqueId: "uniq_video_1",
+      width: 1280,
+      height: 720,
+      duration: 12,
+    });
+    const video = update.message?.video;
+    expect(video?.file_id).toBe("file_video_1"); // extractVideo:53
+    expect(video?.file_unique_id).toBe("uniq_video_1");
+    expect(video?.width).toBe(1280);
+    expect(video?.height).toBe(720);
+    expect(video?.duration).toBe(12);
+  });
+
+  it("kind:'video_note' → message.video_note = { file_id, file_unique_id, length, duration }", () => {
+    const from = makeUser({ id: 1, firstName: "vn" });
+    const update = makeMediaUpdate({
+      updateId: 5,
+      messageId: 104,
+      chatId: 7,
+      from,
+      kind: "video_note",
+      fileId: "file_vn_1",
+      fileUniqueId: "uniq_vn_1",
+      length: 240,
+      duration: 5,
+    });
+    const vn = update.message?.video_note;
+    expect(vn?.file_id).toBe("file_vn_1"); // extractVideoNote:64 (duration → ms downstream)
+    expect(vn?.file_unique_id).toBe("uniq_vn_1");
+    expect(vn?.length).toBe(240);
+    expect(vn?.duration).toBe(5);
+  });
+
+  it("the SAME file_id the caller passes is echoed verbatim (the id injectMedia stores)", () => {
+    const from = makeUser({ id: 1, firstName: "x" });
+    const update = makeMediaUpdate({
+      updateId: 6,
+      messageId: 105,
+      chatId: 7,
+      from,
+      kind: "voice",
+      fileId: "the-exact-file-id",
+      fileUniqueId: "uniq",
+      duration: 1,
+    });
+    expect(update.message?.voice?.file_id).toBe("the-exact-file-id");
+  });
+
+  it("spoiler:true → message.has_media_spoiler = true (message-mapper.ts:142 → metadata.hasSpoiler)", () => {
+    const from = makeUser({ id: 1, firstName: "s" });
+    const update = makeMediaUpdate({
+      updateId: 7,
+      messageId: 106,
+      chatId: 7,
+      from,
+      kind: "photo",
+      fileId: "f",
+      fileUniqueId: "u",
+      width: 1,
+      height: 1,
+      spoiler: true,
+    });
+    expect(update.message?.has_media_spoiler).toBe(true);
+  });
+
+  it("spoiler omitted → has_media_spoiler is absent (exactOptionalPropertyTypes — never `: undefined`)", () => {
+    const from = makeUser({ id: 1, firstName: "s" });
+    const update = makeMediaUpdate({
+      updateId: 8,
+      messageId: 107,
+      chatId: 7,
+      from,
+      kind: "photo",
+      fileId: "f",
+      fileUniqueId: "u",
+      width: 1,
+      height: 1,
+    });
+    // The field is OMITTED, not set to undefined (a falsy-read short-circuit + a
+    // clean `"has_media_spoiler" in msg` check both stay correct).
+    expect("has_media_spoiler" in (update.message as object)).toBe(false);
+  });
+
+  it("date is unix SECONDS (≈ Math.floor(now/1000), <1e12), not milliseconds", () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const from = makeUser({ id: 1, firstName: "c" });
+    const date = makeMediaUpdate({
+      updateId: 9,
+      messageId: 1,
+      chatId: 1,
+      from,
+      kind: "voice",
+      fileId: "f",
+      fileUniqueId: "u",
+      duration: 1,
+    }).message!.date;
+    expect(Number.isInteger(date)).toBe(true);
+    expect(Math.abs(date - nowSeconds)).toBeLessThanOrEqual(5);
+    expect(date).toBeLessThan(1e12);
+  });
+
+  it("the builder return is assignable to grammy `Update`/`Message` (I4 drift tripwire)", () => {
+    const from = makeUser({ id: 5, firstName: "d" });
+    const u: Update = makeMediaUpdate({
+      updateId: 3,
+      messageId: 30,
+      chatId: 300,
+      from,
+      kind: "document",
+      fileId: "f",
+      fileUniqueId: "u",
+    });
+    const m: Message = u.message!;
+    expect(m.document?.file_id).toBe("f");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeLocationUpdate — message-mapper.ts:175-189 reads venue (WINS) then location
+// (a `message` Update; no file store). venue → metadata.location via the venue
+// branch, plain location via the else-if. Asserted structurally here; the
+// metadata.location mapping is corroborated in the Stage-B scenario.
+// ---------------------------------------------------------------------------
+
+describe("makeLocationUpdate runtime shape (mirrors message-mapper.ts location/venue)", () => {
+  it("location → message.location = { latitude, longitude, horizontal_accuracy? }", () => {
+    const from = makeUser({ id: 1, firstName: "l" });
+    const update = makeLocationUpdate({
+      updateId: 1,
+      messageId: 200,
+      chatId: 9,
+      from,
+      location: { latitude: 51.5, longitude: -0.12, horizontalAccuracy: 10 },
+    });
+    const loc = update.message?.location;
+    expect(loc?.latitude).toBe(51.5); // message-mapper.ts:184
+    expect(loc?.longitude).toBe(-0.12);
+    expect(loc?.horizontal_accuracy).toBe(10); // :187
+    // A plain location update has NO venue (the mapper's else-if precedence).
+    expect(update.message?.venue).toBeUndefined();
+  });
+
+  it("location without accuracy → horizontal_accuracy is absent (exactOptional)", () => {
+    const from = makeUser({ id: 1, firstName: "l" });
+    const update = makeLocationUpdate({
+      updateId: 2,
+      messageId: 201,
+      chatId: 9,
+      from,
+      location: { latitude: 1, longitude: 2 },
+    });
+    expect("horizontal_accuracy" in (update.message?.location as object)).toBe(false);
+  });
+
+  it("venue → message.venue = { location:{latitude,longitude}, title, address } (venue WINS, :175)", () => {
+    const from = makeUser({ id: 1, firstName: "v" });
+    const update = makeLocationUpdate({
+      updateId: 3,
+      messageId: 202,
+      chatId: 9,
+      from,
+      venue: { latitude: 40.7, longitude: -74.0, title: "Statue", address: "Liberty Island" },
+    });
+    const venue = update.message?.venue;
+    expect(venue?.location.latitude).toBe(40.7); // message-mapper.ts:177
+    expect(venue?.location.longitude).toBe(-74.0); // :178
+    expect(venue?.title).toBe("Statue"); // :179
+    expect(venue?.address).toBe("Liberty Island"); // :179
+    // venue is mutually exclusive with location in the builder (the mapper's else-if).
+    expect(update.message?.location).toBeUndefined();
+  });
+
+  it("the builder return is assignable to grammy `Update` (I4 drift tripwire)", () => {
+    const from = makeUser({ id: 5, firstName: "d" });
+    const u: Update = makeLocationUpdate({
+      updateId: 3,
+      messageId: 30,
+      chatId: 300,
+      from,
+      location: { latitude: 1, longitude: 2 },
+    });
+    expect(u.message?.location?.latitude).toBe(1);
   });
 });
 
