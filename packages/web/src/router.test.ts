@@ -214,6 +214,28 @@ describe("createRouter", () => {
       });
     });
 
+    it("#/observe/cache -> ic-cache-health-view, route 'observe/cache', params {} (179-07)", () => {
+      window.location.hash = "#/observe/cache";
+      const router = createRouter(onChange);
+      expect(router.current()).toEqual({
+        view: "ic-cache-health-view",
+        route: "observe/cache",
+        params: {},
+        query: {},
+      });
+    });
+
+    it("#/observe/spend -> ic-spend-governance-view, route 'observe/spend', params {} (179-07)", () => {
+      window.location.hash = "#/observe/spend";
+      const router = createRouter(onChange);
+      expect(router.current()).toEqual({
+        view: "ic-spend-governance-view",
+        route: "observe/spend",
+        params: {},
+        query: {},
+      });
+    });
+
     it("#/security -> ic-security-view, route 'security', params {}", () => {
       window.location.hash = "#/security";
       const router = createRouter(onChange);
