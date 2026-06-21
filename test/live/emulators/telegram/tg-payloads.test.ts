@@ -28,10 +28,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import type { Message, Update } from "grammy/types";
+import type { Message, MessageReactionUpdated, Update } from "grammy/types";
 import {
   makeBotUser,
   makeMessageUpdate,
+  makeReactionUpdate,
   makeUser,
   nextUpdateId,
 } from "./tg-payloads.js";
@@ -182,11 +183,152 @@ describe("nextUpdateId monotonic counter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scope guard — only `message` updates in the source (§4.2)
+// makeReactionUpdate — runtime shape the message_reaction adapter handler parses
+// (REACT-01: the inbound half of reactions; the outbound setMessageReaction
+// landed in 204. The adapter handler at telegram-inbound.ts:266 is ALREADY
+// wired — these tests pin the builder produces exactly the ADD it consumes.)
 // ---------------------------------------------------------------------------
 
-describe("tg-payloads.ts scope guard (only `message` updates for 204)", () => {
-  it("imports grammy's OWN types (I4) and emits no unhandled update kind", () => {
+describe("makeReactionUpdate runtime shape", () => {
+  it("builds a well-formed grammy `message_reaction` ADD Update from the passed fields", () => {
+    const user = makeUser({ id: 200, firstName: "alice", username: "alice" });
+    const update = makeReactionUpdate({
+      updateId: 1,
+      messageId: 100,
+      chatId: 555,
+      user,
+      emoji: "👍",
+    });
+
+    expect(update.update_id).toBe(1);
+    // `message_reaction` is the only populated update kind (the REACT-01 ADD).
+    const mr = update.message_reaction;
+    expect(mr).toBeDefined();
+    expect(mr?.message_id).toBe(100);
+    expect(mr?.chat.id).toBe(555);
+    expect(mr?.chat.type).toBe("private");
+    // The reactor — never the bot (so the adapter's :270 own-filter keeps it).
+    expect(mr?.user).toBe(user);
+    expect(mr?.user?.is_bot).toBe(false);
+    expect(mr?.user?.id).toBe(200);
+    // A FRESH ADD: old_reaction empty → new_reaction carries the single emoji.
+    expect(mr?.old_reaction).toEqual([]);
+    expect(mr?.new_reaction).toEqual([{ type: "emoji", emoji: "👍" }]);
+  });
+
+  it("echoes the caller-supplied updateId/messageId (the emulator owns the counter; the messageId is the EXISTING bot reply)", () => {
+    const user = makeUser({ id: 7, firstName: "bob" });
+    const update = makeReactionUpdate({
+      updateId: 42,
+      messageId: 9001,
+      chatId: 12,
+      user,
+      emoji: "👎",
+    });
+    expect(update.update_id).toBe(42);
+    expect(update.message_reaction?.message_id).toBe(9001);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// date semantics — UNIX SECONDS, not milliseconds (mirrors makeMessageUpdate)
+// ---------------------------------------------------------------------------
+
+describe("makeReactionUpdate date is unix seconds (not milliseconds)", () => {
+  it("sets message_reaction.date to an integer ≈ Math.floor(Date.now()/1000)", () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const user = makeUser({ id: 1, firstName: "c" });
+    const update = makeReactionUpdate({
+      updateId: 1,
+      messageId: 1,
+      chatId: 1,
+      user,
+      emoji: "👍",
+    });
+    const date = update.message_reaction!.date;
+    // Integer (Telegram unix-seconds), never a float.
+    expect(Number.isInteger(date)).toBe(true);
+    // Within a few seconds of now/1000 — i.e. SECONDS, not the ~1000× larger ms.
+    expect(Math.abs(date - nowSeconds)).toBeLessThanOrEqual(5);
+    // Sanity tripwire: a ms value would be ≥ 1e12; seconds are ~1.7e9.
+    expect(date).toBeLessThan(1e12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The ADD-detection contract — what the adapter's :272-273 diff needs
+// ---------------------------------------------------------------------------
+
+describe("makeReactionUpdate produces the ADD the adapter detects (telegram-inbound.ts:272-273)", () => {
+  it("the set-difference new\\old of emoji reactions is exactly the injected emoji", () => {
+    const user = makeUser({ id: 3, firstName: "d" });
+    const mr = makeReactionUpdate({
+      updateId: 1,
+      messageId: 10,
+      chatId: 100,
+      user,
+      emoji: "👍",
+    }).message_reaction!;
+
+    // Mirror emojiNames (telegram-inbound.ts:304): keep only type==="emoji".
+    const emojiNames = (rs: typeof mr.new_reaction): string[] =>
+      rs.flatMap((r) => (r.type === "emoji" ? [r.emoji] : []));
+    const oldEmojis = new Set(emojiNames(mr.old_reaction));
+    const added = emojiNames(mr.new_reaction).filter((e) => !oldEmojis.has(e));
+    // Exactly an ADD of "👍" — what the handler dispatches (added.length > 0).
+    expect(added).toEqual(["👍"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// grammy-type fidelity (I4) — the drift tripwire for the reaction builder
+// ---------------------------------------------------------------------------
+
+describe("makeReactionUpdate grammy-type fidelity (I4 — compile-level drift tripwire)", () => {
+  it("the builder return is assignable to grammy `Update` and `MessageReactionUpdated`", () => {
+    const user = makeUser({ id: 5, firstName: "e", username: "e" });
+    // These two annotations are the I4 tripwire: if grammy's
+    // Update/MessageReactionUpdated shape drifts, THIS file fails to COMPILE.
+    const u: Update = makeReactionUpdate({
+      updateId: 3,
+      messageId: 30,
+      chatId: 300,
+      user,
+      emoji: "👍",
+    });
+    const mr: MessageReactionUpdated = u.message_reaction!;
+    expect(u.update_id).toBe(3);
+    expect(mr.message_id).toBe(30);
+    expect(mr.new_reaction[0]).toEqual({ type: "emoji", emoji: "👍" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scope guard — `message` + `message_reaction` are IN-SCOPE; callbacks/edits
+// stay deferred to Phase 207 (§4.2, lifted for reactions by REACT-01)
+// ---------------------------------------------------------------------------
+
+describe("tg-payloads.ts scope guard (message + message_reaction in scope; callbacks deferred to 207)", () => {
+  it("makeReactionUpdate populates only `message_reaction` — no callback/edit/inline kind", () => {
+    const user = makeUser({ id: 1, firstName: "c" });
+    const update = makeReactionUpdate({
+      updateId: 1,
+      messageId: 1,
+      chatId: 1,
+      user,
+      emoji: "👍",
+    });
+    // Exactly the two keys the reaction ADD needs — nothing else.
+    expect(Object.keys(update).sort()).toEqual(["message_reaction", "update_id"]);
+    // None of the still-deferred (207) kinds are present at runtime.
+    const u = update as unknown as Record<string, unknown>;
+    expect(u["channel_post"]).toBeUndefined();
+    expect(u["edited_message"]).toBeUndefined();
+    expect(u["callback_query"]).toBeUndefined();
+    expect(u["inline_query"]).toBeUndefined();
+  });
+
+  it("imports grammy's OWN types (I4) and emits no STILL-deferred update kind", () => {
     const src = readFileSync(PAYLOADS_SOURCE, "utf8");
     // I4: the builders import grammy's exported Update/Message types.
     expect(src).toMatch(/import type \{[^}]*Update[^}]*\} from ["']grammy\/types["']/);
@@ -197,7 +339,12 @@ describe("tg-payloads.ts scope guard (only `message` updates for 204)", () => {
       .split("\n")
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
       .join("\n");
-    // No unhandled update-kind LITERAL in the code (§4.2 scope guard).
+    // REACT-01 lifted `message_reaction` into scope — assert it IS now a code
+    // literal (the builder writes it), proving the guard was lifted on purpose.
+    expect(code).toMatch(/message_reaction/);
+    // Callbacks/edits + the other unhandled kinds stay blocklisted (207 boundary).
+    expect(code).not.toMatch(/callback_query/);
+    expect(code).not.toMatch(/edited_message/);
     expect(code).not.toMatch(/channel_post/);
     expect(code).not.toMatch(/inline_query/);
     expect(code).not.toMatch(/poll_answer/);
