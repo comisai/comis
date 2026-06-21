@@ -28,7 +28,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, existsSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startStandaloneRig, type BuiltRig } from "./rig.js";
+import {
+  startStandaloneRig,
+  type BuiltRig,
+  type DetachedRigHandle,
+} from "./rig.js";
 import { writeHandle, readHandle, handlePath, type ChanliveHandle } from "./chanlive-handle.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -137,6 +141,64 @@ describe("startStandaloneRig (deterministic) — discover-or-spawn decision", ()
     expect(res.reused).toBe(false);
     expect(spawnFn).toHaveBeenCalledTimes(1);
     await res.cleanup!();
+  });
+
+  // -------------------------------------------------------------------------
+  // DETACHED MODE (Option A, Plan 208-08) — the cold-shell cross-process rig.
+  //
+  // When `detached: true`, the launcher spawns a DETACHED subprocess
+  // (`rig-daemon.ts`) that OUTLIVES the launching process, and records a handle
+  // carrying a real `pid` + a rig-control HTTP `rigControlEndpoint` (≠ gateway
+  // URL). The spawn is injected here so the DECISION + the handle SHAPE are
+  // proven deterministically with no real subprocess. The real cross-process
+  // boot is the COMIS_LIVE leg (telegram-cold-shell.test.ts).
+  // -------------------------------------------------------------------------
+
+  it("DETACHED spawn records a handle with a real pid + a rigControlEndpoint DISTINCT from the gateway URL (the cross-process surface)", async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "comis-standalone-detached-"));
+    cleanups.push(() => rmSync(baseDir, { recursive: true, force: true }));
+
+    // A detached subprocess result: a real pid + a rig-control endpoint that is
+    // NOT the gateway URL (the dedicated cold-shell control surface).
+    const detached: DetachedRigHandle = {
+      pid: 987654,
+      gatewayUrl: "http://127.0.0.1:50100",
+      gatewayToken: "test-secret-key-for-integration-tests",
+      controlEndpoint: "http://127.0.0.1:50101",
+      rigControlEndpoint: "http://127.0.0.1:50102",
+      chatId: 424242,
+      dataDir: join(baseDir, "data"),
+      memoryDbPath: join(baseDir, "data", "test-memory-channel-emu.db"),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const spawnDetachedFn = vi.fn(async () => detached);
+    // probe FALSE so the launcher does not short-circuit on a (nonexistent) reuse.
+    const probeFn = vi.fn(async () => false);
+
+    const res = await startStandaloneRig(
+      { channel: "telegram", model: "keyless", baseDir, detached: true },
+      { probeFn, spawnDetachedFn },
+    );
+
+    // A detached spawn happened (NOT the in-process buildRig path).
+    expect(spawnDetachedFn).toHaveBeenCalledTimes(1);
+    expect(res.reused).toBe(false);
+
+    // The recorded handle carries the real pid + the rig-control endpoint.
+    const written = readHandle("telegram", baseDir);
+    expect(written?.pid).toBe(detached.pid);
+    // The cold-shell control surface is a DEDICATED endpoint, NOT the gateway URL
+    // (the in-process spine sets rigControlEndpoint = the gateway anchor; the
+    // detached rig advertises a real cross-process control surface instead).
+    expect(written?.rigControlEndpoint).toBe(detached.rigControlEndpoint);
+    expect(written?.rigControlEndpoint).not.toBe(written?.gatewayUrl);
+
+    // cleanup tears the detached rig down (SIGTERM the child) AND removes the handle.
+    const path = handlePath("telegram", baseDir);
+    expect(existsSync(path)).toBe(true);
+    await res.cleanup!();
+    expect(detached.cleanup).toHaveBeenCalledTimes(1);
+    expect(existsSync(path)).toBe(false);
   });
 });
 
