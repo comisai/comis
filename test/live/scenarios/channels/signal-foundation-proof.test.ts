@@ -61,7 +61,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertChannelTrace, readMirrorText } from "../../assert/channel-trace.js";
-import { createSignalEmulator } from "../../emulators/signal/signal-emulator.js";
+import { createSignalEmulator, type SignalEmulator } from "../../emulators/signal/signal-emulator.js";
 import { signalCaps, SIGNAL_MAX_MESSAGE_CHARS } from "../../emulators/signal/signal-caps.js";
 import {
   parseArgs,
@@ -484,14 +484,11 @@ describe("CHAN2-02 Stage-B — THE ZERO-CHANGE PROOF + zero-production-change + 
         f.endsWith("test/live/assert/channel-trace.ts") ||
         f.endsWith("test/live/harness/chanlive-handle.ts"),
     );
-    // RED: this assertion is intentionally inverted until GREEN — the
-    // foundation-proof PASS files are UNCHANGED (the expensive parts already
-    // generalized), so zeroChangeTargets is [] and this .not.toEqual([]) FAILS.
-    // GREEN flips it to the correct .toEqual([]) (the real zero-change proof).
     expect(
       zeroChangeTargets,
-      "RED placeholder — GREEN asserts the PASS files are UNCHANGED (.toEqual([]))",
-    ).not.toEqual([]);
+      `the foundation-proof PASS files were edited this phase: ${zeroChangeTargets.join(", ")} — ` +
+        "the dual oracle + the handle were supposed to generalize with ZERO change.",
+    ).toEqual([]);
 
     // And they DO carry the channel-agnostic surface the proof rests on (a
     // content check that they hold the structural subset + the per-channel key,
@@ -599,7 +596,10 @@ describe("CHAN2-02 Stage-B — THE ZERO-CHANGE PROOF + zero-production-change + 
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + explain (COMIS_LIVE)", () => {
-  let rig: RigHandle | undefined;
+  // RigHandle<SignalEmulator> — a {channel:"signal"} rig is generic over the
+  // SignalEmulator (vs the TgEmulator default); the emulator field exposes the
+  // Signal oracle the cross-check reads (205-05 made RigHandle generic).
+  let rig: RigHandle<SignalEmulator> | undefined;
   // buildRig exposes memoryDbPath (the RigHandle projection hides it); the
   // round-trip surface (send/waitForReply/emulator/chat) is identical.
   let memoryDbPath: string | undefined;
@@ -684,9 +684,15 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
       // THE HARD dual-oracle cross-check on Signal: the SignalEmulator's recorded
       // wire text == delivery_mirror.text for the session (assertChannelTrace, a
       // HARD throw on mismatch). REUSED UNCHANGED — the foundation-proof PASS,
-      // now against the LIVE Signal writer.
+      // now against the LIVE Signal writer. The rig's control adapter records all
+      // outbound under its single fixed Signal chat string (rig.ts SIGNAL_RIG_CHAT
+      // = "+15555550199"); the SignalEmulator is string-keyed, so we bind that
+      // string into the channel-agnostic `{ lastBotReply(chat): { text? } }` subset
+      // the dual oracle reads (the foundation-proof PASS: the oracle needs NO
+      // Signal-specific edit — a structural adapter at the call site suffices).
+      const RIG_SIGNAL_CHAT = "+15555550199"; // mirrors rig.ts SIGNAL_RIG_CHAT
       await assertChannelTrace({
-        emulator: r.emulator,
+        emulator: { lastBotReply: () => r.emulator.lastBotReply(RIG_SIGNAL_CHAT) },
         chat: r.chat,
         memoryDbPath: dbPath,
         sessionKey,
