@@ -319,7 +319,7 @@ describe("makeReactionUpdate grammy-type fidelity (I4 — compile-level drift tr
 // ---------------------------------------------------------------------------
 
 describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", () => {
-  it("kind:'voice' → message.voice = { file_id, file_unique_id, duration, mime_type }", () => {
+  it("sets message.voice = { file_id, file_unique_id, duration, mime_type } for a kind:'voice' update", () => {
     const from = makeUser({ id: 200, firstName: "alice", username: "alice" });
     const update = makeMediaUpdate({
       updateId: 1,
@@ -349,7 +349,7 @@ describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", (
     expect(message?.video_note).toBeUndefined();
   });
 
-  it("kind:'photo' → message.photo = [{ file_id, file_unique_id, width, height, file_size }] (a PhotoSize[])", () => {
+  it("sets message.photo = [{ file_id, file_unique_id, width, height, file_size }] (a PhotoSize[]) for a kind:'photo' update", () => {
     const from = makeUser({ id: 1, firstName: "p" });
     const update = makeMediaUpdate({
       updateId: 2,
@@ -398,7 +398,7 @@ describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", (
     expect(doc?.file_size).toBe(4096);
   });
 
-  it("kind:'video' → message.video = { file_id, file_unique_id, width, height, duration }", () => {
+  it("sets message.video = { file_id, file_unique_id, width, height, duration } for a kind:'video' update", () => {
     const from = makeUser({ id: 1, firstName: "v" });
     const update = makeMediaUpdate({
       updateId: 4,
@@ -532,7 +532,7 @@ describe("makeMediaUpdate runtime shape (per-kind, mirrors buildAttachments)", (
 // ---------------------------------------------------------------------------
 
 describe("makeLocationUpdate runtime shape (mirrors message-mapper.ts location/venue)", () => {
-  it("location → message.location = { latitude, longitude, horizontal_accuracy? }", () => {
+  it("sets message.location = { latitude, longitude, horizontal_accuracy? } for a location update", () => {
     const from = makeUser({ id: 1, firstName: "l" });
     const update = makeLocationUpdate({
       updateId: 1,
