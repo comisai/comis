@@ -142,24 +142,25 @@ Read more: [Threat model](https://docs.comis.ai/security/threat-model), [Exec sa
 
 ## For Developers
 
-Comis is a TypeScript monorepo with 15 packages:
+Comis is a TypeScript monorepo with 16 packages:
 
 ```text
-shared        Result type and utilities
-core          domain types, ports, config, security, event bus
-infra         logging and runtime infrastructure
-observability diagnostics, traces, stats, health signals
-memory        SQLite stores, FTS5, vectors, sessions, queues
-gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
-skills        tools, MCP, prompt skills, media integrations
-scheduler     cron, heartbeats, task extraction
-agent         execution, planning, RAG, sessions, model safety
-channels      Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email
-orchestrator  inbound routing, channel manager, execution coordination
-cli           setup, operations, audits, RPC client
-daemon        composition root for the running service
-comis         umbrella package
-web           Lit + Vite dashboard
+shared             Result type and utilities
+core               domain types, ports, config, security, event bus
+infra              logging and runtime infrastructure
+observability      diagnostics, traces, stats, health signals
+observability-otel opt-in OTLP/Prometheus/Grafana export (the only OTel-dependent package)
+memory             SQLite stores, FTS5, vectors, sessions, queues
+gateway            Hono HTTP, JSON-RPC, WebSocket, mTLS
+skills             tools, MCP, prompt skills, media integrations
+scheduler          cron, heartbeats, task extraction
+agent              execution, planning, RAG, sessions, model safety
+channels           Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email
+orchestrator       inbound routing, channel manager, execution coordination
+cli                setup, operations, audits, RPC client
+daemon             composition root for the running service
+comis              umbrella package
+web                Lit + Vite dashboard
 ```
 
 The architecture is intentionally boring in the best way: core defines ports, adapters implement them, and the daemon wires everything together. To add a channel, implement `ChannelPort`. To add a storage backend, implement the relevant store port. To add a tool, register metadata and a handler.
