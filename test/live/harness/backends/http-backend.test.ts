@@ -424,3 +424,200 @@ describe("http-backend generalized native matcher (CHAN2-02 FIX #1)", () => {
     expect(json.error_code).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CHAN2-02 FIX #2 (Phase 209) — the base has no SSE streaming.
+//
+// The 204 `send()` responder writes ONE JSON/Buffer body + `res.end()` — it
+// cannot hold a `text/event-stream` connection open. Signal inbound REQUIRES a
+// kept-open SSE response (`GET /api/v1/events`) the emulator emits frames on
+// over time. The fix adds a DEDICATED streaming-route surface
+// (`registerStreamRoute(matcher, (req,res) => void)`, RESEARCH Open-Q1) that
+// hands the handler the raw `ServerResponse` so it can set the SSE content-type,
+// write frames, and register `res.on("close", …)` for cleanup — the dispatcher
+// does NOT route a stream request through `send()`. The existing JSON/Buffer
+// `RouteResult` path (the Telegram request/response surfaces) is UNTOUCHED.
+// On `stop()`, open SSE responses are drained so the server closes cleanly.
+// (Test-infra under `test/live/` — ZERO product change.)
+// ---------------------------------------------------------------------------
+
+/** Read one SSE frame (`event:`/`data:` lines up to a blank line) from a stream reader. */
+async function readSseFrame(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  pending: { buf: string },
+): Promise<{ event?: string; data?: string }> {
+  // Accumulate until a frame terminator (\n\n) is present in the buffer.
+  while (!pending.buf.includes("\n\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending.buf += decoder.decode(value, { stream: true });
+  }
+  const idx = pending.buf.indexOf("\n\n");
+  const raw = idx >= 0 ? pending.buf.slice(0, idx) : pending.buf;
+  pending.buf = idx >= 0 ? pending.buf.slice(idx + 2) : "";
+  const frame: { event?: string; data?: string } = {};
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("event:")) frame.event = line.slice("event:".length).trim();
+    else if (line.startsWith("data:")) frame.data = line.slice("data:".length).trim();
+  }
+  return frame;
+}
+
+describe("http-backend SSE streaming surface (CHAN2-02 FIX #2)", () => {
+  it("holds a text/event-stream connection open and writes SSE frames a client reads incrementally", async () => {
+    const be = createHttpBackend();
+    active = be;
+    // The Signal-shaped inbound surface: a kept-open SSE stream the handler
+    // pushes `event: receive` frames onto over time (mirrors mock-signal-server).
+    let pushFrame: ((env: Record<string, unknown>) => void) | undefined;
+    be.registerStreamRoute(
+      (path) => path === "/api/v1/events",
+      (_req, res) => {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        res.write("\n"); // initial flush — does NOT end the response
+        pushFrame = (env) => {
+          res.write(`event: receive\n`);
+          res.write(`data: ${JSON.stringify(env)}\n\n`);
+        };
+      },
+    );
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/api/v1/events?account=%2B15555550100`, { method: "GET" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(res.body).toBeDefined();
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const pending = { buf: "" };
+
+    // The handler captured its push fn synchronously on connect — emit a frame.
+    expect(pushFrame).toBeDefined();
+    pushFrame!({ source: "+15555550101", message: "hello signal" });
+    const frame1 = await readSseFrame(reader, decoder, pending);
+    expect(frame1.event).toBe("receive");
+    expect(JSON.parse(frame1.data ?? "{}")).toMatchObject({ source: "+15555550101", message: "hello signal" });
+
+    // A SECOND frame over the SAME open connection — proves it was not ended.
+    pushFrame!({ source: "+15555550102", message: "second frame" });
+    const frame2 = await readSseFrame(reader, decoder, pending);
+    expect(frame2.event).toBe("receive");
+    expect(JSON.parse(frame2.data ?? "{}")).toMatchObject({ message: "second frame" });
+
+    await reader.cancel();
+  });
+
+  it("fires the handler's on-close cleanup when the client disconnects", async () => {
+    const be = createHttpBackend();
+    active = be;
+    let closed = false;
+    let connected = false;
+    be.registerStreamRoute(
+      (path) => path === "/api/v1/events",
+      (_req, res) => {
+        connected = true;
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.write("\n");
+        res.on("close", () => {
+          closed = true;
+        });
+      },
+    );
+    const { apiRoot } = await be.start();
+
+    const controller = new AbortController();
+    const res = await fetch(`${apiRoot}/api/v1/events`, { method: "GET", signal: controller.signal });
+    const reader = res.body!.getReader();
+    // Read the initial flush so the connection is fully established.
+    await reader.read();
+    expect(connected).toBe(true);
+
+    // Disconnect the client → the server-side `res` "close" must fire.
+    controller.abort();
+    await reader.cancel().catch(() => {
+      /* aborted */
+    });
+
+    // Poll briefly for the close event to propagate to the server socket.
+    for (let i = 0; i < 50 && !closed; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(closed).toBe(true);
+  });
+
+  it("drains open SSE responses on stop() so the server closes cleanly and stop() does not hang", async () => {
+    const be = createHttpBackend();
+    // NOTE: not assigned to `active` — this test calls stop() itself and asserts it resolves.
+    be.registerStreamRoute(
+      (path) => path === "/api/v1/events",
+      (_req, res) => {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.write("\n");
+        // Intentionally never ends — stop() must drain it.
+      },
+    );
+    const { apiRoot } = await be.start();
+
+    // Open an SSE connection and leave it open.
+    const res = await fetch(`${apiRoot}/api/v1/events`, { method: "GET" });
+    const reader = res.body!.getReader();
+    await reader.read(); // consume the initial flush so the stream is live
+
+    // stop() must resolve promptly even with the SSE client still open.
+    const stopped = Promise.race([
+      be.stop().then(() => "stopped" as const),
+      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 3000)),
+    ]);
+    expect(await stopped).toBe("stopped");
+
+    await reader.cancel().catch(() => {
+      /* server closed the stream */
+    });
+  });
+
+  it("regression guard: the JSON native + Buffer file + control routes still write ONE body + end (send() untouched)", async () => {
+    const be = createHttpBackend();
+    active = be;
+    // A stream route is registered alongside the classic request/response routes;
+    // the classic surfaces must behave byte-identically (one body + end).
+    be.registerStreamRoute(
+      (path) => path === "/api/v1/events",
+      (_req, res) => {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.write("\n");
+      },
+    );
+    be.registerNativeRoute(() => ({ status: 200, body: { ok: true, result: { id: 7 } } }));
+    be.registerControlRoute(() => ({ status: 200, body: { ok: true, surface: "control" } }));
+    const fileBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    be.registerFileRoute(() => ({ status: 200, body: fileBytes, contentType: "image/png" }));
+    const { apiRoot } = await be.start();
+
+    // Native (JSON) — one body + end, application/json.
+    const nativeRes = await fetch(`${apiRoot}/bot1:t/getMe`, { method: "POST", body: "{}" });
+    expect(nativeRes.headers.get("content-type")).toBe("application/json");
+    const nativeJson = (await nativeRes.json()) as { ok: boolean; result: { id: number } };
+    expect(nativeJson.ok).toBe(true);
+    expect(nativeJson.result.id).toBe(7);
+
+    // Control (JSON) — one body + end, application/json.
+    const controlRes = await fetch(`${apiRoot}/control/health`, { method: "GET" });
+    expect(controlRes.headers.get("content-type")).toBe("application/json");
+    const controlJson = (await controlRes.json()) as { ok: boolean; surface: string };
+    expect(controlJson.surface).toBe("control");
+
+    // File (Buffer) — raw bytes byte-for-byte, image/png (NOT JSON-wrapped).
+    const fileRes = await fetch(`${apiRoot}/file/bot1:t/p.png`, { method: "GET" });
+    expect(fileRes.headers.get("content-type")).toBe("image/png");
+    const received = Buffer.from(await fileRes.arrayBuffer());
+    expect(received.equals(fileBytes)).toBe(true);
+    expect(received.toString("utf8")).not.toContain('"type":"Buffer"');
+  });
+});
