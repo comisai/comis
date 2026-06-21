@@ -80,3 +80,70 @@ export function readMirrorText(dbPath: string, sessionKey: string): string | und
     db.close();
   }
 }
+
+/**
+ * Options for {@link assertChannelTrace}.
+ *
+ * The `emulator` is the CHANNEL oracle accepted as a minimal STRUCTURAL subset
+ * (`{ lastBotReply(chat): { text?: string } | undefined }`) so the cross-check
+ * stays channel-agnostic — any emulator that records outbound text satisfies
+ * it, not just `TgEmulator` (which is the concrete 204 implementor and a
+ * superset of this shape). Ready for reuse by the DELIV-01 scenario (205-06)
+ * and Phases 206-208.
+ */
+export interface ChannelTraceOptions {
+  /** The channel oracle (structural subset): the recorded wire bytes for a chat. */
+  readonly emulator: {
+    lastBotReply(chat: { chatId: number }): { text?: string } | undefined;
+  };
+  /** The chat whose last outbound is cross-checked. */
+  readonly chat: { chatId: number };
+  /** Absolute path to the isolated SQLite `memory.db` (the Comis oracle source). */
+  readonly memoryDbPath: string;
+  /** The delivery session key whose `delivery_mirror.text` is compared. */
+  readonly sessionKey: string;
+}
+
+/**
+ * The HARD dual-oracle cross-check (ORACLE-01 + ORACLE-02).
+ *
+ * Reads the CHANNEL oracle (`emulator.lastBotReply(chat).text` — the exact bytes
+ * on the wire, ORACLE-01) and the COMIS oracle (`readMirrorText` — the latest
+ * `delivery_mirror.text` for the session, ORACLE-02), then asserts they are
+ * EQUAL. This is a HARD assertion: it THROWS — never a silent pass — when the
+ * two disagree OR when the mirror row is absent. It catches the "Comis thinks it
+ * sent X but the wire shows Y" bug class the single-oracle VPS run structurally
+ * cannot. Matches the `assert/observe.ts` thrower idiom (void return, throws
+ * descriptively on failure).
+ *
+ * @param opts - The two oracle handles + the session/chat identifiers.
+ * @throws when the mirror row is absent (no delivery_mirror row), or when the
+ *   wire text != the mirror text (a both-values-named, `dual-oracle`-tagged
+ *   message so the failure is diagnosable from the throw alone).
+ */
+export async function assertChannelTrace(opts: ChannelTraceOptions): Promise<void> {
+  // ORACLE-01 — the channel oracle: the exact bytes on the wire.
+  const wire = opts.emulator.lastBotReply(opts.chat)?.text;
+  // ORACLE-02 — the Comis oracle: the latest mirror text for the session
+  // (read DIRECTLY, acknowledged rows included).
+  const mirror = readMirrorText(opts.memoryDbPath, opts.sessionKey);
+
+  // Missing mirror → an honest, reason-coded failure (NEVER a silent pass): a
+  // wire reply with no corresponding delivery_mirror row is a real defect.
+  if (mirror === undefined) {
+    throw new Error(
+      `[channel-trace] no delivery_mirror row for session "${opts.sessionKey}" ` +
+        `(wire="${String(wire)}") — the bot put bytes on the wire but Comis recorded ` +
+        `no mirror for the session. This is an honest cross-check failure, not a pass.`,
+    );
+  }
+
+  // The HARD equality: the wire bytes MUST equal the mirror text.
+  if (wire !== mirror) {
+    throw new Error(
+      `[channel-trace] dual-oracle mismatch: wire="${String(wire)}" mirror="${mirror}" ` +
+        `sessionKey="${opts.sessionKey}" chatId=${opts.chat.chatId} — the channel oracle and ` +
+        `the delivery_mirror disagree (Comis thinks it sent one thing; the wire shows another).`,
+    );
+  }
+}
