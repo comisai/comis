@@ -26,7 +26,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createRigController, type RigControlState } from "./rig-control.js";
@@ -217,6 +217,105 @@ describe("rig-control (deterministic) — resetDeep() clean slate + the ~/.comis
     await expect(homeCtl.resetDeep()).rejects.toThrow(/refusing reset --deep|non-isolated/);
 
     // The guard short-circuits — neither cleanup nor boot ran (nothing was touched).
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(bootFn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DETERMINISTIC — reconfigure(overrides) rewrites the isolated YAML + restarts
+// (AUTO-04, the Track-K model sweep) — no daemon, no network.
+// ---------------------------------------------------------------------------
+
+describe("rig-control (deterministic) — reconfigure(overrides) rewrites the isolated config then restarts", () => {
+  const cleanups: Array<() => void> = [];
+  afterEach(() => {
+    for (const c of cleanups.splice(0)) c();
+    delete process.env["COMIS_DATA_DIR"];
+  });
+
+  it("reconfigure({'agents.default.model': <new>}) REWRITES state.configPath to name the new model, THEN restarts (cleanup→boot, same port)", async () => {
+    const { dataDir, memoryDbPath } = makeIsolatedDataDir();
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const configPath = join(dataDir, "config.rig.yaml");
+    // Pre-seed the YAML with the OLD model (the file reconfigure must overwrite).
+    writeFileSync(configPath, "model: old-model-0.0:1b\n", "utf-8");
+
+    const order: string[] = [];
+    const cleanup = vi.fn(async () => {
+      order.push("cleanup");
+    });
+    const oldHandle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
+    const newHandle = {
+      cleanup: vi.fn(async () => undefined),
+      gatewayUrl: "http://127.0.0.1:1",
+      authToken: "t",
+    } as unknown as TestDaemonHandle;
+    const bootFn = vi.fn(async () => {
+      order.push("boot");
+      return newHandle;
+    }) as unknown as typeof startTestDaemon;
+
+    const { emulator } = makeFakeEmulator();
+    // The injected config writer is the SINGLE override→YAML mapping seam (the real
+    // launcher supplies one closing over buildConfigYaml + apiRoot + gatewayPort, so
+    // rig-control never value-imports rig.ts — there is a rig.ts→rig-control.ts edge).
+    const configYamlFor = vi.fn((overrides: Record<string, string>) => {
+      const model = overrides["agents.default.model"] ?? "fallback";
+      return `# rewritten\nmodel: "${model}"\nport: 1\n`;
+    });
+    const state: RigControlState = {
+      emulator,
+      daemonHandle: oldHandle,
+      dataDir,
+      configPath,
+      gatewayPort: 1,
+      gatewayUrl: "http://127.0.0.1:1",
+      chat: TEST_CHAT,
+      memoryDbPath,
+      configYamlFor,
+    };
+    const controller = createRigController(state, bootFn);
+
+    await controller.reconfigure({ "agents.default.model": "qwen3.6:14b" });
+
+    // The writer was consulted with the overrides and the file was rewritten so it
+    // names the NEW model (the Track-K sweep) and no longer the old one.
+    expect(configYamlFor).toHaveBeenCalledWith({ "agents.default.model": "qwen3.6:14b" });
+    const rewritten = readFileSync(configPath, "utf-8");
+    expect(rewritten).toContain("qwen3.6:14b");
+    expect(rewritten).not.toContain("old-model-0.0:1b");
+    // THEN it restarted: cleanup() ran BEFORE boot (the Pitfall-1 ordering), same port.
+    expect(order).toEqual(["cleanup", "boot"]);
+    expect(bootFn).toHaveBeenCalledWith({ configPath, gatewayPort: 1 });
+    expect(controller.gatewayUrl).toBe("http://127.0.0.1:1");
+  });
+
+  it("reconfigure REFUSES on a controller with no configYamlFor writer (honest, never a silent no-op)", async () => {
+    const { dataDir, memoryDbPath } = makeIsolatedDataDir();
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const cleanup = vi.fn(async () => undefined);
+    const handle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
+    const bootFn = vi.fn(async () => handle) as unknown as typeof startTestDaemon;
+    const { emulator } = makeFakeEmulator();
+    // NO configYamlFor → reconfigure cannot rewrite; it must throw, not no-op + boot.
+    const controller = createRigController(
+      {
+        emulator,
+        daemonHandle: handle,
+        dataDir,
+        configPath: join(dataDir, "config.rig.yaml"),
+        gatewayPort: 1,
+        gatewayUrl: "http://127.0.0.1:1",
+        chat: TEST_CHAT,
+        memoryDbPath,
+      },
+      bootFn,
+    );
+    await expect(
+      controller.reconfigure({ "agents.default.model": "x" }),
+    ).rejects.toThrow(/configYamlFor|reconfigure/);
+    // The guard short-circuits — neither cleanup nor boot ran.
     expect(cleanup).not.toHaveBeenCalled();
     expect(bootFn).not.toHaveBeenCalled();
   });

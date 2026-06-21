@@ -384,6 +384,112 @@ describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
   });
 });
 
+describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over WS (AUTO-04)", () => {
+  it("`tg trigger cron <id>` fires cron.run with { jobName } (no real-time wait)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ triggered: true, mode: "force", jobName: "nvda-scan" });
+    const result = await runVerb("trigger", ["cron", "nvda-scan"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "cron.run",
+      { jobName: "nvda-scan" },
+      "test-token-0000000000000000000000000000",
+    );
+    expect(result).toMatchObject({ triggered: true });
+  });
+
+  it("`tg trigger cron <id> --agent A` threads the agentId (TARGET-01 multi-agent)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ triggered: true, resolvedAgentId: "mldag" });
+    const parsed = parseArgs(["trigger", "cron", "nvda-scan", "--agent", "mldag"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    await runVerb(parsed.verb as string, parsed.args, { ...ctx, rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "cron.run",
+      { jobName: "nvda-scan", agentId: "mldag" },
+      expect.any(String),
+    );
+  });
+
+  it("`tg trigger heartbeat` fires heartbeat.trigger (immediate, no wall-clock wait)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ agentId: "default", triggered: true });
+    await runVerb("trigger", ["heartbeat", "--agent", "default"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "heartbeat.trigger",
+      { agentId: "default" },
+      expect.any(String),
+    );
+  });
+
+  it("`tg trigger wake` fires scheduler.wake with empty params", async () => {
+    const rpc = vi.fn().mockResolvedValue({ woke: true, source: "agent" });
+    await runVerb("trigger", ["wake"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "scheduler.wake",
+      {},
+      expect.any(String),
+    );
+  });
+
+  it("`tg trigger` with NO sub-target is an honest bad_json (non-zero), never an exit-0 no-op", async () => {
+    const rpc = vi.fn();
+    const err = await runVerb("trigger", [], { handle: fakeHandle(), rpc }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    // No partial dispatch — the rpc fn was never reached on a malformed invocation.
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("`tg trigger <unknown-subtarget>` is an honest bad_json (the closed sub-target set)", async () => {
+    const rpc = vi.fn();
+    const err = await runVerb("trigger", ["frobnicate"], { handle: fakeHandle(), rpc }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("`tg trigger cron` with NO job id is an honest bad_json (the force-mode job name is required)", async () => {
+    const rpc = vi.fn();
+    const err = await runVerb("trigger", ["cron"], { handle: fakeHandle(), rpc }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("an RPC error from a trigger maps to a reason-coded rpc_error (honest, never a fake success)", async () => {
+    const rpc = vi.fn().mockRejectedValue(new Error("RPC error -32602: Job not found: nope"));
+    const err = await runVerb("trigger", ["cron", "nope"], { handle: fakeHandle(), rpc }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("rpc_error");
+    expect((err as VerbFailure).body["code"]).toBe(-32602);
+  });
+
+  it("`tg trigger wake` with NO resolved handle is an honest dead_handle (needs the gateway token)", async () => {
+    const err = await runVerb("trigger", ["wake"], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+  });
+});
+
+describe("chan/tg CLI — runVerb: reconfigure is reason-coded in-process-only (W1, AUTO-04)", () => {
+  it("`tg reconfigure --set k=v --restart` against a cross-process handle returns lifecycle_in_process_only (never a faked rewrite)", async () => {
+    const parsed = parseArgs(["reconfigure", "--set", "agents.default.model=qwen3.6:14b", "--restart"]);
+    const ctx = contextFromParsed(parsed, fakeHandle());
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result["status"]).toBe("lifecycle_in_process_only");
+    // It echoes the parsed overrides honestly (the in-proc scenario drives the real
+    // controller.reconfigure; a cold-shell rewrite is the Phase-208 detached rig).
+    expect(JSON.stringify(result)).toContain("agents.default.model");
+    expect(JSON.stringify(result)).toMatch(/208/);
+  });
+});
+
 describe("chan/tg CLI — runVerb: dead handle (CLI-04)", () => {
   it("a non-up verb with NO resolved handle throws VerbFailure(dead_handle) suggesting tg up", async () => {
     const err = await runVerb("send", ["hi"], { handle: undefined }).catch((e: unknown) => e);
