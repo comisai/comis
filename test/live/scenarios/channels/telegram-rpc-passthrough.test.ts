@@ -204,12 +204,11 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
       const resp = (await sendJsonRpc(ws, "definitely.not.a.method", {}, 3, {
         timeoutMs: 20_000,
       })) as JsonRpcResponse;
-      // RED (intentional, this commit): the honest path is a JSON-RPC error
-      // envelope (-32601, "Method not found") — NEVER a fabricated success. This
-      // first asserts the WRONG shape (an unknown method must NOT yield a result)
-      // so the failing state is reproducible; GREEN flips it to assert the error.
-      expect(resp.error).toBeUndefined();
-      expect(resp.result).toBeDefined();
+      // The honest path: a JSON-RPC error envelope with the standard -32601
+      // ("Method not found"), NOT a silent success and NOT a fabricated result.
+      expect(resp.result).toBeUndefined();
+      expect(resp.error).toBeDefined();
+      expect(resp.error!.code).toBe(-32601);
     } finally {
       ws.close();
     }
