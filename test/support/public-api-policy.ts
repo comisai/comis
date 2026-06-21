@@ -752,6 +752,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // builders precedent directly above. Shrink if a cross-package
       // production consumer lands.
       "classifyTelegramError",
+      // Signal wire types (the adapter's OWN signal-cli envelope/attachment
+      // interface, defined in signal/signal-client.ts). Surfaced TYPE-ONLY on the
+      // public barrel for the v2.28 channel-emulation harness's CHAN2-01 I4
+      // discipline — the Signal emulator's payload builders
+      // (test/live/emulators/signal/signal-payloads.ts) return-annotate against
+      // them so an envelope wire-shape drift is a compile error, and the
+      // dist-aliased @comis/channels barrel is the only import path the test/live
+      // vitest alias exposes. `export type` is erased at build (no runtime export
+      // added → SEC-02-safe). The only consumers are test/live/** scenarios + the
+      // channels index.test.ts barrel check — both excluded by the
+      // public-export-consumers AST walker (it scans packages/*/src/** and skips
+      // *.test.ts). Mirrors the thread-context builders / classifyTelegramError
+      // precedents directly above. Shrink if a cross-package production consumer lands.
+      "SignalEnvelope",
+      "SignalAttachment",
       // Discord channel narrowing surface. Consumed to retarget the 18
       // `as any` casts in `discord-actions.ts` + the 5 thread-iteration
       // sites. The 4 entries are removed once discord-actions.ts is

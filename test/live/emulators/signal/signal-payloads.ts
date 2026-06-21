@@ -105,7 +105,6 @@ export function makeMessageEnvelope(opts: MakeMessageEnvelopeOptions): SignalEnv
     sourceName: opts.sourceName ?? opts.from,
     timestamp: ts,
     dataMessage: {
-      timestamp: ts,
       message: opts.content,
       // The `isGroup` branch (message-mapper.ts:33-34): a `group:<id>` channel
       // carries groupInfo.groupId; a DM omits it (the channel id is the sender).
@@ -171,7 +170,6 @@ export function makeReactionEnvelope(opts: MakeReactionEnvelopeOptions): SignalE
     sourceName: opts.from,
     timestamp: ts,
     dataMessage: {
-      timestamp: ts,
       // A reaction envelope carries no text message — the mapper reads `reaction`
       // FIRST (message-mapper.ts:47) and returns the reaction NormalizedMessage
       // before the regular-message branch.

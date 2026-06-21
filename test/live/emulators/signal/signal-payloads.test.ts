@@ -82,8 +82,12 @@ describe("signal-payloads — makeMessageEnvelope (CHAN2-01 text round-trip)", (
     const b = makeMessageEnvelope({ from: "+1", content: "b" });
     expect(typeof a.timestamp).toBe("number");
     expect((b.timestamp ?? 0) > (a.timestamp ?? 0)).toBe(true);
-    // dataMessage.timestamp mirrors the envelope timestamp.
-    expect(a.dataMessage?.timestamp).toBe(a.timestamp);
+    // The mapper reads envelope.timestamp (message-mapper.ts:37) → the durable
+    // metadata.signalTimestamp; the adapter's `dataMessage` wire interface has NO
+    // timestamp field (signal-client.ts:37-58), so the I4-typed builder cannot
+    // (and must not) set one — the strict-tsc leg would reject it.
+    const normalized = mapSignalToNormalized(a, BASE_URL);
+    expect(normalized?.timestamp).toBe(a.timestamp);
   });
 });
 
