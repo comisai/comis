@@ -7050,6 +7050,16 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
         }
       },
       "required": [

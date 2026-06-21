@@ -52,6 +52,7 @@ function makeObsStore(overrides?: Record<string, unknown>) {
     aggregateByAgent: vi.fn().mockReturnValue([]),
     aggregateBySession: vi.fn().mockReturnValue({ sessionKey: "", totalCost: 0, totalTokens: 0, callCount: 0 }),
     aggregateHourly: vi.fn().mockReturnValue([]),
+    aggregateToolCostByAgent: vi.fn().mockReturnValue([]),
     queryDelivery: vi.fn().mockReturnValue([]),
     deliveryStats: vi.fn().mockReturnValue({ total: 0, success: 0, error: 0, timeout: 0, filtered: 0, avgLatencyMs: 0 }),
     latestChannelSnapshots: vi.fn().mockReturnValue([]),
@@ -486,6 +487,91 @@ describe("createObsHandlers - dual-source merge", () => {
     // ch-active from in-memory + ch-old from historical
     expect(result.channels.length).toBe(2);
     expect(result.channels.map((c) => c.channelId).sort()).toEqual(["ch-active", "ch-old"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01 (Phase 179 wiring): the per-tool projection. The COST-01 tool_tag was
+  // persisted + HG-01 built aggregateToolCostByAgent, but the obs.billing.byAgent
+  // handler never projected it — so the billing per-tool table was permanently
+  // empty in prod, hidden by a fabricating view-test mock. These assert the REAL
+  // handler emits a non-empty tools[] (the test that would have caught CR-01).
+  // RED on pre-wiring code: the handler response has no `tools` key at all.
+  // -------------------------------------------------------------------------
+  it("obs.billing.byAgent projects the per-tool even-split as tools[] (CR-01 the projection)", async () => {
+    const toolRows = [
+      { tool: "bash", cost: 0.18, tokens: 50_000, calls: 1.5 },
+      { tool: "read", cost: 0.105, tokens: 30_000, calls: 1 },
+    ];
+
+    const obsStore = makeObsStore({
+      aggregateToolCostByAgent: vi.fn().mockReturnValue(toolRows),
+    });
+
+    const deps = makeDeps({
+      billingEstimator: {
+        byProvider: vi.fn().mockReturnValue([]),
+        byAgent: vi.fn().mockReturnValue({ totalCost: 0.285, totalTokens: 80_000, callCount: 3 }),
+        bySession: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        total: vi.fn().mockReturnValue({ totalCost: 0, totalTokens: 0, callCount: 0 }),
+        usage24h: vi.fn().mockReturnValue([]),
+      },
+      obsStore: obsStore as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: 1000,
+    });
+
+    const handlers = createObsHandlers(deps);
+    const result = await handlers["obs.billing.byAgent"]!({
+      _trustLevel: "admin",
+      agentId: "agent-a",
+    }) as { tools?: Array<{ tool: string; cost: number; tokens: number; calls: number }> };
+
+    // The projection is present + non-empty (the gap CR-01 names: this key did
+    // not exist on the handler output before the wiring).
+    expect(result.tools).toBeDefined();
+    expect(result.tools!.length).toBe(2);
+    const bash = result.tools!.find((t) => t.tool === "bash")!;
+    expect(bash.cost).toBeCloseTo(0.18, 10);
+    expect(bash.tokens).toBe(50_000);
+    // The store query was asked for THIS agent (sinceMs omitted → full window).
+    expect(obsStore.aggregateToolCostByAgent).toHaveBeenCalledWith("agent-a", undefined);
+  });
+
+  it("obs.billing.byAgent omits tools[] when the store surfaces none (honest empty, not a fabricated stub)", async () => {
+    // Default makeObsStore returns [] from aggregateToolCostByAgent.
+    const deps = makeDeps({
+      obsStore: makeObsStore() as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: 1000,
+    });
+    const handlers = createObsHandlers(deps);
+    const result = await handlers["obs.billing.byAgent"]!({
+      _trustLevel: "admin",
+      agentId: "agent-a",
+    }) as { tools?: unknown[] };
+
+    // No tool rows → no tools key (the narrower treats absent === empty; we do
+    // NOT emit a fabricated empty-but-present array that dresses up as data).
+    expect(result.tools).toBeUndefined();
+  });
+
+  it("obs.billing.byAgent content-free: tools[] carries only tool names + numbers", async () => {
+    const obsStore = makeObsStore({
+      aggregateToolCostByAgent: vi.fn().mockReturnValue([
+        { tool: "bash", cost: 0.1, tokens: 100, calls: 1 },
+      ]),
+    });
+    const deps = makeDeps({
+      obsStore: obsStore as unknown as ObsHandlerDeps["obsStore"],
+      startupTimestamp: 1000,
+    });
+    const handlers = createObsHandlers(deps);
+    const result = await handlers["obs.billing.byAgent"]!({
+      _trustLevel: "admin",
+      agentId: "agent-a",
+    }) as { tools?: Array<Record<string, unknown>> };
+
+    const keys = Object.keys(result.tools![0]!).sort();
+    // ONLY the content-free fields — no message/body/args key can ride along.
+    expect(keys).toEqual(["calls", "cost", "tokens", "tool"]);
   });
 });
 

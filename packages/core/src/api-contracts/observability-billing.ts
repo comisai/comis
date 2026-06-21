@@ -93,11 +93,13 @@ export const ObsBillingByProviderContract = defineContract({
  *
  * Request: `{ agentId, sinceMs? }`.
  *
- * Response: `BillingSnapshot & { budgetUsed?: { perExecution, perHour, perDay } }`
- * (handler:232-241). The handler spreads `merged` (a BillingSnapshot)
- * then adds an optional `budgetUsed` field — modeled as a loose
- * record because `perExecution`/`perHour`/`perDay` carry a nested
- * `{ used, limit? }` shape.
+ * Response: `BillingSnapshot & { budgetUsed?: { perExecution, perHour, perDay },
+ * tools?: ToolCost[] }`. The handler spreads `merged` (a BillingSnapshot) then
+ * adds an optional `budgetUsed` field — modeled as a loose record because
+ * `perExecution`/`perHour`/`perDay` carry a nested `{ used, limit? }` shape — and
+ * the CR-01 optional `tools[]` per-tool even-split (HG-01 aggregateToolCostByAgent;
+ * present-only when non-empty), modeled as a loose-record array (the per-tool
+ * `{ tool, cost, tokens, calls }` rows — content-free names + numbers).
  */
 export const ObsBillingByAgentContract = defineContract({
   method: "obs.billing.byAgent",
@@ -111,6 +113,7 @@ export const ObsBillingByAgentContract = defineContract({
     callCount: z.number(),
     totalCacheSaved: z.number().optional(),
     budgetUsed: ObsRecord.optional(),
+    tools: ObsRecordArray.optional(),
   }),
   scopes: ["admin"] as const,
 });
