@@ -18,6 +18,7 @@ function insertCacheBreak(
   store: ObservabilityStore,
   reason: string,
   timestamp: number,
+  estCostUsd = 0,
 ): void {
   store.insertDiagnostic({
     timestamp,
@@ -25,7 +26,7 @@ function insertCacheBreak(
     severity: "warning",
     agentId: "agent-1",
     message: "observability:cache_break",
-    details: JSON.stringify({ reason, delta: 100, estCostUsd: 0 }),
+    details: JSON.stringify({ reason, delta: 100, estCostUsd }),
   });
 }
 
@@ -81,5 +82,39 @@ describe("queryCacheBreakRateByReason (PERSIST-01 — rate by reason via GROUP B
 
   it("returns an empty array when there are no cache_break rows", () => {
     expect(queryCacheBreakRateByReason(db, {})).toEqual([]);
+  });
+
+  // WEBUI-02 (179-04): the $-lost SUM is net-new — the query returned {reason,count}
+  // ONLY before this. The IncidentReport `cacheBreaks?` type already declares
+  // estCostUsd (incident-report.ts:379), so this closes a latent shape gap.
+  it("sums the per-reason estCostUsd ($ lost) from the details JSON (net-new)", () => {
+    insertCacheBreak(store, "tools_changed", 1_000, 0.002);
+    insertCacheBreak(store, "tools_changed", 2_000, 0.003);
+    insertCacheBreak(store, "system_changed", 3_000, 0.01);
+    insertCacheBreak(store, "ttl_expiry", 4_000, 0); // a 0-cost (unknown-priced model) row stays 0
+
+    const rows = queryCacheBreakRateByReason(db, {});
+    const byReason = new Map(rows.map((r) => [r.reason, r]));
+    // tools_changed: 0.002 + 0.003 summed per reason.
+    expect(byReason.get("tools_changed")?.estCostUsd).toBeCloseTo(0.005, 10);
+    expect(byReason.get("tools_changed")?.count).toBe(2);
+    expect(byReason.get("system_changed")?.estCostUsd).toBeCloseTo(0.01, 10);
+    expect(byReason.get("ttl_expiry")?.estCostUsd).toBe(0);
+  });
+
+  it("coalesces a missing estCostUsd to 0 (honest — never NaN/null)", () => {
+    // A row whose details lacks $.estCostUsd (a pre-extension cache_break row).
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "cache_break",
+      severity: "warning",
+      agentId: "agent-1",
+      message: "observability:cache_break",
+      details: JSON.stringify({ reason: "no_cost_field", delta: 100 }),
+    });
+    const rows = queryCacheBreakRateByReason(db, {});
+    const row = rows.find((r) => r.reason === "no_cost_field");
+    expect(row?.estCostUsd).toBe(0);
+    expect(row?.count).toBe(1);
   });
 });
