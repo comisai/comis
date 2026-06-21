@@ -484,6 +484,55 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
       expect(updates[0]!["message"]).toBeDefined();
       expect(updates[1]!["message_reaction"]).toBeDefined();
     });
+
+    // WR-02 (206-05 review fix): resetChat must drop a QUEUED reaction for the
+    // reset chat from the bot-global pending queue. The prior filter keyed only
+    // on `u.message`, so a `message_reaction` update (no `.message`) survived a
+    // reset regardless of chat and could bleed into a later test that reuses
+    // resetChat (207/208/209). RED on pre-fix: the reaction is still served
+    // after the reset.
+    it("resetChat clears a QUEUED reaction for that chat (no cross-test bleed — WR-02)", async () => {
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "to react then reset" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      // Queue a reaction for CHAT_ID, then reset that chat BEFORE it is polled.
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "👍");
+      emu.resetChat({ chatId: CHAT_ID });
+
+      // The queued reaction must NOT survive the reset — a short-timeout poll
+      // sees an empty inbound queue (it would block then return []).
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 1 });
+      expect(env.ok).toBe(true);
+      const updates = env.result as Array<Record<string, unknown>>;
+      const reactionUpdates = updates.filter((u) => u["message_reaction"] !== undefined);
+      expect(reactionUpdates).toEqual([]);
+    });
+
+    it("resetChat is chat-scoped: a queued reaction for a DIFFERENT chat survives the reset (WR-02)", async () => {
+      const OTHER_CHAT = CHAT_ID + 1;
+      const sentReset = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "reset-chat reply" }))
+        .result as Record<string, unknown>;
+      const resetReplyId = sentReset["message_id"] as number;
+      const sentOther = (await callMethod(apiRoot, "sendMessage", { chat_id: OTHER_CHAT, text: "other-chat reply" }))
+        .result as Record<string, unknown>;
+      const otherReplyId = sentOther["message_id"] as number;
+
+      // Queue a reaction in BOTH chats; reset only CHAT_ID.
+      emu.injectReaction({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, resetReplyId, "👍");
+      emu.injectReaction({ chatId: OTHER_CHAT }, { id: 888, firstName: "Bob" }, otherReplyId, "❌");
+      emu.resetChat({ chatId: CHAT_ID });
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const reactionUpdates = updates
+        .map((u) => u["message_reaction"] as Record<string, unknown> | undefined)
+        .filter((mr): mr is Record<string, unknown> => mr !== undefined);
+      // Exactly the OTHER chat's reaction remains; the reset chat's is gone.
+      expect(reactionUpdates.length).toBe(1);
+      expect((reactionUpdates[0]!["chat"] as Record<string, unknown>)["id"]).toBe(OTHER_CHAT);
+      expect(reactionUpdates[0]!["message_id"]).toBe(otherReplyId);
+    });
   });
 
   // -------------------------------------------------------------------------
