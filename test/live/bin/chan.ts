@@ -189,10 +189,494 @@ export function tryParseJson(s: string): ParseJsonResult {
 }
 
 // ---------------------------------------------------------------------------
-// isMain guard (mirrors runner.ts:114-120). All network / process.exit live in
-// runVerb / runMain (Task 2); Task 1 is the pure, unit-testable core above.
+// runVerb dispatch (Task 2). The seams are injected via `ctx` so the dispatch
+// is unit-testable WITHOUT a daemon. `runVerb` THROWS a VerbFailure on any
+// honest failure; `runMain` catches it → prints the body → process.exit with
+// the distinct non-zero code. A no-reply is an honest empty, never a fabricated
+// success (CLI-04, the prime directive).
+// ---------------------------------------------------------------------------
+
+import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
+import type { ChanliveHandle } from "../harness/chanlive-handle.js";
+import { rpcRequest } from "../../support/daemon-harness.js";
+import {
+  startStandaloneRig,
+  type StandaloneRig,
+  type StandaloneRigOptions,
+  type StandaloneRigDeps,
+} from "../harness/rig.js";
+import { readMirrorText } from "../assert/channel-trace.js";
+// NOTE: `wait.ts` statically imports `@comis/observability` (runtime values), the
+// ONE bare `@comis/*` specifier in this CLI's static graph. It is imported
+// TYPE-ONLY here and `await import()`-ed lazily inside the `wait`/`traj` verbs so
+// the HTTP/handle verbs (status/send/last/history/rpc/explain/fleet/mirror/db)
+// stay runnable via a bare `tsx test/live/bin/chan.ts …` (a raw shell, no vitest
+// alias map). `rpcRequest`/`startStandaloneRig` are safe statically: their
+// `@comis/*` imports are type-only (erased) + a dynamic `import("@comis/daemon")`
+// that only fires when a daemon actually boots (the `tg up` spawn path).
+import type {
+  WaitSignalOptions,
+  WaitSignalResult,
+} from "../harness/wait.js";
+
+export type { ChanliveHandle };
+
+/** The exit code for the honest `not_implemented_in_phase` deferral (distinct, non-zero). */
+const NOT_IMPLEMENTED_EXIT = 6;
+
+/**
+ * An honest, reason-coded verb failure. Carries the closed {@link FailureKind}
+ * (one of the four CLI-04 runtime classes) and the `--json` body. `runMain`
+ * maps it to `exitCodeFor(kind)` (a distinct non-zero exit) — a thrown
+ * VerbFailure can NEVER become a false success.
+ *
+ * A DEFERRED verb is a distinct honest failure (`not_implemented_in_phase`,
+ * exit {@link NOT_IMPLEMENTED_EXIT}) built via {@link VerbFailure.notImplemented}
+ * — it keeps the four-class `FailureKind` union pure (the runtime contract)
+ * while still exiting non-zero with an honest reason + phase pointer.
+ */
+export class VerbFailure extends Error {
+  /** A four-class runtime kind, or `not_implemented_in_phase` for a deferred verb. */
+  readonly kind: FailureKind | "not_implemented_in_phase";
+  /** The distinct non-zero exit code this failure exits with. */
+  readonly exitCode: number;
+  /** The `--json` body (`{ error: <kind>, ...detail }`). */
+  readonly body: Readonly<Record<string, unknown>> & { readonly error: string };
+
+  constructor(
+    kind: FailureKind | "not_implemented_in_phase",
+    detail: Record<string, unknown> = {},
+  ) {
+    super(`${kind}: ${JSON.stringify(detail)}`);
+    this.name = "VerbFailure";
+    this.kind = kind;
+    this.exitCode = kind === "not_implemented_in_phase" ? NOT_IMPLEMENTED_EXIT : exitCodeFor(kind);
+    this.body = { error: kind, ...detail };
+  }
+
+  /**
+   * An honest deferral: the verb is owned by a LATER phase (207/208). Exits
+   * non-zero (never a silent no-op) with `error: "not_implemented_in_phase"`,
+   * the verb, and the owning phase. The Deferred-Ideas boundary.
+   */
+  static notImplemented(verb: string, phase: string): VerbFailure {
+    return new VerbFailure("not_implemented_in_phase", {
+      verb,
+      phase,
+      hint: `\`${verb}\` is a Phase ${phase} deliverable — not implemented in this phase (honest deferral, never a silent no-op).`,
+    });
+  }
+}
+
+/**
+ * The injectable dispatch context. The defaults wire the real seams
+ * (`rpcRequest`, `startStandaloneRig`, `readMirrorText`,
+ * `waitForTrajectorySignal`, the global `fetch`); the unit tests pass fakes so
+ * the dispatch runs offline with no daemon.
+ */
+export interface VerbContext {
+  /** The resolved handle (gateway URL/token, control endpoint, db path, chat id). */
+  readonly handle?: ChanliveHandle;
+  /** The raw `--endpoint` flag (when set, `down` REFUSES to wipe — not our rig). */
+  readonly flagEndpoint?: string;
+  /** `--json` — emit a machine-readable body. */
+  readonly json?: boolean;
+  /** The handle-file base dir (default `~/.comis-chanlive`), for `up`/`down`. */
+  readonly baseDir?: string;
+  /** The model `up` boots with (default "keyless"). */
+  readonly model?: string;
+  /** The `/rpc` client (default {@link rpcRequest}) — the `tg rpc` passthrough seam. */
+  readonly rpc?: (
+    gatewayUrl: string,
+    method: string,
+    params: Record<string, unknown>,
+    token: string,
+  ) => Promise<unknown>;
+  /** The HTTP client for `/control/*` (default global `fetch`). */
+  readonly controlFetch?: typeof fetch;
+  /** The discover-or-spawn launcher (default {@link startStandaloneRig}) — `up`. */
+  readonly startStandaloneRigFn?: (
+    opts: StandaloneRigOptions,
+    deps?: StandaloneRigDeps,
+  ) => Promise<StandaloneRig>;
+  /** The trajectory waiter (default {@link waitForTrajectorySignal}) — `wait`. */
+  readonly waitFn?: (opts: WaitSignalOptions) => Promise<WaitSignalResult>;
+  /** The mirror reader (default {@link readMirrorText}) — `mirror`. */
+  readonly readMirror?: (dbPath: string, sessionKey: string) => string | undefined;
+}
+
+/** The recorded-outbound shape the `/control/*` reply-wait returns (subset). */
+interface OutboundLine {
+  readonly messageId: number;
+  readonly text?: string;
+}
+
+/** The verbs that drive / read an ALREADY-RUNNING rig (need a resolved handle). */
+const REQUIRES_HANDLE = new Set([
+  "send",
+  "react",
+  "last",
+  "history",
+  "rpc",
+  "explain",
+  "fleet",
+  "mirror",
+  "traj",
+  "db",
+  "wait",
+  "down",
+  "status",
+  "restart",
+  "reset",
+]);
+
+/**
+ * The deferred verbs → the phase that owns them. Each exits with an HONEST
+ * `not_implemented_in_phase` carrying the owning phase — never a silent no-op
+ * (the Deferred-Ideas boundary: send-photo/send-voice/tap/edit → 207, group → 208).
+ */
+const DEFERRED_VERBS: Record<string, string> = {
+  "send-photo": "207",
+  "send-voice": "207",
+  tap: "207",
+  edit: "207",
+  group: "208",
+};
+
+/** Default reply-wait budget (ms) for `send` — bounded so a no-reply fails fast. */
+const SEND_WAIT_MS = 45_000;
+
+/** Open the isolated `memory.db` READONLY (copy the channel-trace openReadonlyWithVec posture). */
+function openReadonlyDb(dbPath: string): Database.Database {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    sqliteVec.load(db);
+  } catch {
+    // Host lacks sqlite-vec — vec reads degrade; a plain row read is unaffected.
+  }
+  return db;
+}
+
+/** GET the latest recorded outbounds for the handle's chat over `/control/*`. */
+async function readOutbound(
+  ctx: VerbContext,
+  handle: ChanliveHandle,
+  afterMessageId: number,
+  waitMs: number,
+): Promise<OutboundLine[]> {
+  const doFetch = ctx.controlFetch ?? fetch;
+  const url =
+    `${handle.controlEndpoint}/control/chats/${handle.chatId}/outbound` +
+    `?afterMessageId=${afterMessageId}&waitMs=${waitMs}`;
+  const res = await doFetch(url);
+  return (await res.json()) as OutboundLine[];
+}
+
+/**
+ * Dispatch a `chan`/`tg` verb. Returns the verb's result (printed by `runMain`),
+ * or THROWS a {@link VerbFailure} on any honest failure (no-reply / RPC error /
+ * dead handle / bad json / deferred / refusal). NO `process.exit` here — that
+ * lives in `runMain`, so this is unit-testable with injected seams.
+ */
+export async function runVerb(
+  verb: string,
+  args: string[],
+  ctx: VerbContext,
+): Promise<unknown> {
+  // Deferred verbs exit HONESTLY with not_implemented_in_phase (never a silent no-op).
+  const deferredPhase = DEFERRED_VERBS[verb];
+  if (deferredPhase !== undefined) {
+    throw VerbFailure.notImplemented(verb, deferredPhase);
+  }
+
+  // `up` is the ONLY verb that may run without a resolved handle (it discovers-
+  // or-spawns one). Every other handle-requiring verb fails honestly as a dead
+  // handle when none resolved — NEVER a silent spawn (T-205-08).
+  if (verb !== "up" && REQUIRES_HANDLE.has(verb) && ctx.handle === undefined) {
+    throw new VerbFailure("dead_handle", {
+      endpoint: ctx.flagEndpoint ?? null,
+      hint: "no live rig resolved — run `tg up` to start one (or pass --endpoint).",
+    });
+  }
+
+  switch (verb) {
+    case "up": {
+      const launcher = ctx.startStandaloneRigFn ?? startStandaloneRig;
+      const opts: StandaloneRigOptions = {
+        channel: "telegram",
+        model: ctx.model ?? "keyless",
+        ...(ctx.baseDir !== undefined ? { baseDir: ctx.baseDir } : {}),
+      };
+      const rig = await launcher(opts);
+      // Surface the discover-or-spawn outcome + the handle, but NEVER the token.
+      const { gatewayToken: _omit, ...safeHandle } = rig.handle;
+      void _omit;
+      return { reused: rig.reused, status: rig.reused ? "reused" : "spawned", handle: safeHandle };
+    }
+
+    case "down": {
+      // Never destroy what you didn't spawn: an explicit --endpoint REFUSES.
+      if (ctx.flagEndpoint !== undefined) {
+        throw new VerbFailure("dead_handle", {
+          reason: "refused",
+          endpoint: ctx.flagEndpoint,
+          hint: "refusing to tear down a rig addressed by --endpoint (never destroy what you didn't spawn).",
+        });
+      }
+      // In-process scope (W1): the standalone CLI cannot tear down a separate-
+      // process rig from a cold shell. Report honestly rather than fake it.
+      return {
+        status: "down_not_owned_in_process",
+        hint: "a cold-shell `tg down` of a separate-process rig is a Phase 208 deliverable; the in-process rig is torn down by its owner (the 205-06 scenario).",
+      };
+    }
+
+    case "status": {
+      const handle = ctx.handle as ChanliveHandle;
+      return {
+        gatewayUrl: handle.gatewayUrl,
+        controlEndpoint: handle.controlEndpoint,
+        chatId: handle.chatId,
+        dataDir: handle.dataDir,
+        // No token in the status body.
+      };
+    }
+
+    case "restart":
+    case "reset": {
+      // W1 honesty: the rig controller is IN-PROCESS (205-04) — a cold-shell
+      // `tg restart`/`tg reset --deep` against a separate-process rig is NOT
+      // served this phase. Reason-code it; the in-proc scenario (205-06) drives
+      // the controller directly.
+      return {
+        status: "lifecycle_in_process_only",
+        verb: args[0] === "--deep" ? "reset --deep" : verb,
+        hint: "a cross-process `tg restart`/`reset --deep` needs the detached-subprocess rig (Phase 208); the in-process controller is driven by the 205-06 scenario.",
+      };
+    }
+
+    case "send": {
+      const handle = ctx.handle as ChanliveHandle;
+      const text = args[0] ?? "";
+      const doFetch = ctx.controlFetch ?? fetch;
+      // POST the inbound.
+      const postRes = await doFetch(
+        `${handle.controlEndpoint}/control/chats/${handle.chatId}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fromUserId: 111, text }),
+        },
+      );
+      const { messageId: inboundId } = (await postRes.json()) as { messageId: number };
+      // Wait once for the reply outbound.
+      const outbounds = await readOutbound(ctx, handle, inboundId, SEND_WAIT_MS);
+      if (outbounds.length === 0) {
+        // Honest no-reply — NEVER a fabricated success (CLI-04).
+        throw new VerbFailure("no_reply", { waitedMs: SEND_WAIT_MS, inboundId });
+      }
+      const reply = outbounds[outbounds.length - 1];
+      return { inboundId, botReplyId: reply?.messageId, reply: reply?.text };
+    }
+
+    case "react": {
+      // The record-outbound base only — the inbound-reaction loop is Phase 206.
+      const handle = ctx.handle as ChanliveHandle;
+      const outbounds = await readOutbound(ctx, handle, 0, 0);
+      return { reactionsScope: "record-outbound-only (inbound reactions: Phase 206)", count: outbounds.length };
+    }
+
+    case "last": {
+      const handle = ctx.handle as ChanliveHandle;
+      const outbounds = await readOutbound(ctx, handle, 0, 0);
+      const last = outbounds[outbounds.length - 1];
+      if (last === undefined) {
+        throw new VerbFailure("no_reply", { waitedMs: 0, hint: "no recorded outbound yet." });
+      }
+      return { messageId: last.messageId, text: last.text };
+    }
+
+    case "history": {
+      const handle = ctx.handle as ChanliveHandle;
+      const outbounds = await readOutbound(ctx, handle, 0, 0);
+      return { count: outbounds.length, outbound: outbounds };
+    }
+
+    case "rpc": {
+      const handle = ctx.handle as ChanliveHandle;
+      const method = args[0];
+      if (method === undefined || method.length === 0) {
+        throw new VerbFailure("bad_json", { detail: "tg rpc <method> [json] — method is required." });
+      }
+      // V5: validate the json BEFORE any passthrough.
+      const parsed = tryParseJson(args[1] ?? "{}");
+      if (!parsed.ok) {
+        throw new VerbFailure("bad_json", { detail: parsed.detail, arg: args[1] });
+      }
+      return invokeRpc(ctx, handle, method, parsed.value);
+    }
+
+    case "explain": {
+      const handle = ctx.handle as ChanliveHandle;
+      const ref = args[0];
+      if (ref === undefined) {
+        throw new VerbFailure("bad_json", { detail: "tg explain <sessionKey|traceId> — a ref is required." });
+      }
+      // A 2-3-part key looks like a sessionKey; otherwise treat as a traceId.
+      const params: Record<string, unknown> = ref.includes(":")
+        ? { sessionKey: ref, depth: "summary" }
+        : { traceId: ref, depth: "summary" };
+      return invokeRpc(ctx, handle, "obs.explain", params);
+    }
+
+    case "fleet": {
+      const handle = ctx.handle as ChanliveHandle;
+      const since = Number(args[0] ?? "24");
+      return invokeRpc(ctx, handle, "obs.fleet.health", {
+        since: Number.isFinite(since) ? since : 24,
+      });
+    }
+
+    case "mirror": {
+      const handle = ctx.handle as ChanliveHandle;
+      const sessionKey = args[0];
+      if (sessionKey === undefined) {
+        throw new VerbFailure("bad_json", { detail: "tg mirror <sessionKey> — a session key is required." });
+      }
+      const reader = ctx.readMirror ?? readMirrorText;
+      const text = reader(handle.memoryDbPath, sessionKey);
+      return { sessionKey, text: text ?? null };
+    }
+
+    case "traj": {
+      const handle = ctx.handle as ChanliveHandle;
+      const sessionFile = args[0];
+      if (sessionFile === undefined) {
+        throw new VerbFailure("bad_json", { detail: "tg traj <sessionFile> — the session file path is required." });
+      }
+      // Lazy import: wait.ts pulls @comis/observability (see the top-of-file note).
+      const { resolveTrajectoryFile } = await import("../harness/wait.js");
+      const trajFile = resolveTrajectoryFile(sessionFile);
+      return { dataDir: handle.dataDir, trajectoryFile: trajFile };
+    }
+
+    case "db": {
+      const handle = ctx.handle as ChanliveHandle;
+      const sql = args[0];
+      if (sql === undefined || sql.length === 0) {
+        throw new VerbFailure("bad_json", { detail: 'tg db "<sql>" — a SQL query is required.' });
+      }
+      // READONLY query against the isolated memory.db.
+      const db = openReadonlyDb(handle.memoryDbPath);
+      try {
+        const rows = db.prepare(sql).all();
+        return { rows };
+      } finally {
+        db.close();
+      }
+    }
+
+    case "wait": {
+      // Resolve `--event <type>` / `--tool <name>` from the remaining args.
+      const eventIdx = args.indexOf("--event");
+      const toolIdx = args.indexOf("--tool");
+      const event = eventIdx !== -1 ? args[eventIdx + 1] : undefined;
+      const tool = toolIdx !== -1 ? args[toolIdx + 1] : undefined;
+      const trajFile = args[0];
+      if (trajFile === undefined || trajFile.startsWith("--")) {
+        throw new VerbFailure("bad_json", { detail: "tg wait <trajectoryFile> --event <type>|--tool <name>" });
+      }
+      // Lazy import: wait.ts pulls @comis/observability (see the top-of-file note).
+      const waiter =
+        ctx.waitFn ?? (await import("../harness/wait.js")).waitForTrajectorySignal;
+      const result = await waiter({
+        trajectoryFile: trajFile,
+        ...(event !== undefined ? { event } : {}),
+        ...(tool !== undefined ? { tool } : {}),
+      });
+      if (!result.matched) {
+        // settle_timeout / timeout → honest non-zero exit (no false success).
+        throw new VerbFailure("no_reply", { reason: result.reason, waitedMs: null });
+      }
+      return result;
+    }
+
+    default:
+      throw new VerbFailure("bad_json", {
+        detail: `unknown verb "${verb}"`,
+        hint: "run a known verb: up/down/status/restart/reset/send/react/last/history/rpc/explain/fleet/mirror/traj/db/wait.",
+      });
+  }
+}
+
+/** Invoke the `/rpc` passthrough, mapping the `RPC error …` throw to rpc_error. */
+async function invokeRpc(
+  ctx: VerbContext,
+  handle: ChanliveHandle,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const rpc = ctx.rpc ?? rpcRequest;
+  try {
+    return await rpc(handle.gatewayUrl, method, params, handle.gatewayToken);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // rpcRequest throws "RPC error <code>: <message>" — extract the code if present.
+    const codeMatch = /RPC error\s+(-?\d+):/.exec(message);
+    const code = codeMatch?.[1] !== undefined ? Number(codeMatch[1]) : undefined;
+    throw new VerbFailure("rpc_error", {
+      ...(code !== undefined ? { code } : {}),
+      message,
+      method,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// runMain — the only place with process.exit / handle resolution. Guarded by an
+// isMain check so unit tests import the pure core + runVerb with no side effects.
 // ESM main-script detection: tsx sets process.argv[1] to the resolved file path.
 // ---------------------------------------------------------------------------
+
+/** Resolve the verb context (the handle + flags) for a real invocation. */
+async function resolveContext(parsed: ParsedArgs): Promise<VerbContext> {
+  // Lazy import so the pure-core unit tests never pull the handle FS layer.
+  const { readHandle } = await import("../harness/chanlive-handle.js");
+  const handle = readHandle(parsed.channel);
+  return {
+    ...(handle !== undefined ? { handle } : {}),
+    ...(parsed.endpoint !== undefined ? { flagEndpoint: parsed.endpoint } : {}),
+    json: parsed.json,
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+  };
+}
+
+/** Run the CLI: parse → resolve ctx → dispatch → print | honest non-zero exit. */
+async function runMain(): Promise<void> {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.verb === undefined) {
+    console.error(JSON.stringify(toFailure("bad_json", { detail: "no verb given." })));
+    process.exit(exitCodeFor("bad_json"));
+    return;
+  }
+  const ctx = await resolveContext(parsed);
+  try {
+    const result = await runVerb(parsed.verb, parsed.args, ctx);
+    console.log(JSON.stringify(result ?? { ok: true }));
+    process.exit(0);
+  } catch (err: unknown) {
+    if (err instanceof VerbFailure) {
+      // Honest, reason-coded non-zero exit — NEVER a false success (CLI-04).
+      console.error(JSON.stringify(err.body));
+      process.exit(err.exitCode);
+      return;
+    }
+    // An unexpected error is still an honest non-zero exit.
+    console.error(JSON.stringify(toFailure("rpc_error", { message: String(err) })));
+    process.exit(1);
+  }
+}
 
 const isMain =
   typeof process !== "undefined" &&
@@ -200,7 +684,8 @@ const isMain =
   (process.argv[1].endsWith("/chan.ts") || process.argv[1].endsWith("/chan.js"));
 
 if (isMain) {
-  // Task 2 wires runMain() here (parseArgs → resolve ctx → runVerb), guarded so
-  // unit tests can import the pure core with no side effects.
-  void isMain;
+  runMain().catch((err: unknown) => {
+    console.error("chan: fatal error:", err);
+    process.exit(1);
+  });
 }

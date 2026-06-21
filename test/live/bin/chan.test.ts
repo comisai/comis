@@ -251,13 +251,25 @@ describe("chan/tg CLI — runVerb: rpc passthrough (AUTO-01)", () => {
     expect((err as VerbFailure).body["message"]).toContain("Method not found");
   });
 
-  it("explain is a curated rpc call to obs.explain", async () => {
+  it("explain routes a colon-keyed ref to { sessionKey } (matches the comis explain CLI)", async () => {
     const rpc = vi.fn().mockResolvedValue({ outcome: "ok" });
-    await runVerb("explain", ["sess-key-1"], { handle: fakeHandle(), rpc });
+    // A sessionKey is tenant:user:channel:ts (contains ':'); production routes by shape.
+    await runVerb("explain", ["default:user1:telegram:1717"], { handle: fakeHandle(), rpc });
     expect(rpc).toHaveBeenCalledWith(
       "http://127.0.0.1:1",
       "obs.explain",
-      expect.objectContaining({ sessionKey: "sess-key-1" }),
+      expect.objectContaining({ sessionKey: "default:user1:telegram:1717" }),
+      expect.any(String),
+    );
+  });
+
+  it("explain routes a colon-less ref to { traceId } (a UUID — matches the comis explain CLI)", async () => {
+    const rpc = vi.fn().mockResolvedValue({ outcome: "ok" });
+    await runVerb("explain", ["6ba7b810-9dad-11d1-80b4-00c04fd430c8"], { handle: fakeHandle(), rpc });
+    expect(rpc).toHaveBeenCalledWith(
+      "http://127.0.0.1:1",
+      "obs.explain",
+      expect.objectContaining({ traceId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8" }),
       expect.any(String),
     );
   });
