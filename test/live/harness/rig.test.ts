@@ -41,8 +41,14 @@
 
 import { describe, it, expect } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { AppConfigSchema } from "@comis/core";
-import { buildConfigYaml } from "./rig.js";
+import { AppConfigSchema, validateUrl, validateLocalServerUrl } from "@comis/core";
+import {
+  buildConfigYaml,
+  buildLoopbackMediaOverride,
+  buildLoopbackSsrfFetcher,
+  buildMediaOverrides,
+} from "./rig.js";
+import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 
 /** The fixed args a rig boot passes — an emulator apiRoot, a gateway port, the keyless model. */
 const APP_ROOT = "http://127.0.0.1:54321";
@@ -129,5 +135,88 @@ describe("REACT-03 rig config — GOTCHA D: the reactor trust floor (the #1 REAC
     // 'known' (or higher) — NOT the default 'external' (0.6×0.05=0.03 < 0.05 → silent no-row).
     expect(elevatedReply!["defaultTrustLevel"]).toBe("known");
     expect(validConfig().agents["default"]!.elevatedReply.defaultTrustLevel).toBe("known");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MEDIA-02 / SEC-01 (Plan 207-05, Task 1) — the test-scoped SSRF-loopback
+// allowance: a THIN `DaemonOverrides.setupMedia` wrapper that swaps ONLY
+// `result.ssrfFetcher` for a loopback fetcher addressing BOTH SSRF blocks
+// (Pitfall 1): (1) the resolver's HARDCODED `api.telegram.org` download URL
+// (telegram-resolver.ts:95) is host-rewritten to the emulator host; (2)
+// production `validateUrl` BLOCKS loopback — the override uses the inverse
+// primitive `validateLocalServerUrl([host])` (ALLOWS loopback, KEEPS the
+// cloud-metadata DENY). OPT-IN, OFF by default. Production `validateUrl`,
+// `setupMedia`, and `telegram-resolver.ts:95` are NOT edited.
+//
+// Run (Stage-A/B, offline, deterministic — the tiny loopback emulator boots but
+// NO daemon and NO real model):
+//   pnpm vitest run -c test/live/vitest.config.ts test/live/harness/rig.test.ts -t "loopback"
+// ---------------------------------------------------------------------------
+
+/** A throwaway bot token the loopback rewrite + resolver download URL carry. */
+const OVERRIDE_TOKEN = "1234567:override-fake-token";
+
+describe("MEDIA-02 loopback override — buildLoopbackMediaOverride is a thin setupMedia wrapper (opt-in)", () => {
+  it("returns a `typeof setupMedia` FUNCTION (the DaemonOverrides.setupMedia shape)", () => {
+    const override = buildLoopbackMediaOverride({ emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
+    // It is a function the daemon's `_setupMedia = overrides.setupMedia ?? setupMedia`
+    // can await (daemon.ts:1742,2004) — NOT a MediaResult object.
+    expect(typeof override).toBe("function");
+  });
+
+  it("buildMediaOverrides is OFF by default — no `setupMedia` key when the flag is falsy", () => {
+    // The opt-in threading: `startRig`/`buildRig` spread this into
+    // `startTestDaemon({ overrides })`. Falsy flag → an EMPTY overrides bag, so a
+    // standard rig boot is byte-identical (zero media-wiring change).
+    const off = buildMediaOverrides({ mediaLoopbackOverride: false, emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
+    expect("setupMedia" in off).toBe(false);
+
+    const offDefault = buildMediaOverrides({ emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
+    expect("setupMedia" in offDefault).toBe(false);
+  });
+
+  it("buildMediaOverrides ON → a `setupMedia` override function is threaded", () => {
+    const on = buildMediaOverrides({ mediaLoopbackOverride: true, emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
+    expect("setupMedia" in on).toBe(true);
+    expect(typeof on.setupMedia).toBe("function");
+  });
+});
+
+describe("MEDIA-02 loopback override — the loopback fetcher addresses BOTH SSRF blocks", () => {
+  it("rewrites the HARDCODED api.telegram.org download URL to the emulator host AND validates+downloads OK against loopback", async () => {
+    // A real (tiny) emulator on loopback — NO daemon. Store bytes, then drive the
+    // loopback fetcher with the EXACT hardcoded URL the resolver builds.
+    const emulator = createTgEmulator({ botToken: OVERRIDE_TOKEN });
+    const { apiRoot } = await emulator.start();
+    try {
+      const emulatorHost = new URL(apiRoot).host; // 127.0.0.1:<port>
+      const bytes = Buffer.from("loopback-voice-bytes-deterministic", "utf-8");
+      const handle = emulator.storeFile("voice", bytes, { mimeType: "audio/ogg" });
+
+      const fetcher = buildLoopbackSsrfFetcher({ emulatorHost, maxBytes: 1_000_000 });
+      // The hardcoded URL shape (telegram-resolver.ts:95) — points at the PUBLIC
+      // api.telegram.org host; the override fetcher must rewrite it to loopback.
+      const downloadUrl = `https://api.telegram.org/file/bot${OVERRIDE_TOKEN}/${handle.filePath}`;
+      const result = await fetcher.fetch(downloadUrl);
+
+      expect(result.ok, result.ok ? "" : `loopback fetch failed: ${String(result.ok === false && result.error.message)}`).toBe(true);
+      if (result.ok) {
+        // The emulator file route served the EXACT stored bytes — block #1 (host
+        // rewrite) AND block #2 (validateLocalServerUrl-allows-loopback) both passed.
+        expect(Buffer.from(result.value.buffer).equals(bytes)).toBe(true);
+        expect(result.value.sizeBytes).toBe(bytes.length);
+      }
+    } finally {
+      await emulator.stop();
+    }
+  });
+
+  it("STILL BLOCKS a non-loopback / non-emulator host (the override is loopback-ONLY, not an arbitrary-URL hole — T-207-12)", async () => {
+    // A download URL whose host is NOT api.telegram.org (so no rewrite fires) and
+    // resolves to a non-loopback range → the override's validateLocalServerUrl DENIES.
+    const fetcher = buildLoopbackSsrfFetcher({ emulatorHost: "127.0.0.1:54321", maxBytes: 1_000_000 });
+    const result = await fetcher.fetch("http://example.com/file/whatever.bin");
+    expect(result.ok).toBe(false);
   });
 });
