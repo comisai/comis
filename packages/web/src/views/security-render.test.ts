@@ -78,14 +78,15 @@ describe("IcSecurityView _renderTabContent — 7-tab switch branches", () => {
     expect(feed?.getAttribute("activeSubTab")).toBe("events");
   });
 
-  it("renders the security event feed sub-component with activeSubTab=audit when tab is 'audit'", async () => {
+  it("renders the durable ic-durable-audit-log sub-component when tab is 'audit' (the SSE feed was REPLACED here — Plan 179-06)", async () => {
     el = document.createElement("ic-security-view") as IcSecurityView;
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._activeTab = "audit";
     await el.updateComplete;
-    const feed = el.shadowRoot?.querySelector("ic-security-event-feed");
-    expect(feed?.getAttribute("activeSubTab")).toBe("audit");
+    // The audit tab renders the durable obs.audit.query view, not the live SSE feed.
+    expect(el.shadowRoot?.querySelector("ic-durable-audit-log")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector("ic-security-event-feed")).toBeNull();
   });
 
   it("renders the ic-token-manager sub-component when active tab is 'tokens'", async () => {
