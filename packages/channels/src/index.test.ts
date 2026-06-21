@@ -48,6 +48,14 @@ import {
   classifyTelegramError,
 } from "./index.js";
 import type { TelegramThreadScope } from "./index.js";
+// Signal wire types — the adapter's OWN exported SignalEnvelope/SignalAttachment
+// (defined in ./signal/signal-client.ts) surfaced TYPE-ONLY on the public barrel
+// so the v2.28 channel-emulation harness's CHAN2-01 I4 discipline can import them
+// from the dist-aliased @comis/channels (the test/live alias maps the bare package
+// to dist/index.js — the barrel only — so signal-payloads.ts cannot import the
+// wire interface until it is re-exported here). `export type` is ERASED at build:
+// it adds NO runtime export (SEC-02-safe), mirroring the thread-context precedent.
+import type { SignalEnvelope, SignalAttachment } from "./index.js";
 
 describe("@comis/channels barrel exports", () => {
   it("exports all 4 adapter factories as functions", () => {
@@ -109,6 +117,33 @@ describe("@comis/channels barrel exports", () => {
     expect(buildSendThreadParams(1, "forum")).toBeUndefined();
     // TYPING always includes it — the asymmetric counterpart.
     expect(buildTypingThreadParams(1)).toEqual({ message_thread_id: 1 });
+  });
+
+  it("re-exports the Signal wire types (SignalEnvelope/SignalAttachment) type-only for the CHAN2-01 I4 discipline", () => {
+    // `export type { SignalEnvelope, SignalAttachment }` is erased at build, so
+    // there is no runtime value to assert on — the proof is that these type
+    // imports resolve to the adapter's OWN wire interface. A representative
+    // envelope (the mock-signal-server.ts:247-260 shape) must satisfy
+    // SignalEnvelope (drift = a compile error here AND in signal-payloads.ts),
+    // and the nested attachments array must satisfy SignalAttachment[].
+    const attachment: SignalAttachment = { id: "att-1", contentType: "image/png" };
+    const envelope: SignalEnvelope = {
+      source: "+15555550100",
+      sourceNumber: "+15555550100",
+      sourceUuid: "00000000-0000-0000-0000-000000000000",
+      sourceName: "+15555550100",
+      timestamp: 1_700_000_000_001,
+      dataMessage: {
+        message: "hello",
+        attachments: [attachment],
+        reaction: { emoji: "👍", targetSentTimestamp: 1_700_000_000_000 },
+      },
+    };
+    // A runtime assertion so the test is not type-only (vitest strips types):
+    // the literal round-trips its own fields, proving the typed value was built.
+    expect(envelope.dataMessage?.message).toBe("hello");
+    expect(envelope.dataMessage?.reaction?.emoji).toBe("👍");
+    expect(envelope.dataMessage?.attachments?.[0]?.id).toBe("att-1");
   });
 
   it("exports the Telegram error classifier (the FAULT-02 classification surface)", () => {
