@@ -148,6 +148,9 @@ describe.skipIf(!isLive)("rig-control Stage-C — restart() re-boots the isolate
       gatewayUrl: built.gatewayUrl,
       chat: built.chat,
       memoryDbPath: built.memoryDbPath,
+      // Keep the rig's cleanup pointed at the post-restart daemon (the holder), so
+      // afterEach tears down the CURRENT daemon, never the stale pre-restart one.
+      onDaemonHandle: built.rebindDaemonHandle,
     });
 
     const emulatorBefore = controller.emulator;
@@ -165,9 +168,7 @@ describe.skipIf(!isLive)("rig-control Stage-C — restart() re-boots the isolate
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
     // The emulator instance is PRESERVED across the re-boot (success-criterion #5).
     expect(controller.emulator).toBe(emulatorBefore);
-
-    // The controller now owns the live daemonHandle; sync it back so afterEach tears
-    // down the CURRENT daemon (not the pre-restart one).
-    built = { ...built, daemonHandle: controller.daemonHandle };
+    // afterEach's built.cleanup() tears down the post-restart daemon: restart()
+    // called onDaemonHandle(newHandle) → the rig's cleanup holder now points at it.
   });
 });

@@ -80,6 +80,14 @@ const DEFAULT_FROM_USER_ID = 100;
 /** The fake bot token grammy builds `/bot<token>/<method>` paths from (never hits real Telegram). */
 const FAKE_BOT_TOKEN = "1234567:emulator-fake-token";
 
+/**
+ * The isolated `memory.db` file name the throwaway config writes (under the rig's
+ * `COMIS_DATA_DIR`). Threaded into both {@link buildConfigYaml} and the
+ * {@link BuiltRig.memoryDbPath} the controller's `resetDeep()` wipes, so the YAML
+ * and the recorded path can never drift.
+ */
+const MEMORY_DB_FILE = "test-memory-channel-emu.db";
+
 /** Options for {@link startRig}. */
 export interface StartRigOptions {
   /** The channel to emulate. Phase 204 ships Telegram; channel #2 is Phase 209. */
@@ -129,6 +137,38 @@ export interface RigHandle {
   waitForReply(afterMessageId: number, waitMs?: number): Promise<RecordedOutbound | undefined>;
   /** Tear down: stop the daemon, stop the emulator, remove the throwaway temp dirs. */
   cleanup(): Promise<void>;
+}
+
+/**
+ * {@link RigHandle} PLUS the rig INTERNALS the standalone launcher
+ * ({@link startStandaloneRig}) and the rig-control owner (`rig-control.ts`) need
+ * but which the public `RigHandle` deliberately hides: the throwaway data /
+ * config dirs, the config path + gateway port (for the `restart()` re-boot), the
+ * live `TestDaemonHandle`, and the isolated `memory.db` path (for `resetDeep()`).
+ *
+ * `buildRig` returns this superset; the public {@link startRig} projects only the
+ * `RigHandle` fields so its existing surface (and `telegram-emulator.test.ts`) is
+ * unchanged.
+ */
+export interface BuiltRig extends RigHandle {
+  /** The throwaway `COMIS_DATA_DIR` this rig pinned (the dir `resetDeep()` wipes UNDER, never `~/.comis`). */
+  readonly dataDir: string;
+  /** The throwaway config dir (removed at cleanup). */
+  readonly configDir: string;
+  /** The throwaway YAML config path (re-passed to `startTestDaemon` on `restart()`). */
+  readonly configPath: string;
+  /** The gateway port the daemon binds (kept fixed across `restart()` so the handle URL is stable). */
+  readonly gatewayPort: number;
+  /** The live test-daemon handle (its `cleanup()` clears the `activeHandle` double-start guard — Pitfall 1). */
+  readonly daemonHandle: TestDaemonHandle;
+  /** `<dataDir>/<memory.dbPath>` — the isolated `memory.db` `resetDeep()` replaces + the oracles read. */
+  readonly memoryDbPath: string;
+  /**
+   * Point this rig's `cleanup()` at a NEW `TestDaemonHandle` after a re-boot. The
+   * rig-control owner calls this on every `restart()`/`resetDeep()` so a later
+   * `cleanup()` tears down the CURRENT daemon, never the stale pre-restart one.
+   */
+  rebindDaemonHandle(next: TestDaemonHandle): void;
 }
 
 /**
@@ -245,7 +285,7 @@ gateway:
   wsHeartbeatMs: 30000
 
 memory:
-  dbPath: "test-memory-channel-emu.db"
+  dbPath: "${MEMORY_DB_FILE}"
 
 security:
   agentToAgent:
@@ -266,9 +306,13 @@ monitoring:
 }
 
 /**
- * Start the walking-skeleton rig: boot the emulator, write the temp config with
- * the dynamic `apiRoot` seam + a keyless model + the ≥32-char gateway token, boot
- * an isolated daemon via `startTestDaemon`, and return the round-trip driver.
+ * Build the walking-skeleton rig and return the FULL {@link BuiltRig} (the public
+ * round-trip driver PLUS the internals the standalone launcher / rig-control owner
+ * need). This is the body the public {@link startRig} delegates to; it boots the
+ * emulator, writes the temp config with the dynamic `apiRoot` seam + a keyless
+ * model + the ≥32-char gateway token, boots an isolated daemon via
+ * `startTestDaemon`, and returns the round-trip driver + `{ dataDir, configDir,
+ * configPath, gatewayPort, daemonHandle, memoryDbPath }`.
  *
  * The daemon's real grammy adapter token-validates (`getMe`) + registers commands
  * (`setMyCommands`) + long-polls (`getUpdates`) against the emulator at boot; the
@@ -276,9 +320,9 @@ monitoring:
  * called (afterEach/afterAll) to release the daemon, the emulator port, and the
  * throwaway temp dirs.
  */
-export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
+export async function buildRig(opts: StartRigOptions): Promise<BuiltRig> {
   if (opts.channel !== "telegram") {
-    throw new Error(`startRig: unsupported channel "${opts.channel}" (Phase 204 ships telegram only)`);
+    throw new Error(`buildRig: unsupported channel "${opts.channel}" (Phase 204 ships telegram only)`);
   }
 
   // 1. Start the emulator → the dynamic loopback apiRoot.
@@ -330,12 +374,24 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
   else delete process.env["COMIS_DATA_DIR"];
 
   const { gatewayUrl, authToken } = daemonHandle;
+  const memoryDbPath = join(dataDir, MEMORY_DB_FILE);
+
+  // The LIVE daemon handle behind a mutable holder so `cleanup()` always tears
+  // down the CURRENT daemon — `restart()`/`resetDeep()` (rig-control.ts) re-boot
+  // the daemon and call `rebindDaemonHandle(newHandle)`, so a post-restart
+  // `cleanup()` does NOT release a stale, already-cleaned handle (the restart bug
+  // class). The controller is wired to this via `RigControlState.onDaemonHandle`.
+  let activeDaemon = daemonHandle;
+  const rebindDaemonHandle = (next: TestDaemonHandle): void => {
+    activeDaemon = next;
+  };
 
   const cleanup = async (): Promise<void> => {
     // Daemon FIRST (stops the grammy client polling the emulator), then the
-    // emulator, then the throwaway temp dirs.
+    // emulator, then the throwaway temp dirs. Reads the CURRENT (possibly
+    // post-restart) daemon from the holder.
     try {
-      await daemonHandle.cleanup();
+      await activeDaemon.cleanup();
     } finally {
       await emulator.stop().catch(() => undefined);
       rmSync(configDir, { recursive: true, force: true });
@@ -349,6 +405,13 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
     chat,
     gatewayUrl,
     authToken,
+    dataDir,
+    configDir,
+    configPath,
+    gatewayPort,
+    daemonHandle,
+    memoryDbPath,
+    rebindDaemonHandle,
     send(text: string): Promise<number> {
       return controlClient.injectMessage({
         chatId: chat.chatId,
@@ -360,5 +423,32 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
       return controlClient.waitForReply({ chatId: chat.chatId, afterMessageId, waitMs });
     },
     cleanup,
+  };
+}
+
+/**
+ * Start the walking-skeleton rig and return the public {@link RigHandle} (the
+ * round-trip driver surface the scenarios use). A thin projection over
+ * {@link buildRig} — it builds the full rig and returns ONLY the public fields, so
+ * the existing `RigHandle` surface (and `telegram-emulator.test.ts`) is unchanged
+ * while the standalone launcher / rig-control owner reach the internals via
+ * `buildRig`.
+ *
+ * `cleanup()` MUST be called (afterEach/afterAll) to release the daemon, the
+ * emulator port, and the throwaway temp dirs.
+ */
+export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
+  const built = await buildRig(opts);
+  // Project the public RigHandle fields only — the internals (dataDir, configPath,
+  // daemonHandle, …) stay hidden from the public surface.
+  return {
+    emulator: built.emulator,
+    controlClient: built.controlClient,
+    chat: built.chat,
+    gatewayUrl: built.gatewayUrl,
+    authToken: built.authToken,
+    send: built.send.bind(built),
+    waitForReply: built.waitForReply.bind(built),
+    cleanup: built.cleanup.bind(built),
   };
 }
