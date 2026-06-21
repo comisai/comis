@@ -213,6 +213,33 @@ describe("buildScopeArgs — credentialPaths dimension (tool-agnostic)", () => {
     expect(args).not.toContain("/home/u/.claude");
     expect(args).not.toContain("--ro-bind-try");
   });
+
+  // EROFS-03 vs credentialPaths conflict (live-reproduced on the VPS): when an
+  // operator RO-binds ~/.claude (or an ancestor), bwrap cannot mkdir the
+  // session-env tmpfs mountpoint inside the now-read-only subtree and the WHOLE
+  // jail fails to launch ("Can't mkdir …/.claude/session-env: Read-only file
+  // system"). The carve-out must be dropped in that case.
+  it("OMITS the session-env carve-out tmpfs when a credentialPath RO-binds ~/.claude (its parent)", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~/.claude"] }) }));
+    expect(indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env")).toBe(-1);
+    // the cred RO-bind itself is still emitted (the operator opt-in still works).
+    expect(hasBind(args, "--ro-bind-try", "/home/u/.claude", "/home/u/.claude")).toBe(true);
+  });
+
+  it("OMITS the carve-out when ~ (the whole home, an ancestor of .claude) is RO-bound", () => {
+    const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths: ["~"] }) }));
+    expect(indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env")).toBe(-1);
+  });
+
+  it("KEEPS the session-env carve-out for the default ([]) and unrelated creds (~/.codex, ~/.claude.json file)", () => {
+    for (const credentialPaths of [[], ["~/.codex"], ["~/.claude.json"]]) {
+      const args = buildScopeArgs(makeInput({ scope: makeScope({ credentialPaths }) }));
+      expect(
+        indexOfPair(args, "--tmpfs", "/home/u/.claude/session-env"),
+        `carve-out must remain for credentialPaths=${JSON.stringify(credentialPaths)}`,
+      ).toBeGreaterThanOrEqual(0);
+    }
+  });
 });
 
 describe("buildScopeArgs — uid dimension", () => {

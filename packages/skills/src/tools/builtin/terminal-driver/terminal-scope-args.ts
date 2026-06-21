@@ -267,7 +267,29 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    creds/config under ~/.claude stay intact (only the transient session-env subdir is the
   //    tmpfs). Placed BEFORE the ~/.comis mask so that mask + the workspace re-bind stay the LAST
   //    mounts. Harmless for a non-claude CLI (an unused empty tmpfs at a path it never touches).
-  args.push("--tmpfs", `${input.home}/.claude/session-env`);
+  //
+  //    SKIP it when an operator credentialPath RO-binds the carve-out's PARENT
+  //    (<home>/.claude, or an ancestor like ~): bwrap then cannot mkdir the
+  //    session-env mountpoint inside the read-only subtree and the WHOLE jail
+  //    fails to launch ("Can't mkdir …/.claude/session-env: Read-only file
+  //    system" — live-reproduced on the VPS). A writable subdir cannot exist in a
+  //    RO bind anyway, so the RO-cred operator opt-in takes precedence over the
+  //    carve-out (claude's per-bash session-env then falls back to its own EROFS
+  //    handling, no worse than without the carve-out).
+  const sessionEnvParent = `${input.home}/.claude`;
+  const carveOutParentIsRoBound = input.scope.credentialPaths.some((credPath) => {
+    if (credPath.length === 0) return false;
+    const expanded =
+      credPath === "~"
+        ? input.home
+        : credPath.startsWith("~/")
+          ? `${input.home}${credPath.slice(1)}`
+          : credPath;
+    return sessionEnvParent === expanded || isUnderDir(sessionEnvParent, expanded);
+  });
+  if (!carveOutParentIsRoBound) {
+    args.push("--tmpfs", `${input.home}/.claude/session-env`);
+  }
 
   // -- The ~/.comis carve-out LAST -- later bwrap mount wins (the bind-order
   //    insight); even at filesystem:full (--bind / / | --bind <home>) ~/.comis is
