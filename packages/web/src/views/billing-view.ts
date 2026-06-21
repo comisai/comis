@@ -11,9 +11,13 @@ import type {
   BillingByProvider,
   BillingByAgent,
   BillingBySession,
-  AgentInfo,
   CostSegment,
 } from "../api/types/index.js";
+import {
+  createBillingViewController,
+  type BillingViewController,
+  type BillingTotalData,
+} from "./billing-view-controller.js";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-stat-card.js";
@@ -42,13 +46,6 @@ const PROVIDER_COLORS = [
   "#f472b6",
   "#34d399",
 ];
-
-/** Billing total shape returned by obs.billing.total RPC. */
-interface BillingTotalData {
-  totalCost: number;
-  totalTokens: number;
-  callCount: number;
-}
 
 /**
  * Standalone billing view with 4-level cost attribution drill-down.
@@ -207,6 +204,8 @@ export class IcBillingView extends LitElement {
 
   private _sse: SseController | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** RPC orchestration + wire shaping (the file-size split — see billing-view-controller.ts). */
+  private _controller: BillingViewController | null = null;
 
   /* ---- Internal state ---- */
 
@@ -297,6 +296,10 @@ export class IcBillingView extends LitElement {
       this._loadState = "loaded";
       return;
     }
+    // Create the controller once the rpcClient is present (the setup-wizard mold).
+    if (!this._controller) {
+      this._controller = createBillingViewController(this.rpcClient);
+    }
     this._rpcStatusUnsub?.();
     if (this.rpcClient.status === "connected") {
       this._startLoading();
@@ -318,147 +321,38 @@ export class IcBillingView extends LitElement {
     }
   }
 
-  /* ---- Data loading ---- */
+  /* ---- Data loading (delegated to the controller) ---- */
 
   private async _loadData(): Promise<void> {
-    if (!this.rpcClient || this.rpcClient.status !== "connected") {
+    if (!this.rpcClient || this.rpcClient.status !== "connected" || !this._controller) {
       this._loadState = "loaded";
       return;
     }
 
-    const rpc = this.rpcClient;
+    const ctrl = this._controller;
 
     try {
       switch (this._drillLevel) {
-        case "total":
-          await this._loadTotalLevel(rpc);
+        case "total": {
+          this._billingTotal = await ctrl.loadTotalLevel(this._sinceMs, (partial) => {
+            if (partial.previousTotal !== undefined) this._previousTotal = partial.previousTotal;
+            if (partial.providers !== undefined) this._providers = partial.providers;
+          });
           break;
+        }
         case "provider":
-          await this._loadProviderLevel(rpc);
+          this._providers = await ctrl.loadProviderLevel(this._sinceMs);
           break;
         case "agent":
-          await this._loadAgentLevel(rpc);
+          this._agentBillings = await ctrl.loadAgentLevel(this._sinceMs);
           break;
         case "session":
-          await this._loadSessionLevel(rpc);
+          this._sessionBillings = await ctrl.loadSessionLevel(this._sinceMs, this._drillContext.agentId);
           break;
       }
       this._loadState = "loaded";
     } catch {
       this._loadState = "error";
-    }
-  }
-
-  private async _loadTotalLevel(rpc: RpcClient): Promise<void> {
-    // Load current billing first (primary data for stat cards)
-    const raw = await rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: this._sinceMs });
-    this._billingTotal = {
-      totalCost: Number(raw.totalCost ?? 0),
-      totalTokens: Number(raw.totalTokens ?? 0),
-      callCount: Number(raw.callCount ?? 0),
-    };
-
-    // Load cumulative (for deltas) and provider breakdown in the background
-    Promise.allSettled([
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: this._sinceMs * 2 }),
-      rpc.call<unknown>("obs.billing.byProvider", { sinceMs: this._sinceMs }),
-    ]).then(([cumulativeResult, providersResult]) => {
-      if (cumulativeResult.status === "fulfilled" && this._billingTotal) {
-        const cumRaw = cumulativeResult.value;
-        const cumulative: BillingTotalData = {
-          totalCost: Number(cumRaw.totalCost ?? 0),
-          totalTokens: Number(cumRaw.totalTokens ?? 0),
-          callCount: Number(cumRaw.callCount ?? 0),
-        };
-        this._previousTotal = {
-          totalCost: cumulative.totalCost - this._billingTotal.totalCost,
-          totalTokens: cumulative.totalTokens - this._billingTotal.totalTokens,
-          callCount: cumulative.callCount - this._billingTotal.callCount,
-        };
-      }
-
-      if (providersResult.status === "fulfilled") {
-        const provRaw = providersResult.value;
-        if (Array.isArray(provRaw)) {
-          this._providers = provRaw;
-        } else {
-          const wrapped = provRaw as Record<string, unknown>;
-          this._providers = Array.isArray(wrapped.providers) ? wrapped.providers as BillingByProvider[] : [];
-        }
-      }
-    });
-  }
-
-  private async _loadProviderLevel(rpc: RpcClient): Promise<void> {
-    const raw = await rpc.call<unknown>("obs.billing.byProvider", { sinceMs: this._sinceMs });
-    if (Array.isArray(raw)) {
-      this._providers = raw;
-    } else {
-      const wrapped = raw as Record<string, unknown>;
-      this._providers = Array.isArray(wrapped.providers) ? wrapped.providers as BillingByProvider[] : [];
-    }
-  }
-
-  private async _loadAgentLevel(rpc: RpcClient): Promise<void> {
-    const listResult = await rpc.call<Record<string, unknown>>("agents.list");
-    const agentData = Array.isArray(listResult)
-      ? listResult
-      : Array.isArray((listResult as Record<string, unknown>).agents)
-        ? (listResult as { agents: AgentInfo[] | string[] }).agents
-        : [];
-
-    const agentIds = agentData.map((a: AgentInfo | string) =>
-      typeof a === "string" ? a : a.id,
-    );
-
-    if (agentIds.length === 0) {
-      this._agentBillings = [];
-      return;
-    }
-
-    const results = await Promise.allSettled(
-      agentIds.map((id) =>
-        rpc.call<Record<string, unknown>>("obs.billing.byAgent", { agentId: id, sinceMs: this._sinceMs }),
-      ),
-    );
-
-    this._agentBillings = results
-      .map((r, i) => {
-        if (r.status !== "fulfilled") return null;
-        const raw = r.value;
-        return {
-          agentId: agentIds[i]!,
-          totalTokens: Number(raw.tokensToday ?? raw.totalTokens ?? 0),
-          percentOfTotal: Number(raw.percentOfTotal ?? 0),
-          cost: Number(raw.costToday ?? raw.cost ?? 0),
-        };
-      })
-      .filter((a): a is BillingByAgent => a !== null)
-      .sort((a, b) => b.cost - a.cost);
-  }
-
-  private async _loadSessionLevel(rpc: RpcClient): Promise<void> {
-    const agentId = this._drillContext.agentId;
-    if (!agentId) {
-      this._sessionBillings = [];
-      return;
-    }
-
-    try {
-      const raw = await rpc.call<unknown>("obs.billing.bySession", {
-        sessionKey: "all",
-        agentId,
-        sinceMs: this._sinceMs,
-      });
-
-      if (Array.isArray(raw)) {
-        this._sessionBillings = raw;
-      } else {
-        const wrapped = raw as Record<string, unknown>;
-        this._sessionBillings = Array.isArray(wrapped.sessions) ? wrapped.sessions as BillingBySession[] : [];
-      }
-    } catch {
-      this._sessionBillings = [];
     }
   }
 
