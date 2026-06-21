@@ -41,10 +41,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Update } from "grammy/types";
-import {
-  TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER,
-  checkWebhookSecretToken,
-} from "./tg-emulator.js";
+import { checkWebhookSecretToken } from "./tg-emulator.js";
 
 /** A handle for a running {@link createWebhookReceiver} loopback target. */
 export interface WebhookReceiver {
