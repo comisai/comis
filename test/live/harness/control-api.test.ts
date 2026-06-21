@@ -1132,3 +1132,41 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// FOUNDATION-FIX (type-lift, CHAN2-02) — the generic control-api imports its
+// shared outbound-oracle types from harness/, NOT from emulators/telegram/.
+//
+// The telegram-first build anchored the channel-agnostic `RecordedOutbound`
+// subset (the bit the dual oracle + control-api actually consume) inside the
+// Telegram emulator, and pulled `MediaKind` from `tg-payloads.ts` even though
+// a shared `MediaKind` already lives in `channel-emulator.ts`. So the "generic"
+// /control/* surface had a type edge on ONE specific channel — a second channel
+// (Phase 209 Signal) could not feed it without depending on the Telegram
+// emulator. This contract test pins that the lifted oracle type comes from the
+// harness layer, so channel #2 has no telegram dependency for the shared types.
+// ---------------------------------------------------------------------------
+describe("control-api imports shared oracle types from harness/, not the telegram emulator", () => {
+  it("does NOT import the lifted RecordedOutbound from the telegram emulator", () => {
+    const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+    // The foundation bug: `import type { … RecordedOutbound … } from
+    // "../emulators/telegram/tg-emulator.js"`. After the lift this edge is gone.
+    expect(src).not.toMatch(
+      /import\s+type\s*\{[^}]*RecordedOutbound[^}]*\}\s*from\s*["']\.\.\/emulators\/telegram\/tg-emulator/,
+    );
+  });
+
+  it("imports the lifted RecordedOutbound from the harness layer", () => {
+    const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+    // It now imports the agnostic subset from harness/ (recorded-outbound.ts or
+    // re-exported via channel-emulator.ts) — the channel-neutral type source.
+    expect(src).toMatch(/from\s+["']\.\/recorded-outbound|from\s+["']\.\/channel-emulator/);
+  });
+
+  it("drops the tg-payloads.ts MediaKind edge (MediaKind now comes from channel-emulator.ts)", () => {
+    const src = readFileSync(CONTROL_API_SOURCE, "utf8");
+    // `MediaKind` already lives shared in channel-emulator.ts:31 — the generic
+    // API must not re-import it from the telegram payloads module.
+    expect(src).not.toMatch(/from\s+["']\.\.\/emulators\/telegram\/tg-payloads/);
+  });
+});
