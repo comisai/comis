@@ -740,6 +740,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveTelegramThreadContext",
       "TelegramThreadScope",
       "TelegramThreadContext",
+      // Telegram error classifier (the structural GrammyError →
+      // ActivityRenderError mapping: 429→rate_limited / 400-edit→
+      // not_supported{edit} / 403→permission / default→internal). Surfaced on
+      // the public barrel for the v2.28 channel-emulation harness's FAULT-02
+      // assertion (it drives the REAL classifier through the dist-aliased
+      // @comis/channels, not a re-implementation). The only consumers are
+      // test/live/** scenarios + the channels index.test.ts barrel check — both
+      // excluded by the public-export-consumers AST walker (it scans
+      // packages/*/src/** and skips *.test.ts). Mirrors the thread-context
+      // builders precedent directly above. Shrink if a cross-package
+      // production consumer lands.
+      "classifyTelegramError",
       // Discord channel narrowing surface. Consumed to retarget the 18
       // `as any` casts in `discord-actions.ts` + the 5 thread-iteration
       // sites. The 4 entries are removed once discord-actions.ts is
