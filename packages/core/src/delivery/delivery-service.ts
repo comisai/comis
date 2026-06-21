@@ -526,6 +526,24 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 agentId,
                 sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
               });
+              // WR-01 (206-05): the bind above is otherwise SILENT. Emit a
+              // positive, counts-only `delivery:reply_bound` so the primary-path
+              // attribution is observable — a later reaction map-miss can then be
+              // told apart ("bind fired → entry evicted" vs "bind never fired")
+              // from the event trail in one obs call, with no daemon.log grep.
+              // Same fail-closed branch as the bind; shares `messageId` with the
+              // `delivery:acked` event just emitted. IDS/closed-scalars ONLY —
+              // never a body or a secret (§2.7 / SEC-01); `agentId` is the REAL
+              // agent (never the tenantId). Only on the learning-enabled path
+              // (recordOutboundMessage defined) → byte-identity when disabled.
+              deps.eventBus?.emit("delivery:reply_bound", {
+                messageId: result.value,
+                channelId,
+                channelType: adapter.channelType,
+                traceId,
+                agentId,
+                timestamp: systemNowMs(),
+              });
             }
           } else {
             chunkResult.error = result.error;

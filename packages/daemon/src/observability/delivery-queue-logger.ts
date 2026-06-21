@@ -2,15 +2,19 @@
 /**
  * Delivery queue observability: structured logging subscriber for queue
  * lifecycle events.
- * Subscribes to all 7 delivery queue events (delivery:enqueued, delivery:acked,
- * delivery:nacked, delivery:failed, delivery:queue_drained, delivery:hook_cancelled,
- * delivery:aborted) and logs with
+ * Subscribes to the 8 delivery queue / reply-binding events (delivery:enqueued,
+ * delivery:acked, delivery:nacked, delivery:failed, delivery:queue_drained,
+ * delivery:hook_cancelled, delivery:aborted, delivery:reply_bound) and logs with
  * canonical fields per the project logging rules.
  * Logging levels follow the boundary-event convention:
  * - INFO for boundary events: enqueue (message enters queue), ack (delivery
  *   confirmed), queue_drained (startup drain complete).
  * - WARN for degraded states: nack (transient failure, will retry) and fail
  *   (permanent failure). WARN events include hint and errorKind as required.
+ * - DEBUG for the reply->trajectory binding breadcrumb (delivery:reply_bound,
+ *   WR-01): a high-frequency per-reply positive signal, kept at DEBUG so it does
+ *   not flood INFO, but present so a reaction map-miss is one-call diagnosable
+ *   (the bind fired vs never fired) from the log trail alongside the bus event.
  * @module
  */
 
@@ -129,6 +133,26 @@ export function setupDeliveryQueueLogging(deps: {
         origin: data.origin,
       },
       "Delivery aborted",
+    );
+  });
+
+  // 8. Reply bound: the agent-reply messageId was bound to its trajectory scope
+  // on the primary inbound-reply path (WR-01). DEBUG, not INFO — this is a
+  // per-reply positive signal that would flood INFO, but the breadcrumb is
+  // load-bearing for diagnosing a reaction map-miss (a `delivery:reply_bound`
+  // for the messageId means the bind fired → a later miss is an eviction; its
+  // absence means the bind never fired). Counts/ids only (the event payload is
+  // already content-free); shares the messageId with the delivery:acked INFO.
+  eventBus.on("delivery:reply_bound", (data) => {
+    log.debug(
+      {
+        messageId: data.messageId,
+        channelType: data.channelType,
+        channelId: data.channelId,
+        traceId: data.traceId,
+        agentId: data.agentId,
+      },
+      "Agent reply bound to trajectory for reaction attribution",
     );
   });
 }
