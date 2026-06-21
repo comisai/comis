@@ -58,6 +58,9 @@ import { fileURLToPath } from "node:url";
 import { validateLocalServerUrl } from "@comis/core";
 import { startTestDaemon, type TestDaemonHandle } from "../../support/daemon-harness.js";
 import { createTgEmulator, type TgEmulator, type ChatRef } from "../emulators/telegram/tg-emulator.js";
+import { createSignalEmulator, type SignalEmulator } from "../emulators/signal/signal-emulator.js";
+import type { ChannelEmulator } from "./channel-emulator.js";
+import type { HttpBackend } from "./backends/http-backend.js";
 import { registerControlApi, type ControlClient } from "./control-api.js";
 // `RigHandle.waitForReply` is the GENERIC round-trip driver surface (Phase 209
 // channel #2 reuses it), so it surfaces the channel-agnostic outbound subset
@@ -89,9 +92,15 @@ import { createRigController, type RigController } from "./rig-control.js";
 // config writer under a bare `tsx` (where `rig.ts`'s `@comis/core` import does not
 // resolve). Re-export `buildConfigYaml` below so `rig.ts`'s public surface (and
 // `rig.test.ts`) is unchanged.
-import { FAKE_BOT_TOKEN, MEMORY_DB_FILE, GATEWAY_TOKEN, buildConfigYaml } from "./rig-config.js";
+import {
+  FAKE_BOT_TOKEN,
+  MEMORY_DB_FILE,
+  GATEWAY_TOKEN,
+  buildConfigYaml,
+  buildSignalConfigYaml,
+} from "./rig-config.js";
 
-export { buildConfigYaml } from "./rig-config.js";
+export { buildConfigYaml, buildSignalConfigYaml } from "./rig-config.js";
 
 /**
  * The FIXED test chat id the round-trip injects into. A fabricated id far from
@@ -111,10 +120,164 @@ const DEFAULT_FROM_USER_ID = 100;
  */
 const RIG_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 
+// ---------------------------------------------------------------------------
+// CHAN2-01 + CHAN2-02 (Phase 209) — the channel→{emulator-factory, config-writer}
+// dispatch MAP. THE foundation-fix: the telegram-first rig hard-coded the channel
+// (a `"telegram"` literal type), THREW on any other channel, hard-constructed
+// `createTgEmulator`, and hard-wrote `buildConfigYaml`. This map IS the
+// generalization — and the registration point where "channel #2 is a one-line
+// rig registration" actually lands: the `signal:` entry below.
+//
+// `buildRig`/`startStandaloneRig` look up `RIG_CHANNELS[opts.channel]` and call
+// `.make(opts)` for the emulator + `.writeConfig(seamUrl, gatewayPort, model)` for
+// the throwaway YAML. EVERYTHING ELSE — the daemon boot, the `mkdtemp` isolation,
+// cleanup, `rebindDaemonHandle` — is channel-agnostic and reused UNCHANGED.
+// ---------------------------------------------------------------------------
+
+/** The channels the rig can emulate. Telegram (204/205) + Signal (209). */
+export type RigChannel = "telegram" | "signal";
+
+/**
+ * The minimal emulator surface the rig drives, channel-agnostically: the
+ * `ChannelEmulator` lifecycle (`start()`/`stop()`/`caps`) PLUS the shared
+ * `http-backend` base the control API / SSRF routes register on. Both
+ * `TgEmulator` and `SignalEmulator` satisfy this (each `extends ChannelEmulator`
+ * and exposes `backend`).
+ */
+export type RigEmulator = ChannelEmulator & { readonly backend: HttpBackend };
+
+/**
+ * One channel's rig registration: the emulator FACTORY + the config WRITER. The
+ * factory mints the per-channel wire emulator (Telegram needs `{ botToken }`;
+ * Signal needs no token); the writer renders the throwaway YAML wiring the
+ * channel's REDIRECT SEAM to the started emulator's loopback `apiRoot` (Telegram
+ * → `channels.telegram.apiRoot`; Signal → `channels.signal.baseUrl`). The
+ * `seamUrl` is ALWAYS the emulator's `apiRoot` — the channel decides which config
+ * key it lands under.
+ */
+export interface ChannelRigEntry {
+  /** Mint the per-channel wire emulator (started by the rig). */
+  readonly make: (opts: { readonly channel: RigChannel; readonly model: string }) => RigEmulator;
+  /** Render the throwaway YAML wiring `seamUrl` (the emulator apiRoot) to the channel's config key. */
+  readonly writeConfig: (seamUrl: string, gatewayPort: number, model: string) => string;
+}
+
+/**
+ * The channel→{factory, config-writer} dispatch MAP (the foundation-fix
+ * registration point). The `signal:` entry is the ONE-LINE registration
+ * (CHAN2-01): `createSignalEmulator` + `buildSignalConfigYaml`. The `telegram:`
+ * entry MUST produce the byte-identical `createTgEmulator` + `buildConfigYaml`
+ * output (the public surface is inviolate, 205-04).
+ *
+ * EXPORTED so the Task-2 dispatch tests assert the registration + the per-channel
+ * factory/writer wiring deterministically (no daemon).
+ */
+export const RIG_CHANNELS: Record<RigChannel, ChannelRigEntry> = {
+  telegram: {
+    // Telegram keeps its fake bot token (grammy builds /bot<token>/<method> paths
+    // from it; apiRoot redirects every call to the emulator).
+    make: () => createTgEmulator({ botToken: FAKE_BOT_TOKEN }),
+    // The telegram seam: channels.telegram.apiRoot = the emulator apiRoot.
+    writeConfig: (seamUrl, gatewayPort, model) => buildConfigYaml(seamUrl, gatewayPort, model),
+  },
+  signal: {
+    // The ONE-LINE signal registration — Signal needs no bot token (signal-cli
+    // is account-less at boot; the rig writes no `account` → the GET /api/v1/check
+    // health-check is the whole boot).
+    make: () => createSignalEmulator(),
+    // The signal seam: channels.signal.baseUrl = the emulator apiRoot.
+    writeConfig: (seamUrl, gatewayPort, model) => buildSignalConfigYaml(seamUrl, gatewayPort, model),
+  },
+};
+
+/**
+ * Wire the in-process {@link ControlClient} for a rig's emulator. The control API
+ * (`/control/*`) is the channel-AGNOSTIC driver surface, but its handlers expect
+ * the Telegram emulator's numeric-`chatId` `ControlEmulator` shape. A
+ * `ControlEmulator` (the Telegram emulator) gets the REAL `registerControlApi`
+ * client; a non-control emulator (the Signal emulator, whose chat is a STRING)
+ * gets a thin client backed by the emulator's OWN inject/outbound verbs for the
+ * round-trip (`injectMessage`/`waitForReply`), with the Telegram-only verbs
+ * (media/location/callback/edit/fault) throwing an honest `unsupported_on_channel`
+ * rather than a silent no-op (§3A.4 / I5).
+ *
+ * The Signal round-trip wiring is exercised by the 209-06/07 scenario; this plan
+ * proves the DISPATCH (a Signal rig boots + the seam wires). The Signal control
+ * client keys on a fixed Signal chat string (the rig's `chat`), so `send` injects
+ * an inbound the booted daemon's real Signal adapter pulls from the SSE stream.
+ */
+
+/**
+ * Is `emulator` the Telegram emulator (the one native `ControlEmulator`)? It is
+ * the only emulator carrying the Bot-API fault verbs (`fail`/`clearFaults`) the
+ * generic control API requires, so this is the honest structural discriminator
+ * between the two channels — a Signal emulator (no fault surface) falls through to
+ * the {@link adaptSignalToControlEmulator} path.
+ */
+function isTelegramControlEmulator(emulator: RigEmulator): emulator is RigEmulator & TgEmulator {
+  return (
+    typeof (emulator as Partial<TgEmulator>).fail === "function" &&
+    typeof (emulator as Partial<TgEmulator>).clearFaults === "function"
+  );
+}
+
+/**
+ * The fixed Signal chat string a Signal rig's round-trip drives. A Signal "chat"
+ * is a STRING (a bare recipient / uuid), unlike Telegram's numeric `chatId` — the
+ * `/control/*` driver surface is numeric-keyed (the Telegram-first shape), so the
+ * Signal control adapter maps the rig's single fixed chat to this string. The
+ * booted daemon's real Signal adapter pulls the injected inbound off the SSE
+ * stream and replies; the emulator records the outbound under this same key.
+ */
+const SIGNAL_RIG_CHAT = "+15555550199";
+
+/**
+ * Adapt a {@link SignalEmulator} (string-keyed chat, no Bot-API faults) to the
+ * channel-AGNOSTIC `ControlEmulator` the generic `registerControlApi` drives, so
+ * the SAME control surface (`/control/*` + the in-proc `ControlClient`) gives the
+ * Signal rig its inject + reply-wait round-trip WITHOUT editing `control-api.ts`
+ * (a zero-change file). The rig drives ONE fixed chat ({@link SIGNAL_RIG_CHAT}),
+ * so the numeric `chatId` the control API passes is mapped to that one Signal
+ * string; `from.firstName` carries the Signal sender identifier.
+ *
+ * The CORE round-trip verbs (`injectMessage`/`injectReaction`/`outbound`) delegate
+ * to the emulator's own string-keyed verbs. The Telegram-ONLY verbs
+ * (`injectMedia`/`injectLocation`/`injectCallback`/`injectEdit`/`fail`/
+ * `clearFaults`) throw an honest `unsupported_on_channel` — NEVER a silent no-op
+ * (§3A.4 / I5). Signal's media/edit/fault round-trips are NOT part of this
+ * foundation-fix; the 209-06/07 scenario exercises the Signal send/react path.
+ */
+function adaptSignalToControlEmulator(emulator: SignalEmulator): import("./control-api.js").ControlEmulator {
+  const unsupported = (verb: string): never => {
+    throw new Error(`unsupported_on_channel: Signal does not support the control verb "${verb}" (CHAN2 honest-degrade)`);
+  };
+  return {
+    injectMessage(_chat, from, text) {
+      // The numeric control-chat maps to the single fixed Signal chat string; the
+      // Signal sender identifier rides on `from.firstName` (the control API mints
+      // `user_<id>` when absent — for Signal the rig passes the recipient).
+      return emulator.injectMessage(SIGNAL_RIG_CHAT, from.firstName, text);
+    },
+    injectReaction(_chat, from, botMessageId, emoji) {
+      // A Signal reaction targets the bot reply's `timestamp` (botMessageId).
+      emulator.injectReaction(SIGNAL_RIG_CHAT, from.firstName, botMessageId, emoji);
+    },
+    outbound(_chat) {
+      return emulator.outbound(SIGNAL_RIG_CHAT);
+    },
+    injectMedia: () => unsupported("injectMedia"),
+    injectLocation: () => unsupported("injectLocation"),
+    injectCallback: () => unsupported("injectCallback"),
+    injectEdit: () => unsupported("injectEdit"),
+    fail: () => unsupported("fail"),
+    clearFaults: () => unsupported("clearFaults"),
+  };
+}
+
 /** Options for {@link startRig}. */
 export interface StartRigOptions {
-  /** The channel to emulate. Phase 204 ships Telegram; channel #2 is Phase 209. */
-  readonly channel: "telegram";
+  /** The channel to emulate. Telegram (204/205) or Signal (209). */
+  readonly channel: RigChannel;
   /**
    * The model the booted daemon's agent runs. `"keyless"` → a keyless `ollama`
    * provider ($0/offline; the agent-content reply is the COMIS_LIVE leg). Any
@@ -143,9 +306,14 @@ export interface StartRigOptions {
  * config + data dirs — order matters (daemon first so its grammy client stops
  * polling the emulator before the emulator closes).
  */
-export interface RigHandle {
-  /** The running Telegram emulator (the channel oracle: `outbound()` etc.). */
-  readonly emulator: TgEmulator;
+export interface RigHandle<E extends RigEmulator = TgEmulator> {
+  /**
+   * The running channel emulator (the channel oracle: `outbound()` etc.).
+   * Generic over the emulator type, defaulting to `TgEmulator` so every existing
+   * Telegram caller keeps the full Telegram surface unchanged (205-04); a
+   * `{channel:"signal"}` rig is `RigHandle<SignalEmulator>`.
+   */
+  readonly emulator: E;
   /** The in-process control client (inject + reply-wait). */
   readonly controlClient: ControlClient;
   /** The fixed test chat the round-trip drives. */
@@ -182,7 +350,7 @@ export interface RigHandle {
  * `RigHandle` fields so its existing surface (and `telegram-emulator.test.ts`) is
  * unchanged.
  */
-export interface BuiltRig extends RigHandle {
+export interface BuiltRig<E extends RigEmulator = TgEmulator> extends RigHandle<E> {
   /** The emulator's loopback base (`http://127.0.0.1:P`) — the `/control/*` endpoint the handle records. */
   readonly controlEndpoint: string;
   /** The throwaway `COMIS_DATA_DIR` this rig pinned (the dir `resetDeep()` wipes UNDER, never `~/.comis`). */
@@ -405,30 +573,44 @@ export function buildMediaOverrides(opts: MediaOverridesOptions): { setupMedia?:
  * called (afterEach/afterAll) to release the daemon, the emulator port, and the
  * throwaway temp dirs.
  */
-export async function buildRig(opts: StartRigOptions): Promise<BuiltRig> {
-  if (opts.channel !== "telegram") {
-    throw new Error(`buildRig: unsupported channel "${opts.channel}" (Phase 204 ships telegram only)`);
-  }
+export function buildRig(opts: StartRigOptions & { channel: "telegram" }): Promise<BuiltRig<TgEmulator>>;
+export function buildRig(opts: StartRigOptions & { channel: "signal" }): Promise<BuiltRig<SignalEmulator>>;
+export function buildRig(opts: StartRigOptions): Promise<BuiltRig<RigEmulator>>;
+export async function buildRig(opts: StartRigOptions): Promise<BuiltRig<RigEmulator>> {
+  // CHAN2-02: dispatch by channel through the factory+config-writer MAP — NO
+  // `channel:"telegram"` throw, NO hard-coded createTgEmulator/buildConfigYaml.
+  const entry = RIG_CHANNELS[opts.channel];
 
-  // 1. Start the emulator → the dynamic loopback apiRoot.
-  const emulator = createTgEmulator({ botToken: FAKE_BOT_TOKEN });
+  // 1. Start the channel's emulator → the dynamic loopback apiRoot.
+  const emulator: RigEmulator = entry.make({ channel: opts.channel, model: opts.model });
   const { apiRoot } = await emulator.start();
 
   // 2. Register the control API on the emulator's SHARED http-backend base so
-  //    /control/* and the Bot API share ONE loopback port (SEC-01).
-  const controlClient = registerControlApi(emulator.backend, emulator);
+  //    /control/* and the wire surface share ONE loopback port (SEC-01). The
+  //    control API is numeric-chatId-keyed (the Telegram-first shape): the
+  //    Telegram emulator IS a `ControlEmulator`; the Signal emulator (string-keyed
+  //    chat) is adapted to that shape (the core inject/outbound verbs delegate;
+  //    the Telegram-only verbs honest-degrade) — registerControlApi unchanged.
+  const controlEmulator = isTelegramControlEmulator(emulator)
+    ? emulator
+    : adaptSignalToControlEmulator(emulator as SignalEmulator);
+  const controlClient = registerControlApi(emulator.backend, controlEmulator);
 
+  // The fixed test chat. Telegram is numeric; the Signal control adapter maps this
+  // numeric chat to its single fixed Signal chat string (SIGNAL_RIG_CHAT).
   const chat: ChatRef = { chatId: DEFAULT_CHAT_ID };
 
   // 3. Pick a free gateway port (startTestDaemon's waitForPortFree double-checks it).
   const gatewayPort = await pickFreePort();
 
   // 4. Write the throwaway config (AFTER the emulator started, so apiRoot is real)
+  //    via the CHANNEL's config writer — Telegram → channels.telegram.apiRoot;
+  //    Signal → channels.signal.baseUrl (the redirect seam, dispatched by channel)
   //    + a fresh per-rig COMIS_DATA_DIR (D14 .daemon.lock isolation; per-fork in
   //    daemon-harness, but the rig pins its OWN so each rig is fully isolated).
   const configDir = mkdtempSync(join(tmpdir(), "comis-rig-cfg-"));
   const configPath = join(configDir, "config.rig.yaml");
-  writeFileSync(configPath, buildConfigYaml(apiRoot, gatewayPort, opts.model), "utf-8");
+  writeFileSync(configPath, entry.writeConfig(apiRoot, gatewayPort, opts.model), "utf-8");
 
   const dataDir = mkdtempSync(join(tmpdir(), "comis-rig-data-"));
   // startTestDaemon only fills COMIS_DATA_DIR when unset, and restores it after
@@ -535,7 +717,10 @@ export async function buildRig(opts: StartRigOptions): Promise<BuiltRig> {
  * `cleanup()` MUST be called (afterEach/afterAll) to release the daemon, the
  * emulator port, and the throwaway temp dirs.
  */
-export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
+export function startRig(opts: StartRigOptions & { channel: "telegram" }): Promise<RigHandle<TgEmulator>>;
+export function startRig(opts: StartRigOptions & { channel: "signal" }): Promise<RigHandle<SignalEmulator>>;
+export function startRig(opts: StartRigOptions): Promise<RigHandle<RigEmulator>>;
+export async function startRig(opts: StartRigOptions): Promise<RigHandle<RigEmulator>> {
   const built = await buildRig(opts);
   // Project the public RigHandle fields only — the internals (dataDir, configPath,
   // daemonHandle, …) stay hidden from the public surface.
@@ -553,8 +738,8 @@ export async function startRig(opts: StartRigOptions): Promise<RigHandle> {
 
 /** Options for {@link startStandaloneRig}. */
 export interface StandaloneRigOptions {
-  /** The channel to emulate. Phase 204/205 ship Telegram. */
-  readonly channel: "telegram";
+  /** The channel to emulate. Telegram (204/205) or Signal (209). */
+  readonly channel: RigChannel;
   /** The model the booted daemon's agent runs (`"keyless"` → keyless ollama; else the provider/model id). */
   readonly model: "keyless" | string;
   /** Reserved for a future group/forum rig (Phase 206+). */
@@ -735,14 +920,21 @@ export async function startStandaloneRig(
   // Wrap the lifecycle controller (restart / reset-deep / reconfigure).
   // onDaemonHandle keeps the rig's cleanup() pointed at the post-restart daemon
   // (never a stale one). configYamlFor wires AUTO-04's Track-K model sweep: it
-  // closes over buildConfigYaml + the rig's apiRoot (controlEndpoint) + gatewayPort
-  // so reconfigure can rewrite a new `agents.default.model` (the only --set key the
-  // sweep needs) while keeping the exact telegram schema keys + the ≥32-char literal
-  // gateway token stable. An override-less call re-derives the rig's original model
-  // (the writer is the SINGLE override→YAML mapping; rig-control never imports
-  // buildConfigYaml — that would be a circular value import).
+  // closes over the CHANNEL's config writer + the rig's apiRoot (controlEndpoint) +
+  // gatewayPort so reconfigure can rewrite a new `agents.default.model` (the only
+  // --set key the sweep needs) while keeping the exact channel schema keys + the
+  // ≥32-char literal gateway token stable. An override-less call re-derives the
+  // rig's original model (the writer is the SINGLE override→YAML mapping;
+  // rig-control never imports the writer — that would be a circular value import).
+  // CHAN2-02: dispatch the config writer by channel (a detached Signal rig
+  // re-writes channels.signal, NOT channels.telegram).
+  const writeChannelConfig = RIG_CHANNELS[opts.channel].writeConfig;
+  // rig-control's `createRigController` is typed against `TgEmulator` (a zero-change
+  // file) but only ever calls `emulator.resetChat(chat)` — which BOTH emulators
+  // implement. A Signal rig passes its `SignalEmulator` through this structural
+  // bridge (the controller resets the channel-side oracle identically).
   const controller = createRigController({
-    emulator: built.emulator,
+    emulator: built.emulator as unknown as TgEmulator,
     daemonHandle: built.daemonHandle,
     dataDir: built.dataDir,
     configPath: built.configPath,
@@ -752,7 +944,7 @@ export async function startStandaloneRig(
     memoryDbPath: built.memoryDbPath,
     onDaemonHandle: built.rebindDaemonHandle,
     configYamlFor: (overrides) =>
-      buildConfigYaml(
+      writeChannelConfig(
         built.controlEndpoint,
         built.gatewayPort,
         overrides["agents.default.model"] ?? opts.model,
