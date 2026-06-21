@@ -636,6 +636,294 @@ describe("chan/tg CLI — runVerb: react correlates to the botReplyId arg (REACT
   });
 });
 
+// ---------------------------------------------------------------------------
+// Phase 207: the four wired verbs (tap / edit / send-photo / send-voice). A
+// shared recording fetch captures every (method, url, parsed-body) and returns a
+// scripted status/body per url-substring — the same shape the react suite uses,
+// lifted to module scope for re-use across the 207 suites.
+// ---------------------------------------------------------------------------
+
+/** A recording fake fetch (lifted from the react suite) for the 207 verb suites. */
+function recording207Fetch(script: (url: string) => { status?: number; body?: unknown }): {
+  fetch: typeof fetch;
+  calls: Array<{ method: string; url: string; body: unknown }>;
+} {
+  const calls: Array<{ method: string; url: string; body: unknown }> = [];
+  const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    let parsedBody: unknown;
+    if (typeof init?.body === "string" && init.body.length > 0) {
+      try {
+        parsedBody = JSON.parse(init.body);
+      } catch {
+        parsedBody = init.body;
+      }
+    }
+    calls.push({ method, url, body: parsedBody });
+    const { status = 200, body = { ok: true } } = script(url);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+    } as Response;
+  }) as typeof fetch;
+  return { fetch: fn, calls };
+}
+
+describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 / attribution)", () => {
+  it("POSTs {fromUserId:111, botMessageId:<arg>, data} to /callbacks and returns { tapped } — the ARG, not tg last", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    // botReplyId = 42 (the id `tg send` returned as the agent-authored reply).
+    const result = (await runVerb("tap", ["42", "page=2"], ctx)) as Record<string, unknown>;
+
+    // Exactly one control call: the POST to /callbacks (no /outbound re-read).
+    expect(rec.calls).toHaveLength(1);
+    const call = rec.calls[0]!;
+    expect(call.method).toBe("POST");
+    // ATTRIBUTION: the URL is the callbacks route on the handle's chat.
+    expect(call.url.endsWith(`/control/chats/${fakeHandle().chatId}/callbacks`)).toBe(true);
+    // ATTRIBUTION (T-207-15): the body taps the ARG id (42), NOT a re-read `last`.
+    expect(call.body).toEqual({ fromUserId: 111, botMessageId: 42, data: "page=2" });
+    // The honest result echoes the attributed reply id + the callback data.
+    expect(result).toEqual({ tapped: { botReplyId: 42, data: "page=2" } });
+  });
+
+  it("does NOT consult tg last / readOutbound — no GET to /outbound is made", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
+      // If the verb ever read the oracle, this /outbound GET would be recorded.
+      return { status: 200, body: [{ messageId: 9999, text: "a DIFFERENT, more-recent message" }] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    await runVerb("tap", ["42", "page=2"], ctx);
+    // The map is keyed on the agent-authored reply's id — the verb taps args[0]
+    // ONLY; a `/outbound` re-read could pick a non-attributed message.
+    expect(rec.calls.some((c) => c.url.includes("/outbound"))).toBe(false);
+    expect(rec.calls.every((c) => c.url.includes("/callbacks"))).toBe(true);
+  });
+
+  it("the scalar callback data survives verbatim (a &-laden value is IN-04 safe on the JSON path)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    await runVerb("tap", ["7", "page=2&sort=asc"], ctx);
+    expect(rec.calls[0]?.body).toEqual({ fromUserId: 111, botMessageId: 7, data: "page=2&sort=asc" });
+  });
+
+  it("bad args (missing both) → VerbFailure(bad_json); the control fetch is NEVER called", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("tap", [], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a non-numeric botReplyId → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("tap", ["not-a-number", "page=2"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a missing data (only the id) → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("tap", ["42"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a control POST !ok (502) → VerbFailure(dead_handle, control_post_error) — no false exit-0 (T-207-14)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 502, body: { ok: false } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("tap", ["42", "page=2"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+    expect((err as VerbFailure).body["status"]).toBe(502);
+  });
+
+  it("tap with NO resolved handle is a dead_handle (it drives a live rig) — never a silent no-op", async () => {
+    const err = await runVerb("tap", ["42", "page=2"], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
+  });
+});
+
+describe("chan/tg CLI — runVerb: edit drives the edits route (INTERACT-02)", () => {
+  it("POSTs {messageId:<arg>, newText} to /edits and returns { edited } on a 2xx", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/edits")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const result = (await runVerb("edit", ["55", "corrected text"], ctx)) as Record<string, unknown>;
+
+    expect(rec.calls).toHaveLength(1);
+    const call = rec.calls[0]!;
+    expect(call.method).toBe("POST");
+    expect(call.url.endsWith(`/control/chats/${fakeHandle().chatId}/edits`)).toBe(true);
+    expect(call.body).toEqual({ messageId: 55, newText: "corrected text" });
+    expect(result).toEqual({ edited: { messageId: 55 } });
+  });
+
+  it("bad args (missing both) → VerbFailure(bad_json); no fetch", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("edit", [], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a non-numeric messageId → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("edit", ["nope", "x"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a missing newText (only the id) → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("edit", ["55"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a control POST !ok (500) → VerbFailure(dead_handle, control_post_error) — no false exit-0 (T-207-14)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/edits")) return { status: 500, body: { ok: false } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("edit", ["55", "x"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+    expect((err as VerbFailure).body["status"]).toBe(500);
+  });
+
+  it("edit with NO resolved handle is a dead_handle — never a silent no-op", async () => {
+    const err = await runVerb("edit", ["55", "x"], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
+  });
+});
+
+describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route (MEDIA-01)", () => {
+  /** A tiny base64 payload the tests POST as the media bytes. */
+  const PHOTO_B64 = Buffer.from("\x89PNG\r\n\x1a\n-fake-photo-bytes").toString("base64");
+  const VOICE_B64 = Buffer.from("OggS-fake-voice-bytes").toString("base64");
+
+  it("send-photo POSTs {kind:'photo', fromUserId:111, fileBase64} to /media then reply-waits and returns the reply", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/media")) return { status: 200, body: { ok: true, messageId: 2001 } };
+      if (url.includes("/outbound")) return { status: 200, body: [{ messageId: 2002, text: "nice photo" }] };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const result = (await runVerb("send-photo", [PHOTO_B64], ctx)) as Record<string, unknown>;
+
+    const post = rec.calls.find((c) => c.url.includes("/media"))!;
+    expect(post.method).toBe("POST");
+    expect(post.url.endsWith(`/control/chats/${fakeHandle().chatId}/media`)).toBe(true);
+    expect(post.body).toMatchObject({ kind: "photo", fromUserId: 111, fileBase64: PHOTO_B64 });
+    // The reply-wait surfaced the bot reply (honest, not fabricated) keyed on the
+    // minted media messageId (2001).
+    const wait = rec.calls.find((c) => c.url.includes("/outbound"))!;
+    expect(wait.url).toContain("afterMessageId=2001");
+    expect(result).toMatchObject({ inboundId: 2001, botReplyId: 2002, reply: "nice photo" });
+  });
+
+  it("send-voice POSTs {kind:'voice', …} to /media (the same reply-wait shape as send)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/media")) return { status: 200, body: { ok: true, messageId: 3001 } };
+      if (url.includes("/outbound")) return { status: 200, body: [{ messageId: 3002, text: "got it" }] };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const result = (await runVerb("send-voice", [VOICE_B64], ctx)) as Record<string, unknown>;
+    const post = rec.calls.find((c) => c.url.includes("/media"))!;
+    expect(post.body).toMatchObject({ kind: "voice", fromUserId: 111, fileBase64: VOICE_B64 });
+    expect(result).toMatchObject({ inboundId: 3001, botReplyId: 3002, reply: "got it" });
+  });
+
+  it("send-photo with an EMPTY outbound throws VerbFailure(no_reply) — no false success (T-207-14)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/media")) return { status: 200, body: { ok: true, messageId: 4001 } };
+      if (url.includes("/outbound")) return { status: 200, body: [] }; // honest no-reply
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("send-photo", [PHOTO_B64], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("no_reply");
+    expect((err as VerbFailure).body).toHaveProperty("inboundId", 4001);
+  });
+
+  it("a missing bytes arg → VerbFailure(bad_json); the control fetch is NEVER called", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("send-photo", [], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a media POST !ok (500) → VerbFailure(dead_handle, control_post_error) BEFORE the reply-wait", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/media")) return { status: 500, body: { ok: false } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("send-photo", [PHOTO_B64], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+    // The reply-wait was never reached (the POST failed fast).
+    expect(rec.calls.some((c) => c.url.includes("/outbound"))).toBe(false);
+  });
+
+  it("a media POST 200 with NO numeric messageId fails honestly (not a 45s no_reply)", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/media")) return { status: 200, body: { ok: true } }; // no messageId
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("send-photo", [PHOTO_B64], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+  });
+
+  it("send-photo with NO resolved handle is a dead_handle — never a silent no-op", async () => {
+    const err = await runVerb("send-photo", [PHOTO_B64], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
+  });
+});
+
 describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_error)", () => {
   it("db against a MISSING memory.db is a dead_handle (db_unavailable), NOT rpc_error", async () => {
     // A freshly-spawned rig before its first write: the db path does not exist.
@@ -717,18 +1005,33 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
 });
 
 describe("chan/tg CLI — runVerb: deferred verbs exit honestly (Deferred-Ideas boundary)", () => {
+  // Phase 207 wired send-photo/send-voice/tap/edit to the control routes — ONLY
+  // `group` remains deferred (Phase 208). The four 207 verbs are covered by the
+  // wired-verb suites below; they must NO LONGER throw not_implemented_in_phase.
+  it.each([["group", "208"]])(
+    "%s throws VerbFailure with not_implemented_in_phase pointing at phase %s",
+    async (verb, phase) => {
+      const err = await runVerb(verb, [], { handle: fakeHandle() }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(VerbFailure);
+      const bodyStr = JSON.stringify((err as VerbFailure).body);
+      expect(bodyStr).toMatch(/not_implemented_in_phase/);
+      expect(bodyStr).toContain(phase);
+    },
+  );
+
   it.each([
-    ["send-photo", "207"],
-    ["send-voice", "207"],
-    ["tap", "207"],
-    ["edit", "207"],
-    ["group", "208"],
-  ])("%s throws VerbFailure with not_implemented_in_phase pointing at phase %s", async (verb, phase) => {
-    const err = await runVerb(verb, [], { handle: fakeHandle() }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(VerbFailure);
-    const bodyStr = JSON.stringify((err as VerbFailure).body);
-    expect(bodyStr).toMatch(/not_implemented_in_phase/);
-    expect(bodyStr).toContain(phase);
+    ["send-photo"],
+    ["send-voice"],
+    ["tap"],
+    ["edit"],
+  ])("%s is NO LONGER a not_implemented_in_phase stub (wired in Phase 207)", async (verb) => {
+    // It must reach the verb body (which then fails honestly on the fake handle's
+    // dead control endpoint / bad args) — NOT short-circuit to the deferred stub.
+    const err = await runVerb(verb, ["1", "x"], { handle: fakeHandle() }).catch((e: unknown) => e);
+    // Whatever it throws (a real control error), it must NOT be the deferral.
+    if (err instanceof VerbFailure) {
+      expect(err.kind).not.toBe("not_implemented_in_phase");
+    }
   });
 });
 
