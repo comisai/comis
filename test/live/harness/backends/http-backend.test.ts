@@ -314,3 +314,113 @@ describe("http-backend binary response path (MEDIA-01/02 — a Buffer body serve
     expect(nativeJson.result.id).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CHAN2-02 FIX #1 (Phase 209) — the native-route matcher is telegram-shaped.
+//
+// The 204 base discriminates the native surface with a single hard-coded
+// `BOT_PATH = /^\/bot[^/]+\/([^?]+).../` matcher — it matches ONLY
+// `/bot<token>/<method>`. A second HTTP-class channel (Signal) serves its native
+// wire surface under a DIFFERENT path shape — `/api/v1/{check,rpc,events}` — which
+// `BOT_PATH` will never match, so it 404s on the pre-patch base. The fix
+// generalizes surface discrimination so a channel registers its OWN path
+// predicate (`registerPathRoute(matcher, handler)`, RESEARCH Open-Q2), checked
+// BEFORE the preserved Telegram `BOT_PATH` default. NO channel's path shape is
+// baked into the base beyond the Telegram default (the regression guard).
+// (Test-infra under `test/live/` — ZERO product change.)
+// ---------------------------------------------------------------------------
+
+describe("http-backend generalized native matcher (CHAN2-02 FIX #1)", () => {
+  it("dispatches a channel-registered arbitrary path (Signal POST /api/v1/rpc) with body + query", async () => {
+    const be = createHttpBackend();
+    active = be;
+    let seenPath: string | undefined;
+    let seenBody: string | undefined;
+    let seenQuery: string | undefined;
+    let seenMethod: string | undefined;
+    // A channel-supplied matcher: a string PREFIX (the simplest form). The base
+    // owns the discrimination; the channel owns its internal sub-routing.
+    be.registerPathRoute("/api/v1/", (ctx) => {
+      seenPath = ctx.path;
+      seenBody = ctx.body;
+      seenQuery = ctx.query;
+      seenMethod = ctx.httpMethod;
+      return { status: 200, body: { jsonrpc: "2.0", id: 1, result: { timestamp: 1700000000001 } } };
+    });
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/api/v1/rpc?account=%2B15555550100`, {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method: "send", id: 1 }),
+    });
+    const json = (await res.json()) as { jsonrpc: string; result: { timestamp: number } };
+
+    expect(res.status).toBe(200);
+    expect(seenPath).toBe("/api/v1/rpc");
+    expect(seenMethod).toBe("POST");
+    expect(seenBody).toBe(JSON.stringify({ jsonrpc: "2.0", method: "send", id: 1 }));
+    expect(seenQuery).toBe("account=%2B15555550100");
+    expect(json.jsonrpc).toBe("2.0");
+    expect(json.result.timestamp).toBe(1700000000001);
+  });
+
+  it("dispatches a different arbitrary path (Signal GET /api/v1/check) via a predicate matcher", async () => {
+    const be = createHttpBackend();
+    active = be;
+    let hit = false;
+    // A channel-supplied matcher can also be a PREDICATE over the request path.
+    be.registerPathRoute(
+      (path) => path === "/api/v1/check",
+      () => {
+        hit = true;
+        return { status: 200, body: { ok: true } };
+      },
+    );
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/api/v1/check`, { method: "GET" });
+    const json = (await res.json()) as { ok: boolean };
+
+    expect(res.status).toBe(200);
+    expect(hit).toBe(true);
+    expect(json.ok).toBe(true);
+  });
+
+  it("regression guard: the Telegram /bot<token>/<method> native route still dispatches byte-identically", async () => {
+    // The generalization is ADDITIVE — registering a path route must not disturb
+    // the preserved Telegram BOT_PATH default. A native route + a path route are
+    // registered together; each fires only for its own surface.
+    const be = createHttpBackend();
+    active = be;
+    let nativeMethod: string | undefined;
+    be.registerNativeRoute((method) => {
+      nativeMethod = method;
+      return { status: 200, body: { ok: true, result: { id: 12345, is_bot: true } } };
+    });
+    be.registerPathRoute("/api/v1/", () => ({ status: 200, body: { jsonrpc: "2.0", result: {} } }));
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/bot12345:test/getMe`, { method: "POST", body: JSON.stringify({ a: 1 }) });
+    const json = (await res.json()) as { ok: boolean; result: { id: number; is_bot: boolean } };
+
+    expect(res.status).toBe(200);
+    expect(nativeMethod).toBe("getMe"); // the BOT_PATH default still captures the method
+    expect(json.ok).toBe(true);
+    expect(json.result.id).toBe(12345);
+    expect(json.result.is_bot).toBe(true);
+  });
+
+  it("does not over-broaden: an unmatched path still 404s even with a path route registered", async () => {
+    const be = createHttpBackend();
+    active = be;
+    be.registerPathRoute("/api/v1/", () => ({ status: 200, body: { ok: true } }));
+    const { apiRoot } = await be.start();
+
+    const res = await fetch(`${apiRoot}/some/other/surface`, { method: "GET" });
+    const json = (await res.json()) as { ok: boolean; error_code: number };
+
+    expect(res.status).toBe(404);
+    expect(json.ok).toBe(false);
+    expect(json.error_code).toBe(404);
+  });
+});
