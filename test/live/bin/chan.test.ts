@@ -1188,6 +1188,50 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(result["detached"]).toBe(true);
   });
 
+  // ── FIX #1 (CHAN2-02 foundation-design-bug): `up` must thread the PARSED channel
+  // into StandaloneRigOptions.channel — `chan --channel signal up` boots a Signal
+  // rig, NOT the hard-coded Telegram one. Drive the REAL parse→ctx→dispatch path so
+  // the --channel flag actually reaches the verb (the CR-01 masking lesson).
+
+  it("up threads the PARSED channel into the launcher (chan --channel signal up → channel:'signal')", async () => {
+    const startStandaloneRigFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle({ channel: "signal" }) });
+    const parsed = parseArgs(["--channel", "signal", "up"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, undefined), startStandaloneRigFn };
+    await runVerb(parsed.verb as string, parsed.args, ctx);
+    expect(startStandaloneRigFn).toHaveBeenCalledTimes(1);
+    // The launcher receives channel:"signal" — NOT the pre-patch hard-coded "telegram".
+    expect(startStandaloneRigFn.mock.calls[0]?.[0]).toMatchObject({ channel: "signal" });
+  });
+
+  it("up with --channel telegram (and the default, no --channel) still spawns a Telegram rig — byte-identical regression guard", async () => {
+    // Explicit telegram.
+    const tgFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle() });
+    const tgParsed = parseArgs(["--channel", "telegram", "up"]);
+    await runVerb(tgParsed.verb as string, tgParsed.args, {
+      ...contextFromParsed(tgParsed, undefined),
+      startStandaloneRigFn: tgFn,
+    });
+    expect(tgFn.mock.calls[0]?.[0]).toMatchObject({ channel: "telegram" });
+
+    // Default (no --channel → the `tg` alias). The launcher STILL gets telegram.
+    const defFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle() });
+    const defParsed = parseArgs(["up"]);
+    await runVerb(defParsed.verb as string, defParsed.args, {
+      ...contextFromParsed(defParsed, undefined),
+      startStandaloneRigFn: defFn,
+    });
+    expect(defFn.mock.calls[0]?.[0]).toMatchObject({ channel: "telegram" });
+  });
+
+  it("up --detached --channel signal threads the channel through the detached path too", async () => {
+    const startStandaloneRigFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle({ channel: "signal", pid: 7000 }) });
+    const parsed = parseArgs(["--channel", "signal", "up", "--detached"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, undefined), startStandaloneRigFn };
+    await runVerb(parsed.verb as string, parsed.args, ctx);
+    // BOTH the threaded channel AND the detached flag reach the launcher.
+    expect(startStandaloneRigFn.mock.calls[0]?.[0]).toMatchObject({ channel: "signal", detached: true });
+  });
+
   // ── Cold-shell DETACHED lifecycle (Plan 208-08, Option A) — a handle WITH a pid.
 
   it("restart against a DETACHED handle (pid present) POSTs the rig-control /restart (Option A)", async () => {
