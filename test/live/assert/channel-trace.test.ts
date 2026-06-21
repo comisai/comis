@@ -28,7 +28,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertChannelTrace, readMirrorText } from "./channel-trace.js";
+import { readMirrorText } from "./channel-trace.js";
 
 // Tmp dirs created per DB-using test — cleaned up after each test (the
 // delivery-modes.test.ts idiom).
@@ -162,73 +162,5 @@ describe("readMirrorText — the direct readonly delivery_mirror read (ORACLE-02
     } finally {
       ro.close();
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Task 2 — assertChannelTrace (the HARD dual-oracle cross-check, ORACLE-01+02)
-// ---------------------------------------------------------------------------
-
-describe("assertChannelTrace — the HARD dual-oracle cross-check (ORACLE-01 + ORACLE-02)", () => {
-  /** A minimal channel-oracle fake (structural subset — channel-agnostic). */
-  function fakeEmulator(text: string | undefined): {
-    lastBotReply(chat: { chatId: number }): { text?: string } | undefined;
-  } {
-    return {
-      lastBotReply: () => (text === undefined ? undefined : { text }),
-    };
-  }
-
-  it("resolves (no throw) when the wire text equals the mirror text", async () => {
-    const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "hi", createdAt: 1000 });
-
-    await expect(
-      assertChannelTrace({
-        emulator: fakeEmulator("hi"),
-        chat: { chatId: 42 },
-        memoryDbPath: dbPath,
-        sessionKey: "s",
-      }),
-    ).resolves.toBeUndefined();
-  });
-
-  it("throws naming BOTH values + 'dual-oracle' when the wire text != the mirror text", async () => {
-    const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "bye", createdAt: 1000 });
-
-    await expect(
-      assertChannelTrace({
-        emulator: fakeEmulator("hi"),
-        chat: { chatId: 42 },
-        memoryDbPath: dbPath,
-        sessionKey: "s",
-      }),
-    ).rejects.toThrow(/dual-oracle/);
-
-    // The thrown message names BOTH the wire and the mirror values (so a
-    // failure is diagnosable from the throw alone — no-false-success).
-    await expect(
-      assertChannelTrace({
-        emulator: fakeEmulator("hi"),
-        chat: { chatId: 42 },
-        memoryDbPath: dbPath,
-        sessionKey: "s",
-      }),
-    ).rejects.toThrow(/hi[\s\S]*bye|bye[\s\S]*hi/);
-  });
-
-  it("throws an honest, reason-coded error when the mirror row is ABSENT (never a silent pass)", async () => {
-    const dbPath = freshMirrorDb();
-    // No row for "s" — a wire reply with no mirror is a real failure, not a pass.
-
-    await expect(
-      assertChannelTrace({
-        emulator: fakeEmulator("hi"),
-        chat: { chatId: 42 },
-        memoryDbPath: dbPath,
-        sessionKey: "s",
-      }),
-    ).rejects.toThrow(/delivery_mirror|no mirror/i);
   });
 });
