@@ -66,6 +66,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, relative, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
+import { pollPortFree } from "../../harness/rig-lifecycle.js";
 
 const isLive = !!process.env["COMIS_LIVE"];
 
@@ -295,10 +296,14 @@ describe.skipIf(!isLive)("ACCEPT-01 Option A Stage-C — a cold-shell tg up(p1)�
 
       // ── NO LEAK (the headline's no-false-success absolute): the rig PROCESS is
       //    gone, the gateway PORT is free, and the handle is removed.
-      // Give a brief settle for the OS to release the port after the process exits.
-      await new Promise((r) => setTimeout(r, 1500));
       expect(pidAlive(handle.pid), "the detached rig process must be GONE after tg down (no zombie daemon)").toBe(false);
-      expect(await portFree(gwPort), "the gateway port must be FREE after tg down (no leaked daemon)").toBe(true);
+      // INFO-3: poll for the port to free (TIME_WAIT/LAST_ACK can linger briefly after
+      // the daemon process exits) rather than a fixed real-clock settle — consistent with
+      // the rig's own isPortFree oracle, and not timing-fragile on a loaded host.
+      expect(
+        await pollPortFree(gwPort, portFree),
+        "the gateway port must be FREE after tg down (no leaked daemon)",
+      ).toBe(true);
       expect(existsSync(handlePath), "the handle file must be removed after tg down").toBe(false);
     },
     240_000,

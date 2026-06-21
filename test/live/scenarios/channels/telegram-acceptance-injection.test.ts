@@ -135,9 +135,11 @@ function openReadonlyWithVec(dbPath: string): Database.Database {
  * The `tg db` residency sweep (the SECRET-RESIDENCY oracle over the isolated
  * memory.db). Opens the db READONLY (with sqlite-vec loaded), walks EVERY user
  * table, and scans EVERY string cell for credential-shaped patterns via the
- * product-shared scanForSecrets (the SECRET_PATTERN) — Don't-Hand-Roll a new
- * scanner. Returns the list of REDACTED matches (empty == zero residency). A
- * non-empty return is a HARD-oracle trip the caller HALTS on (§10A.5).
+ * harness secret-sweep regex (`cost.ts` SECRET_PATTERN — a port of the
+ * `bench-memory.sh` sweep, positive-control-verified non-no-op; NOT a `@comis/*`
+ * product export, so it does not track a product secret-pattern divergence — IN-01).
+ * Returns the list of REDACTED matches (empty == zero residency). A non-empty
+ * return is a HARD-oracle trip the caller HALTS on (§10A.5).
  *
  * Reads the schema from sqlite_master (the db-oracle pattern) so it sweeps
  * whatever tables the daemon actually created — no hardcoded table list that

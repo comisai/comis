@@ -67,6 +67,11 @@ import {
   handlePath,
   type ChanliveHandle,
 } from "./chanlive-handle.js";
+import {
+  respawnDaemon,
+  reapForTeardown,
+  type RespawnOutcome,
+} from "./rig-lifecycle.js";
 
 /** The fixed test chat id the rig drives (a fabricated id, never a real operator chat — T-204-15). */
 const DEFAULT_CHAT_ID = 424242;
@@ -262,16 +267,25 @@ function spawnDaemonGrandchild(state: RigState): ChildProcess {
  * exit. Every path (SIGTERM, `/shutdown`, orphan-reap) calls this.
  */
 async function teardown(state: RigState, code: number): Promise<never> {
-  if (state.tearingDown) {
-    // A second trigger — wait out the first, then exit.
-    await new Promise((r) => setTimeout(r, REAP_GRACE_MS));
-    process.exit(code);
-  }
-  state.tearingDown = true;
+  // AUTHORITATIVE teardown (WR-01): reapForTeardown sets the `tearingDown` latch (so a
+  // racing /reset|/restart refuses to respawn) and reaps the CURRENT daemon, then
+  // re-reads state.daemon and reaps AGAIN — catching a daemon a /reset swapped in just
+  // before the latch took effect. This guarantees NO daemon survives teardown even on
+  // the orphan-reap path (where process.exit does NOT group-kill the respawned one).
+  // It returns false when the latch was already set (a concurrent teardown owns it).
+  let owned = true;
   try {
-    await reapDaemon(state.daemon, state.env.gatewayPort);
+    owned = await reapForTeardown(
+      state,
+      { gatewayPort: state.env.gatewayPort, reap: reapDaemon },
+    );
   } catch {
     // best-effort — proceed to the rest of teardown regardless.
+  }
+  if (!owned) {
+    // A second trigger — wait out the first teardown, then exit.
+    await new Promise((r) => setTimeout(r, REAP_GRACE_MS));
+    process.exit(code);
   }
   try {
     await state.emulator.stop();
@@ -407,32 +421,59 @@ async function handleRigControl(
   if (req.method === "POST" && url === "/reset") {
     // Clean-slate the isolated state (memory.db + logs + sessions), reset the chat
     // oracle, then restart. Scoped UNDER the throwaway dataDir — never ~/.comis.
-    await reapDaemon(state.daemon, state.env.gatewayPort);
-    for (const f of [
-      join(state.dataDir, MEMORY_DB_FILE),
-      `${join(state.dataDir, MEMORY_DB_FILE)}-wal`,
-      `${join(state.dataDir, MEMORY_DB_FILE)}-shm`,
-    ]) {
-      rmSync(f, { force: true });
-    }
-    rmSync(join(state.dataDir, "logs"), { recursive: true, force: true });
-    rmSync(join(state.dataDir, "workspace", "sessions"), { recursive: true, force: true });
-    state.emulator.resetChat({ chatId: DEFAULT_CHAT_ID });
-    state.daemon = spawnDaemonGrandchild(state);
-    const ok = await waitForHealthy(state.gatewayUrl);
-    res.statusCode = ok ? 200 : 503;
-    res.end(JSON.stringify({ ok, status: ok ? "reset" : "reset_unhealthy" }));
+    //
+    // Delegated to respawnDaemon so /reset shares the SAME guards as /restart:
+    //   - WR-01: refuses to respawn (and skips the wipe) once teardown's latch is set;
+    //   - WR-02: only wipes + rebinds once the prior daemon is CONFIRMED reaped AND the
+    //     gateway port is free — so the wipe never runs against a live daemon's db and
+    //     the fresh daemon never races an EADDRINUSE.
+    // The wipe is the beforeSpawn seam (after the confirmed reap, before the new spawn).
+    const outcome: RespawnOutcome = await respawnDaemon(state, {
+      gatewayPort: state.env.gatewayPort,
+      reap: reapDaemon,
+      isPortFree,
+      spawn: () => spawnDaemonGrandchild(state),
+      waitForHealthy: () => waitForHealthy(state.gatewayUrl),
+      beforeSpawn: () => {
+        for (const f of [
+          join(state.dataDir, MEMORY_DB_FILE),
+          `${join(state.dataDir, MEMORY_DB_FILE)}-wal`,
+          `${join(state.dataDir, MEMORY_DB_FILE)}-shm`,
+        ]) {
+          rmSync(f, { force: true });
+        }
+        rmSync(join(state.dataDir, "logs"), { recursive: true, force: true });
+        rmSync(join(state.dataDir, "workspace", "sessions"), { recursive: true, force: true });
+        state.emulator.resetChat({ chatId: DEFAULT_CHAT_ID });
+      },
+    });
+    res.statusCode = outcome.ok ? 200 : 503;
+    res.end(JSON.stringify({ ok: outcome.ok, status: outcome.ok ? "reset" : "reset_unhealthy" }));
     return;
   }
   res.statusCode = 404;
   res.end(JSON.stringify({ ok: false, error: "not_found", url }));
 }
 
-/** Reap the current daemon grandchild + re-spawn it on the (current) config; wait on health. */
+/**
+ * Reap the current daemon grandchild + re-spawn it on the (current) config; wait on
+ * health. Delegates the DECISION to {@link respawnDaemon}, which (WR-01) REFUSES to
+ * respawn once teardown's `tearingDown` latch is set — so no daemon is created that a
+ * teardown-via-`process.exit` could not reap on the orphan-reap path — and (WR-02)
+ * HONORS the reap result + confirms {@link isPortFree} before rebinding, so a fresh
+ * daemon never races an EADDRINUSE onto a gateway port the prior (slow-to-die) daemon
+ * still holds. Returns the boolean the `/restart`/`/reconfigure` verbs branch on (a
+ * refusal is honestly "not healthy" → a `*_unhealthy` 503).
+ */
 async function restartDaemon(state: RigState): Promise<boolean> {
-  await reapDaemon(state.daemon, state.env.gatewayPort);
-  state.daemon = spawnDaemonGrandchild(state);
-  return await waitForHealthy(state.gatewayUrl);
+  const outcome: RespawnOutcome = await respawnDaemon(state, {
+    gatewayPort: state.env.gatewayPort,
+    reap: reapDaemon,
+    isPortFree,
+    spawn: () => spawnDaemonGrandchild(state),
+    waitForHealthy: () => waitForHealthy(state.gatewayUrl),
+  });
+  return outcome.ok;
 }
 
 /**
