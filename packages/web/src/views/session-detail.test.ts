@@ -119,6 +119,32 @@ describe("IcSessionDetail", () => {
     expect(api.getSessionDetail).toHaveBeenCalledWith("default:user123:telegram");
   });
 
+  it("has an incident drill control that navigates to the Incident view keyed on the sessionKey (179-08)", async () => {
+    const api = createMockApiClient();
+    const el = await createElement<IcSessionDetail>("ic-session-detail", {
+      apiClient: api,
+      sessionKey: "default:user123:telegram",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    await el.updateComplete;
+
+    // Find the drill control (a button surfacing the incident drill).
+    const drill = Array.from(el.shadowRoot?.querySelectorAll("button") ?? []).find((b) =>
+      (b.textContent ?? "").toLowerCase().includes("incident"),
+    );
+    expect(drill).toBeTruthy();
+
+    // Clicking it navigates to the incident route carrying a VALID obs.explain
+    // ref (the sessionKey) — §11 "drill-down resolves to a valid obs.explain ref".
+    window.location.hash = "#/sessions/default:user123:telegram";
+    drill!.click();
+    await el.updateComplete;
+
+    expect(window.location.hash).toContain("observe/incident");
+    expect(window.location.hash).toContain("ref=");
+    expect(decodeURIComponent(window.location.hash)).toContain("default:user123:telegram");
+  });
+
   it("renders three tab buttons (Conversation, Context State, Metrics)", async () => {
     const api = createMockApiClient();
     const el = await createElement<IcSessionDetail>("ic-session-detail", {

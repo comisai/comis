@@ -236,6 +236,27 @@ describe("createRouter", () => {
       });
     });
 
+    it("#/observe/incident -> ic-incident-view, route 'observe/incident', params {} (179-08)", () => {
+      window.location.hash = "#/observe/incident";
+      const router = createRouter(onChange);
+      expect(router.current()).toEqual({
+        view: "ic-incident-view",
+        route: "observe/incident",
+        params: {},
+        query: {},
+      });
+    });
+
+    it("#/observe/incident?ref=<key> -> ic-incident-view carrying the obs.explain ref in query (179-08 drill-down)", () => {
+      window.location.hash = "#/observe/incident?ref=agent:default:telegram:12345";
+      const router = createRouter(onChange);
+      const match = router.current();
+      expect(match.view).toBe("ic-incident-view");
+      expect(match.route).toBe("observe/incident");
+      // The drill resolves to a VALID obs.explain ref (§11).
+      expect(match.query).toEqual({ ref: "agent:default:telegram:12345" });
+    });
+
     it("#/security -> ic-security-view, route 'security', params {}", () => {
       window.location.hash = "#/security";
       const router = createRouter(onChange);
