@@ -633,6 +633,243 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
+  // MEDIA-01 / MEDIA-03 — injectMedia / injectLocation queue the right inbound
+  // `message` update + mint/return a message_id (mirroring injectMessage). The
+  // media update carries the SAME file_id storeFile minted, so getFile + the
+  // route + the adapter's tg-file://{file_id} resolution all agree.
+  // -------------------------------------------------------------------------
+  describe("injectMedia / injectLocation (MEDIA-01 — queue a media/place message + mint a message_id)", () => {
+    it("injectMedia stores the bytes, queues a media `message` carrying the stored file_id, and RETURNS the minted message_id", async () => {
+      const bytes = Buffer.from("a-voice-clip", "utf8");
+      const msgId = emu.injectMedia(
+        { chatId: CHAT_ID },
+        { id: 777, firstName: "Alice" },
+        "voice",
+        bytes,
+        { mimeType: "audio/ogg", duration: 3 },
+      );
+      expect(typeof msgId).toBe("number");
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message).toBeDefined();
+      expect(message["message_id"]).toBe(msgId);
+      const voice = message["voice"] as Record<string, unknown>;
+      expect(voice).toBeDefined();
+      const storedFileId = voice["file_id"] as string;
+
+      // The injected file_id resolves to the stored bytes (getFile + the route).
+      const fileEnv = await callMethod(apiRoot, "getFile", { file_id: storedFileId });
+      expect(fileEnv.ok).toBe(true);
+      const file = fileEnv.result as Record<string, unknown>;
+      expect(file["file_size"]).toBe(bytes.length);
+      const res = await fetch(`${apiRoot}/file/bot${TOKEN}/${file["file_path"] as string}`);
+      const received = Buffer.from(await res.arrayBuffer());
+      expect(received.equals(bytes)).toBe(true);
+    });
+
+    it("injectMedia mints sequential message_ids (it advances the counter like injectMessage)", () => {
+      const a = emu.injectMedia({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "photo", Buffer.from("p"));
+      const b = emu.injectMedia({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "photo", Buffer.from("q"));
+      expect(b).toBe(a + 1);
+    });
+
+    it("injectMedia with spoiler:true sets has_media_spoiler on the message", async () => {
+      emu.injectMedia({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "photo", Buffer.from("p"), { spoiler: true });
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message["has_media_spoiler"]).toBe(true);
+    });
+
+    it("injectLocation queues a `message` carrying a location (no file store) + mints a message_id", async () => {
+      const msgId = emu.injectLocation(
+        { chatId: CHAT_ID },
+        { id: 777, firstName: "Alice" },
+        { location: { latitude: 51.5, longitude: -0.12, horizontalAccuracy: 10 } },
+      );
+      expect(typeof msgId).toBe("number");
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message["message_id"]).toBe(msgId);
+      const loc = message["location"] as Record<string, unknown>;
+      expect(loc["latitude"]).toBe(51.5);
+      expect(loc["longitude"]).toBe(-0.12);
+      // No file was stored — a location is not media.
+      expect(message["voice"]).toBeUndefined();
+      expect(message["document"]).toBeUndefined();
+    });
+
+    it("injectLocation with a venue sets message.venue (venue WINS — and NOT message.location)", async () => {
+      emu.injectLocation(
+        { chatId: CHAT_ID },
+        { id: 777, firstName: "Alice" },
+        { venue: { latitude: 40.0, longitude: -73.0, title: "The Spot", address: "1 Main St" } },
+      );
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      const venue = message["venue"] as Record<string, unknown>;
+      expect(venue["title"]).toBe("The Spot");
+      expect(message["location"]).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // INTERACT-01 / INTERACT-02 — injectCallback / injectEdit queue the
+  // callback_query / edited_message updates the adapter handlers consume
+  // (telegram-inbound.ts:165 / :117). The callback references an EXISTING bot
+  // reply (mints NO message_id, like injectReaction); the edit references the
+  // existing message_id.
+  // -------------------------------------------------------------------------
+  describe("injectCallback / injectEdit (INTERACT-01/02 — queue callback_query / edited_message)", () => {
+    it("injectCallback queues a callback_query update referencing the EXISTING bot reply (data + tapper preserved), mints NO message_id", async () => {
+      // A bot reply with an inline button to tap.
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "tap me" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      const ret = emu.injectCallback({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "ACTION_YES");
+      // Like injectReaction, a callback references an existing reply — no new id.
+      expect(ret).toBeUndefined();
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const cb = updates[0]!["callback_query"] as Record<string, unknown>;
+      expect(cb).toBeDefined();
+      expect(cb["data"]).toBe("ACTION_YES");
+      // The tapper (≠ bot).
+      const from = cb["from"] as Record<string, unknown>;
+      expect(from["id"]).toBe(777);
+      expect(from["is_bot"]).toBe(false);
+      // The tapped message is the EXISTING bot reply (chat.id + message_id).
+      const message = cb["message"] as Record<string, unknown>;
+      expect(message["message_id"]).toBe(botReplyId);
+      expect((message["chat"] as Record<string, unknown>)["id"]).toBe(CHAT_ID);
+      expect(typeof cb["chat_instance"]).toBe("string");
+    });
+
+    it("injectCallback mints NO message_id — a subsequent sendMessage is the NEXT sequential id (not id+2)", async () => {
+      const first = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "first" }))
+        .result as Record<string, unknown>;
+      const firstId = first["message_id"] as number;
+      emu.injectCallback({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, firstId, "X");
+      const second = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "second" }))
+        .result as Record<string, unknown>;
+      expect((second["message_id"] as number)).toBe(firstId + 1);
+    });
+
+    it("injectEdit queues an edited_message update for the existing message_id with the new text + edit_date", async () => {
+      const ret = emu.injectEdit({ chatId: CHAT_ID }, 555, "the corrected text", { id: 777, firstName: "Alice" });
+      expect(ret).toBeUndefined();
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const edited = updates[0]!["edited_message"] as Record<string, unknown>;
+      expect(edited).toBeDefined();
+      expect(edited["message_id"]).toBe(555);
+      expect(edited["text"]).toBe("the corrected text");
+      expect(typeof edited["edit_date"]).toBe("number");
+      expect((edited["from"] as Record<string, unknown>)["id"]).toBe(777);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // INTERACT-01 — answerCallbackQuery / editMessageText RECORD a
+  // RecordedOutbound (Pattern 5). The adapter calls answerCallbackQuery
+  // UNCONDITIONALLY + FIRST (telegram-inbound.ts:168); recording it makes the
+  // ack provable on the channel oracle (the silent default: would answer but be
+  // invisible). The ack body carries NO chat_id (only callback_query_id), so it
+  // records on the chat-0 oracle.
+  // -------------------------------------------------------------------------
+  describe("answerCallbackQuery / editMessageText record cases (INTERACT-01 — Pattern 5)", () => {
+    it("answerCallbackQuery returns { ok:true, result:true } AND records a RecordedOutbound (method:answerCallbackQuery)", async () => {
+      const env = await callMethod(apiRoot, "answerCallbackQuery", { callback_query_id: "cbq_123" });
+      // The adapter awaits ctx.answerCallbackQuery() → expects result:true (A5).
+      expect(env.ok).toBe(true);
+      expect(env.result).toBe(true);
+
+      // The ack is RECORDED (Pattern 5) — assertable on the channel oracle. The
+      // ack body has no chat_id, so it lands on the chat-0 oracle.
+      const ackRecord = emu.outbound({ chatId: 0 }).find((r) => r.method === "answerCallbackQuery");
+      expect(ackRecord).toBeDefined();
+      expect((ackRecord!.raw as Record<string, unknown>)["callback_query_id"]).toBe("cbq_123");
+    });
+
+    it("editMessageText records a RecordedOutbound (method:editMessageText, text) AND echoes a Message", async () => {
+      const env = await callMethod(apiRoot, "editMessageText", {
+        chat_id: CHAT_ID,
+        message_id: 4242,
+        text: "edited body",
+        parse_mode: "HTML",
+      });
+      expect(env.ok).toBe(true);
+      // grammy's editMessageText return type is Message-or-true; the emulator
+      // echoes a realistic Message.
+      const result = env.result as Record<string, unknown>;
+      expect(result["message_id"]).toBe(4242);
+      expect(result["text"]).toBe("edited body");
+      expect((result["chat"] as Record<string, unknown>)["id"]).toBe(CHAT_ID);
+
+      const editRecord = emu.outbound({ chatId: CHAT_ID }).find((r) => r.method === "editMessageText");
+      expect(editRecord).toBeDefined();
+      expect(editRecord!.messageId).toBe(4242);
+      expect(editRecord!.text).toBe("edited body");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // resetChat clears ALL FOUR new update kinds (no cross-test bleed — the
+  // WR-02 206-05 precedent extended). A media/edit `message`/`edited_message`
+  // is chat-id-matched; a callback_query is bot-global (kept by the `: true`
+  // tail) — but a callback whose tapped `message` is in the reset chat must
+  // also be dropped, so the filter matches the callback's message chat.id.
+  // -------------------------------------------------------------------------
+  describe("resetChat clears the new inbound kinds (no leak — WR-02 extended)", () => {
+    it("resetChat clears a QUEUED media `message`, location `message`, edited_message AND callback_query for that chat", async () => {
+      const sent = (await callMethod(apiRoot, "sendMessage", { chat_id: CHAT_ID, text: "reply" }))
+        .result as Record<string, unknown>;
+      const botReplyId = sent["message_id"] as number;
+
+      emu.injectMedia({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, "document", Buffer.from("d"));
+      emu.injectLocation({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, { location: { latitude: 1, longitude: 2 } });
+      emu.injectEdit({ chatId: CHAT_ID }, 555, "edit", { id: 777, firstName: "Alice" });
+      emu.injectCallback({ chatId: CHAT_ID }, { id: 777, firstName: "Alice" }, botReplyId, "DATA");
+      emu.resetChat({ chatId: CHAT_ID });
+
+      // All four kinds for CHAT_ID are gone — a short poll sees an empty queue.
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 1 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates).toEqual([]);
+    });
+
+    it("resetChat is chat-scoped: a callback_query / edited_message for a DIFFERENT chat survives", async () => {
+      const OTHER_CHAT = CHAT_ID + 7;
+      const sentOther = (await callMethod(apiRoot, "sendMessage", { chat_id: OTHER_CHAT, text: "other reply" }))
+        .result as Record<string, unknown>;
+      const otherReplyId = sentOther["message_id"] as number;
+
+      // Queue an edit + a callback in CHAT_ID, and a callback in OTHER_CHAT.
+      emu.injectEdit({ chatId: CHAT_ID }, 100, "x", { id: 777, firstName: "Alice" });
+      emu.injectCallback({ chatId: OTHER_CHAT }, { id: 888, firstName: "Bob" }, otherReplyId, "OTHER_DATA");
+      emu.resetChat({ chatId: CHAT_ID });
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      // Only the OTHER chat's callback remains.
+      expect(updates.length).toBe(1);
+      const cb = updates[0]!["callback_query"] as Record<string, unknown>;
+      expect(cb["data"]).toBe("OTHER_DATA");
+      expect(((cb["message"] as Record<string, unknown>)["chat"] as Record<string, unknown>)["id"]).toBe(OTHER_CHAT);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // SEC-01 — loopback bind
   // -------------------------------------------------------------------------
   describe("loopback bind (SEC-01)", () => {
