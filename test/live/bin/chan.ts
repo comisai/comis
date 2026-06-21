@@ -68,6 +68,14 @@ export interface ParsedArgs {
   /** `--restart` — the `tg reconfigure --restart` re-boot sub-flag (AUTO-04). */
   readonly restart?: boolean;
   /**
+   * `--detached` — `tg up --detached` spawns a DETACHED-subprocess rig (Plan
+   * 208-08, Option A) that OUTLIVES this `tg up` process, so a SEPARATE-shell
+   * `tg send`/`tg down` can drive it (the cold-shell, shell-only-unattended path).
+   * Without it, `tg up` boots an IN-PROCESS rig (the certified spine) that dies
+   * when `tg up` exits.
+   */
+  readonly detached?: boolean;
+  /**
    * `--set k=v` (REPEATABLE) — the `tg reconfigure` config overrides (AUTO-04, the
    * Track-K model sweep). Each `--set agents.default.model=qwen3.6:14b` adds one
    * `key→value` pair. A malformed `--set` (no `=`) is dropped (never a crash).
@@ -95,7 +103,7 @@ function stripQuotes(s: string): string {
 const STRING_FLAGS = new Set(["--channel", "--endpoint", "--model", "--event", "--tool", "--agent"]);
 
 /** The boolean sub-flags (presence-only; consume no value). */
-const BOOLEAN_FLAGS = new Set(["--json", "--deep", "--restart"]);
+const BOOLEAN_FLAGS = new Set(["--json", "--deep", "--restart", "--detached"]);
 
 /**
  * Parse the `chan`/`tg` CLI argv into a {@link ParsedArgs}. PURE — no side
@@ -112,6 +120,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let json = false;
   let deep = false;
   let restart = false;
+  let detached = false;
   let endpoint: string | undefined;
   let model: string | undefined;
   let event: string | undefined;
@@ -128,6 +137,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (tok === "--json") json = true;
       else if (tok === "--deep") deep = true;
       else if (tok === "--restart") restart = true;
+      else if (tok === "--detached") detached = true;
       continue;
     }
     if (tok === "--timeout") {
@@ -182,6 +192,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     ...(timeout !== undefined ? { timeout } : {}),
     ...(deep ? { deep } : {}),
     ...(restart ? { restart } : {}),
+    ...(detached ? { detached } : {}),
     ...(Object.keys(set).length > 0 ? { set } : {}),
   };
 }
@@ -386,6 +397,8 @@ export interface VerbContext {
   readonly agent?: string;
   /** The `--restart` sub-flag — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
   readonly restart?: boolean;
+  /** The `--detached` sub-flag — `up` (Plan 208-08, the cold-shell rig). Resolved by {@link parseArgs}. */
+  readonly detached?: boolean;
   /** The `--set k=v` overrides — `reconfigure` (AUTO-04). Resolved by {@link parseArgs}. */
   readonly set?: Record<string, string>;
 }
@@ -413,6 +426,7 @@ export function contextFromParsed(
     ...(parsed.deep === true ? { deep: true } : {}),
     ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
     ...(parsed.restart === true ? { restart: true } : {}),
+    ...(parsed.detached === true ? { detached: true } : {}),
     ...(parsed.set !== undefined ? { set: parsed.set } : {}),
   };
 }
@@ -463,6 +477,118 @@ const DEFERRED_VERBS: Record<string, string> = {
 
 /** Default reply-wait budget (ms) for `send` — bounded so a no-reply fails fast. */
 const SEND_WAIT_MS = 45_000;
+
+// ---------------------------------------------------------------------------
+// Cold-shell DETACHED-rig lifecycle helpers (Plan 208-08, Option A). A separate
+// process reads the handle (pid + rigControlEndpoint) and drives / reaps the
+// detached rig. NO half-down / half-restart — honest non-zero on failure.
+// ---------------------------------------------------------------------------
+
+/** Grace after a cold-shell SIGTERM before the SIGKILL escalation when reaping a detached rig (ms). */
+const DETACHED_DOWN_GRACE_MS = 20_000;
+/** Poll cadence for the detached-rig reap (ms). */
+const DETACHED_DOWN_PROBE_MS = 250;
+
+/** Is `pid` alive? `kill(pid, 0)` throws ESRCH when not (POSIX liveness probe). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Signal the process GROUP led by `pid` (negative pid → the rig-daemon + its daemon grandchild), then the bare pid. */
+function signalDetachedGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+    return;
+  } catch {
+    // group gone / unsupported — fall through to the single pid.
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // already gone — honest no-op.
+  }
+}
+
+/**
+ * Reap a detached rig from a COLD SHELL: SIGTERM the process group → wait up to
+ * {@link DETACHED_DOWN_GRACE_MS} for the rig PROCESS to be GONE (the group leader
+ * dead ⇒ the whole group — rig-daemon + daemon grandchild — reaped) → SIGKILL
+ * escalation. The PROCESS-dead check is the no-leak oracle. Returns true when gone.
+ */
+async function reapDetachedRig(pid: number): Promise<boolean> {
+  if (!pidAlive(pid)) return true;
+  signalDetachedGroup(pid, "SIGTERM");
+  const termDeadline = Date.now() + DETACHED_DOWN_GRACE_MS;
+  while (Date.now() < termDeadline) {
+    if (!pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, DETACHED_DOWN_PROBE_MS));
+  }
+  signalDetachedGroup(pid, "SIGKILL");
+  const killDeadline = Date.now() + DETACHED_DOWN_GRACE_MS;
+  while (Date.now() < killDeadline) {
+    if (!pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, DETACHED_DOWN_PROBE_MS));
+  }
+  return !pidAlive(pid);
+}
+
+/** Remove the handle file for a channel (idempotent) — a cold-shell `tg down` cleans the discovery anchor. */
+async function removeHandleFile(ctx: VerbContext, channel: string): Promise<void> {
+  const { handlePath } = await import("../harness/chanlive-handle.js");
+  const { existsSync, rmSync } = await import("node:fs");
+  const path = handlePath(channel, ctx.baseDir);
+  if (existsSync(path)) rmSync(path, { force: true });
+}
+
+/**
+ * POST a detached rig-control route (`/restart` / `/reset` / `/reconfigure`),
+ * owner-checked with the handle's gateway token. Maps a non-2xx / network error
+ * to an honest `dead_handle` (never a fabricated lifecycle success). Returns the
+ * parsed JSON body (the rig-control `{ ok, status, … }`).
+ */
+async function postRigControl(
+  ctx: VerbContext,
+  handle: ChanliveHandle,
+  route: "/restart" | "/reset" | "/reconfigure",
+  payload?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const doFetch = ctx.controlFetch ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(`${handle.rigControlEndpoint}${route}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${handle.gatewayToken}`,
+      },
+      body: JSON.stringify(payload ?? {}),
+      // A lifecycle re-boot is slow (the daemon grandchild restarts) — generous ceiling.
+      signal: AbortSignal.timeout(90_000),
+    });
+  } catch (e: unknown) {
+    throw new VerbFailure("dead_handle", {
+      reason: "rig_control_unreachable",
+      route,
+      endpoint: handle.rigControlEndpoint,
+      message: String(e),
+    });
+  }
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || body["ok"] === false) {
+    throw new VerbFailure("dead_handle", {
+      reason: "rig_control_failed",
+      route,
+      status: res.status,
+      ...body,
+    });
+  }
+  return body;
+}
 
 /** Open the isolated `memory.db` READONLY (copy the channel-trace openReadonlyWithVec posture). */
 function openReadonlyDb(dbPath: string): Database.Database {
@@ -628,12 +754,23 @@ export async function runVerb(
         channel: "telegram",
         model: ctx.model ?? "keyless",
         ...(ctx.baseDir !== undefined ? { baseDir: ctx.baseDir } : {}),
+        // --detached (Plan 208-08, Option A): spawn a DETACHED subprocess rig that
+        // OUTLIVES this `tg up` process so a SEPARATE-shell `tg send`/`tg down` can
+        // drive it (the cold-shell, shell-only-unattended path). The launcher
+        // returns once the detached rig reports healthy; this process then exits and
+        // the rig keeps running (its handle carries the pid + rig-control endpoint).
+        ...(ctx.detached === true ? { detached: true } : {}),
       };
       const rig = await launcher(opts);
       // Surface the discover-or-spawn outcome + the handle, but NEVER the token.
       const { gatewayToken: _omit, ...safeHandle } = rig.handle;
       void _omit;
-      return { reused: rig.reused, status: rig.reused ? "reused" : "spawned", handle: safeHandle };
+      return {
+        reused: rig.reused,
+        status: rig.reused ? "reused" : "spawned",
+        detached: ctx.detached === true,
+        handle: safeHandle,
+      };
     }
 
     case "down": {
@@ -641,12 +778,33 @@ export async function runVerb(
       // — it fires before the dead-handle guard so the reason is precisely
       // `refused` regardless of handle resolution. Reaching here means no
       // --endpoint was given.
-      //
-      // In-process scope (W1): the standalone CLI cannot tear down a separate-
-      // process rig from a cold shell. Report honestly rather than fake it.
+      const handle = ctx.handle as ChanliveHandle;
+      // DETACHED rig (Plan 208-08, Option A): the handle carries a `pid` (the
+      // detached subprocess's process-group leader). Tear it down for real from a
+      // COLD SHELL — SIGTERM the GROUP (the rig-daemon + its daemon grandchild),
+      // confirm the rig PROCESS is gone, then remove the handle. NO half-down rig.
+      if (handle.pid !== undefined) {
+        const reaped = await reapDetachedRig(handle.pid);
+        // The detached rig's own teardown removes the handle, but remove it here
+        // too (idempotent) so a later `tg up`/discover never resolves a dead rig.
+        await removeHandleFile(ctx, handle.channel);
+        if (!reaped) {
+          // The process would not die even after SIGKILL — an honest non-zero exit
+          // (never a fabricated "down" while a daemon lingers — the no-leak absolute).
+          throw new VerbFailure("dead_handle", {
+            reason: "down_reap_failed",
+            pid: handle.pid,
+            hint: "the detached rig process did not exit after SIGTERM+SIGKILL — check for a stuck daemon.",
+          });
+        }
+        return { status: "down", detached: true, pid: handle.pid, reaped: true };
+      }
+      // In-process scope (W1): the rig is owned by its in-process launcher (the
+      // 205-06 / 208-07 scenario), NOT a separate process — report honestly rather
+      // than fake it. (Use `tg up --detached` for a cold-shell-teardownable rig.)
       return {
         status: "down_not_owned_in_process",
-        hint: "a cold-shell `tg down` of a separate-process rig is a Phase 208 deliverable; the in-process rig is torn down by its owner (the 205-06 scenario).",
+        hint: "this handle has no pid → an in-process rig (torn down by its owner). Use `tg up --detached` for a cold-shell rig `tg down` can SIGTERM.",
       };
     }
 
@@ -663,44 +821,56 @@ export async function runVerb(
 
     case "restart":
     case "reset": {
-      // W1 honesty: the rig controller is IN-PROCESS (205-04) — a cold-shell
-      // `tg restart`/`tg reset --deep` against a separate-process rig is NOT
-      // served this phase. Reason-code it; the in-proc scenario (205-06) drives
-      // the controller directly.
-      //
       // WR-01: branch on the TYPED `--deep` flag (resolved by parseArgs into
-      // `ctx.deep`), NOT `args[0]` — parseArgs strips the flag from positionals,
-      // so `args[0] === "--deep"` was ALWAYS false and `reset --deep` was
-      // indistinguishable from a plain `reset` in the reported body.
+      // `ctx.deep`), NOT `args[0]` — parseArgs strips the flag from positionals.
       const resetVerb = verb === "reset" && ctx.deep === true ? "reset --deep" : verb;
+      const handle = ctx.handle as ChanliveHandle;
+      // DETACHED rig (Plan 208-08, Option A): drive the cold-shell lifecycle for
+      // real by POSTing the detached rig-control endpoint (owner-checked with the
+      // gateway token). `restart` → /restart; `reset --deep` → /reset (the isolated
+      // clean-slate). An honest non-zero exit on a failed POST / unhealthy re-boot.
+      if (handle.pid !== undefined) {
+        const route = verb === "reset" ? "/reset" : "/restart";
+        const body = await postRigControl(ctx, handle, route);
+        return { status: route === "/reset" ? "reset" : "restarted", verb: resetVerb, detached: true, ...body };
+      }
+      // In-process scope (W1): a cold-shell restart/reset against an IN-PROCESS rig
+      // is not served (its controller dies with its launcher). Reason-code it.
       return {
         status: "lifecycle_in_process_only",
         verb: resetVerb,
-        hint: "a cross-process `tg restart`/`reset --deep` needs the detached-subprocess rig (Phase 208); the in-process controller is driven by the 205-06 scenario.",
+        hint: "this handle has no pid → an in-process rig. Use `tg up --detached` for a cold-shell rig `tg restart`/`reset` can POST.",
       };
     }
 
     case "reconfigure": {
       // AUTO-04 (the Track-K model sweep) — rewrite the throwaway config with the
-      // `--set` overrides + restart. Like restart/reset this is a LIFECYCLE verb on
-      // the IN-PROCESS controller (205-04 W1): a cold-shell `tg reconfigure` against
-      // a separate-process rig cannot re-pin COMIS_DATA_DIR + re-boot it, so report
-      // honestly rather than fake a rewrite. The in-proc scenario (208-05 Stage-C)
-      // drives `controller.reconfigure(overrides)` directly. We ECHO the parsed
-      // overrides + the --restart intent so a driving agent sees exactly what would
-      // have been applied (never a silent or fabricated success).
+      // `--set` overrides + restart.
       const overrides = ctx.set ?? {};
       if (Object.keys(overrides).length === 0) {
         throw new VerbFailure("bad_json", {
           detail: "tg reconfigure --set k=v [--set …] [--restart] — at least one --set override is required.",
         });
       }
+      const handle = ctx.handle as ChanliveHandle;
+      // DETACHED rig (Plan 208-08, Option A): drive the cold-shell sweep for real —
+      // POST the rig-control /reconfigure endpoint with the overrides (the detached
+      // rig rewrites its throwaway config + restarts on the same gateway port). An
+      // honest non-zero exit on a failed POST / unhealthy re-boot.
+      if (handle.pid !== undefined) {
+        const body = await postRigControl(ctx, handle, "/reconfigure", { overrides });
+        return { status: "reconfigured", verb: "reconfigure", detached: true, overrides, ...body };
+      }
+      // In-process scope (W1): a cold-shell reconfigure against an IN-PROCESS rig
+      // cannot re-pin COMIS_DATA_DIR + re-boot it — ECHO what WOULD have applied so a
+      // driving agent sees it (never a silent / fabricated success). The in-proc
+      // scenario (208-05 Stage-C) drives `controller.reconfigure(overrides)` directly.
       return {
         status: "lifecycle_in_process_only",
         verb: "reconfigure",
         overrides,
         restart: ctx.restart === true,
-        hint: "a cross-process `tg reconfigure` (rewrite the throwaway config + restart — the model sweep) needs the detached-subprocess rig (Phase 208); the in-process controller.reconfigure(overrides) is driven by the 208-05 scenario.",
+        hint: "this handle has no pid → an in-process rig. Use `tg up --detached` for a cold-shell rig `tg reconfigure` can POST.",
       };
     }
 

@@ -83,8 +83,21 @@ export interface ChanliveHandle {
   readonly pid?: number;
 }
 
-/** The default handle directory — `~/.comis-chanlive` (a NEW operator-visible artifact, first written by Phase 205). */
+/**
+ * The default handle directory — `~/.comis-chanlive` (a NEW operator-visible
+ * artifact, first written by Phase 205), OR the `COMIS_CHANLIVE_DIR` env override
+ * when set.
+ *
+ * The env override is the CROSS-PROCESS isolation seam (Plan 208-08, Option A):
+ * the cold-shell acceptance test points every separate-process `tg` (and the
+ * detached `rig-daemon`) at ONE throwaway dir via `COMIS_CHANLIVE_DIR`, so the
+ * processes share the same handle WITHOUT a `--baseDir` flag on each invocation
+ * and the operator's real `~/.comis-chanlive` is never touched. An operator can
+ * likewise relocate the handle dir off `$HOME`.
+ */
 function defaultBaseDir(): string {
+  const override = process.env["COMIS_CHANLIVE_DIR"];
+  if (override !== undefined && override.length > 0) return override;
   return join(homedir(), ".comis-chanlive");
 }
 

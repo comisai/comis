@@ -854,7 +854,12 @@ function isGatewayPortFree(port: number): Promise<boolean> {
  * half-alive rig).
  */
 export async function spawnDetachedRig(opts: StandaloneRigOptions): Promise<DetachedRigHandle> {
-  const baseDir = opts.baseDir ?? join(homedir(), ".comis-chanlive");
+  // Resolve the handle dir consistently with chanlive-handle's defaultBaseDir:
+  // explicit opts.baseDir › the COMIS_CHANLIVE_DIR env (the cross-process isolation
+  // seam the cold-shell test sets) › ~/.comis-chanlive. Threaded to the subprocess
+  // as COMIS_RIG_BASE_DIR so it writes its handle to the SAME dir the launcher reads.
+  const baseDir =
+    opts.baseDir ?? process.env["COMIS_CHANLIVE_DIR"] ?? join(homedir(), ".comis-chanlive");
   const gatewayPort = await pickFreeRigPort();
   const rigControlPort = await pickFreeRigPort();
   const rigControlEndpoint = `http://127.0.0.1:${rigControlPort}`;

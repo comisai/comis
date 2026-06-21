@@ -492,16 +492,38 @@ describe("chan/tg CLI — runVerb: trigger fires the real time-based RPCs over W
   });
 });
 
-describe("chan/tg CLI — runVerb: reconfigure is reason-coded in-process-only (W1, AUTO-04)", () => {
-  it("`tg reconfigure --set k=v --restart` against a cross-process handle returns lifecycle_in_process_only (never a faked rewrite)", async () => {
+describe("chan/tg CLI — runVerb: reconfigure (W1 in-process-only / Option-A detached, AUTO-04 + 208-08)", () => {
+  it("`tg reconfigure` against an IN-PROCESS handle (no pid) returns lifecycle_in_process_only (never a faked rewrite)", async () => {
     const parsed = parseArgs(["reconfigure", "--set", "agents.default.model=qwen3.6:14b", "--restart"]);
+    // fakeHandle has NO pid → the in-process rig branch (its controller dies with
+    // its launcher); the CLI must report honestly, not fake a cross-process rewrite.
     const ctx = contextFromParsed(parsed, fakeHandle());
     const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
     expect(result["status"]).toBe("lifecycle_in_process_only");
-    // It echoes the parsed overrides honestly (the in-proc scenario drives the real
-    // controller.reconfigure; a cold-shell rewrite is the Phase-208 detached rig).
+    // It echoes the parsed overrides honestly + points at the cold-shell escape hatch.
     expect(JSON.stringify(result)).toContain("agents.default.model");
-    expect(JSON.stringify(result)).toMatch(/208/);
+    expect(JSON.stringify(result)).toMatch(/--detached/);
+  });
+
+  it("`tg reconfigure` against a DETACHED handle (pid present) POSTs the rig-control /reconfigure with the overrides (Option A)", async () => {
+    const parsed = parseArgs(["reconfigure", "--set", "agents.default.model=qwen3.6:14b", "--restart"]);
+    // A DETACHED handle carries a pid + a real rig-control endpoint (≠ gateway).
+    const handle = fakeHandle({ pid: 999001, rigControlEndpoint: "http://127.0.0.1:55001" });
+    // Capture the rig-control POST so the cross-process drive is proven WITHOUT a real subprocess.
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const controlFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), ...(init !== undefined ? { init } : {}) });
+      return new Response(JSON.stringify({ ok: true, status: "reconfigured" }), { status: 200 });
+    });
+    const ctx: VerbContext = { ...contextFromParsed(parsed, handle), controlFetch: controlFetch as unknown as typeof fetch };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result["status"]).toBe("reconfigured");
+    expect(result["detached"]).toBe(true);
+    // The POST hit the DEDICATED rig-control /reconfigure endpoint (≠ gateway), bearer-authed, with the overrides.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("http://127.0.0.1:55001/reconfigure");
+    expect((calls[0]?.init?.headers as Record<string, string>)["authorization"]).toMatch(/^Bearer /);
+    expect(String(calls[0]?.init?.body)).toContain("agents.default.model");
   });
 });
 
@@ -1153,6 +1175,62 @@ describe("chan/tg CLI — runVerb: lifecycle (CLI-01)", () => {
     expect(result["reused"]).toBe(true);
     // The token is NOT surfaced in the up result (no secret leak).
     expect(JSON.stringify(result)).not.toContain("test-token-0000");
+  });
+
+  it("up --detached forwards detached:true to the launcher (the cold-shell rig)", async () => {
+    const startStandaloneRigFn = vi.fn().mockResolvedValue({ reused: false, handle: fakeHandle({ pid: 4242 }) });
+    const parsed = parseArgs(["up", "--detached"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, undefined), startStandaloneRigFn };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(startStandaloneRigFn).toHaveBeenCalledTimes(1);
+    // The launcher received detached:true (so it spawns the cross-process rig).
+    expect(startStandaloneRigFn.mock.calls[0]?.[0]).toMatchObject({ detached: true });
+    expect(result["detached"]).toBe(true);
+  });
+
+  // ── Cold-shell DETACHED lifecycle (Plan 208-08, Option A) — a handle WITH a pid.
+
+  it("restart against a DETACHED handle (pid present) POSTs the rig-control /restart (Option A)", async () => {
+    const handle = fakeHandle({ pid: 999100, rigControlEndpoint: "http://127.0.0.1:55100" });
+    const calls: string[] = [];
+    const controlFetch = vi.fn(async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ ok: true, status: "restarted" }), { status: 200 });
+    });
+    const result = (await runVerb("restart", [], { handle, controlFetch: controlFetch as unknown as typeof fetch })) as Record<string, unknown>;
+    expect(result["status"]).toBe("restarted");
+    expect(result["detached"]).toBe(true);
+    expect(calls[0]).toBe("http://127.0.0.1:55100/restart");
+  });
+
+  it("reset --deep against a DETACHED handle (pid present) POSTs the rig-control /reset (Option A)", async () => {
+    const handle = fakeHandle({ pid: 999101, rigControlEndpoint: "http://127.0.0.1:55101" });
+    const calls: string[] = [];
+    const controlFetch = vi.fn(async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ ok: true, status: "reset" }), { status: 200 });
+    });
+    const parsed = parseArgs(["reset", "--deep"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, handle), controlFetch: controlFetch as unknown as typeof fetch };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result["status"]).toBe("reset");
+    expect(result["verb"]).toBe("reset --deep");
+    expect(calls[0]).toBe("http://127.0.0.1:55101/reset");
+  });
+
+  it("restart against a DETACHED handle whose rig-control POST FAILS is an honest dead_handle (never a faked restart)", async () => {
+    const handle = fakeHandle({ pid: 999102, rigControlEndpoint: "http://127.0.0.1:55102" });
+    const controlFetch = vi.fn(async () => new Response(JSON.stringify({ ok: false, status: "restart_unhealthy" }), { status: 503 }));
+    const err = await runVerb("restart", [], { handle, controlFetch: controlFetch as unknown as typeof fetch }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("rig_control_failed");
+  });
+
+  it("restart against an IN-PROCESS handle (no pid) stays lifecycle_in_process_only (honest, no faked cross-process restart)", async () => {
+    const result = (await runVerb("restart", [], { handle: fakeHandle() })) as Record<string, unknown>;
+    expect(result["status"]).toBe("lifecycle_in_process_only");
+    expect(JSON.stringify(result)).toMatch(/--detached/);
   });
 });
 

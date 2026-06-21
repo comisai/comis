@@ -101,6 +101,21 @@ describe("chanlive-handle — handle file write/read round-trip (CLI-01)", () =>
     expect(handlePath("telegram", baseDir)).toBe(join(baseDir, "telegram.json"));
   });
 
+  it("handlePath honors the COMIS_CHANLIVE_DIR env override (the cross-process isolation seam, Plan 208-08)", () => {
+    // The cold-shell acceptance test points every separate-process `tg` + the
+    // detached rig-daemon at ONE throwaway dir via COMIS_CHANLIVE_DIR — so they
+    // share the handle WITHOUT a --baseDir flag and never touch ~/.comis-chanlive.
+    const had = process.env["COMIS_CHANLIVE_DIR"];
+    process.env["COMIS_CHANLIVE_DIR"] = baseDir;
+    try {
+      // No explicit baseDir arg → the env override is used (not ~/.comis-chanlive).
+      expect(handlePath("telegram")).toBe(join(baseDir, "telegram.json"));
+    } finally {
+      if (had === undefined) delete process.env["COMIS_CHANLIVE_DIR"];
+      else process.env["COMIS_CHANLIVE_DIR"] = had;
+    }
+  });
+
   it("writeHandle then readHandle round-trips the handle back equal", () => {
     const handle = makeHandle();
     writeHandle(handle, baseDir);
