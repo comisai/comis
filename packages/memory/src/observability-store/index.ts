@@ -24,6 +24,7 @@ import { bindMutations } from "./observability-mutations.js";
 import { bindReset } from "./observability-reset.js";
 import { bindAuditMutations } from "./audit-mutations.js";
 import { buildCacheStatsQueries } from "./cache-stats-queries.js";
+import { queryCacheBreakRateByReason } from "./cache-break-queries.js";
 
 export type {
   ObservabilityStore,
@@ -90,6 +91,10 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     ...bindAuditMutations(db),
     // Durable cache-stats queries over `obs_token_usage`.
     ...buildCacheStatsQueries(db),
+    // WEBUI-02 (179-04): the deps-reachable cache-break rate + $-lost read (the
+    // store-method wrapper around the standalone GROUP BY) the obs.cacheBreaks.byReason
+    // RPC consumes — the queryAuditEvents mold.
+    queryCacheBreaksByReason: (params = {}) => queryCacheBreakRateByReason(db, params),
   };
   return Object.freeze(store);
 }

@@ -16,21 +16,27 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
+import type { CacheBreakReasonRate } from "./cache-break-types.js";
 
-/** One per-reason aggregate bucket from the cache-break rate query. */
-export interface CacheBreakReasonRate {
-  reason: string;
-  count: number;
-}
+// WEBUI-02 (179-04): CacheBreakReasonRate moved to the cache-break-types.ts leaf
+// (the cache-stats-types.ts precedent) so the store interface + this impl can both
+// reference it without a barrel cycle. Re-export for the barrel's existing line.
+export type { CacheBreakReasonRate } from "./cache-break-types.js";
 
 /**
- * Typed mapper for the `{ reason, count }` GROUP BY projection. `json_extract` can
- * return NULL (a row whose details lacks `$.reason`); coalesced to "" in SQL but kept
- * nullable here for defense-in-depth (a malformed row degrades to an empty result via
- * the untyped-sqlite-gate-mandated mapper, never an `as` cast).
+ * Typed mapper for the `{ reason, count, estCostUsd }` GROUP BY projection.
+ * `json_extract` can return NULL (a row whose details lacks `$.reason` /
+ * `$.estCostUsd`); `$.reason` is coalesced to "" in SQL, and the SUM of a column
+ * with no non-null rows is NULL — both kept nullable here for defense-in-depth (a
+ * malformed row degrades to an empty result via the untyped-sqlite-gate-mandated
+ * mapper, never an `as` cast). WEBUI-02 widened this from `{reason,count}`.
  */
 const cacheBreakRateMapper = createRowMapper(
-  z.strictObject({ reason: z.string().nullable(), count: z.number() }),
+  z.strictObject({
+    reason: z.string().nullable(),
+    count: z.number(),
+    estCostUsd: z.number().nullable(),
+  }),
 );
 
 /**
@@ -53,7 +59,8 @@ export function queryCacheBreakRateByReason(
     values.push(params.until);
   }
   const sql = `
-    SELECT COALESCE(json_extract(details, '$.reason'), '') AS reason, COUNT(*) AS count
+    SELECT COALESCE(json_extract(details, '$.reason'), '') AS reason, COUNT(*) AS count,
+           SUM(json_extract(details, '$.estCostUsd')) AS estCostUsd
     FROM obs_diagnostics
     WHERE ${conditions.join(" AND ")}
     GROUP BY reason
@@ -62,5 +69,11 @@ export function queryCacheBreakRateByReason(
   const parsed = cacheBreakRateMapper.parseRows(db.prepare(sql).all(...values));
   // Degrade-on-validation-error: observability aggregate is non-fatal → empty.
   const rows = parsed.ok ? parsed.value : [];
-  return rows.map((r) => ({ reason: r.reason ?? "", count: r.count }));
+  // estCostUsd: a NULL SUM (no priced rows for this reason) coalesces to 0 — honest,
+  // never NaN/null (the IncidentReport cacheBreaks? estCostUsd is a plain number).
+  return rows.map((r) => ({
+    reason: r.reason ?? "",
+    count: r.count,
+    estCostUsd: r.estCostUsd ?? 0,
+  }));
 }

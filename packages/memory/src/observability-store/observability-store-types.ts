@@ -24,6 +24,7 @@ import {
 import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
 import type { CacheStatsQueriesSlice } from "./cache-stats-types.js";
+import type { CacheBreakQueriesSlice } from "./cache-break-types.js";
 
 export type {
   CacheStatsWindowRow,
@@ -400,7 +401,7 @@ export interface DiagnosticQueryParams {
 
 /** The ObservabilityStore interface. */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ObservabilityStore extends CacheStatsQueriesSlice {
+export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQueriesSlice {
   // Token usage
   insertTokenUsage(entry: TokenUsageRow): void;
   aggregateByProvider(sinceMs?: number): ProviderAggregation[];
@@ -424,11 +425,10 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice {
    */
   aggregateHourlyCost(sinceMs?: number, filter?: CostBucketFilter): QuarterHourBucket[];
   /**
-   * Per-agent rolling SUM(cost_total) over the last `windowMs` (the window bound
-   * is derived from the current time INSIDE the method — the prune() precedent).
-   * The spend accumulator's BOOT rehydration read (SPEND-03) — NOT a per-check
-   * read; the rows ARE the durability. Grouped by agent_id only (obs_token_usage
-   * has no tenant_id, L1).
+   * Per-agent rolling SUM(cost_total) over the last `windowMs` (window bound derived
+   * from the current time INSIDE the method — the prune() precedent). The spend
+   * accumulator's BOOT rehydration read (SPEND-03), NOT a per-check read; the rows
+   * ARE the durability. Grouped by agent_id only (obs_token_usage has no tenant_id, L1).
    */
   getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 

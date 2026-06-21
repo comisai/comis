@@ -417,6 +417,21 @@ export const ObsCacheStatsWindowContract = defineContract({
   scopes: ["admin"] as const,
 });
 
+/** `obs.cacheBreaks.byReason` — cache-break rate by reason + the $-lost SUM
+ *  (WEBUI-02, 179-04). Admin-only. The rows are `{reason, count, estCostUsd}[]`
+ *  GROUP BY'd server-side over the existing `category:'cache_break'` diagnostics
+ *  index — content-free (a closed reason label + two numbers). The Cache Health
+ *  view consumes it. Rides the loose ObsRecordArray (bundle-size budget). */
+export const ObsCacheBreaksByReasonContract = defineContract({
+  method: "obs.cacheBreaks.byReason",
+  request: z.object({
+    since: z.number().int().nonnegative().optional(),
+    until: z.number().int().nonnegative().optional(),
+  }),
+  response: z.object({ rows: ObsRecordArray }),
+  scopes: ["admin"] as const,
+});
+
 // ---------------------------------------------------------------------------
 // memory.embeddingCache
 // ---------------------------------------------------------------------------
@@ -678,6 +693,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsBillingTotalContract,
   ObsBillingUsage24hContract,
   ObsAuditQueryContract,
+  ObsCacheBreaksByReasonContract,
   ObsCacheStatsWindowContract,
   ObsChannelsAllContract,
   ObsChannelsGetContract,

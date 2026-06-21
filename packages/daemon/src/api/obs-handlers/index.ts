@@ -44,6 +44,11 @@ export { assembleFleetHealthReport } from "./fleet-health.js";
 // admin-RPC-only read surface, not an operator-allowlisted MCP tool).
 export { bindObsAuditHandlers } from "./obs-audit.js";
 
+// The obs.cacheBreaks.byReason binder (WEBUI-02, 179-04). Re-exported for symmetry
+// with the other obs-handler slices; the daemon composition root spreads it into
+// createObsHandlers below (admin-RPC-only read surface, no MCP closure).
+export { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
+
 import type { RpcHandler } from "../types.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 import { bindObsMetricsHandlers } from "./obs-metrics.js";
@@ -55,6 +60,7 @@ import { bindObsTraceHandlers } from "./obs-trace.js";
 import { bindObsExplainHandlers } from "./obs-explain.js";
 import { bindFleetHealthHandlers } from "./fleet-health.js";
 import { bindObsAuditHandlers } from "./obs-audit.js";
+import { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
 
 /**
  * Create a record of observability RPC handlers bound to the given deps.
@@ -74,5 +80,6 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
     ...bindObsExplainHandlers(deps),
     ...bindFleetHealthHandlers(deps),
     ...bindObsAuditHandlers(deps),
+    ...bindObsCacheBreaksHandlers(deps),
   };
 }
