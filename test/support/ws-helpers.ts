@@ -83,8 +83,17 @@ export function sendJsonRpc(
   const timeoutMs = options?.timeoutMs ?? RPC_LLM_MS;
 
   return new Promise<unknown>((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    // Detach ALL listeners + the timeout in one place so every settle path
+    // (response / timeout / socket death) leaves no dangling handlers (WR-05).
+    function cleanup(): void {
+      clearTimeout(timeout);
       ws.removeEventListener("message", handler);
+      ws.removeEventListener("close", onClose);
+      ws.removeEventListener("error", onError);
+    }
+
+    const timeout = setTimeout(() => {
+      cleanup();
       reject(
         new Error(
           `JSON-RPC response timed out after ${timeoutMs / 1000}s for method: ${method}`,
@@ -109,13 +118,37 @@ export function sendJsonRpc(
 
       // Match on response id
       if (msg.id === id) {
-        clearTimeout(timeout);
-        ws.removeEventListener("message", handler);
+        cleanup();
         resolve(msg);
       }
     }
 
+    // WR-05: a mid-request socket death (daemon crash mid-dispatch, gateway
+    // drops the socket) must reject PROMPTLY as a transport failure — not stall
+    // to the full `timeoutMs` and then mislead with a "response timed out".
+    // Phase 205 routes `rpcRequest` (and the `tg rpc` keystone) through here, so
+    // this latency/diagnosis gap is now load-bearing for the harness.
+    function onClose(): void {
+      cleanup();
+      reject(
+        new Error(
+          `WebSocket closed before the JSON-RPC response for method: ${method} (socket died mid-request)`,
+        ),
+      );
+    }
+
+    function onError(): void {
+      cleanup();
+      reject(
+        new Error(
+          `WebSocket connection error before the JSON-RPC response for method: ${method}`,
+        ),
+      );
+    }
+
     ws.addEventListener("message", handler);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("error", onError);
 
     ws.send(
       JSON.stringify({
