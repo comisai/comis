@@ -908,6 +908,117 @@ describe("chan/tg CLI — runVerb: tap drives the callbacks route (INTERACT-01 /
   });
 });
 
+// ---------------------------------------------------------------------------
+// FIX #2 (CHAN2-02 foundation-design-bug + the §3A.4 honest-degradation): a
+// GENERAL caps gate. A button/edit-dependent verb on a channel that LACKS the
+// capability (Signal `buttons:false`/`edits:false`) honest-degrades to a
+// DISTINCT non-zero exit + `unsupported_on_channel` reason BEFORE any POST —
+// NEVER a silent no-op, NEVER a fabricated success (the no-false-success
+// directive applied to capability coverage). The gate is a verb→required-cap
+// lookup keyed on the resolved channel's caps — NOT a `verb === "tap"` special
+// case — so any unsupported verb degrades the same honest way. `react` is
+// UNAFFECTED (Signal supports reactions). Telegram (`buttons:true`/`edits:true`)
+// is byte-identical: the gate passes, the verb POSTs as today.
+// ---------------------------------------------------------------------------
+describe("chan/tg CLI — runVerb: caps gate honest-degrade for an unsupported verb (FIX #2 / §3A.4)", () => {
+  it("tap on Signal (buttons:false) honest-degrades: a DISTINCT non-zero exit + unsupported_on_channel BEFORE the POST — no silent no-op, no false success", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    // The threaded channel is signal (the gate keys on ctx.channel, FIX #1).
+    const parsed = parseArgs(["--channel", "signal", "tap", "42", "page=2"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle({ channel: "signal" })), controlFetch: rec.fetch };
+    const err = await runVerb(parsed.verb as string, parsed.args, ctx).catch((e: unknown) => e);
+    // An honest, reason-coded VerbFailure — NOT a success shape ({ tapped }).
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("unsupported_on_channel");
+    // It is NOT mislabeled as a dead_handle / no_reply — a caps-gated honest skip.
+    expect((err as VerbFailure).kind).not.toBe("dead_handle");
+    expect((err as VerbFailure).kind).not.toBe("no_reply");
+    // The --json body carries the reason + names the channel + the verb + the missing cap.
+    const body = (err as VerbFailure).body;
+    expect(body["error"]).toBe("unsupported_on_channel");
+    expect(JSON.stringify(body)).toContain("signal");
+    expect(JSON.stringify(body)).toMatch(/tap/);
+    expect(JSON.stringify(body)).toMatch(/buttons/);
+    // The gate fired BEFORE the POST — NO control fetch was made (not a silent no-op
+    // POST, not a fabricated success). The callbacks route was never touched.
+    expect(rec.calls).toHaveLength(0);
+    // A DISTINCT, non-zero, machine-readable exit code (a driving agent branches on it).
+    expect((err as VerbFailure).exitCode).toBeGreaterThan(0);
+    // Distinct from the four FailureKind codes AND from not_implemented (6).
+    expect((err as VerbFailure).exitCode).not.toBe(exitCodeFor("dead_handle"));
+    expect((err as VerbFailure).exitCode).not.toBe(exitCodeFor("no_reply"));
+    expect((err as VerbFailure).exitCode).not.toBe(6);
+  });
+
+  it("the gate is GENERAL (not tap-special-cased): edit on Signal (edits:false) honest-degrades the SAME way", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const parsed = parseArgs(["--channel", "signal", "edit", "55", "corrected"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle({ channel: "signal" })), controlFetch: rec.fetch };
+    const err = await runVerb(parsed.verb as string, parsed.args, ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("unsupported_on_channel");
+    // The reason names the edits cap + the edit verb (a verb→cap map, not a tap case).
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/edits/);
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/edit/);
+    // Fired before the /edits POST — no fetch.
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("react on Signal is UNAFFECTED (reactions:true) — the gate passes, the verb POSTs the reaction", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/reactions")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const parsed = parseArgs(["--channel", "signal", "react", "42", "👍"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle({ channel: "signal" })), controlFetch: rec.fetch };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    // Signal supports reactions → react works unchanged (the POST happened, honest success).
+    expect(result).toEqual({ reacted: { botReplyId: 42, emoji: "👍" } });
+    expect(rec.calls).toHaveLength(1);
+    expect(rec.calls[0]?.url.endsWith("/reactions")).toBe(true);
+  });
+
+  it("tap on Telegram (buttons:true) STILL POSTs the callback — byte-identical regression guard", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    // Explicit telegram channel threaded.
+    const parsed = parseArgs(["--channel", "telegram", "tap", "42", "page=2"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle()), controlFetch: rec.fetch };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    // The gate passes for Telegram (buttons:true) → the callback POST happens as today.
+    expect(result).toEqual({ tapped: { botReplyId: 42, data: "page=2" } });
+    expect(rec.calls).toHaveLength(1);
+    expect(rec.calls[0]?.url.endsWith("/callbacks")).toBe(true);
+  });
+
+  it("tap with NO threaded channel (the default, telegram) STILL POSTs — the default is byte-identical", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/callbacks")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    // ctx has NO channel field (the existing 207 tests' shape) → defaults to telegram.
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const result = (await runVerb("tap", ["42", "page=2"], ctx)) as Record<string, unknown>;
+    expect(result).toEqual({ tapped: { botReplyId: 42, data: "page=2" } });
+    expect(rec.calls).toHaveLength(1);
+  });
+
+  it("edit on Telegram (edits:true) STILL POSTs — byte-identical regression guard", async () => {
+    const rec = recording207Fetch((url) => {
+      if (url.includes("/edits")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const parsed = parseArgs(["--channel", "telegram", "edit", "55", "corrected"]);
+    const ctx: VerbContext = { ...contextFromParsed(parsed, fakeHandle()), controlFetch: rec.fetch };
+    const result = (await runVerb(parsed.verb as string, parsed.args, ctx)) as Record<string, unknown>;
+    expect(result).toEqual({ edited: { messageId: 55 } });
+    expect(rec.calls).toHaveLength(1);
+    expect(rec.calls[0]?.url.endsWith("/edits")).toBe(true);
+  });
+});
+
 describe("chan/tg CLI — runVerb: edit drives the edits route (INTERACT-02)", () => {
   it("POSTs {messageId:<arg>, newText} to /edits and returns { edited } on a 2xx", async () => {
     const rec = recording207Fetch((url) => {
