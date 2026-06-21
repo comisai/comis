@@ -314,11 +314,10 @@ describe("DELIV-01/ORACLE-02 Stage-B — both delivery oracles + the HARD cross-
       createdAt: 1700000000,
     });
     expect(replayInsert).toBe(0); // deduped — no second row
-    // RED (intentional, this commit): the dedupe must HOLD — the count is
-    // UNCHANGED at 1 after the replay. This asserts the WRONG value (2) first so
-    // the failing state is reproducible from this commit alone; GREEN flips it to
-    // the correct `toBe(1)` (the load-bearing dedupe assertion).
-    expect(countMirrorRows(dbPath, "s")).toBe(2);
+    // The count is UNCHANGED at 1 after the replay (the load-bearing dedupe
+    // assertion — the same-second identical-text replay collides on the unique
+    // idempotency index and INSERT OR IGNORE adds no second row).
+    expect(countMirrorRows(dbPath, "s")).toBe(1);
   });
 
   it("runDbOracle confirms the delivery store survived uncorrupted with exactly the expected delta (persistence oracle)", async () => {
