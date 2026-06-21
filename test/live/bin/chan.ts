@@ -235,6 +235,7 @@ export function tryParseJson(s: string): ParseJsonResult {
 // success (CLI-04, the prime directive).
 // ---------------------------------------------------------------------------
 
+import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type { ChanliveHandle } from "../harness/chanlive-handle.js";
@@ -387,6 +388,11 @@ interface OutboundLine {
 const REQUIRES_HANDLE = new Set([
   "send",
   "react",
+  // Phase 207 interactive/media drive verbs (each POSTs the control routes).
+  "tap",
+  "edit",
+  "send-photo",
+  "send-voice",
   "last",
   "history",
   "rpc",
@@ -405,13 +411,10 @@ const REQUIRES_HANDLE = new Set([
 /**
  * The deferred verbs → the phase that owns them. Each exits with an HONEST
  * `not_implemented_in_phase` carrying the owning phase — never a silent no-op
- * (the Deferred-Ideas boundary: send-photo/send-voice/tap/edit → 207, group → 208).
+ * (the Deferred-Ideas boundary). Phase 207 wired send-photo/send-voice/tap/edit
+ * to the control routes; only `group` remains (Phase 208).
  */
 const DEFERRED_VERBS: Record<string, string> = {
-  "send-photo": "207",
-  "send-voice": "207",
-  tap: "207",
-  edit: "207",
   group: "208",
 };
 
@@ -455,6 +458,83 @@ async function readOutbound(
     throw new VerbFailure("dead_handle", { reason: "control_bad_shape", url });
   }
   return body as OutboundLine[];
+}
+
+/**
+ * Resolve the media-bytes arg for `send-photo`/`send-voice` into base64. The arg
+ * is EITHER raw base64 (the common path — a scenario / test supplies the bytes
+ * directly) OR `@<path>` to read a small fixture file off disk (re-encoded to
+ * base64 for the JSON+base64 media transport — no form-data upload). A missing /
+ * empty arg, or an unreadable `@<path>`, is a `bad_json` usage error (never a
+ * silent empty push). Returns the base64 string the `/media` route expects in
+ * `fileBase64`.
+ */
+function resolveMediaBase64(arg: string | undefined): string {
+  if (arg === undefined || arg.length === 0) {
+    throw new VerbFailure("bad_json", {
+      detail: "send-photo/send-voice <base64|@path> — the media bytes are required.",
+    });
+  }
+  if (arg.startsWith("@")) {
+    const path = arg.slice(1);
+    try {
+      return readFileSync(path).toString("base64");
+    } catch (e: unknown) {
+      throw new VerbFailure("bad_json", {
+        detail: `cannot read media fixture ${JSON.stringify(path)}: ${String(e)}`,
+      });
+    }
+  }
+  return arg;
+}
+
+/**
+ * POST a media inbound (`send-photo`/`send-voice`) to the `/media` control route,
+ * then reply-wait like `send`. Shares the `send` shape: the media POST returns a
+ * minted `messageId` (the §4.6 `{ ok, messageId }` shape — the new media message
+ * id), which becomes the reply-wait watermark; a no-reply is an honest `no_reply`,
+ * NEVER a fabricated success (CLI-04 / I5). Honest-exits on a control `!ok` /
+ * non-numeric messageId before waiting.
+ */
+async function sendMedia(
+  ctx: VerbContext,
+  handle: ChanliveHandle,
+  kind: "photo" | "voice",
+  args: string[],
+): Promise<unknown> {
+  const fileBase64 = resolveMediaBase64(args[0]);
+  const doFetch = ctx.controlFetch ?? fetch;
+  // POST the media inbound (base64 in the JSON body — no form-data upload parser).
+  const postRes = await doFetch(
+    `${handle.controlEndpoint}/control/chats/${handle.chatId}/media`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, fromUserId: 111, fileBase64 }),
+    },
+  );
+  // WR-03: verify the POST status + that a numeric messageId came back BEFORE
+  // waiting — a 400/500 (or a body without a numeric messageId) would make the
+  // watermark undefined → the reply-wait filter always false → a misleading 45s
+  // no_reply. Fail fast + honestly instead (no false exit-0, T-207-14).
+  if (!postRes.ok) {
+    throw new VerbFailure("dead_handle", { reason: "control_post_error", status: postRes.status });
+  }
+  const postBody = (await postRes.json()) as { messageId?: unknown };
+  const inboundId = postBody.messageId;
+  if (typeof inboundId !== "number") {
+    throw new VerbFailure("dead_handle", {
+      reason: "control_post_error",
+      hint: "the media POST returned no numeric messageId — cannot wait for a reply.",
+    });
+  }
+  // Wait once for the reply outbound (the same primitive `send` uses).
+  const outbounds = await readOutbound(ctx, handle, inboundId, SEND_WAIT_MS);
+  if (outbounds.length === 0) {
+    throw new VerbFailure("no_reply", { waitedMs: SEND_WAIT_MS, inboundId });
+  }
+  const reply = outbounds[outbounds.length - 1];
+  return { inboundId, botReplyId: reply?.messageId, reply: reply?.text };
 }
 
 /**
@@ -632,6 +712,85 @@ export async function runVerb(
       return { reacted: { botReplyId, emoji } };
     }
 
+    case "tap": {
+      // INTERACT-01 — drive an inbound callback (button tap) at the ATTRIBUTED bot
+      // reply. Copied from `react` almost verbatim (the attribution keystone is
+      // identical): the `botReplyId` arg is the agent-authored reply's minted id
+      // from `tg send`'s reply-wait return (the `{ inboundId, botReplyId, reply }`
+      // above). We tap the ARG, NOT a re-read `tg last` — a re-read could pick a
+      // non-attributed message in a multi-message reply, so the callback must carry
+      // the id the caller passes (T-207-15, the react attribution keystone, #5).
+      const handle = ctx.handle as ChanliveHandle;
+      const botReplyId = Number(args[0]);
+      const data = args[1];
+      if (!Number.isFinite(botReplyId) || data === undefined) {
+        throw new VerbFailure("bad_json", {
+          detail: "tg tap <botReplyId> <callbackData> — both required (a numeric id + the callback data).",
+        });
+      }
+      const doFetch = ctx.controlFetch ?? fetch;
+      // POST the callback on the attributed reply. `fromUserId: 111` is the rig's
+      // fixed tapper id (same reactor id as `react` — the single-user happy path).
+      const res = await doFetch(
+        `${handle.controlEndpoint}/control/chats/${handle.chatId}/callbacks`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fromUserId: 111, botMessageId: botReplyId, data }),
+        },
+      );
+      // WR-03 honest-exit: a control !ok is NOT a success — reason-code it as a
+      // dead_handle non-zero exit (no false exit-0 on a failed tap, T-207-14).
+      if (!res.ok) {
+        throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
+      }
+      return { tapped: { botReplyId, data } };
+    }
+
+    case "edit": {
+      // INTERACT-02 — drive an `edited_message` for an EXISTING message id. The
+      // edits route mints no id (the §4.6 `{ ok: true }` shape — the edited
+      // message already exists), so we return `{ edited: { messageId } }` on a 2xx
+      // rather than reply-waiting on a watermark we don't have. (An edit DOES
+      // re-ingest through the inbound handler and MAY trigger a reply, but the
+      // edit verb's honest contract is the edit landing; the 207-05 scenario reads
+      // any resulting reply via the outbound oracle / `tg last`.)
+      const handle = ctx.handle as ChanliveHandle;
+      const messageId = Number(args[0]);
+      const newText = args[1];
+      if (!Number.isFinite(messageId) || newText === undefined) {
+        throw new VerbFailure("bad_json", {
+          detail: "tg edit <messageId> <newText> — both required (a numeric id + the new text).",
+        });
+      }
+      const doFetch = ctx.controlFetch ?? fetch;
+      const res = await doFetch(
+        `${handle.controlEndpoint}/control/chats/${handle.chatId}/edits`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId, newText }),
+        },
+      );
+      // WR-03 honest-exit: a control !ok is NOT a success (no false exit-0, T-207-14).
+      if (!res.ok) {
+        throw new VerbFailure("dead_handle", { reason: "control_post_error", status: res.status });
+      }
+      return { edited: { messageId } };
+    }
+
+    case "send-photo": {
+      // MEDIA-01 — POST a photo media inbound (base64) then reply-wait like `send`.
+      const handle = ctx.handle as ChanliveHandle;
+      return sendMedia(ctx, handle, "photo", args);
+    }
+
+    case "send-voice": {
+      // MEDIA-01 — POST a voice media inbound (base64) then reply-wait like `send`.
+      const handle = ctx.handle as ChanliveHandle;
+      return sendMedia(ctx, handle, "voice", args);
+    }
+
     case "last": {
       const handle = ctx.handle as ChanliveHandle;
       const outbounds = await readOutbound(ctx, handle, 0, 0);
@@ -793,7 +952,7 @@ export async function runVerb(
     default:
       throw new VerbFailure("bad_json", {
         detail: `unknown verb "${verb}"`,
-        hint: "run a known verb: up/down/status/restart/reset/send/react/last/history/rpc/explain/fleet/mirror/traj/db/wait.",
+        hint: "run a known verb: up/down/status/restart/reset/send/react/tap/edit/send-photo/send-voice/last/history/rpc/explain/fleet/mirror/traj/db/wait.",
       });
   }
 }

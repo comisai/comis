@@ -18,7 +18,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -885,6 +885,37 @@ describe("chan/tg CLI — runVerb: send-photo / send-voice drive the media route
     const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
     const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
     const err = await runVerb("send-photo", [], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("an @<path> arg reads a fixture file off disk and base64-encodes it for /media", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sv-chan-media-"));
+    const fixture = join(dir, "pic.bin");
+    const raw = Buffer.from("\x89PNG-fixture-on-disk");
+    writeFileSync(fixture, raw);
+    try {
+      const rec = recording207Fetch((url) => {
+        if (url.includes("/media")) return { status: 200, body: { ok: true, messageId: 5001 } };
+        if (url.includes("/outbound")) return { status: 200, body: [{ messageId: 5002, text: "seen" }] };
+        return { status: 200, body: [] };
+      });
+      const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+      const result = (await runVerb("send-photo", [`@${fixture}`], ctx)) as Record<string, unknown>;
+      const post = rec.calls.find((c) => c.url.includes("/media"))!;
+      // The disk bytes were re-encoded to base64 (NO form-data upload).
+      expect((post.body as Record<string, unknown>)["fileBase64"]).toBe(raw.toString("base64"));
+      expect(result).toMatchObject({ inboundId: 5001, reply: "seen" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an @<path> to a MISSING file → VerbFailure(bad_json); the control fetch is NEVER called", async () => {
+    const rec = recording207Fetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("send-voice", ["@/tmp/sv-no-such-fixture.ogg"], ctx).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(VerbFailure);
     expect((err as VerbFailure).kind).toBe("bad_json");
     expect(rec.calls).toHaveLength(0);
