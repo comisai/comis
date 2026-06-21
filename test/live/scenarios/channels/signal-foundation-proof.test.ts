@@ -63,6 +63,9 @@ import { fileURLToPath } from "node:url";
 import { assertChannelTrace, readMirrorText } from "../../assert/channel-trace.js";
 import { createSignalEmulator, type SignalEmulator } from "../../emulators/signal/signal-emulator.js";
 import { signalCaps, SIGNAL_MAX_MESSAGE_CHARS } from "../../emulators/signal/signal-caps.js";
+import { makeMessageEnvelope } from "../../emulators/signal/signal-payloads.js";
+import { mapSignalToNormalized, type SignalEnvelope } from "@comis/channels";
+import { adaptSignalToControlEmulator, SIGNAL_RIG_CHAT } from "../../harness/rig.js";
 import {
   parseArgs,
   contextFromParsed,
@@ -279,6 +282,44 @@ async function collectSseFrames(url: string, inject: () => void): Promise<SseEnv
   return frames;
 }
 
+/**
+ * Drive the REAL rig Signal control adapter's inject path deterministically (no
+ * daemon) and return the `SignalEnvelope` it causes the emulator to build. A
+ * capturing fake `SignalEmulator` (whose `injectMessage` builds the envelope the
+ * SAME way the real emulator does — `makeMessageEnvelope` from the adapter's
+ * (chat, from, text, opts)) is passed to the REAL `adaptSignalToControlEmulator`;
+ * invoking the adapter's `injectMessage` then captures EXACTLY the inbound the
+ * rig injects — so a missing sender-identity opt (the round-trip-keystone bug) is
+ * caught here, deterministically, without booting the daemon.
+ */
+function injectViaRigSignalAdapter(text: string): SignalEnvelope {
+  let captured: SignalEnvelope | undefined;
+  // A minimal capturing SignalEmulator: only `injectMessage` is exercised by the
+  // adapter's injectMessage; it builds the envelope the real emulator builds
+  // (signal-emulator.ts injectMessage -> makeMessageEnvelope) and captures it.
+  const capturingEmulator = {
+    injectMessage(chat: string, from: string, content: string, opts?: { sourceUuid?: string; sourceName?: string }) {
+      captured = makeMessageEnvelope({
+        from,
+        content,
+        channel: chat,
+        ...(opts?.sourceUuid !== undefined ? { sourceUuid: opts.sourceUuid } : {}),
+        ...(opts?.sourceName !== undefined ? { sourceName: opts.sourceName } : {}),
+      });
+      return captured.timestamp as number;
+    },
+  } as unknown as SignalEmulator;
+
+  const adapter = adaptSignalToControlEmulator(capturingEmulator);
+  // The control API passes a chat { chatId } + a `from` whose firstName carries
+  // the sender identity (the rig's send() path); drive that EXACT call.
+  adapter.injectMessage({ chatId: 424242 }, { id: 111, firstName: "user_111" }, text);
+  if (captured === undefined) {
+    throw new Error("the rig Signal adapter did not inject a message envelope");
+  }
+  return captured;
+}
+
 // ---------------------------------------------------------------------------
 // Stage-B — the foundation-proof STRUCTURE (deterministic, no daemon/model)
 // ---------------------------------------------------------------------------
@@ -423,6 +464,37 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
     } finally {
       await emulator.stop();
     }
+  });
+
+  it("the round-trip CLOSES: an inbound injected via the rig's Signal control adapter resolves (via the REAL mapper) to channelId == the chat key the reply lands under (the Stage-C round-trip keystone, deterministic)", () => {
+    // THE ROUND-TRIP KEYSTONE (the deterministic guard for the live Stage-C
+    // round-trip): the rig's Signal control adapter injects an inbound for its
+    // single fixed Signal chat (rig.ts SIGNAL_RIG_CHAT) and later polls
+    // emulator.outbound(SIGNAL_RIG_CHAT) for the reply. For the round-trip to
+    // CLOSE, the agent must reply to a channelId the emulator records the outbound
+    // under as SIGNAL_RIG_CHAT. The real Signal adapter resolves the DM channelId
+    // = senderId = (sourceUuid ?? sourceNumber ?? source) (message-mapper.ts:31,34)
+    // and replies there; resolveChatKey records the outbound under that recipient.
+    // So the inbound the rig injects MUST resolve channelId == SIGNAL_RIG_CHAT —
+    // else the reply lands under a DIFFERENT key (the all-zero placeholder uuid
+    // sourceUuid defaults to) and waitForReply times out (the Stage-C no-reply).
+    // Drive the REAL rig adapter's inject path: capture the envelope the rig's
+    // adaptSignalToControlEmulator causes the emulator to emit when the rig sends.
+    const envelope = injectViaRigSignalAdapter("hello from the round-trip");
+    // baseUrl is the attachment-fetch base — irrelevant to the senderId/channelId
+    // resolution this guards; a loopback placeholder suffices.
+    const normalized = mapSignalToNormalized(envelope, "http://127.0.0.1:8080") as {
+      channelId?: string;
+      senderId?: string;
+    };
+    // The agent replies to channelId; the emulator records the reply under it;
+    // waitForReply polls outbound(SIGNAL_RIG_CHAT). They MUST be the same key.
+    expect(
+      normalized.channelId,
+      "the rig-injected inbound must resolve channelId to the chat key the reply " +
+        "lands under (else the Stage-C round-trip cannot close — waitForReply times out)",
+    ).toBe(SIGNAL_RIG_CHAT);
+    expect(normalized.senderId).toBe(SIGNAL_RIG_CHAT);
   });
 });
 

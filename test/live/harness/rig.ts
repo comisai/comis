@@ -229,7 +229,7 @@ function isTelegramControlEmulator(emulator: RigEmulator): emulator is RigEmulat
  * booted daemon's real Signal adapter pulls the injected inbound off the SSE
  * stream and replies; the emulator records the outbound under this same key.
  */
-const SIGNAL_RIG_CHAT = "+15555550199";
+export const SIGNAL_RIG_CHAT = "+15555550199";
 
 /**
  * Adapt a {@link SignalEmulator} (string-keyed chat, no Bot-API faults) to the
@@ -240,6 +240,10 @@ const SIGNAL_RIG_CHAT = "+15555550199";
  * so the numeric `chatId` the control API passes is mapped to that one Signal
  * string; `from.firstName` carries the Signal sender identifier.
  *
+ * Exported (test visibility) so the 209-07 foundation-proof scenario can drive
+ * the REAL adapter inject path deterministically (the Stage-C round-trip
+ * keystone) without booting a daemon.
+ *
  * The CORE round-trip verbs (`injectMessage`/`injectReaction`/`outbound`) delegate
  * to the emulator's own string-keyed verbs. The Telegram-ONLY verbs
  * (`injectMedia`/`injectLocation`/`injectCallback`/`injectEdit`/`fail`/
@@ -247,7 +251,9 @@ const SIGNAL_RIG_CHAT = "+15555550199";
  * (§3A.4 / I5). Signal's media/edit/fault round-trips are NOT part of this
  * foundation-fix; the 209-06/07 scenario exercises the Signal send/react path.
  */
-function adaptSignalToControlEmulator(emulator: SignalEmulator): import("./control-api.js").ControlEmulator {
+export function adaptSignalToControlEmulator(
+  emulator: SignalEmulator,
+): import("./control-api.js").ControlEmulator {
   const unsupported = (verb: string): never => {
     throw new Error(`unsupported_on_channel: Signal does not support the control verb "${verb}" (CHAN2 honest-degrade)`);
   };
