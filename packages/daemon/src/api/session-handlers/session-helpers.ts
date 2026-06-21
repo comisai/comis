@@ -19,7 +19,8 @@
  */
 
 import { readdirSync, statSync, readFileSync } from "node:fs";
-import { safePath, systemGetEnv, systemDateFrom } from "@comis/core";
+import { safePath, systemGetEnv, systemDateFrom, formatSessionKey } from "@comis/core";
+import { pathToSessionKey } from "@comis/agent";
 
 // Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: SessionsApiDeps. The session-handlers factory
@@ -170,21 +171,28 @@ export function scanWorkspaceSessions(workspaceDir: string): JsonlSessionInfo[] 
         const filePath = safePath(channelPath, file);
         try {
           const st = statSync(filePath);
-          // Canonical session key is `tenant:user:channel` (formatSessionKey) — the
-          // SAME form the LCD/`reset`/`explain` paths use. The directory layout is
-          // sessions/{tenant}/{channelDir}/{file}, so the file is the user/peer and
-          // channelDir is the channel. Dropping channelDir (the old
-          // `${tenant}:${file}`) produced a 2-part key that `sessions reset`
-          // rejected (0 rows) and that never dedups against the SQLite session_key
-          // (UX-1, live 2026-06-20).
-          const sessionKey = `${tenantId}:${file.slice(0, -6)}:${channelDir}`;
+          // Canonical session key (formatSessionKey: `tenant:user:channel[:peer:peerId]…`)
+          // — the SAME form LCD/`reset`/`explain`/`mirror` key on. DERIVE it by parsing
+          // the sessions/{tenant}/{channelDir}/{filename}.jsonl path: pathToSessionKey
+          // decodes the `~peer~`/`~guild~`/`~thread~` filename tokens into the tagged
+          // SessionKey, then formatSessionKey emits the canonical string. The prior
+          // `${tenant}:${file}:${channelDir}` spliced the RAW filename whole, so a DM
+          // file `111~peer~111.jsonl` produced the hybrid `tenant:111~peer~111:channel`
+          // that parseFormattedSessionKey + `explain`/`mirror` reject — "no trajectory
+          // found" on a session whose stored key is `tenant:111:channel:peer:111`
+          // (UX-1 added channelDir but missed the peer encoding; live 2026-06-21 rig
+          // Phase-0). Fall back to the legacy splice only when the path is unparseable.
+          const parsedKey = pathToSessionKey(filePath, sessionsRoot);
+          const sessionKey = parsedKey
+            ? formatSessionKey(parsedKey)
+            : `${tenantId}:${file.slice(0, -6)}:${channelDir}`;
           const content = readFileSync(filePath, "utf-8");
           const lines = content.split("\n").filter(l => l.trim().length > 0);
 
           // channelDir is the chat/channel ID (e.g., "678314278")
           results.push({
             sessionKey,
-            userId: "unknown",
+            userId: parsedKey?.userId ?? "unknown",
             channelId: channelDir,
             metadata: { _workspaceJsonlPath: filePath },
             createdAt: Math.floor(st.birthtimeMs),
