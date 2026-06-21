@@ -138,11 +138,10 @@ describe("AUTO-05 Stage-B — the harness-side secret-token gate (the emulator w
 describe("AUTO-05 Stage-B — validateWebhookSecret (the product boot FORMAT validator, the testable product surface today)", () => {
   it("rejects an EMPTY secret at boot", () => {
     const r = validateWebhookSecret("");
-    // RED (deliberately wrong, Pitfall 2): assert the EMPTY secret is ACCEPTED
-    // (r.ok === true). It is NOT — validateWebhookSecret REJECTS an empty secret
-    // — so this RUNS-and-FAILS, proving the validator actually rejects it. Flip
-    // to 'false' (the GREEN) once the RED is committed.
-    expect(r.ok).toBe(true);
+    // GREEN: validateWebhookSecret REJECTS an empty secret (Telegram requires
+    // 1-256 chars) — the product boot FORMAT validator, asserted at the real
+    // export. This is AUTO-05's testable product surface today.
+    expect(r.ok).toBe(false);
   });
 
   it("rejects a secret LONGER than 256 chars at boot", () => {
