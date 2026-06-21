@@ -26,8 +26,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createRigController, type RigControlState } from "./rig-control.js";
 import type { TgEmulator, ChatRef } from "../emulators/telegram/tg-emulator.js";
@@ -48,8 +48,12 @@ function makeIsolatedDataDir(): { dataDir: string; memoryDbPath: string } {
   const dataDir = mkdtempSync(join(tmpdir(), "comis-rigctl-test-"));
   const memoryDbPath = join(dataDir, "test-memory-channel-emu.db");
   writeFileSync(memoryDbPath, "dummy-sqlite-bytes", "utf-8");
+  writeFileSync(`${memoryDbPath}-wal`, "wal", "utf-8");
+  writeFileSync(`${memoryDbPath}-shm`, "shm", "utf-8");
   mkdirSync(join(dataDir, "logs"), { recursive: true });
-  mkdirSync(join(dataDir, "workspace", "sessions"), { recursive: true });
+  writeFileSync(join(dataDir, "logs", "daemon.log"), "log line", "utf-8");
+  mkdirSync(join(dataDir, "workspace", "sessions", "test", "telegram"), { recursive: true });
+  writeFileSync(join(dataDir, "workspace", "sessions", "test", "telegram", "s.jsonl"), "{}", "utf-8");
   return { dataDir, memoryDbPath };
 }
 
@@ -120,6 +124,101 @@ describe("rig-control (deterministic) — restart() ordering (the activeHandle d
     expect(controller.emulator).toBe(emulator);
     // COMIS_DATA_DIR is restored (not leaked into sibling daemons) after the re-boot.
     expect(process.env["COMIS_DATA_DIR"]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DETERMINISTIC — resetDeep() clean slate (isolated-dir-only) + the home guard
+// ---------------------------------------------------------------------------
+
+describe("rig-control (deterministic) — resetDeep() clean slate + the ~/.comis guard", () => {
+  const cleanups: Array<() => void> = [];
+  afterEach(() => {
+    for (const c of cleanups.splice(0)) c();
+    delete process.env["COMIS_DATA_DIR"];
+  });
+
+  it("resetDeep() wipes ONLY the isolated dataDir (memory.db + wal/shm + logs + sessions), resets the emulator chat, then restarts", async () => {
+    const { dataDir, memoryDbPath } = makeIsolatedDataDir();
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+
+    const order: string[] = [];
+    const cleanup = vi.fn(async () => {
+      order.push("cleanup");
+    });
+    const oldHandle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
+    const newHandle = { cleanup: vi.fn(async () => undefined), gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
+    const bootFn = vi.fn(async () => {
+      order.push("boot");
+      return newHandle;
+    }) as unknown as typeof startTestDaemon;
+
+    const { emulator, resetChat } = makeFakeEmulator();
+    const controller = createRigController(
+      {
+        emulator,
+        daemonHandle: oldHandle,
+        dataDir,
+        configPath: join(dataDir, "config.rig.yaml"),
+        gatewayPort: 1,
+        gatewayUrl: "http://127.0.0.1:1",
+        chat: TEST_CHAT,
+        memoryDbPath,
+      },
+      bootFn,
+    );
+
+    // Pre-condition: the isolated state exists.
+    expect(existsSync(memoryDbPath)).toBe(true);
+    expect(existsSync(join(dataDir, "logs"))).toBe(true);
+    expect(existsSync(join(dataDir, "workspace", "sessions"))).toBe(true);
+
+    await controller.resetDeep();
+
+    // The clean slate: memory.db (+ wal/shm), logs/, and workspace/sessions/ are gone.
+    expect(existsSync(memoryDbPath)).toBe(false);
+    expect(existsSync(`${memoryDbPath}-wal`)).toBe(false);
+    expect(existsSync(`${memoryDbPath}-shm`)).toBe(false);
+    expect(existsSync(join(dataDir, "logs"))).toBe(false);
+    expect(existsSync(join(dataDir, "workspace", "sessions"))).toBe(false);
+    // The data dir itself survives (we wipe UNDER it, never the dir — it is re-booted into).
+    expect(existsSync(dataDir)).toBe(true);
+    // The emulator chat was reset (channel-side clean slate).
+    expect(resetChat).toHaveBeenCalledWith(TEST_CHAT);
+    // And it restarted (cleanup → boot, the Pitfall-1 ordering, runs as part of resetDeep).
+    expect(order).toEqual(["cleanup", "boot"]);
+  });
+
+  it("resetDeep() REFUSES a non-isolated dataDir (empty, or the operator's real ~/.comis) — the T-205-10 guard", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const handle = { cleanup, gatewayUrl: "http://127.0.0.1:1", authToken: "t" } as unknown as TestDaemonHandle;
+    const bootFn = vi.fn(async () => handle) as unknown as typeof startTestDaemon;
+    const { emulator } = makeFakeEmulator();
+
+    const baseState = {
+      emulator,
+      daemonHandle: handle,
+      configPath: "/tmp/x/config.rig.yaml",
+      gatewayPort: 1,
+      gatewayUrl: "http://127.0.0.1:1",
+      chat: TEST_CHAT,
+    };
+
+    // Empty dataDir → refuse.
+    const emptyCtl = createRigController({ ...baseState, dataDir: "", memoryDbPath: "" }, bootFn);
+    await expect(emptyCtl.resetDeep()).rejects.toThrow(/refusing reset --deep|non-isolated/);
+
+    // The real home ~/.comis → refuse (must never wipe operator state).
+    const homeComis = join(homedir(), ".comis");
+    const homeCtl = createRigController(
+      { ...baseState, dataDir: homeComis, memoryDbPath: join(homeComis, "memory.db") },
+      bootFn,
+    );
+    await expect(homeCtl.resetDeep()).rejects.toThrow(/refusing reset --deep|non-isolated/);
+
+    // The guard short-circuits — neither cleanup nor boot ran (nothing was touched).
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(bootFn).not.toHaveBeenCalled();
   });
 });
 
