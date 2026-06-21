@@ -519,6 +519,123 @@ describe("chan/tg CLI — runVerb: control-response shape guard (WR-03: no exit-
   });
 });
 
+describe("chan/tg CLI — runVerb: react correlates to the botReplyId arg (REACT-02 / attribution)", () => {
+  /**
+   * A recording fake fetch: captures every (method, url, parsed-body) and
+   * returns a scripted status/body per url-substring. Lets the react tests
+   * assert the EXACT POST the verb makes (the attribution body) AND that no
+   * `/outbound` GET (a `tg last` re-read) happens.
+   */
+  function recordingFetch(script: (url: string) => { status?: number; body?: unknown }): {
+    fetch: typeof fetch;
+    calls: Array<{ method: string; url: string; body: unknown }>;
+  } {
+    const calls: Array<{ method: string; url: string; body: unknown }> = [];
+    const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      let parsedBody: unknown;
+      if (typeof init?.body === "string" && init.body.length > 0) {
+        try {
+          parsedBody = JSON.parse(init.body);
+        } catch {
+          parsedBody = init.body;
+        }
+      }
+      calls.push({ method, url, body: parsedBody });
+      const { status = 200, body = { ok: true } } = script(url);
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+      } as Response;
+    }) as typeof fetch;
+    return { fetch: fn, calls };
+  }
+
+  it("POSTs {fromUserId:111, botMessageId:<arg>, emoji} to /reactions and returns { reacted } — the ARG, not tg last", async () => {
+    const rec = recordingFetch((url) => {
+      if (url.includes("/reactions")) return { status: 200, body: { ok: true } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    // botReplyId = 42 (the id `tg send` returned as the agent-authored reply).
+    const result = (await runVerb("react", ["42", "👍"], ctx)) as Record<string, unknown>;
+
+    // Exactly one control call: the POST to /reactions (no /outbound re-read).
+    expect(rec.calls).toHaveLength(1);
+    const call = rec.calls[0]!;
+    expect(call.method).toBe("POST");
+    // ATTRIBUTION: the URL is the reactions route on the handle's chat.
+    expect(call.url.endsWith(`/control/chats/${fakeHandle().chatId}/reactions`)).toBe(true);
+    // ATTRIBUTION: the body reacts to the ARG id (42), NOT a re-read `last`.
+    expect(call.body).toEqual({ fromUserId: 111, botMessageId: 42, emoji: "👍" });
+    // The honest result echoes the attributed reply id + emoji.
+    expect(result).toEqual({ reacted: { botReplyId: 42, emoji: "👍" } });
+  });
+
+  it("does NOT consult tg last / readOutbound — no GET to /outbound is made", async () => {
+    const rec = recordingFetch((url) => {
+      if (url.includes("/reactions")) return { status: 200, body: { ok: true } };
+      // If the verb ever read the oracle, this /outbound GET would be recorded.
+      return { status: 200, body: [{ messageId: 9999, text: "a DIFFERENT, more-recent message" }] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    await runVerb("react", ["42", "👍"], ctx);
+    // The map is keyed on the agent-authored reply's id — the verb reacts to
+    // args[0] ONLY; a `/outbound` re-read could pick a non-attributed message.
+    expect(rec.calls.some((c) => c.url.includes("/outbound"))).toBe(false);
+    expect(rec.calls.every((c) => c.url.includes("/reactions"))).toBe(true);
+  });
+
+  it("bad args (missing both) → VerbFailure(bad_json); the control fetch is NEVER called", async () => {
+    const rec = recordingFetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("react", [], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a non-numeric botReplyId → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recordingFetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("react", ["not-a-number", "👍"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a missing emoji (only the id) → VerbFailure(bad_json), no fetch", async () => {
+    const rec = recordingFetch(() => ({ status: 200, body: { ok: true } }));
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("react", ["42"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("bad_json");
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("a control POST !ok (502) → VerbFailure(dead_handle, control_post_error) — no false success", async () => {
+    const rec = recordingFetch((url) => {
+      if (url.includes("/reactions")) return { status: 502, body: { ok: false } };
+      return { status: 200, body: [] };
+    });
+    const ctx: VerbContext = { handle: fakeHandle(), controlFetch: rec.fetch };
+    const err = await runVerb("react", ["42", "👍"], ctx).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect((err as VerbFailure).body["reason"]).toBe("control_post_error");
+    expect((err as VerbFailure).body["status"]).toBe(502);
+  });
+
+  it("react with NO resolved handle is a dead_handle (it drives a live rig) — never a silent no-op", async () => {
+    const err = await runVerb("react", ["42", "👍"], { handle: undefined }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerbFailure);
+    expect((err as VerbFailure).kind).toBe("dead_handle");
+    expect(JSON.stringify((err as VerbFailure).body)).toMatch(/tg up/);
+  });
+});
+
 describe("chan/tg CLI — runVerb: oracle-read reason codes (WR-02: not rpc_error)", () => {
   it("db against a MISSING memory.db is a dead_handle (db_unavailable), NOT rpc_error", async () => {
     // A freshly-spawned rig before its first write: the db path does not exist.
