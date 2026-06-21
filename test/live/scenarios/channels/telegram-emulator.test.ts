@@ -192,11 +192,15 @@ describe("SEC-01 Stage-B — loopback bind + the §13-Q1 file-route verdict (no 
     //   route SHAPE (no 404 at boot). The inverse-SSRF primitive
     //   validateLocalServerUrl (ssrf-guard.ts:198) already exists for the Phase-207
     //   test-only host allowance — it never relaxes production validateUrl.
-    // Assert the getFile method answers a well-formed descriptor over loopback:
+    // Phase-207 NOTE: getFile now resolves against the REAL file store (207-02);
+    // an UNSTORED file_id is a Telegram-shaped not-found (`ok:false`, error_code 400)
+    // — so seed a file first, then assert getFile answers a well-formed descriptor
+    // for a KNOWN id over loopback (the 204 boot-reachability intent, store-aware).
+    const seeded = emu.storeFile("document", Buffer.from("getfile-shape-probe", "utf8"));
     const getFileRes = await fetch(`${apiRoot}/bot12345:test/getFile`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ file_id: "file_abc" }),
+      body: JSON.stringify({ file_id: seeded.fileId }),
     });
     expect(getFileRes.status).toBe(200);
     const getFileJson = (await getFileRes.json()) as { ok: boolean; result?: { file_path?: string } };
