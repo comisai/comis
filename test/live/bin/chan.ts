@@ -290,6 +290,13 @@ import {
   type StandaloneRigDeps,
 } from "../harness/rig.js";
 import { readMirrorText } from "../assert/channel-trace.js";
+// The per-channel capability descriptors (FIX #2: the caps gate reads these to
+// decide whether a verb is even attempted on the resolved channel). Both are
+// `@comis/*`-FREE (they import only the flat `ChannelCaps` type from the shared
+// harness port), so chan.ts stays runnable via a bare `tsx` shell.
+import type { ChannelCaps } from "../harness/channel-emulator.js";
+import { tgCaps } from "../emulators/telegram/tg-caps.js";
+import { signalCaps } from "../emulators/signal/signal-caps.js";
 // NOTE: `wait.ts` statically imports `@comis/observability` (runtime values), the
 // ONE bare `@comis/*` specifier in this CLI's static graph. It is imported
 // TYPE-ONLY here and `await import()`-ed lazily inside the `wait`/`traj` verbs so
@@ -309,6 +316,18 @@ export type { ChanliveHandle };
 const NOT_IMPLEMENTED_EXIT = 6;
 
 /**
+ * The exit code for the honest `unsupported_on_channel` caps-degrade (distinct,
+ * non-zero — FIX #2 / §3A.4). A verb whose required capability the resolved
+ * channel does not support (e.g. `tap`/`edit` on Signal — `buttons:false`/
+ * `edits:false`) exits with THIS code + an `unsupported_on_channel` reason
+ * BEFORE any POST — never a silent no-op, never a fabricated success. Distinct
+ * from the four `FailureKind` codes (2-5) AND from {@link NOT_IMPLEMENTED_EXIT}
+ * (6) so a driving agent can branch on "the channel can't do this" vs "the rig
+ * is dead" vs "not built yet".
+ */
+const UNSUPPORTED_ON_CHANNEL_EXIT = 7;
+
+/**
  * An honest, reason-coded verb failure. Carries the closed {@link FailureKind}
  * (one of the four CLI-04 runtime classes) and the `--json` body. `runMain`
  * maps it to `exitCodeFor(kind)` (a distinct non-zero exit) — a thrown
@@ -318,23 +337,38 @@ const NOT_IMPLEMENTED_EXIT = 6;
  * exit {@link NOT_IMPLEMENTED_EXIT}) built via {@link VerbFailure.notImplemented}
  * — it keeps the four-class `FailureKind` union pure (the runtime contract)
  * while still exiting non-zero with an honest reason + phase pointer.
+ *
+ * A CAPS-UNSUPPORTED verb is likewise a distinct honest failure
+ * (`unsupported_on_channel`, exit {@link UNSUPPORTED_ON_CHANNEL_EXIT}) built via
+ * {@link VerbFailure.unsupportedOnChannel} — the resolved channel does not
+ * support the verb's required capability (FIX #2 / §3A.4). It too stays OUTSIDE
+ * the four-class `FailureKind` runtime union, so that contract stays pure.
  */
 export class VerbFailure extends Error {
-  /** A four-class runtime kind, or `not_implemented_in_phase` for a deferred verb. */
-  readonly kind: FailureKind | "not_implemented_in_phase";
+  /**
+   * A four-class runtime kind, or one of the two distinct honest-exit kinds that
+   * stay OUTSIDE the `FailureKind` runtime contract: `not_implemented_in_phase`
+   * (a deferred verb) / `unsupported_on_channel` (a caps-gated verb).
+   */
+  readonly kind: FailureKind | "not_implemented_in_phase" | "unsupported_on_channel";
   /** The distinct non-zero exit code this failure exits with. */
   readonly exitCode: number;
   /** The `--json` body (`{ error: <kind>, ...detail }`). */
   readonly body: Readonly<Record<string, unknown>> & { readonly error: string };
 
   constructor(
-    kind: FailureKind | "not_implemented_in_phase",
+    kind: FailureKind | "not_implemented_in_phase" | "unsupported_on_channel",
     detail: Record<string, unknown> = {},
   ) {
     super(`${kind}: ${JSON.stringify(detail)}`);
     this.name = "VerbFailure";
     this.kind = kind;
-    this.exitCode = kind === "not_implemented_in_phase" ? NOT_IMPLEMENTED_EXIT : exitCodeFor(kind);
+    this.exitCode =
+      kind === "not_implemented_in_phase"
+        ? NOT_IMPLEMENTED_EXIT
+        : kind === "unsupported_on_channel"
+          ? UNSUPPORTED_ON_CHANNEL_EXIT
+          : exitCodeFor(kind);
     this.body = { error: kind, ...detail };
   }
 
@@ -348,6 +382,23 @@ export class VerbFailure extends Error {
       verb,
       phase,
       hint: `\`${verb}\` is a Phase ${phase} deliverable — not implemented in this phase (honest deferral, never a silent no-op).`,
+    });
+  }
+
+  /**
+   * An honest caps-degrade (FIX #2 / §3A.4): the resolved `channel` does not
+   * support the `cap` that `verb` requires (e.g. `tap` needs `buttons`, `edit`
+   * needs `edits` — both `false` on Signal). Exits non-zero (never a silent
+   * no-op, never a fabricated success) with `error: "unsupported_on_channel"`,
+   * the verb, the channel, and the missing capability — the reason a driving
+   * agent machine-reads. Fired BEFORE any control POST.
+   */
+  static unsupportedOnChannel(verb: string, channel: string, cap: string): VerbFailure {
+    return new VerbFailure("unsupported_on_channel", {
+      verb,
+      channel,
+      cap,
+      hint: `\`${verb}\` requires the \`${cap}\` capability, which channel "${channel}" does not support (honest degradation, never a silent no-op).`,
     });
   }
 }
@@ -739,6 +790,56 @@ function resolveRigChannel(ctx: VerbContext): RigChannel {
   return channel as RigChannel;
 }
 
+// ---------------------------------------------------------------------------
+// FIX #2 — the GENERAL caps gate (§3A.4 honest-degradation, the no-false-success
+// directive applied to capability coverage). A verb whose required OUTBOUND
+// capability the resolved channel does not support honest-degrades to a distinct
+// non-zero exit + `unsupported_on_channel` reason BEFORE any control POST —
+// never a silent no-op, never a fabricated success. The gate is a verb→cap
+// LOOKUP keyed on the channel's caps descriptor — NOT a `verb === "tap"` special
+// case — so ANY button/edit-dependent verb degrades the same honest way (RESEARCH
+// A5). A verb with no required-cap entry (send/react/last/…) is unconstrained.
+// ---------------------------------------------------------------------------
+
+/** The per-channel capability descriptors the gate reads (the FOUND-03 flat shape). */
+const CHANNEL_CAPS: Record<string, ChannelCaps> = {
+  telegram: tgCaps,
+  signal: signalCaps,
+};
+
+/**
+ * The verb → required OUTBOUND capability map (GENERAL, not tap-special-cased).
+ * Each entry names the `outbound.*` flag the verb depends on; a channel whose
+ * descriptor has that flag `false` honest-degrades the verb. `tap` drives an
+ * inline-button callback → needs `buttons`; `edit` rewrites a sent message →
+ * needs `edits`. Verbs absent from this map (send/react/last/history/…) are
+ * unconstrained (no required cap). Add an entry to gate a new capability-
+ * dependent verb — the gate generalizes with no per-verb code.
+ */
+const VERB_REQUIRED_CAP: Record<string, keyof ChannelCaps["outbound"]> = {
+  tap: "buttons",
+  edit: "edits",
+};
+
+/**
+ * The GENERAL caps gate. If `verb` requires an outbound capability the resolved
+ * channel does not support, THROW an honest `unsupported_on_channel` failure
+ * (distinct non-zero exit + reason) — fired by {@link runVerb} BEFORE any POST.
+ * Channels with no registered caps descriptor (none today beyond telegram/signal)
+ * are not gated — the verb proceeds (the gate never blocks an unknown channel on
+ * a missing descriptor; the verb's own honest-exit handles a real failure).
+ */
+function assertVerbSupportedOnChannel(verb: string, ctx: VerbContext): void {
+  const requiredCap = VERB_REQUIRED_CAP[verb];
+  if (requiredCap === undefined) return; // the verb needs no special capability.
+  const channel = ctx.channel ?? "telegram";
+  const caps = CHANNEL_CAPS[channel];
+  if (caps === undefined) return; // no descriptor for this channel — do not gate.
+  if (caps.outbound[requiredCap] === false) {
+    throw VerbFailure.unsupportedOnChannel(verb, channel, requiredCap);
+  }
+}
+
 /**
  * Dispatch a `chan`/`tg` verb. Returns the verb's result (printed by `runMain`),
  * or THROWS a {@link VerbFailure} on any honest failure (no-reply / RPC error /
@@ -780,6 +881,15 @@ export async function runVerb(
       hint: "no live rig resolved — run `tg up` to start one (or pass --endpoint).",
     });
   }
+
+  // FIX #2 (§3A.4): the GENERAL caps gate. A button/edit-dependent verb on a
+  // channel that lacks the capability (Signal `buttons:false`/`edits:false`)
+  // honest-degrades to a distinct non-zero exit + `unsupported_on_channel`
+  // BEFORE any control POST — never a silent no-op, never a fabricated success.
+  // Fired here (after the dead-handle guard, before the switch) so it precedes
+  // every verb's POST. `react` and the channel-agnostic verbs have no required
+  // cap → they pass through unchanged.
+  assertVerbSupportedOnChannel(verb, ctx);
 
   switch (verb) {
     case "up": {
