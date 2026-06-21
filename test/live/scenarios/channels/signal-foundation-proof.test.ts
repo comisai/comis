@@ -289,11 +289,7 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
       // Record a `send` outbound on the REAL SignalEmulator (the channel oracle)
       // via the EXACT JSON-RPC `send` wire path the live adapter drives.
       const wireText = "the Signal reply on the wire";
-      // RED: the SignalEmulator wire-recording seam is not yet driven — the
-      // HARD dual-oracle cross-check must THROW (no false green) until GREEN
-      // wires the send-recording path. Proves the cross-check has real teeth.
-      void apiRoot;
-      void recordSendOnEmulator;
+      await recordSendOnEmulator(apiRoot, SIGNAL_CHAT, wireText);
 
       // Seed the matching delivery_mirror row (the Comis oracle).
       insertSignalMirrorRow(dbPath, {
