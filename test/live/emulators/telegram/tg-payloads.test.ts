@@ -39,6 +39,7 @@ import {
   makeMediaUpdate,
   makeMessageUpdate,
   makeReactionUpdate,
+  makeServiceMessageUpdate,
   makeUser,
   nextUpdateId,
 } from "./tg-payloads.js";
@@ -963,5 +964,70 @@ describe("makeMessageUpdate addressing extensions (chat/entities/replyToMessage/
     // The addressing extensions reference grammy's Chat + MessageEntity types.
     expect(src).toMatch(/import type \{[^}]*Chat[^}]*\} from ["']grammy\/types["']/);
     expect(src).toMatch(/import type \{[^}]*MessageEntity[^}]*\} from ["']grammy\/types["']/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeServiceMessageUpdate — a forum-service `message` Update (COVER-02
+// negative, Phase 208). The adapter FILTERS these six kinds before the agent
+// (telegram-inbound.ts:50-58); the harness must be able to MINT one so the
+// scenario proves it is NOT dispatched. §4.2 scope guard: service messages ARE
+// handled (filtered) → permitted; channel_post/inline_query/poll_answer stay
+// forbidden. A service message is a `message` with NO `text`, carrying exactly
+// one of the named forum-service fields.
+// ---------------------------------------------------------------------------
+
+describe("makeServiceMessageUpdate runtime shape (the forum-service negative builder, COVER-02)", () => {
+  const FORUM_SERVICE_KINDS = [
+    "forum_topic_created",
+    "forum_topic_edited",
+    "forum_topic_closed",
+    "forum_topic_reopened",
+    "general_forum_topic_hidden",
+    "general_forum_topic_unhidden",
+  ] as const;
+
+  it("builds a `message` Update carrying the named forum-service field (no text — it is a service message)", () => {
+    const update = makeServiceMessageUpdate("forum_topic_created", { chatId: -100777, messageId: 900 });
+    // It is a `message` Update (the kind the adapter's message handler receives,
+    // then filters at telegram-inbound.ts:50).
+    expect(Object.keys(update).sort()).toEqual(["message", "update_id"]);
+    const msg = update.message as unknown as Record<string, unknown>;
+    expect(msg["forum_topic_created"]).toBeDefined();
+    // A service message has no body text — it would be a real defect to ingest it
+    // as a prompt; the negative test proves it never reaches the agent.
+    expect(msg["text"]).toBeUndefined();
+    expect(msg["message_id"]).toBe(900);
+    // The service message rides a supergroup chat (forum topics live in supergroups).
+    expect((msg["chat"] as Record<string, unknown>)["id"]).toBe(-100777);
+    expect((msg["chat"] as Record<string, unknown>)["type"]).toBe("supergroup");
+  });
+
+  it("each of the six filtered forum-service kinds is mintable and sets ONLY that field", () => {
+    for (const kind of FORUM_SERVICE_KINDS) {
+      const update = makeServiceMessageUpdate(kind, { chatId: -100777, messageId: 901 });
+      const msg = update.message as unknown as Record<string, unknown>;
+      // The requested kind is present.
+      expect(msg[kind], `${kind} present`).toBeDefined();
+      // No OTHER forum-service field is set (exactly one per service message).
+      for (const other of FORUM_SERVICE_KINDS) {
+        if (other === kind) continue;
+        expect(msg[other], `${other} absent when minting ${kind}`).toBeUndefined();
+      }
+    }
+  });
+
+  it("the update_id defaults to nextUpdateId() but is overridable (the emulator owns the counter)", () => {
+    const update = makeServiceMessageUpdate("forum_topic_closed", { chatId: -100777, messageId: 902, updateId: 4242 });
+    expect(update.update_id).toBe(4242);
+  });
+
+  it("§4.2 scope guard: a service message is a `message` kind — it does NOT mint a forbidden update kind", () => {
+    const update = makeServiceMessageUpdate("general_forum_topic_hidden", { chatId: -100777, messageId: 903 });
+    const u = update as unknown as Record<string, unknown>;
+    expect(u["channel_post"]).toBeUndefined();
+    expect(u["inline_query"]).toBeUndefined();
+    expect(u["poll_answer"]).toBeUndefined();
+    expect(u["my_chat_member"]).toBeUndefined();
   });
 });

@@ -1102,4 +1102,150 @@ describe("TgEmulator — group/forum chats + addressing inject (GROUP-01/02)", (
       expect(env.parameters?.retry_after).toBe(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // COVER-01 — the Tier-3 group-admin Bot-API methods (on demand) + the honest
+  // unimplemented-log guard (HARD constraint 3: log it, NEVER a silent stub).
+  // -------------------------------------------------------------------------
+  describe("Tier-3 Bot-API methods (COVER-01 — round-trip against a seeded group)", () => {
+    /** Seed a group via createGroupChat and return its negative chat id. */
+    function seedGroup(admins: Array<{ id: number; firstName: string; username?: string }>): number {
+      const ref = emu.createGroupChat({
+        members: admins,
+        admins,
+        bot: { id: 12345, firstName: "TestBot", username: "test_bot" },
+        supergroup: true,
+      });
+      return ref.chatId;
+    }
+
+    it("getChatAdministrators reports the createGroupChat admins[] seed (the COVER-01 round-trip keystone)", async () => {
+      const chatId = seedGroup([
+        { id: 111, firstName: "owner", username: "owner" },
+        { id: 222, firstName: "mod", username: "mod" },
+      ]);
+      const env = await callMethod(apiRoot, "getChatAdministrators", { chat_id: chatId });
+      expect(env.ok).toBe(true);
+      const admins = env.result as Array<{ status: string; user: { id: number; first_name: string; is_bot: boolean } }>;
+      // The emulator reports the seeded admin set — same ids the createGroupChat
+      // admins[] seed recorded. A bot client maps a.user.id/first_name/is_bot/status.
+      const ids = admins.map((a) => a.user.id).sort((a, b) => a - b);
+      expect(ids).toEqual([111, 222]);
+      // Each entry carries a well-formed status + a user (the platformAction reads these).
+      for (const a of admins) {
+        expect(typeof a.status).toBe("string");
+        expect(typeof a.user.id).toBe("number");
+        expect(typeof a.user.first_name).toBe("string");
+        expect(typeof a.user.is_bot).toBe("boolean");
+      }
+    });
+
+    it("getChatAdministrators on an UNSEEDED chat returns an empty admin set (no phantom admins)", async () => {
+      const env = await callMethod(apiRoot, "getChatAdministrators", { chat_id: -100999 });
+      expect(env.ok).toBe(true);
+      expect(env.result as unknown[]).toEqual([]);
+    });
+
+    it("pinChatMessage records the pin + returns ok:true (a Tier-3 mutation round-trip)", async () => {
+      const chatId = seedGroup([{ id: 111, firstName: "owner" }]);
+      const env = await callMethod(apiRoot, "pinChatMessage", { chat_id: chatId, message_id: 55 });
+      expect(env.ok).toBe(true);
+      expect(env.result).toBe(true);
+      // The pin is recorded on the chat oracle (provable round-trip).
+      const recorded = emu.outbound({ chatId }).filter((o) => o.method === "pinChatMessage");
+      expect(recorded.length).toBe(1);
+      expect(recorded[0]!.messageId).toBe(55);
+    });
+
+    it("sendChatAction carries message_thread_id INCLUDING the General id=1 (the typing side of the asymmetry)", async () => {
+      const chatId = seedGroup([{ id: 111, firstName: "owner" }]);
+      // General topic (id=1) — TYPING must carry message_thread_id:1 (the side
+      // sendMessage omits). The emulator records the thread id verbatim.
+      const env = await callMethod(apiRoot, "sendChatAction", {
+        chat_id: chatId,
+        action: "typing",
+        message_thread_id: 1,
+      });
+      expect(env.ok).toBe(true);
+      const recorded = emu.outbound({ chatId }).filter((o) => o.method === "sendChatAction");
+      expect(recorded.length).toBe(1);
+      expect(recorded[0]!.messageThreadId).toBe(1);
+    });
+
+    it("getChat returns the seeded chat descriptor (a Tier-3 read round-trip)", async () => {
+      const chatId = seedGroup([{ id: 111, firstName: "owner" }]);
+      const env = await callMethod(apiRoot, "getChat", { chat_id: chatId });
+      expect(env.ok).toBe(true);
+      const chat = env.result as Record<string, unknown>;
+      expect(chat["id"]).toBe(chatId);
+      expect(chat["type"]).toBe("supergroup");
+    });
+
+    it("getChatMemberCount returns the seeded member count", async () => {
+      const chatId = seedGroup([
+        { id: 111, firstName: "owner" },
+        { id: 222, firstName: "mod" },
+      ]);
+      const env = await callMethod(apiRoot, "getChatMemberCount", { chat_id: chatId });
+      expect(env.ok).toBe(true);
+      // 2 members + the bot = 3 (the recorded seed + bot).
+      expect(typeof env.result).toBe("number");
+      expect(env.result as number).toBeGreaterThanOrEqual(2);
+    });
+
+    it("an UNIMPLEMENTED Tier-3 method logs an honest line + is surfaced via unimplementedCalls() — NEVER a silent no-op (HARD constraint 3)", async () => {
+      // banChatMember is a real Tier-3 method NOT wired on demand for any COVER
+      // UC. It MUST route through the honest fallback: a `[tg-emulator]
+      // unimplemented Bot-API method: <name>` log + a detectable record. A silent
+      // okEnvelope({}) here would FALSELY report coverage (the no-false-success
+      // principle applied to coverage — T-208-10).
+      const before = emu.unimplementedCalls().length;
+      await callMethod(apiRoot, "banChatMember", { chat_id: -100999, user_id: 222 });
+      const calls = emu.unimplementedCalls();
+      // The unimplemented call is surfaced (the scenario can detect it) — not silent.
+      expect(calls.length).toBe(before + 1);
+      expect(calls[calls.length - 1]).toBe("banChatMember");
+    });
+
+    it("the honest-log guard is present in source (no silent stub for an unimplemented Tier-3 method)", () => {
+      const src = readFileSync(EMULATOR_SOURCE, "utf8");
+      expect(src).toMatch(/unimplemented Bot-API method/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // COVER-02 — injectServiceMessage (the forum-service negative; the adapter
+  // FILTERS these, so the harness must be able to mint + queue one).
+  // -------------------------------------------------------------------------
+  describe("injectServiceMessage (COVER-02 — the forum-service message the adapter filters)", () => {
+    it("queues a forum-service `message` update for the next getUpdates poll", async () => {
+      const group = emu.createGroupChat({
+        members: [{ id: 111, firstName: "owner" }],
+        supergroup: true,
+        forum: true,
+      });
+      emu.injectServiceMessage(group, "forum_topic_created");
+
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 5 });
+      expect(env.ok).toBe(true);
+      const updates = env.result as Array<Record<string, unknown>>;
+      expect(updates.length).toBe(1);
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      // The queued update is a forum-service message (no text) — exactly what the
+      // adapter filters at telegram-inbound.ts:50.
+      expect(msg["forum_topic_created"]).toBeDefined();
+      expect(msg["text"]).toBeUndefined();
+      expect((msg["chat"] as Record<string, unknown>)["id"]).toBe(group.chatId);
+    });
+
+    it("resetChat drops a queued service message (it is a `message` update keyed on the chat)", async () => {
+      const group = emu.createGroupChat({ members: [{ id: 111, firstName: "owner" }], supergroup: true, forum: true });
+      emu.injectServiceMessage(group, "forum_topic_closed");
+      emu.resetChat(group);
+      // After reset the queue has no pending update for that chat — a poll returns [].
+      const env = await callMethod(apiRoot, "getUpdates", { timeout: 0 });
+      expect(env.ok).toBe(true);
+      expect((env.result as unknown[]).length).toBe(0);
+    });
+  });
 });
