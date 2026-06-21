@@ -156,7 +156,7 @@ describe("signal-payloads — I4 source discipline (the wire-type import is type
     expect(src).toMatch(/import type \{[^}]*SignalEnvelope[^}]*\} from "@comis\/channels"/);
   });
 
-  it("return-annotates the builders against SignalEnvelope (the I4 compile-drift guarantee)", () => {
+  it("returns a SignalEnvelope from each builder via an explicit return annotation (the I4 compile-drift guarantee)", () => {
     const src = readFileSync(PAYLOADS_SOURCE, "utf8");
     expect(src).toMatch(/: SignalEnvelope/);
     // The reaction builder exists (the WS1-relevant verb).
