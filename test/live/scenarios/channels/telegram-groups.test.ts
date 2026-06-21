@@ -225,10 +225,8 @@ describe("GROUP-03 Stage-B — the General-Topic id=1 asymmetry (the REAL @comis
     // topic must NOT carry message_thread_id=1 (the API rejects it AND it would
     // leak the General topic id onto the send). This is the load-bearing HARD
     // assertion — asserted against the REAL builder, never re-implemented.
-    // RED-FIRST (Pitfall 2): the deliberately-WRONG value — confirm this
-    // composition-over-real-seams test RUNS-and-FAILS, then flip to the GREEN
-    // `.toBeUndefined()` so the failing state is reproducible from the RED commit.
-    expect(buildSendThreadParams(1, "forum")).toEqual({ message_thread_id: 1 });
+    // (RED-first proved this RUNS-and-FAILS against the wrong value; GREEN here.)
+    expect(buildSendThreadParams(1, "forum")).toBeUndefined();
   });
 
   it("TYPING INCLUDES message_thread_id for the General topic (the asymmetric counterpart)", () => {
