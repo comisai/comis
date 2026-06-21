@@ -260,9 +260,212 @@ describe("SignalEmulator — built ON the http-backend base (SEC-01 source contr
   });
 });
 
+// ---------------------------------------------------------------------------
+// Task 2 — the SSE inbound (/api/v1/events) + injectMessage/injectReaction.
+//
+// The Signal analog of Telegram's getUpdates long-poll: the adapter pulls
+// inbound autonomously via a kept-open `GET /api/v1/events` SSE stream
+// (createSignalEventStream, signal-client.ts:240). `injectMessage` emits a
+// `SignalEnvelope` on that stream (queue-or-emit) — the structural twin of
+// `tgEmulator.injectMessage` queuing an Update.
+// ---------------------------------------------------------------------------
+
+/** Read one SSE frame (`event:`/`data:` lines up to a blank line) from a stream reader. */
+async function readSseFrame(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  pending: { buf: string },
+): Promise<{ event?: string; data?: string }> {
+  while (!pending.buf.includes("\n\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending.buf += decoder.decode(value, { stream: true });
+  }
+  const idx = pending.buf.indexOf("\n\n");
+  const raw = idx >= 0 ? pending.buf.slice(0, idx) : pending.buf;
+  pending.buf = idx >= 0 ? pending.buf.slice(idx + 2) : "";
+  const frame: { event?: string; data?: string } = {};
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("event:")) frame.event = line.slice("event:".length).trim();
+    else if (line.startsWith("data:")) frame.data = line.slice("data:".length).trim();
+  }
+  return frame;
+}
+
+/** Open the SSE inbound stream and return a reader + the running decode buffer. */
+async function openEvents(
+  apiRoot: string,
+  controller: AbortController,
+): Promise<{ reader: ReadableStreamDefaultReader<Uint8Array>; decoder: TextDecoder; pending: { buf: string } }> {
+  const res = await fetch(`${apiRoot}/api/v1/events`, {
+    method: "GET",
+    headers: { Accept: "text/event-stream" },
+    signal: controller.signal,
+  });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("text/event-stream");
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  const pending = { buf: "" };
+  // Drain the initial flush so the connection is fully established before an inject.
+  await reader.read();
+  return { reader, decoder, pending };
+}
+
+describe("SignalEmulator — SSE inbound /api/v1/events + injectMessage (CHAN2-01 Task 2)", () => {
+  let emu: SignalEmulator;
+  let apiRoot: string;
+
+  beforeEach(async () => {
+    resetSignalTimestampCounter();
+    emu = createSignalEmulator();
+    apiRoot = (await emu.start()).apiRoot;
+  });
+
+  afterEach(async () => {
+    await emu.stop();
+  });
+
+  it("GET /api/v1/events stays OPEN; injectMessage emits a `receive` frame a connected client reads", async () => {
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    // Inject AFTER a client connected → the envelope is emitted on the open stream.
+    emu.injectMessage(CHAT, CHAT, "hi");
+    const frame = await readSseFrame(reader, decoder, pending);
+    expect(frame.event).toBe("receive");
+    const envelope = JSON.parse(frame.data ?? "{}") as SignalEnvelope;
+    expect(envelope.dataMessage?.message).toBe("hi");
+    expect(envelope.source).toBe(CHAT);
+
+    // The strongest fidelity proof: the emitted envelope is EXACTLY what the
+    // REAL production mapper parses (the adapter's createSignalEventStream →
+    // JSON.parse → mapSignalToNormalized path).
+    const normalized = mapSignalToNormalized(envelope, BASE_URL);
+    expect(normalized?.text).toBe("hi");
+    expect(normalized?.channelType).toBe("signal");
+    expect(normalized?.chatType).toBe("dm");
+    expect(normalized?.channelId).toBe(CHAT);
+
+    await reader.cancel();
+    controller.abort();
+  });
+
+  it("emits a SECOND frame over the SAME open connection (the stream is not ended per inject)", async () => {
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    emu.injectMessage(CHAT, CHAT, "first");
+    const f1 = await readSseFrame(reader, decoder, pending);
+    expect((JSON.parse(f1.data ?? "{}") as SignalEnvelope).dataMessage?.message).toBe("first");
+
+    emu.injectMessage(CHAT, CHAT, "second");
+    const f2 = await readSseFrame(reader, decoder, pending);
+    expect((JSON.parse(f2.data ?? "{}") as SignalEnvelope).dataMessage?.message).toBe("second");
+
+    await reader.cancel();
+    controller.abort();
+  });
+
+  it("a group:<id> inject carries dataMessage.groupInfo.groupId (the group inbound path)", async () => {
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    emu.injectMessage(GROUP_CHAT, "+15555550111", "group ping");
+    const frame = await readSseFrame(reader, decoder, pending);
+    const envelope = JSON.parse(frame.data ?? "{}") as SignalEnvelope;
+    expect(envelope.dataMessage?.groupInfo?.groupId).toBe("test-group-id");
+    // The REAL mapper derives a group chatType + the group:<id> channelId.
+    const normalized = mapSignalToNormalized(envelope, BASE_URL);
+    expect(normalized?.chatType).toBe("group");
+    expect(normalized?.channelId).toBe(GROUP_CHAT);
+
+    await reader.cancel();
+    controller.abort();
+  });
+
+  it("QUEUE-then-drain: an inject with NO client connected is queued and drained on the next connect", async () => {
+    // No SSE client connected yet — the inject must be queued, not lost.
+    emu.injectMessage(CHAT, CHAT, "queued before connect");
+
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    // The queued envelope drains on connect (the queue-or-emit discipline).
+    const frame = await readSseFrame(reader, decoder, pending);
+    expect(frame.event).toBe("receive");
+    expect((JSON.parse(frame.data ?? "{}") as SignalEnvelope).dataMessage?.message).toBe(
+      "queued before connect",
+    );
+
+    await reader.cancel();
+    controller.abort();
+  });
+
+  it("injectReaction emits a SignalEnvelope with dataMessage.reaction { emoji, targetSentTimestamp }", async () => {
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    const targetTs = 1_700_000_000_500;
+    emu.injectReaction(CHAT, CHAT, targetTs, "👍");
+    const frame = await readSseFrame(reader, decoder, pending);
+    const envelope = JSON.parse(frame.data ?? "{}") as SignalEnvelope;
+    expect(envelope.dataMessage?.reaction?.emoji).toBe("👍");
+    expect(envelope.dataMessage?.reaction?.targetSentTimestamp).toBe(targetTs);
+
+    // The REAL mapper classifies it as a reaction (the WS1-relevant react FLOW).
+    const normalized = mapSignalToNormalized(envelope, BASE_URL);
+    expect(normalized?.metadata.signalReaction).toBe(true);
+    expect(normalized?.metadata.signalReactionEmoji).toBe("👍");
+    expect(normalized?.metadata.signalReactionTarget).toBe(targetTs);
+
+    await reader.cancel();
+    controller.abort();
+  });
+
+  it("injectMessage returns the Signal-shaped id (the envelope timestamp) consistent with the oracle source", async () => {
+    const controller = new AbortController();
+    const { reader, decoder, pending } = await openEvents(apiRoot, controller);
+
+    const id = emu.injectMessage(CHAT, CHAT, "with id");
+    expect(typeof id).toBe("number");
+    const frame = await readSseFrame(reader, decoder, pending);
+    const envelope = JSON.parse(frame.data ?? "{}") as SignalEnvelope;
+    // The returned id IS the emitted envelope's timestamp (the Signal message id).
+    expect(envelope.timestamp).toBe(id);
+
+    await reader.cancel();
+    controller.abort();
+  });
+});
+
+describe("SignalEmulator — stop() drains the SSE stream (CHAN2-01 / T-209-09)", () => {
+  it("stop() ends an open /api/v1/events client so stop() resolves and does not hang", async () => {
+    const emu = createSignalEmulator();
+    const { apiRoot } = await emu.start();
+
+    // Open an SSE connection and leave it open (no abort).
+    const res = await fetch(`${apiRoot}/api/v1/events`, { method: "GET" });
+    const reader = res.body!.getReader();
+    await reader.read(); // initial flush — the connection is now established + open.
+
+    // stop() MUST drain the kept-open stream — assert it resolves under a race.
+    await expect(
+      Promise.race([
+        emu.stop(),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error("stop() hung")), 5_000)),
+      ]),
+    ).resolves.toBeUndefined();
+
+    await reader.cancel().catch(() => {
+      /* server already closed the stream */
+    });
+  });
+});
+
 // A compile-time use of the imported `SignalEnvelope` type + the mapper so the
-// I4 wire-type import is exercised even before Task 2 wires the SSE round-trip
-// (keeps the import live; the Task-2 SSE tests consume both at runtime).
+// I4 wire-type import is exercised at the module top (the SSE tests above also
+// consume both at runtime).
 const _typeWitness: (e: SignalEnvelope) => ReturnType<typeof mapSignalToNormalized> = (e) =>
   mapSignalToNormalized(e, BASE_URL);
 void _typeWitness;
