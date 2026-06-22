@@ -23,7 +23,7 @@
  * @module
  */
 
-import { API_CONTRACTS_ORDERED, type AppContainer } from "@comis/core";
+import { API_CONTRACTS_ORDERED, stripInternalFields, type AppContainer } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { DynamicMethodRouter } from "@comis/gateway";
 
@@ -77,6 +77,14 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // runs once and registers the method under that scope. For multi-scope
   // contracts (none today; future-proof) the method registers separately
   // under each scope.
+  // ORIGIN-02 (v8 section 3.1): strip INTERNAL_FIELD_NAMES from external
+  // WS/REST caller params at BOTH branches before dispatch. External callers
+  // must never be able to forge an `_X` control field; in particular, after
+  // this strip the PRESENCE of `_agentId` is a sound, unforgeable agent-origin
+  // signal — the prerequisite that makes deny-by-origin sound. On the admin
+  // branch the order is strip-THEN-inject so the daemon's own trusted
+  // `_trustLevel` is never stripped. The in-process `createAgentRpcCall` path
+  // (the legitimate `_agentId` injector) does NOT pass through here.
   for (const c of API_CONTRACTS_ORDERED) {
     for (const scope of c.scopes) {
       if (scope === "admin") {
@@ -84,14 +92,17 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
           c.method,
           "admin",
           async (params: Record<string, unknown> | undefined) =>
-            rpcCall(c.method, { ...(params ?? {}), _trustLevel: "admin" }),
+            rpcCall(c.method, {
+              ...stripInternalFields(params ?? {}),
+              _trustLevel: "admin",
+            }),
         );
       } else {
         dynamicRouter.registerMethod(
           c.method,
           "rpc",
           async (params: Record<string, unknown> | undefined) =>
-            rpcCall(c.method, params ?? {}),
+            rpcCall(c.method, stripInternalFields(params ?? {})),
         );
       }
     }
