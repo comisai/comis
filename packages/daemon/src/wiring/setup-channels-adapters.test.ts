@@ -546,7 +546,7 @@ describe("bootstrapAdapters", () => {
       const container = makeContainer({ telegram: { enabled: true, botToken: "tg-tok" } });
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
 
-      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("api.telegram.org", expect.any(Object));
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("api.telegram.org", expect.any(Object), expect.any(Object));
       expect(createTelegramPlugin).toHaveBeenCalledWith(
         expect.objectContaining({ agent: mockHttpsAgent }),
       );
@@ -566,7 +566,7 @@ describe("bootstrapAdapters", () => {
       const container = makeContainer({ slack: { enabled: true, botToken: "xoxb-slack", mode: "socket", appToken: "xapp-sock" } });
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
 
-      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("slack.com", expect.any(Object));
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("slack.com", expect.any(Object), expect.any(Object));
       expect(createSlackPlugin).toHaveBeenCalledWith(
         expect.objectContaining({ agent: mockHttpsAgent }),
       );
@@ -586,7 +586,7 @@ describe("bootstrapAdapters", () => {
       const container = makeContainer({ whatsapp: { enabled: true, authDir: "/auth", printQR: false } });
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
 
-      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("web.whatsapp.com", expect.any(Object));
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("web.whatsapp.com", expect.any(Object), expect.any(Object));
       expect(createWhatsAppPlugin).toHaveBeenCalledWith(
         expect.objectContaining({ agent: mockHttpsAgent }),
       );
@@ -606,7 +606,7 @@ describe("bootstrapAdapters", () => {
       const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
 
-      expect(resolveUndiciProxyAgent).toHaveBeenCalledWith("discord.com", expect.any(Object));
+      expect(resolveUndiciProxyAgent).toHaveBeenCalledWith("discord.com", expect.any(Object), expect.any(Object));
       expect(createDiscordPlugin).toHaveBeenCalledWith(
         expect.objectContaining({ dispatcher: mockUndiciDispatcher }),
       );
@@ -628,10 +628,14 @@ describe("bootstrapAdapters", () => {
       });
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://user:pass@proxy:3128" }) });
 
-      // proxyUrl is resolved per-host (IMAP host used for email)
-      expect(resolveProxyUrl).toHaveBeenCalledWith(expect.any(String), expect.any(Object));
+      // proxyUrl is resolved per-host: imapHost for IMAP, smtpHost for SMTP.
+      expect(resolveProxyUrl).toHaveBeenCalledWith("imap.example.com", expect.any(Object));
+      expect(resolveProxyUrl).toHaveBeenCalledWith("smtp.example.com", expect.any(Object));
       expect(createEmailPlugin).toHaveBeenCalledWith(
-        expect.objectContaining({ proxyUrl: "http://user:pass@proxy:3128" }),
+        expect.objectContaining({
+          imapProxyUrl: "http://user:pass@proxy:3128",
+          smtpProxyUrl: "http://user:pass@proxy:3128",
+        }),
       );
     });
 
@@ -642,7 +646,10 @@ describe("bootstrapAdapters", () => {
       await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
       expect(createEmailPlugin).toHaveBeenCalledWith(
-        expect.not.objectContaining({ proxyUrl: expect.anything() }),
+        expect.not.objectContaining({ imapProxyUrl: expect.anything() }),
+      );
+      expect(createEmailPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ smtpProxyUrl: expect.anything() }),
       );
     });
   });

@@ -9,6 +9,7 @@
 // (@comis/infra `ssrfBlockInterceptor`, which owns the undici Dispatcher wiring
 // and imports `isSsrfBlocked` from here) and the offline `comis proxy validate`
 // command (@comis/cli) share one predicate without a cli→infra edge.
+import { parseIpv4Address, matchesIpv4Cidr } from "./ipv4.js";
 
 // ---------------------------------------------------------------------------
 // Blocked hostname/address sets (O(1) lookup before IP parsing)
@@ -69,48 +70,6 @@ const BLOCKED_IPV6_RANGES: readonly string[] = [
   "::ffff:0:0/96", // IPv4-mapped
   "2001:2::/48", // Benchmarking
 ];
-
-// ---------------------------------------------------------------------------
-// IPv4 helpers — ported from ~/projects/openclaw/src/infra/net/proxy-env.ts
-// (parseIpv4Address / matchesIpv4NoProxyPattern)
-// ---------------------------------------------------------------------------
-
-function parseIpv4Address(host: string): number | undefined {
-  const parts = host.split(".");
-  if (parts.length !== 4) {
-    return undefined;
-  }
-  let value = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) {
-      return undefined;
-    }
-    const octet = Number(part);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
-      return undefined;
-    }
-    value = (value << 8) | octet;
-  }
-  return value >>> 0;
-}
-
-function matchesIpv4Cidr(targetHost: string, cidr: string): boolean {
-  const target = parseIpv4Address(targetHost);
-  if (target === undefined) {
-    return false;
-  }
-  const cidrMatch = cidr.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
-  if (!cidrMatch) {
-    return false;
-  }
-  const network = parseIpv4Address(cidrMatch[1]);
-  const prefixLength = Number(cidrMatch[2]);
-  if (network === undefined || prefixLength < 0 || prefixLength > 32) {
-    return false;
-  }
-  const mask = prefixLength === 0 ? 0 : ((0xffffffff << (32 - prefixLength)) >>> 0);
-  return (target & mask) === (network & mask);
-}
 
 // ---------------------------------------------------------------------------
 // IPv6 helpers — minimal prefix-match for the blocked ranges above

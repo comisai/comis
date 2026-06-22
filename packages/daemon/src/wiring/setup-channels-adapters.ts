@@ -36,6 +36,7 @@ import {
 } from "@comis/channels";
 import os from "node:os";
 import { safePath } from "@comis/core";
+import { deriveChannelProxyEnv, resolveProxyCaPem } from "../daemon-proxy-boot-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -77,6 +78,15 @@ export async function bootstrapAdapters(deps: {
   const { container, channelsLogger, mergedEnv = {} } = deps;
   const channelConfig = container.config.channels;
 
+  // Bridge the config.yaml proxy onto the env the per-channel resolvers read
+  // (they only consult HTTP(S)_PROXY/ALL_PROXY env vars), and read the
+  // TLS-intercepting-proxy CA so the channel agents trust it — parity with the
+  // global undici dispatcher. Both are no-ops when no proxy is configured.
+  const proxyCfg = container.config.proxy ?? {};
+  const proxyEnv = deriveChannelProxyEnv(mergedEnv, proxyCfg, container.config.gateway ?? {});
+  const proxyCaPem = resolveProxyCaPem(proxyCfg.tls?.caFile);
+  const proxyOpts = proxyCaPem ? { ca: proxyCaPem } : {};
+
   const adaptersByType = new Map<string, ChannelPort>();
   const channelPlugins = new Map<string, ChannelPluginPort>();
   let tgPlugin: TelegramPluginHandle | undefined;
@@ -104,7 +114,7 @@ export async function bootstrapAdapters(deps: {
         : undefined;
       const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
-        const telegramProxyAgent = resolveHttpsProxyAgent("api.telegram.org", mergedEnv);
+        const telegramProxyAgent = resolveHttpsProxyAgent("api.telegram.org", proxyEnv, proxyOpts);
         const plugin = createTelegramPlugin({
           botToken: token,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
@@ -138,7 +148,7 @@ export async function bootstrapAdapters(deps: {
         : undefined;
       const validation = await validateDiscordToken(token, discordApiRoot);
       if (validation.ok) {
-        const discordDispatcher = resolveUndiciProxyAgent("discord.com", mergedEnv);
+        const discordDispatcher = resolveUndiciProxyAgent("discord.com", proxyEnv, proxyOpts);
         const plugin = createDiscordPlugin({
           botToken: token,
           logger: channelsLogger,
@@ -178,7 +188,7 @@ export async function bootstrapAdapters(deps: {
         ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
       });
       if (validation.ok) {
-        const slackProxyAgent = resolveHttpsProxyAgent("slack.com", mergedEnv);
+        const slackProxyAgent = resolveHttpsProxyAgent("slack.com", proxyEnv, proxyOpts);
         const plugin = createSlackPlugin({
           botToken: token,
           mode,
@@ -210,7 +220,7 @@ export async function bootstrapAdapters(deps: {
       ? channelConfig.whatsapp.apiRoot
       : undefined;
     if (validation.ok) {
-      const whatsappProxyAgent = resolveHttpsProxyAgent("web.whatsapp.com", mergedEnv);
+      const whatsappProxyAgent = resolveHttpsProxyAgent("web.whatsapp.com", proxyEnv, proxyOpts);
       const plugin = createWhatsAppPlugin({
         authDir,
         printQR: channelConfig.whatsapp.printQR,
@@ -354,9 +364,11 @@ export async function bootstrapAdapters(deps: {
 
       if (validation.ok) {
         const attachmentDir = safePath(safePath(os.homedir(), ".comis"), "email-attachments");
-        // Resolve proxy URL using IMAP host as the representative target
-        // (imapflow + nodemailer share the same proxy: option via EmailAdapterDeps.proxyUrl)
-        const emailProxyUrl = resolveProxyUrl(imapHost, mergedEnv);
+        // Resolve the proxy per host: imapHost drives the IMAP connection,
+        // smtpHost the SMTP connection. They can differ in NO_PROXY / SSRF
+        // status, so a single shared decision would route one of them wrong.
+        const emailImapProxyUrl = resolveProxyUrl(imapHost, proxyEnv);
+        const emailSmtpProxyUrl = resolveProxyUrl(smtpHost, proxyEnv);
         const plugin = createEmailPlugin({
           address,
           imapHost,
@@ -370,7 +382,8 @@ export async function bootstrapAdapters(deps: {
           pollingIntervalMs: emailCfg.pollingIntervalMs,
           attachmentDir,
           logger: channelsLogger,
-          ...(emailProxyUrl ? { proxyUrl: emailProxyUrl } : {}),
+          ...(emailImapProxyUrl ? { imapProxyUrl: emailImapProxyUrl } : {}),
+          ...(emailSmtpProxyUrl ? { smtpProxyUrl: emailSmtpProxyUrl } : {}),
         });
         adaptersByType.set("email", plugin.adapter);
         channelPlugins.set("email", plugin);

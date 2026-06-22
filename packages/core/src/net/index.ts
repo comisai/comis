@@ -20,6 +20,7 @@ export {
   matchesNoProxy,
   resolveEnvHttpProxyAgentOptions,
   resolveEffectiveNoProxy,
+  resolveLoopbackExemptHosts,
   resolveEnvHttpProxyUrl,
   hasEnvHttpProxyConfigured,
   hasEnvHttpProxyAgentConfigured,

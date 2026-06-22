@@ -11,6 +11,7 @@ export {
   matchesNoProxy,
   resolveEnvHttpProxyAgentOptions,
   resolveEffectiveNoProxy,
+  resolveLoopbackExemptHosts,
   isSsrfBlocked,
   ProxyConfigError,
 } from "../net/index.js";

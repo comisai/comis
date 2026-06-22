@@ -22,8 +22,13 @@ import { ProxyConfigError } from "@comis/core";
 import {
   installProxyAtBoot,
   logProxyPosture,
+  deriveChannelProxyEnv,
+  resolveProxyCaPem,
   type ProxyBootPosture,
 } from "./daemon-proxy-boot-helpers.js";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Mock @comis/infra — intercept installGlobalProxyDispatcher
@@ -125,14 +130,16 @@ describe("installProxyAtBoot — ProxyBootConfig mapping", () => {
     expect(arg.gatewayHostPort).toBe("127.0.0.1:4766");
   });
 
-  it("passes proxyUrl as undefined when config.proxy.proxyUrl is not a string (SecretRef guard)", async () => {
+  it("throws a SecretRef-naming error (not the misleading 'required') when proxyUrl is an unresolved SecretRef", async () => {
     const container = makeContainer({ proxyEnabled: true });
     // Force proxyUrl to look like an unresolved SecretRef object
     (container.config.proxy as Record<string, unknown>).proxyUrl = { $secret: "PROXY_URL" };
-    await installProxyAtBoot(container as never, makeMergedEnv());
 
-    const arg = (installGlobalProxyDispatcher as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.proxyUrl).toBeUndefined();
+    await expect(
+      installProxyAtBoot(container as never, makeMergedEnv()),
+    ).rejects.toThrow(/did not resolve to a string|\$secret/i);
+    // The installer is NOT reached — we fail before it with the precise cause.
+    expect(installGlobalProxyDispatcher).not.toHaveBeenCalled();
   });
 
   it("returns a ProxyBootPosture with installerOk:true and configured when proxy enabled", async () => {
@@ -241,5 +248,79 @@ describe("installProxyAtBoot — zero-config no-op (D-10)", () => {
     const logger = makeLoggerSpy();
     logProxyPosture(logger as never, { configured: false, installerOk: true });
     expect(logger.info).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. deriveChannelProxyEnv — bridge a config.yaml proxy onto the channel env
+//    so the per-channel resolvers (env-only) route through it.
+// ---------------------------------------------------------------------------
+describe("deriveChannelProxyEnv", () => {
+  const gw = { host: "127.0.0.1", port: 4766 };
+
+  it("returns the env unchanged when no proxy is configured anywhere", () => {
+    const env = { HOME: "/home/bot" };
+    const out = deriveChannelProxyEnv(env, {}, gw);
+    expect(out).toBe(env);
+  });
+
+  it("returns the env unchanged when an env-var proxy is already present (env wins)", () => {
+    const env = { HTTPS_PROXY: "http://env-proxy:3128" };
+    const out = deriveChannelProxyEnv(env, { enabled: true, proxyUrl: "http://config-proxy:8080" }, gw);
+    expect(out).toBe(env);
+  });
+
+  it("overlays HTTP(S)_PROXY from a config-file proxy when no env proxy is set", () => {
+    const out = deriveChannelProxyEnv(
+      { HOME: "/home/bot" },
+      { enabled: true, proxyUrl: "http://config-proxy:8080", loopbackMode: "gateway-only" },
+      gw,
+    );
+    expect(out.HTTPS_PROXY).toBe("http://config-proxy:8080");
+    expect(out.HTTP_PROXY).toBe("http://config-proxy:8080");
+    // Effective NO_PROXY carries the loopback bypass set (gateway-only)
+    expect(out.NO_PROXY).toContain("127.0.0.1");
+    expect(out.no_proxy).toBe(out.NO_PROXY);
+  });
+
+  it("does NOT overlay when config proxy is present but disabled", () => {
+    const env = { HOME: "/home/bot" };
+    const out = deriveChannelProxyEnv(env, { enabled: false, proxyUrl: "http://config-proxy:8080" }, gw);
+    expect(out).toBe(env);
+  });
+
+  it("does NOT overlay when config proxyUrl is an unresolved SecretRef (non-string)", () => {
+    const env = { HOME: "/home/bot" };
+    const out = deriveChannelProxyEnv(
+      env,
+      { enabled: true, proxyUrl: { $secret: "PROXY_URL" } },
+      gw,
+    );
+    expect(out).toBe(env);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. resolveProxyCaPem — read the TLS-intercepting-proxy CA for channel agents
+// ---------------------------------------------------------------------------
+describe("resolveProxyCaPem", () => {
+  it("returns undefined when no caFile is configured", () => {
+    expect(resolveProxyCaPem(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when the caFile is unreadable (global installer is the fail-fast authority)", () => {
+    expect(resolveProxyCaPem("/nonexistent/ca.pem")).toBeUndefined();
+  });
+
+  it("returns the PEM contents when the caFile is readable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-proxy-ca-"));
+    const caPath = join(dir, "ca.pem");
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    writeFileSync(caPath, pem, "utf8");
+    try {
+      expect(resolveProxyCaPem(caPath)).toBe(pem);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

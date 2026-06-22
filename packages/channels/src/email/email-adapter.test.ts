@@ -292,4 +292,62 @@ describe("createEmailAdapter", () => {
       expect(callArg.proxy).toBe(credUrl);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Per-host proxy resolution: IMAP and SMTP can route through different
+  // proxies (or one direct) when imapHost ≠ smtpHost differ in NO_PROXY/SSRF.
+  // -------------------------------------------------------------------------
+  describe("per-host proxy URLs (imapProxyUrl / smtpProxyUrl)", () => {
+    let createTransportMock: ReturnType<typeof vi.fn>;
+    let createImapLifecycleMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      const nm = await import("nodemailer");
+      createTransportMock = (nm as any).default.createTransport as ReturnType<typeof vi.fn>;
+      const il = await import("./imap-lifecycle.js");
+      createImapLifecycleMock = il.createImapLifecycle as ReturnType<typeof vi.fn>;
+    });
+
+    it("routes IMAP and SMTP through their own proxy URLs", async () => {
+      const { createEmailAdapter } = await getModule();
+      const adapter = createEmailAdapter(
+        makeDeps({
+          imapProxyUrl: "http://imap-proxy:3128",
+          smtpProxyUrl: "http://smtp-proxy:3128",
+        }),
+      );
+      await adapter.start();
+
+      // IMAP lifecycle gets the imap proxy
+      const imapArg = createImapLifecycleMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(imapArg.proxyUrl).toBe("http://imap-proxy:3128");
+      // SMTP transport gets the smtp proxy
+      const smtpArg = createTransportMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(smtpArg.proxy).toBe("http://smtp-proxy:3128");
+    });
+
+    it("uses the per-host URL for SMTP even when IMAP should bypass (imapProxyUrl undefined)", async () => {
+      const { createEmailAdapter } = await getModule();
+      const adapter = createEmailAdapter(
+        makeDeps({ imapProxyUrl: undefined, smtpProxyUrl: "http://smtp-proxy:3128" }),
+      );
+      await adapter.start();
+
+      const imapArg = createImapLifecycleMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(imapArg).not.toHaveProperty("proxyUrl");
+      const smtpArg = createTransportMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(smtpArg.proxy).toBe("http://smtp-proxy:3128");
+    });
+
+    it("falls back to the shared proxyUrl for both when per-host fields are absent", async () => {
+      const { createEmailAdapter } = await getModule();
+      const adapter = createEmailAdapter(makeDeps({ proxyUrl: "http://shared-proxy:3128" }));
+      await adapter.start();
+
+      const imapArg = createImapLifecycleMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(imapArg.proxyUrl).toBe("http://shared-proxy:3128");
+      const smtpArg = createTransportMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(smtpArg.proxy).toBe("http://shared-proxy:3128");
+    });
+  });
 });

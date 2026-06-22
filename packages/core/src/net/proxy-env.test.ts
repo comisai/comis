@@ -11,6 +11,7 @@ import {
   matchesNoProxy,
   resolveEnvHttpProxyAgentOptions,
   resolveEnvHttpProxyUrl,
+  resolveLoopbackExemptHosts,
   shouldUseEnvHttpProxyForUrl,
 } from "./proxy-env.js";
 
@@ -458,5 +459,63 @@ describe("matchesNoProxy branch coverage", () => {
     const env = { no_proxy: "example.com", NO_PROXY: "other.com" };
     expect(matchesNoProxy("http://example.com", env)).toBe(true);
     expect(matchesNoProxy("http://other.com", env)).toBe(false);
+  });
+});
+
+describe("resolveLoopbackExemptHosts", () => {
+  it("returns the loopback + gateway hostnames (port-stripped) in gateway-only mode", () => {
+    const hosts = resolveLoopbackExemptHosts({
+      env: { HTTPS_PROXY: "http://proxy.example.com:3128" },
+      loopbackMode: "gateway-only",
+    });
+    // Defaults: localhost, 127.0.0.1, ::1 (ports stripped from gateway/Ollama entries)
+    expect(hosts).toContain("localhost");
+    expect(hosts).toContain("127.0.0.1");
+    expect(hosts).toContain("::1");
+    // No gateway/Ollama host:port forms leak through — the interceptor matches
+    // on hostname only (note ::1 legitimately ends in ":1" and is not a port).
+    expect(hosts).not.toContain("127.0.0.1:4766");
+    expect(hosts).not.toContain("localhost:11434");
+  });
+
+  it("returns the loopback set in proxy mode (loopback still reachable through the proxy)", () => {
+    const hosts = resolveLoopbackExemptHosts({
+      env: { HTTPS_PROXY: "http://proxy.example.com:3128" },
+      loopbackMode: "proxy",
+    });
+    expect(hosts).toContain("127.0.0.1");
+    expect(hosts).toContain("localhost");
+  });
+
+  it("returns an empty list in block mode (loopback stays SSRF-blocked)", () => {
+    const hosts = resolveLoopbackExemptHosts({
+      env: { HTTPS_PROXY: "http://proxy.example.com:3128" },
+      loopbackMode: "block",
+    });
+    expect(hosts).toEqual([]);
+  });
+
+  it("defaults to gateway-only behavior when loopbackMode is omitted", () => {
+    const hosts = resolveLoopbackExemptHosts({ env: {} });
+    expect(hosts).toContain("127.0.0.1");
+  });
+
+  it("includes a custom gateway host (port stripped) in gateway-only mode", () => {
+    const hosts = resolveLoopbackExemptHosts({
+      env: {},
+      loopbackMode: "gateway-only",
+      gatewayHostPort: "192.168.1.1:9999",
+    });
+    expect(hosts).toContain("192.168.1.1");
+    expect(hosts).not.toContain("192.168.1.1:9999");
+  });
+
+  it("strips the port from a bracketed IPv6 gateway host", () => {
+    const hosts = resolveLoopbackExemptHosts({
+      env: {},
+      loopbackMode: "gateway-only",
+      gatewayHostPort: "[::1]:4766",
+    });
+    expect(hosts).toContain("::1");
   });
 });

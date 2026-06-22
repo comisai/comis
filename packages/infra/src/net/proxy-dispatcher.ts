@@ -22,23 +22,28 @@
  *   - installation is NOT a module side effect — only inside the exported fn
  *   - noProxy ALWAYS passed explicitly (EnvHttpProxyAgent re-reads process.env
  *     at dispatch time unless the explicit option is set)
+ *
+ * @allow-throw: fail-fast config validation. A self-contradictory proxy config
+ * (enabled without proxyUrl, unreadable caFile) throws ProxyConfigError naming
+ * the exact dotted key so the daemon aborts boot rather than installing a
+ * half-configured dispatcher — the throw is the documented boundary contract.
  */
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   EnvHttpProxyAgent,
-  ProxyAgent,
   setGlobalDispatcher,
 } from "undici";
 import {
   resolveEnvHttpProxyAgentOptions,
   resolveEffectiveNoProxy,
+  resolveLoopbackExemptHosts,
   sanitizeProxyUrl,
   type ProxyBootConfig,
   ProxyConfigError,
 } from "@comis/core";
-import { ssrfBlockInterceptor } from "./ssrf-blocklist.js";
+import { createSsrfBlockInterceptor } from "./ssrf-blocklist.js";
 
 // ---------------------------------------------------------------------------
 // Module-level idempotency state
@@ -162,37 +167,35 @@ export function installGlobalProxyDispatcher(config: ProxyBootConfig): void {
   const proxyTls = ca ? { ca } : undefined;
   const envOptions = resolveEnvHttpProxyAgentOptions(config.env);
 
-  let agent: EnvHttpProxyAgent | ProxyAgent;
+  // Both paths use EnvHttpProxyAgent so `noProxy` (and therefore loopbackMode)
+  // is honored uniformly. undici's plain ProxyAgent has NO noProxy option, so
+  // the explicit-proxyUrl (config.yaml) path used to force loopback through the
+  // proxy and ignore loopbackMode entirely — EnvHttpProxyAgent with explicit
+  // http/https proxy options fixes that. noProxy MUST be explicit: EnvHttpProxyAgent
+  // re-reads process.env.NO_PROXY at dispatch time unless the option overrides it.
+  const proxyOptions = envOptions ?? {
+    httpProxy: config.proxyUrl!,
+    httpsProxy: config.proxyUrl!,
+  };
 
-  if (envOptions) {
-    // Env-first path: EnvHttpProxyAgent with explicit options
-    // noProxy MUST be explicit — EnvHttpProxyAgent re-reads process.env.NO_PROXY
-    // at dispatch time unless the explicit option overrides it.
-    agent = new EnvHttpProxyAgent({
-      ...envOptions,
-      noProxy: effectiveNoProxy,
-      ...(proxyTls ? { proxyTls } : {}),
-      allowH2: false,
-    });
-  } else {
-    // Explicit proxyUrl path (enabled + proxyUrl, no env proxy)
-    agent = new ProxyAgent({
-      uri: config.proxyUrl!,
-      ...(proxyTls ? { proxyTls } : {}),
-      allowH2: false,
-    });
-  }
+  const agent: EnvHttpProxyAgent = new EnvHttpProxyAgent({
+    ...proxyOptions,
+    noProxy: effectiveNoProxy,
+    ...(proxyTls ? { proxyTls } : {}),
+    allowH2: false,
+  });
 
   // -------------------------------------------------------------------------
-  // Step 6: Compose SSRF interceptor
-  // ssrfBlockInterceptor is compose-compatible; blocks BEFORE connect
+  // Step 6: Compose SSRF interceptor (blocks BEFORE connect)
   // -------------------------------------------------------------------------
 
-  // Note: loopbackMode="block" is handled by the SSRF interceptor — the
-  // interceptor already blocks loopback IPs via isSsrfBlocked.
-  // No additional machinery is needed for block-mode when the interceptor is
-  // always composed.
-  const guarded = agent.compose(ssrfBlockInterceptor);
+  // The interceptor runs ABOVE the NO_PROXY routing decision and blocks ALL
+  // loopback/private ranges via isSsrfBlocked. In gateway-only / proxy modes the
+  // trusted loopback + gateway hosts must stay reachable, so they are passed as
+  // an exempt allowlist. In block mode the allowlist is empty → loopback stays
+  // blocked, which is exactly what block mode means.
+  const exemptHosts = new Set(resolveLoopbackExemptHosts(config));
+  const guarded = agent.compose(createSsrfBlockInterceptor(exemptHosts));
 
   // -------------------------------------------------------------------------
   // Step 7: Install globally + record fingerprint

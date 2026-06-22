@@ -61,18 +61,23 @@ export interface EmailAdapterDeps {
   attachmentDir: string;
   logger: ComisLogger;
   /**
-   * Optional full proxy URL (credential-bearing) for IMAP + SMTP egress.
+   * Optional full proxy URL (credential-bearing) applied to BOTH IMAP and SMTP.
    *
-   * When set, passed as imapflow's native `proxy:` option (IMAP) and nodemailer's
-   * `proxy:` option (SMTP), routing both connections through the configured proxy.
-   * The full URL (including any credentials) is passed directly — do NOT sanitize
-   * here; sanitizeProxyUrl is reserved for logs.
+   * Back-compat fallback only — prefer `imapProxyUrl` / `smtpProxyUrl`, which are
+   * resolved per-host so the NO_PROXY / SSRF bypass decision is correct when
+   * `imapHost` and `smtpHost` differ (e.g. one is in NO_PROXY or on a private
+   * network and the other is public). `imapProxyUrl`/`smtpProxyUrl` take
+   * precedence over this field when set.
    *
-   * The daemon's setup-channels-adapters.ts populates this field by calling
-   * resolveProxyUrl(deps.smtpHost, mergedEnv). Production callers without a proxy
-   * leave it undefined — the adapter behaves byte-identically to before.
+   * The full URL (including any credentials) is passed directly to imapflow's
+   * and nodemailer's native `proxy:` option — do NOT sanitize here;
+   * sanitizeProxyUrl is reserved for logs.
    */
   proxyUrl?: string;
+  /** Proxy URL for the IMAP connection (resolved against `imapHost`). Falls back to `proxyUrl`. */
+  imapProxyUrl?: string;
+  /** Proxy URL for the SMTP connection (resolved against `smtpHost`). Falls back to `proxyUrl`. */
+  smtpProxyUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +130,11 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     auth: imapAuth,
     pollingIntervalMs: deps.pollingIntervalMs,
     logger: deps.logger,
-    // Forward proxy URL for IMAP egress (no sanitization).
-    ...(deps.proxyUrl ? { proxyUrl: deps.proxyUrl } : {}),
+    // Forward proxy URL for IMAP egress (no sanitization). Per-host imapProxyUrl
+    // wins; falls back to the shared proxyUrl for back-compat.
+    ...(deps.imapProxyUrl ?? deps.proxyUrl
+      ? { proxyUrl: (deps.imapProxyUrl ?? deps.proxyUrl) as string }
+      : {}),
   });
 
   // Register IMAP message handler
@@ -226,7 +234,10 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       port: deps.smtpPort,
       secure: deps.secure,
       auth: buildSmtpAuth(),
-      ...(deps.proxyUrl ? { proxy: deps.proxyUrl } : {}),
+      // Per-host smtpProxyUrl wins; falls back to the shared proxyUrl.
+      ...(deps.smtpProxyUrl ?? deps.proxyUrl
+        ? { proxy: (deps.smtpProxyUrl ?? deps.proxyUrl) as string }
+        : {}),
     });
 
     // Start IMAP lifecycle

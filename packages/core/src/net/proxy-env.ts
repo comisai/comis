@@ -11,6 +11,7 @@
 // (@comis/infra) and the offline `comis proxy validate` command (@comis/cli)
 // share these primitives without a cli→infra edge.
 import type { ProxyBootConfig } from "./proxy-config.js";
+import { parseIpv4Address, matchesIpv4Cidr } from "./ipv4.js";
 
 export const PROXY_ENV_KEYS = [
   "HTTP_PROXY",
@@ -250,40 +251,15 @@ export function matchesNoProxy(targetUrl: string, env: Record<string, string | u
   return false;
 }
 
-function parseIpv4Address(host: string): number | undefined {
-  const parts = host.split(".");
-  if (parts.length !== 4) {
-    return undefined;
-  }
-  let value = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) {
-      return undefined;
-    }
-    const octet = Number(part);
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) {
-      return undefined;
-    }
-    value = (value << 8) | octet;
-  }
-  return value >>> 0;
-}
-
 function matchesIpv4NoProxyPattern(targetHost: string, entryHost: string): boolean {
   const target = parseIpv4Address(targetHost);
   if (target === undefined) {
     return false;
   }
 
-  const cidrMatch = entryHost.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
-  if (cidrMatch) {
-    const network = parseIpv4Address(cidrMatch[1]);
-    const prefixLength = Number(cidrMatch[2]);
-    if (network === undefined || prefixLength < 0 || prefixLength > 32) {
-      return false;
-    }
-    const mask = prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
-    return (target & mask) === (network & mask);
+  // CIDR entry → shared membership test (single source of truth in ipv4.ts).
+  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(entryHost)) {
+    return matchesIpv4Cidr(targetHost, entryHost);
   }
 
   if (!entryHost.includes("*")) {
@@ -368,4 +344,55 @@ export function resolveEffectiveNoProxy(config: ProxyBootConfig): string {
   }
 
   return parts.join(",");
+}
+
+// ---------------------------------------------------------------------------
+// resolveLoopbackExemptHosts — SSRF carve-out for the runtime interceptor
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip an optional `:port` (and IPv6 brackets) from a `host[:port]` token,
+ * returning a lowercased, bracket-free hostname suitable for matching against
+ * `new URL(origin).hostname`. IPv6 literals carry multiple colons, so a bare
+ * `::1` is returned unchanged (only a single trailing `:digits` is treated as a
+ * port).
+ */
+function hostnameOfHostPort(hostPort: string): string {
+  const s = hostPort.trim().toLowerCase();
+  if (s.startsWith("[")) {
+    const m = s.match(/^\[([^\]]+)\]/);
+    return m ? m[1] : s.replace(/^\[|\]$/g, "");
+  }
+  const firstColon = s.indexOf(":");
+  const lastColon = s.lastIndexOf(":");
+  if (firstColon > -1 && firstColon === lastColon && /^\d+$/.test(s.slice(lastColon + 1))) {
+    return s.slice(0, lastColon);
+  }
+  return s;
+}
+
+/**
+ * Hostnames (port-stripped, lowercased, bracket-free) that must be EXEMPT from
+ * the SSRF block when a proxy is installed.
+ *
+ * The SSRF interceptor blocks loopback/private ranges unconditionally; it runs
+ * ABOVE the NO_PROXY routing decision, so forcing loopback "direct" via
+ * `resolveEffectiveNoProxy` is not enough — without this carve-out, enabling a
+ * proxy in the default `gateway-only` mode would also block the local gateway
+ * (127.0.0.1:4766) and Ollama (localhost:11434), since `127.0.0.1`/`localhost`
+ * are in the SSRF blocklist.
+ *
+ * - `gateway-only` / `proxy`: the loopback set + gateway host are exempt.
+ * - `block`: returns `[]` — loopback stays blocked by the interceptor as documented.
+ */
+export function resolveLoopbackExemptHosts(config: ProxyBootConfig): string[] {
+  if (config.loopbackMode === "block") {
+    return [];
+  }
+  const gatewayHostPort = config.gatewayHostPort ?? "127.0.0.1:4766";
+  const hosts = new Set<string>();
+  for (const entry of [...DEFAULT_LOOPBACK_HOSTS, gatewayHostPort]) {
+    hosts.add(hostnameOfHostPort(entry));
+  }
+  return [...hosts];
 }
