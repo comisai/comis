@@ -123,6 +123,9 @@ export interface AgentsResult {
    * buildImageGenBundle → the Codex image adapter (CDX-01). Only OAuth-configured
    * agents appear (setupSingleAgent's `oauth` is undefined otherwise). */
   oauthManagers: Map<string, OAuthTokenManager>;
+  /** FLAG-3: per-agent pi AuthStorage (piAuthStorage) → the memory.ask dialectic OAuth credential
+   *  resolver's runtime-override target. Mirrors oauthManagers (every agent has one). */
+  authStorages: Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>;
   /**
    * Session-scoped trajectory recorder registry. Daemon shutdown MUST
    * call `closeAll()` to flush every open per-session recorder.
@@ -348,6 +351,8 @@ export async function setupAgents(deps: {
   const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
   // Per-agent OAuthTokenManager map (184) — see AgentsResult.oauthManagers.
   const oauthManagers = new Map<string, OAuthTokenManager>();
+  // FLAG-3: per-agent pi AuthStorage map — see AgentsResult.authStorages.
+  const authStorages = new Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
@@ -526,6 +531,7 @@ export async function setupAgents(deps: {
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
     executionPlanPorts.set(agentId, result.executionPlanPort);
     if (result.oauth) oauthManagers.set(agentId, result.oauth); // 184: per-agent OAuth manager (when present)
+    if (result.authStorage) authStorages.set(agentId, result.authStorage); // FLAG-3: per-agent pi AuthStorage
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -592,6 +598,7 @@ export async function setupAgents(deps: {
     // chat plan-stream reads from the SAME object SEP publishes into.
     executionPlanPorts,
     oauthManagers, // 184: per-agent OAuth managers → buildImageGenBundle (Codex image adapter)
+    authStorages, // FLAG-3: per-agent pi AuthStorage → memory.ask dialectic OAuth resolver
   };
 }
 

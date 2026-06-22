@@ -531,6 +531,10 @@ export interface BootContext {
    * path resolves its OAuth bearer (CDX-01/CRED-01). Populated by bootAgents'
    * setupAgents Object.assign; read by bootChannels' image bundle. */
   oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
+  /** FLAG-3: per-agent pi AuthStorage map. Populated by the SAME bootAgents setupAgents Object.assign
+   *  as oauthManagers; read by the memory.ask dialectic OAuth credential resolver (the runtime-override
+   *  target so the dialectic's pi model picks up the OAuth bearer — the proven main-agent path). */
+  authStorages?: Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>;
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   /**
    * The ONE mode-selected MCP OAuth token store (selectMcpTokenStore),

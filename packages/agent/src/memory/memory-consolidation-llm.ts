@@ -33,7 +33,7 @@
 import { wrapExternalContent } from "@comis/core";
 import type { MemoryConsolidationConfig, MemoryEntry, ClockPort } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import {
   CONSOLIDATION_PROMPT,
@@ -187,7 +187,7 @@ async function runClusterCompletion(
       { systemPrompt, messages: [{ role: "user" as const, content: userContent, timestamp: clock.now() }] },
       {
         apiKey: deps.apiKey,
-        temperature: 0.2,
+        ...temperatureOption(model, 0.2),
         maxTokens: config.maxConsolidationTokens,
         signal: controller.signal,
       },

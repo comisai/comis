@@ -33,7 +33,7 @@ import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/co
 import type { SessionData, SessionKey } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
@@ -467,7 +467,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       },
       {
         apiKey: deps.apiKey,
-        temperature: 0.3,
+        ...temperatureOption(model, 0.3),
         maxTokens: config.maxReviewTokens,
         signal: controller.signal,
       },

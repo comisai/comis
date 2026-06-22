@@ -595,5 +595,6 @@ export async function setupSingleAgent(
     toolCapabilityPort,
     executionPlanPort: executionPlanHolder, // SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
     oauth: authProvider.oauth, // 184: SAME manager consumed at :439 — surfaced for the Codex image path (no 2nd instance)
+    authStorage: piAuthStorage, // FLAG-3: the runtime-override target for the memory.ask dialectic OAuth credential resolver
   };
 }

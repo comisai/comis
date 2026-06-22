@@ -32,6 +32,7 @@ import {
   resolveProviderFamily,
   createDialecticSeam,
   createMemoryRecall,
+  resolveProviderApiKey,
   buildScoringAlphas,
   type MemoryRecall,
   type DialecticParsed,
@@ -110,6 +111,12 @@ export interface DialecticWiringDeps {
   costFeaturesEnabled: boolean;
   /** Resolves the provider apiKey VALUE by NAME (never logged). */
   secretManager: { get: (name: string) => string | undefined };
+  /** FLAG-3: per-agent OAuth-credential resolver factory. Returns a per-call `getApiKey` for the
+   *  resolved cheap provider when that agent has an OAuth manager (openai-codex), else `undefined`.
+   *  Built in `dialecticWiringDepsFromBoot` from the boot `oauthManagers` map (the SAME the Codex
+   *  image/video/vision bundles use). Without it, an OAuth provider resolves no API key and the seam
+   *  abstains on every `memory.ask`. */
+  getResolveCredential?: (agentId: string, provider: string) => (() => Promise<string>) | undefined;
   /** Provider entries (for apiKeyName lookup + the R6 capabilities override) —
    *  `container.config.providers?.entries`. `capabilities` supplies the optional
    *  operator capabilityClass override the dialectic seam's R6 routing reads (CR-01). */
@@ -160,6 +167,15 @@ export interface DialecticWiring {
 export interface DialecticBootSlice {
   defaultAgentId: string;
   agentsConfig: Record<string, PerAgentConfig>;
+  /** FLAG-3: per-agent OAuth managers (the boot `oauthManagers` map on PostChannelsBootContext —
+   *  the SAME one threaded to the Codex image/video/vision bundles). Read to build the dialectic
+   *  credential resolver so OAuth providers (openai-codex) don't abstain on a missing API key. */
+  oauthManagers?: Map<string, import("@comis/core").OAuthTokenManager>;
+  /** FLAG-3 (approach A): per-agent pi AuthStorage (piAuthStorage) — the runtime-override target.
+   *  `resolveProviderApiKey` calls `authStorage.setRuntimeApiKey(token)` so the dialectic's pi model
+   *  picks up the OAuth bearer (the PROVEN main-agent path; passing the token as `apiKey` does NOT work
+   *  for openai-codex — empirically verified live 2026-06-22). Threaded beside `oauthManagers`. */
+  authStorages?: Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>;
   container: {
     secretManager: { get: (name: string) => string | undefined };
     config: {
@@ -210,6 +226,25 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
     // `false` here force-disables it regardless of any agent's per-agent dialectic.enabled.
     costFeaturesEnabled: c.container.config.memory.costFeatures.enabled,
     secretManager: c.container.secretManager,
+    // FLAG-3: per-agent OAuth-credential resolver — returns a per-call getApiKey for the cheap
+    // provider when that agent has an OAuth manager (openai-codex), else undefined (seam falls back
+    // to the static apiKey). Resolves the OAuth bearer so memory.ask no longer abstains on OAuth deployments.
+    getResolveCredential: (agentId, provider) => {
+      // eslint-disable-next-line security/detect-object-injection -- agentId is the invoking agent's configured id
+      const mgr = c.oauthManagers?.get(agentId);
+      // eslint-disable-next-line security/detect-object-injection -- agentId is the invoking agent's configured id
+      const authStorage = c.authStorages?.get(agentId);
+      if (mgr === undefined || authStorage === undefined) return undefined;
+      // eslint-disable-next-line security/detect-object-injection -- agentId is the invoking agent's configured id
+      const agentConfig = c.agentsConfig[agentId];
+      // resolveProviderApiKey resolves the OAuth bearer AND writes it via authStorage.setRuntimeApiKey
+      // (pi runtime-override, HIGHEST priority) so the dialectic's completeSimple picks it up — the proven
+      // main-agent path. Returned per-call so a rotated OAuth token never goes stale.
+      // `mgr` is typed as @comis/core OAuthTokenManager; resolveProviderApiKey wants the agent-local
+      // OAuthTokenManager (adds `invalidate`). The runtime object IS the full manager (authProvider.oauth),
+      // so cast the deps to the param type — sound at runtime, only the static types are duplicated.
+      return () => resolveProviderApiKey(provider, { authStorage, oauthManager: mgr, agentConfig } as Parameters<typeof resolveProviderApiKey>[1]);
+    },
     providers: c.container.config.providers?.entries ?? {},
     stores: {
       memoryPort: c.memoryAdapter,
@@ -249,7 +284,7 @@ const DIALECTIC_DEFAULT_MAX_RECALL = 10;
  * for the seam, RagConfig for recall, maxRecall for the DoS bound), memoizing the seam per agent.
  */
 export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring {
-  const { defaultAgentId, agentsConfig, costFeaturesEnabled, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger } = deps;
+  const { defaultAgentId, agentsConfig, costFeaturesEnabled, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger, getResolveCredential } = deps;
 
   // The master cost-feature kill switch (opt-out posture). The dialectic (memory_ask) is the
   // ONE query-time LLM tool — a cost-bearing feature — so when the operator turns all cost
@@ -338,10 +373,14 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
 
     // The ONE query-time synthesis seam (bounded by THIS agentʼs dialectic.maxOutputTokens — the
     // cost axis; falls back to the schema default when the agentʼs dialectic block is absent).
+    // FLAG-3: per-call OAuth-credential resolver for THIS agent's cheap provider. Undefined for
+    // non-OAuth/keyless providers ⇒ the seam keeps using the static `apiKey` (pre-fix behavior).
+    const resolveCredential = getResolveCredential?.(agentId, resolved.provider);
     const seamDeps: DialecticSeamDeps = {
       provider: resolved.provider,
       modelId: resolved.modelId,
       apiKey,
+      ...(resolveCredential !== undefined ? { resolveCredential } : {}),
       maxOutputTokens: agentConfig.dialectic?.maxOutputTokens ?? 1024,
       clock,
       logger,

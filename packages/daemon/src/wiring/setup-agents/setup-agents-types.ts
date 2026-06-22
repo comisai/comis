@@ -294,4 +294,11 @@ export interface SingleAgentResult {
    * agent has no OAuth config.
    */
   oauth?: OAuthTokenManager;
+  /**
+   * FLAG-3: the per-agent pi AuthStorage (piAuthStorage). The SAME instance the executor's
+   * model auth uses — surfaced so the registry collects it into AgentsResult.authStorages and the
+   * memory.ask dialectic OAuth resolver can call resolveProviderApiKey → authStorage.setRuntimeApiKey
+   * (the runtime-override the dialectic's pi model reads). Always present (every runtime builds one).
+   */
+  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
 }
