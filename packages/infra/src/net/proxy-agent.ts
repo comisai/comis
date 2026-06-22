@@ -40,52 +40,41 @@ export interface ProxyAgentOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Internal gate: true when the target host should bypass the proxy
+// Internal gate: the proxy URL to use for a host, or undefined when bypassed
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true when the target host must NOT be proxied:
+ * Resolve the proxy URL a target host should be routed through, or `undefined`
+ * when the host must NOT be proxied:
  *   - no proxy is configured in env (zero-config)
  *   - the host matches an effective NO_PROXY entry
  *   - the host is SSRF-blocked
+ *
+ * Folds the bypass decision and the URL resolution into one pass: when a proxy
+ * IS configured, `resolveEnvHttpProxyAgentOptions` guarantees at least one of
+ * httpsProxy/httpProxy is set, so the returned value is always a string on the
+ * proxied path (httpsProxy preferred, httpProxy fallback).
  */
-function shouldBypass(
+function resolveActiveProxyUrl(
   targetHost: string,
   env: Record<string, string | undefined>,
-): boolean {
+): string | undefined {
   // (a) Zero-config gate — no proxy configured at all
   const options = resolveEnvHttpProxyAgentOptions(env);
   if (options === undefined) {
-    return true;
+    return undefined;
   }
 
-  // (b) NO_PROXY gate — build a synthetic target URL for matchesNoProxy
-  // matchesNoProxy expects a URL string so it can parse the hostname
-  const targetUrl = `https://${targetHost}`;
-  if (matchesNoProxy(targetUrl, env)) {
-    return true;
+  // (b) NO_PROXY gate — matchesNoProxy expects a URL string to parse the host
+  if (matchesNoProxy(`https://${targetHost}`, env)) {
+    return undefined;
   }
 
   // (c) SSRF gate — block private/loopback/cloud-metadata hosts
   if (isSsrfBlocked(targetHost)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Resolve the proxy URL to use for a given env snapshot.
- * Prefers httpsProxy, falls back to httpProxy.
- * Returns undefined if neither is set (guarded by shouldBypass already).
- */
-function resolveProxyUrlFromEnv(
-  env: Record<string, string | undefined>,
-): string | undefined {
-  const options = resolveEnvHttpProxyAgentOptions(env);
-  if (!options) {
     return undefined;
   }
+
   return options.httpsProxy ?? options.httpProxy;
 }
 
@@ -110,12 +99,8 @@ export function resolveHttpsProxyAgent(
   env: Record<string, string | undefined>,
   opts: ProxyAgentOptions = {},
 ): HttpsProxyAgent<string> | undefined {
-  if (shouldBypass(targetHost, env)) {
-    return undefined;
-  }
-
-  const proxyUrl = resolveProxyUrlFromEnv(env);
-  if (!proxyUrl) {
+  const proxyUrl = resolveActiveProxyUrl(targetHost, env);
+  if (proxyUrl === undefined) {
     return undefined;
   }
 
@@ -140,12 +125,8 @@ export function resolveUndiciProxyAgent(
   env: Record<string, string | undefined>,
   opts: ProxyAgentOptions = {},
 ): ProxyAgent | undefined {
-  if (shouldBypass(targetHost, env)) {
-    return undefined;
-  }
-
-  const proxyUrl = resolveProxyUrlFromEnv(env);
-  if (!proxyUrl) {
+  const proxyUrl = resolveActiveProxyUrl(targetHost, env);
+  if (proxyUrl === undefined) {
     return undefined;
   }
 
@@ -175,9 +156,5 @@ export function resolveProxyUrl(
   targetHost: string,
   env: Record<string, string | undefined>,
 ): string | undefined {
-  if (shouldBypass(targetHost, env)) {
-    return undefined;
-  }
-
-  return resolveProxyUrlFromEnv(env);
+  return resolveActiveProxyUrl(targetHost, env);
 }

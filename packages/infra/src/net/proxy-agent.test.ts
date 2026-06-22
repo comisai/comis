@@ -70,6 +70,14 @@ describe("resolveHttpsProxyAgent", () => {
     const agent = resolveHttpsProxyAgent("127.0.0.1", PROXY_ENV);
     expect(agent).toBeUndefined();
   });
+
+  it("threads a CA PEM through for a TLS-intercepting proxy (opts.ca branch)", () => {
+    const agent = resolveHttpsProxyAgent("api.telegram.org", PROXY_ENV, {
+      ca: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+    });
+    expect(agent).toBeDefined();
+    expect(agent!.constructor.name).toBe("HttpsProxyAgent");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -96,6 +104,14 @@ describe("resolveUndiciProxyAgent", () => {
   it("returns undefined when the target host is SSRF-blocked (T-5-01)", () => {
     const agent = resolveUndiciProxyAgent("169.254.169.254", PROXY_ENV);
     expect(agent).toBeUndefined();
+  });
+
+  it("threads a CA PEM through proxyTls for a TLS-intercepting proxy (opts.ca branch)", () => {
+    const agent = resolveUndiciProxyAgent("discord.com", PROXY_ENV, {
+      ca: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+    });
+    expect(agent).toBeDefined();
+    expect(agent!.constructor.name).toBe("ProxyAgent");
   });
 });
 
