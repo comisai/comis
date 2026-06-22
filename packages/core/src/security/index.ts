@@ -40,7 +40,7 @@ export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal }
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
 
 // Agent orchestration capabilities (Phase 210)
-export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError } from "./capability.js";
+export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError, attenuateCaps } from "./capability.js";
 export type { AgentCapability } from "./capability.js";
 
 // HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)

@@ -40,7 +40,7 @@
 import net from "node:net";
 import { chmodSync, unlinkSync } from "node:fs";
 import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
-import type { LeaseManager } from "@comis/infra";
+import type { LeaseManager, LeaseInfo } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
 /**
@@ -223,7 +223,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // not-revoked + AUDIENCE-bound to the requested method — 211-01). The
     // requested method is threaded into validate so a captured lease cannot be
     // replayed at a foreign method (RFC 8707).
-    const lease = leaseManager.validate(bearer, method);
+    const lease: LeaseInfo | null = leaseManager.validate(bearer, method);
     if (!lease) {
       throw new Error("lease invalid/expired/revoked or audience mismatch");
     }

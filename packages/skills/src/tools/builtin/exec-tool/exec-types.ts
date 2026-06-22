@@ -148,10 +148,13 @@ export interface ExecToolDeps {
    * field; the general exec call site never passes it (egress security invariant).
    */
   readonly brokerSpawnEnv?: {
-    readonly HTTPS_PROXY: string;
+    // HTTPS_PROXY / NODE_EXTRA_CA_CERTS are OPTIONAL: the Phase 211 capability-
+    // lease path injects ONLY `placeholders` (COMIS_CAP_LEASE / COMIS_ORCH_SOCKET)
+    // with no HTTPS proxy when no broker is configured.
+    readonly HTTPS_PROXY?: string;
     /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
     readonly HTTP_PROXY?: string;
-    readonly NODE_EXTRA_CA_CERTS: string;
+    readonly NODE_EXTRA_CA_CERTS?: string;
     /** Provider placeholder key env vars. e.g. { ANTHROPIC_API_KEY: "broker-placeholder" } */
     readonly placeholders: Record<string, string>;
   };

@@ -553,12 +553,17 @@ export function buildExecEnv(deps: {
   resolvedSecretEnv?: Record<string, string>;
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
-  /** Broker proxy env — driven-CLI spawn only; merged LAST. */
+  /**
+   * Broker proxy env + daemon-injected placeholders — driven-CLI spawn only;
+   * merged LAST. HTTPS_PROXY / NODE_EXTRA_CA_CERTS are OPTIONAL: the Phase 211
+   * capability-lease path injects ONLY `placeholders` (COMIS_CAP_LEASE /
+   * COMIS_ORCH_SOCKET) with no HTTPS proxy when no broker is configured.
+   */
   brokerSpawnEnv?: {
-    HTTPS_PROXY: string;
+    HTTPS_PROXY?: string;
     /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
     HTTP_PROXY?: string;
-    NODE_EXTRA_CA_CERTS: string;
+    NODE_EXTRA_CA_CERTS?: string;
     placeholders: Record<string, string>;
   };
 }): Record<string, string> {
@@ -589,10 +594,15 @@ export function buildExecEnv(deps: {
     ...(resolvedSecretEnv ?? {}),
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
-  // Broker env LAST — driven-CLI spawns only. HTTP_PROXY optional (broker is CONNECT-only).
+  // Broker + capability-lease env LAST — driven-CLI spawns only. Each proxy var
+  // is assigned ONLY when present: the Phase 211 cap-lease path injects just
+  // `placeholders` (COMIS_CAP_LEASE / COMIS_ORCH_SOCKET) with no HTTPS proxy, so
+  // assigning an undefined HTTPS_PROXY/NODE_EXTRA_CA_CERTS would poison the env.
   if (deps.brokerSpawnEnv) {
     const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
-    Object.assign(finalEnv, { HTTPS_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders });
+    Object.assign(finalEnv, { ...placeholders });
+    if (HTTPS_PROXY !== undefined) Object.assign(finalEnv, { HTTPS_PROXY });
+    if (NODE_EXTRA_CA_CERTS !== undefined) Object.assign(finalEnv, { NODE_EXTRA_CA_CERTS });
     if (HTTP_PROXY !== undefined) Object.assign(finalEnv, { HTTP_PROXY });
   }
   return finalEnv;
