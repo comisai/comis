@@ -320,15 +320,18 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
   const baseCaps: readonly AgentCapability[] = cfg?.capabilities ?? base.capabilities;
 
   // Union in per-surface toggles. `assistant` has zero surfaces by default, but
-  // an explicit toggle is honored as an opt-in (progressive disclosure).
+  // an explicit toggle is honored as an opt-in (progressive disclosure). The
+  // pairs are read from explicit, statically-named fields (no dynamic indexing
+  // into `cfg`) so each access is type-checked and injection-sink-free.
   const capSet = new Set<AgentCapability>(baseCaps);
-  for (const [field, cap] of Object.entries(SURFACE_TOGGLE_TO_CAP) as [
-    keyof typeof SURFACE_TOGGLE_TO_CAP,
-    AgentCapability,
-  ][]) {
-    if (cfg?.[field] === true) {
-      capSet.add(cap);
-    }
+  const surfaceToggles: readonly (readonly [boolean | undefined, AgentCapability])[] = [
+    [cfg?.web, SURFACE_TOGGLE_TO_CAP.web],
+    [cfg?.analyze, SURFACE_TOGGLE_TO_CAP.analyze],
+    [cfg?.write, SURFACE_TOGGLE_TO_CAP.write],
+    [cfg?.browse, SURFACE_TOGGLE_TO_CAP.browse],
+  ];
+  for (const [enabled, cap] of surfaceToggles) {
+    if (enabled === true) capSet.add(cap);
   }
   // Stable order: profile/base order first, then any toggle-added caps.
   const orderedCaps: AgentCapability[] = [];
