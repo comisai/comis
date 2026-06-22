@@ -32,7 +32,7 @@ vi.mock(import("node:os"), async (importOriginal) => {
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
-import { BwrapProvider } from "./bwrap-provider.js";
+import { BwrapProvider, resolveJailNode } from "./bwrap-provider.js";
 import type { SandboxOptions } from "./types.js";
 
 function makeOpts(overrides?: Partial<SandboxOptions>): SandboxOptions {
@@ -692,6 +692,55 @@ describe("BwrapProvider", () => {
       });
     });
 
+    // -- §4.6 Node-runtime honesty (JAIL-04): buildArgs binds execPath on "bind" --
+
+    describe("Node-runtime bind in buildArgs (JAIL-04)", () => {
+      it("RO-binds execPath when jailNode mode is 'bind'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const execPath = "/usr/local/bin/node";
+        const args = provider.buildArgs(
+          makeOpts({ jailNode: { mode: "bind", execPath } }),
+        );
+
+        // The daemon node binary is bound READ-ONLY (never RW — a writable
+        // interpreter is a host-RCE vector).
+        const hasRoBind = (target: string) => {
+          for (let i = 0; i < args.length - 2; i++) {
+            if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+              return true;
+            }
+          }
+          return false;
+        };
+        expect(hasRoBind(execPath)).toBe(true);
+        // Never RW.
+        expect(args.some((a, i) => a === "--bind" && args[i + 1] === execPath)).toBe(false);
+      });
+
+      it("does NOT bind execPath when jailNode mode is 'path' (node already on the jail PATH)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ jailNode: { mode: "path" } }));
+
+        // No spurious execPath bind — node resolves from the bound RO paths.
+        expect(args).not.toContain("/usr/local/bin/node");
+      });
+
+      it("does NOT bind execPath when jailNode mode is 'unavailable'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ jailNode: { mode: "unavailable", hint: "no node" } }),
+        );
+
+        expect(args).not.toContain("/usr/local/bin/node");
+      });
+    });
+
     it("includes --chdir with opts.cwd", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 
@@ -905,5 +954,74 @@ describe("BwrapProvider", () => {
         expect(segments).not.toContain(".");
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveJailNode (JAIL-04 / v8 §4.6) — Node-runtime honesty.
+// PURE three-mode resolver: probe node on the jail PATH → bind execPath →
+// mark unavailable. macOS-unit-testable via an injected `exists` predicate.
+// ---------------------------------------------------------------------------
+
+describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
+  it("mode 'path' when a node executable resolves under the bound RO pathDirs", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin", "/usr/local/bin"],
+      execPath: "/opt/daemon/node",
+      // A fake exists predicate: node lives under /usr/local/bin.
+      exists: (p) => p === "/usr/local/bin/node",
+    });
+    expect(result.mode).toBe("path");
+  });
+
+  it("mode 'bind' with execPath when node is NOT on the jail PATH but execPath is set", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin", "/usr/local/bin"],
+      execPath: "/opt/daemon/node",
+      // No node under any pathDir; execPath exists.
+      exists: (p) => p === "/opt/daemon/node",
+    });
+    expect(result.mode).toBe("bind");
+    if (result.mode === "bind") {
+      expect(result.execPath).toBe("/opt/daemon/node");
+    }
+  });
+
+  it("mode 'unavailable' with a hint when neither a jail-PATH node nor a bindable execPath exists", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin"],
+      execPath: undefined,
+      exists: () => false,
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      expect(typeof result.hint).toBe("string");
+      expect(result.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the unavailable hint NEVER claims a bundled Node and names the remediation", () => {
+    const result = resolveJailNode({ pathDirs: [], execPath: undefined, exists: () => false });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      const h = result.hint.toLowerCase();
+      // Must explicitly DENY a bundled Node (the spoofing class T-211-21).
+      expect(h).toContain("bundled");
+      // Names the remediation (install node / make the daemon binary bindable)
+      // and which surfaces degrade.
+      expect(h).toMatch(/install node|bindable|process\.execpath|execpath/);
+      expect(h).toMatch(/unavailable|surface/);
+    }
+  });
+
+  it("mode 'unavailable' even when execPath is set but does not exist on disk", () => {
+    // An execPath that the exists-predicate says is absent must NOT be claimed
+    // bindable — honesty over an optimistic bind.
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin"],
+      execPath: "/gone/node",
+      exists: () => false,
+    });
+    expect(result.mode).toBe("unavailable");
   });
 });
