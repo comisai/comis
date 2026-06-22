@@ -39,6 +39,10 @@ export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
 export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError } from "./capability.js";
 export type { AgentCapability } from "./capability.js";
 
+// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
+export { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
+export type { HandlerCapabilityClassification, GatedMethodName } from "./handler-capability-map.js";
+
 // Log sanitizer
 export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
 
