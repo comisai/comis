@@ -27,6 +27,7 @@ const DENYLIST_SYSTEM_DIRS = ["/etc", "/proc", "/sys", "/dev", "/root", "/run"] 
 
 /** Credential directories under the daemon HOME — `~` resolved to the `home` param. */
 function denylistedHomeDirs(home: string): string[] {
+  // eslint-disable-next-line no-restricted-syntax -- this is a path VALIDATOR (the inverse of safePath); it builds the BLOCKED set from constant credential-dir basenames under HOME. safePath would confine to a base and throw on the system paths this validator must also inspect.
   return [".ssh", ".aws", ".gnupg", ".config", ".npm", ".netrc"].map((d) => path.join(home, d));
 }
 
@@ -52,6 +53,7 @@ function resolveThroughAncestors(abs: string): string {
   let tailIndex = 0;
 
   for (let i = 0; i < parts.length; i++) {
+    // eslint-disable-next-line no-restricted-syntax -- resolve-through-ancestors needs raw path.join to rebuild each absolute segment from the kernel-resolved prefix; safePath's base-confinement would reject the symlink-to-blocked-target cases this loop exists to DETECT.
     const candidate = path.join(resolvedPrefix, parts[i]!);
     try {
       // realpathSync resolves a symlinked segment to its real target.
@@ -64,6 +66,7 @@ function resolveThroughAncestors(abs: string): string {
   }
 
   const tail = parts.slice(tailIndex);
+  // eslint-disable-next-line no-restricted-syntax -- re-append the not-yet-created tail to the resolved prefix; this is absolute-path reconstruction inside a validator, not a base-confined join.
   return tail.length > 0 ? path.join(resolvedPrefix, ...tail) : resolvedPrefix;
 }
 
