@@ -31,4 +31,5 @@
 export * from "./schema-agent-model.js";
 export * from "./schema-agent-context.js";
 export * from "./schema-agent-prompt.js";
+export * from "./schema-agent-autonomy.js";
 export * from "./schema-agent-runtime.js";

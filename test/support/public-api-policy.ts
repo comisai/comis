@@ -2151,6 +2151,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // imports the type NAME (callers use it inline via the returned value), so the
       // walker still counts it an orphan. Shrink when a consumer imports it by name.
       "TrigramRoute",
+      // ── agent autonomy named-profile resolver (Phase 210 / v8 §3.8) ──
+      // The §3.8 named-profile layer (AutonomyConfigSchema -> resolveAutonomy)
+      // lands FIRST so the cap injection (Plan 04: createAgentRpcCall computes
+      // _capabilities from resolveAutonomy(agent.autonomy)) and the legible
+      // boot log (Plan 06) receive the exact resolved cap/guard shape. Until
+      // those land, the only callers are this leaf's own tests + the
+      // section-registry/serializer derivations (intra-core, excluded from the
+      // consumer scan). Shrink each entry as a real cross-package production
+      // caller lands.
+      "AutonomyConfigSchema",
+      "AutonomyMessageConfigSchema",
+      "AUTONOMY_PROFILES",
+      "AGENT_CAPABILITIES",
+      "STANDARD_FLOOR_CAPABILITIES",
+      "resolveAutonomy",
+      "AutonomyConfig",
+      "AutonomyMessageConfig",
+      "AutonomyProfileName",
+      "AutonomyMode",
+      "AgentCapability",
+      "ResolvedAutonomy",
+      "ResolvedCapability",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
