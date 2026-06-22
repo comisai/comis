@@ -281,9 +281,6 @@ importers:
       '@comis/daemon':
         specifier: workspace:*
         version: link:../daemon
-      '@comis/infra':
-        specifier: workspace:*
-        version: link:../infra
       '@comis/memory':
         specifier: workspace:*
         version: link:../memory
