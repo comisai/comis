@@ -620,11 +620,18 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
       expect(dbPath, "memoryDbPath resolved").toBeDefined();
       if (r === undefined || dbPath === undefined) return;
 
-      // The rig drives its single configured chat; the trust floor (the rig's
-      // defaultTrustLevel: known for the fixed reactor, external for an unknown
-      // member) is what discriminates the two 👍. waitForReply is the SYNC POINT —
-      // the reply landed, so recordOutboundMessage bound its messageId.
-      const inboundId = await r.send("Reply with a short greeting for the group.");
+      // FLAG-2 (participant-aware trust): the AUTHORIZED reactor must BE the conversation
+      // participant — the user whose inbound message triggered the bot's reply. So inject the
+      // triggering message AS AUTH_REACTOR_ID (NOT the rig's r.send() default sender 100),
+      // binding AUTH as the participant on the outbound trajectory. AUTH's 👍 then inherits the
+      // rig's defaultTrustLevel: known; a bystander's (ATTACKER, a non-participant) resolves to
+      // "external" (the inert 0.03). waitForReply is the SYNC POINT — the reply landed, so
+      // recordOutboundMessage bound its messageId AND the participant (ctx.userId = AUTH).
+      const inboundId = await r.controlClient.injectMessage({
+        chatId: r.chat.chatId,
+        fromUserId: AUTH_REACTOR_ID,
+        text: "Reply with a short greeting for the group.",
+      });
       const reply = await r.waitForReply(inboundId, 1_500_000);
       expect(
         reply,

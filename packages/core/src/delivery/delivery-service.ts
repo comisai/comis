@@ -131,7 +131,7 @@ export interface DeliveryServiceDeps {
    */
   recordOutboundMessage?: (
     messageId: string,
-    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
 }
 
@@ -333,6 +333,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // to the REAL agent. `null` when absent (pre-executor paths) → the drain
         // fails closed and does not map the message.
         const agentId = ctx?.agentId ?? null;
+        // FLAG-2 (group reaction-spoof): the conversation PARTICIPANT — the inbound
+        // sender whose message triggered this reply — rides on the request ALS as
+        // ctx.userId (the inbound pipeline sets userId = sessionKey.userId =
+        // msg.senderId). It is threaded onto the reaction trajectory binding so an
+        // unmapped group BYSTANDER cannot inherit defaultTrustLevel and spoof
+        // reaction-learning; only the participant (or an explicitly-mapped reactor)
+        // drives it. `undefined` on pre-resolution paths → the trust resolution fails
+        // safe to the prior defaultTrustLevel-for-unmapped behavior.
+        const participantId = ctx?.userId;
 
         // Resolve delivery strategy
         const strategy: DeliveryStrategy = options?.strategy ?? "all-or-abort";
@@ -421,8 +430,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // never rides into the platform `adapter.sendMessage` call. Omitted
             // entirely when absent (pre-executor paths), keeping the drain
             // fail-closed rather than mis-attributing to the tenantId.
-            const persistedOptions: Record<string, unknown> =
-              agentId !== null ? { ...sendOpts, agentId } : { ...sendOpts };
+            //
+            // FLAG-2: likewise persist the conversation participant (ctx.userId) so
+            // a reaction resolved via the DRAIN path (not the direct ack) is also
+            // participant-aware — an unmapped group bystander stays inert. Omitted
+            // when absent; the drain then threads `undefined` → fail-safe.
+            const persistedOptions: Record<string, unknown> = { ...sendOpts };
+            if (agentId !== null) persistedOptions.agentId = agentId;
+            if (participantId !== undefined) persistedOptions.participantId = participantId;
             const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
               text: chunk,
               channelType: adapter.channelType,
@@ -525,6 +540,10 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 tenantId,
                 agentId,
                 sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
+                // FLAG-2: bind the conversation participant (the inbound sender) so a
+                // reaction from an unmapped group bystander is inert (resolves to
+                // "external"); only the participant inherits defaultTrustLevel.
+                participantId,
               });
               // WR-01 (206-05): the bind above is otherwise SILENT. Emit a
               // positive, counts-only `delivery:reply_bound` so the primary-path

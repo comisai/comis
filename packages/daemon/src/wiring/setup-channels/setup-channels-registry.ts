@@ -270,10 +270,13 @@ export interface ChannelsDeps {
    * the direct ack, not the drain) also binds the minted reply id → trajectory —
    * else a reaction on a normal agent reply map-misses (the 206-03 live finding).
    * `undefined` when learning-outcome is off for all agents (byte-identity).
+   * `participantId` (FLAG-2) carries the conversation participant (the inbound
+   * sender) so a reaction from an unmapped group bystander resolves to "external"
+   * (inert) and cannot spoof reaction-learning.
    */
   recordOutboundMessage?: (
     messageId: string,
-    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
   /** Optional active run registry for SDK-native steer+followup inbound routing */
   activeRunRegistry?: ActiveRunRegistry;

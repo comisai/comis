@@ -77,6 +77,21 @@ export interface OutboundTrajectoryEntry {
   agentId: string;
   /** Conversation/session identity (falls back to the trajectory id at capture). */
   sessionId: string;
+  /**
+   * FLAG-2 (group reaction-spoof): the conversation PARTICIPANT — the inbound
+   * sender whose message triggered this agent reply, captured from
+   * `RequestContext.userId` at the delivery binding (the inbound pipeline sets
+   * `ctx.userId = sessionKey.userId = msg.senderId`). It is the ONE reactor who
+   * legitimately inherits the agent's `defaultTrustLevel`; an unmapped group
+   * BYSTANDER (any other member) must resolve to `"external"` (inert) so they
+   * cannot spoof reaction-learning by reacting to the bot's reply. OPTIONAL —
+   * `undefined` on legacy/unthreaded captures (a pre-executor send, a path that
+   * predates threading); when absent the trust resolution FAILS SAFE to the prior
+   * `defaultTrustLevel`-for-unmapped behavior so reaction-learning is never
+   * silently killed. In a DM the participant IS the reactor, so DM behavior is
+   * unchanged.
+   */
+  participantId?: string;
 }
 
 /**
@@ -249,8 +264,16 @@ export interface LearningReactionsWiringDeps {
   reactionRateLimiter: InjectionRateLimiter;
   /** The closed emoji → outcome map (success/failure arrays). */
   reactionMap: ReactionEmojiMap;
-  /** Resolve the RAW channel-sender trust string for a reactor (senderTrustMap[id] ?? defaultTrustLevel). */
-  resolveSenderTrust: (agentId: string, reactorId: string) => string;
+  /**
+   * Resolve the RAW channel-sender trust string for a reactor. Explicitly-mapped
+   * reactors keep `senderTrustMap[reactorId]`. For an UNMAPPED reactor the result
+   * is participant-aware (FLAG-2): `defaultTrustLevel` applies ONLY when the
+   * reactor IS the conversation `participantId` (the inbound sender); any other
+   * unmapped reactor — a group bystander — resolves to `"external"` (inert). When
+   * `participantId` is `undefined` (a legacy/unthreaded capture) it FAILS SAFE to
+   * `defaultTrustLevel` so reaction-learning is never silently killed.
+   */
+  resolveSenderTrust: (agentId: string, reactorId: string, participantId?: string) => string;
   /** The cost-gated correction detector — `undefined` when disabled (no-op branch). */
   correctionDetector?: (followUpUserTurn: string) => Promise<CorrectionVerdict | undefined>;
   /** Per-agent effective correction enable (the byte-identity gate for the correction path). */
@@ -407,7 +430,12 @@ export function wireLearningReactions(deps: LearningReactionsWiringDeps): void {
     if (outcome === undefined) return;
 
     // 4. RAW channel-sender trust → a confidence weight (external → near-zero).
-    const trust = deps.resolveSenderTrust(entry.agentId, p.reactorId);
+    //    FLAG-2: pass the bound conversation participant so an unmapped reactor
+    //    inherits defaultTrustLevel ONLY when it IS the participant (the inbound
+    //    sender); an unmapped group bystander resolves to "external" (inert) and
+    //    cannot spoof the reaction-learning signal. `entry.participantId` is
+    //    undefined on legacy captures → fail-safe to defaultTrustLevel.
+    const trust = deps.resolveSenderTrust(entry.agentId, p.reactorId, entry.participantId);
     const confidence = REACTION_BASE_CONFIDENCE * trustWeight(trust);
 
     // 4b. WR-03: a near-zero (external/unknown) reaction is below the write floor →
@@ -662,11 +690,31 @@ export function buildReactionWiringDeps(
   // A DEDICATED reaction rate limiter (separate counters from the injection-detection singleton).
   const reactionRateLimiter = createInjectionRateLimiter({ clock, timers }, REACTION_RATE_LIMIT);
 
-  // Resolve the RAW channel-sender trust string (senderTrustMap[id] ?? defaultTrustLevel,
-  // default "external") — the channel-sender vocabulary, NOT the tool-gate narrowing.
-  const resolveSenderTrust = (agentId: string, reactorId: string): string => {
+  // Resolve the RAW channel-sender trust string — the channel-sender vocabulary,
+  // NOT the tool-gate narrowing.
+  //
+  // FLAG-2 (group reaction-spoof): `defaultTrustLevel` is the privilege of the ONE
+  // conversation PARTICIPANT (the inbound sender whose message triggered the reply),
+  // NOT a blanket grant to every unmapped group member. Resolution order:
+  //   1. an EXPLICITLY-mapped reactor keeps `senderTrustMap[reactorId]` (an
+  //      intentional operator grant — never demoted by the participant gate);
+  //   2. an UNMAPPED reactor inherits `defaultTrustLevel` ONLY when it IS the
+  //      `participantId`; any other unmapped reactor (a group bystander) → "external"
+  //      (inert: 0.6 * 0.05 = 0.03, below REACTION_MIN_CONFIDENCE_TO_WRITE → no row);
+  //   3. FAIL-SAFE: when `participantId` is undefined (a legacy/unthreaded capture —
+  //      a pre-executor send, or a path predating the delivery threading) we cannot
+  //      tell participant from bystander, so we PRESERVE the prior behavior
+  //      (defaultTrustLevel for unmapped) rather than silently demote everyone to
+  //      external and kill reaction-learning. In a DM the participant IS the reactor,
+  //      so DM behavior is unchanged.
+  const resolveSenderTrust = (agentId: string, reactorId: string, participantId?: string): string => {
     const elev = agents[agentId]?.elevatedReply;
-    return elev?.senderTrustMap?.[reactorId] ?? elev?.defaultTrustLevel ?? "external";
+    const mapped = elev?.senderTrustMap?.[reactorId];
+    if (mapped !== undefined) return mapped; // (1) explicit grant — gate never applies
+    const defaultTrust = elev?.defaultTrustLevel ?? "external";
+    if (participantId === undefined) return defaultTrust; // (3) fail-safe (unthreaded)
+    // (2) participant-aware: only the conversation participant inherits the default.
+    return reactorId === participantId ? defaultTrust : "external";
   };
 
   // The correction detector — built ONLY when some agent has correction on. Resolve
