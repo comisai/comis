@@ -137,6 +137,8 @@ export {
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
+  // Honest legible degrade (Phase 210 / PROFILE-03)
+  degradeAutonomy,
 } from "./schema-agent/index.js";
 export { ChannelConfigSchema, ChannelEntrySchema, AckReactionConfigSchema, MediaProcessingSchema, ChannelHealthCheckSchema, EmailChannelEntrySchema } from "./schema-channel.js";
 export {
@@ -307,6 +309,9 @@ export type {
   AutonomyMode,
   ResolvedAutonomy,
   ResolvedCapability,
+  // Honest legible degrade (Phase 210 / PROFILE-03)
+  AutonomyDownshift,
+  AutonomyPreflightResult,
 } from "./schema-agent/index.js";
 export type {
   AppConfig,

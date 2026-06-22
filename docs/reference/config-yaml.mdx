@@ -282,6 +282,39 @@ agents:
       openai-codex: "openai-codex:work@company.com"
 ```
 
+#### Autonomy (agents.*.autonomy)
+
+How much the agent may do on its own. Set `profile` to pick a named posture;
+omit the whole block to get `standard` (the zero-config default). Any explicit
+field overrides the profile (progressive disclosure). See the
+[Autonomy](/agents/autonomy) page for the full model and the legible-degrade
+behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `profile` | `enum` | `"standard"` | `assistant`, `standard`, `unattended`, or `max`. `standard` is the zero-config default. `unattended`/`max` resolve to `standard`-equivalent in this release plus an "available later" notice (no silent over-grant). |
+| `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. |
+| `capabilities` | `string[]` | _(from profile)_ | Explicit `orch:*` capability list. Overrides the profile's base set (still bounded by the structural floor). |
+| `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
+| `aggregateBudgetUsd` | `number` | `2.0` | Hard $ ceiling across the whole spawn tree, per root run. |
+| `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. |
+| `maxSelfSpawnRatePerMin` | `number` | `30` | Self-spawn rate limit per minute (distinct from the concurrency cap). |
+| `cronSelfMax` | `number` | `8` | Maximum agent-authored cron jobs. |
+| `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
+| `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
+| `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |
+| `write` | `boolean` | _(from profile)_ | Toggle for `orch:write` (jailed workspace mutation). |
+| `browse` | `boolean` | `false` | Toggle for `orch:browse` (a real browser). Off in every default profile; even when on, it always escalates for approval. |
+
+```yaml title="~/.comis/config.yaml -- standard with a tighter budget"
+agents:
+  default:
+    autonomy:
+      profile: standard
+      aggregateBudgetUsd: 5
+      browse: true            # opt into orch:browse (still always escalates)
+```
+
 #### Budget (agents.*.budgets)
 
 | Key | Type | Default | Description |

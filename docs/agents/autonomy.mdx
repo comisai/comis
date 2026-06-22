@@ -1,0 +1,180 @@
+---
+title: "Autonomy"
+description: "Named autonomy profiles, the zero-config default, and the honest, legible degrade"
+icon: "sliders"
+---
+
+**What it does.** Decides how much an agent can do on its own -- spawn
+sub-agents, run scheduled jobs, write to its workspace, browse the web -- and
+makes that decision **legible**. You pick a named profile (or accept the
+default); Comis resolves it into a concrete set of capabilities and guard
+rails, logs exactly what it turned on, and tells you the one field to change
+it. Smart defaults must never surprise you.
+
+<Note>
+**Autonomy vs. capabilities.** A *profile* is the operator-facing dial. It
+resolves to a set of **capabilities** (the `orch:*` permission tokens an agent
+holds) plus guard rails (budget ceiling, spawn-rate limit, message quota).
+Capabilities are enforced by a single gate on every privileged action -- see
+the [Capability Model](/security/capability-model) for the enforcement side.
+This page is about choosing and reading the posture.
+</Note>
+
+## The Zero-Config Default
+
+If you set no `autonomy` block at all, every agent resolves to the **`standard`**
+profile. That is the great-out-of-the-box posture: the agent can orchestrate
+(spawn sub-agents, author cron jobs, run execution graphs, use skills, read and
+analyze content, write to its jailed workspace) under always-on guard rails, and
+it messages only its own channel under an hourly quota.
+
+```yaml title="~/.comis/config.yaml -- nothing to set; standard is the default"
+agents:
+  default:
+    model: gpt-5.1
+    # No autonomy block -> resolves to the `standard` profile.
+```
+
+This is also the migration story: an existing agent that previously reached
+orchestration through the old un-gated path now resolves to `standard` and
+regains exactly those surfaces -- now capability-gated. It is an explicit grant
+via a named profile, not a compatibility shim.
+
+## Named Profiles
+
+Set `autonomy.profile` to pick a posture. There are four:
+
+| Profile | Orchestration | Guard rails | When to use |
+|---------|---------------|-------------|-------------|
+| `assistant` | **Off** -- zero orchestration surfaces, the agent only replies | n/a | A pure conversational agent; or the safe floor Comis downshifts to when the jail cannot be built |
+| `standard` _(default)_ | The eight floor capabilities (read, web, write, analyze, spawn, graph, cron, skill) | Budget ceiling, spawn-rate limit, concurrency cap, message quota -- all on | The default for almost everyone |
+| `unattended` | Same as `standard` in this release | Same | Reserved for long-running, no-human-present operation (the extra surfaces ship later) |
+| `max` | Same as `standard` in this release | Same | Reserved for the fullest coordinator posture (ships later) |
+
+<Info>
+**`unattended` and `max` resolve to `standard`-equivalent today.** Their extra
+surfaces -- a coordinator role, durable runs, and sandbox auto-allow -- are not
+in this release. Selecting either resolves to `standard`'s capability set and
+attaches an "available in a later milestone" notice (logged at boot). Comis
+**never silently grants** a capability whose enforcement floor is not yet built,
+so you are told rather than over-granted.
+</Info>
+
+### What `standard` turns on
+
+The `standard` profile resolves these eight floor capabilities:
+
+| Capability | What it permits |
+|------------|-----------------|
+| `orch:read` | Read content and workspace files |
+| `orch:web` | Fetch untrusted external web content |
+| `orch:write` | Write to the agent's jailed workspace |
+| `orch:analyze` | Cost-bearing media analysis (behind the budget) |
+| `orch:spawn` | Spawn sub-agents |
+| `orch:graph` | Run execution graphs |
+| `orch:cron` | Author and run scheduled jobs |
+| `orch:skill` | Invoke skills |
+
+Two surfaces are **off** in every default profile because they are outward and
+hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel
+(beyond the agent's own). Opt into the browser explicitly with `browse: true`;
+even then it always escalates for approval -- it is never auto-decided.
+
+## Overriding Individual Knobs (Progressive Disclosure)
+
+Most operators set only `profile:` (or nothing). When you need a single
+adjustment, set just that field -- an explicit field **overrides** the profile,
+so you do not have to restate the whole posture.
+
+```yaml title="~/.comis/config.yaml -- standard, but with a tighter budget and the browser on"
+agents:
+  default:
+    autonomy:
+      profile: standard
+      aggregateBudgetUsd: 5      # override just the spawn-tree $ ceiling
+      browse: true               # opt into orch:browse (still always escalates)
+```
+
+The per-surface toggles (`web`, `analyze`, `write`, `browse`) each map to the
+matching `orch:*` capability. The scalar guard rails (`aggregateBudgetUsd`,
+`maxConcurrentSelfAgents`, `maxSelfSpawnRatePerMin`, `cronSelfMax`) and the
+`message` block (`channels`, `maxPerHour`) are all individually overridable. See
+the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
+
+## Legible Boot Logging
+
+At startup Comis logs **one INFO line per agent** stating the resolved posture,
+so you can read what every agent was granted -- and how to change it -- from the
+boot logs alone, without turning on debug logging:
+
+```json
+{
+  "level": 30,
+  "submodule": "autonomy",
+  "agentId": "default",
+  "profile": "standard",
+  "capabilities": ["orch:read", "orch:web", "orch:write", "orch:analyze", "orch:spawn", "orch:graph", "orch:cron", "orch:skill"],
+  "aggregateBudgetUsd": 2,
+  "changeField": "autonomy.profile",
+  "msg": "Resolved agent autonomy profile"
+}
+```
+
+The `changeField` names the one config field that changes all of the above:
+`autonomy.profile`. For an `unattended` or `max` agent, the line also carries an
+`m1Notice` saying the extra surfaces arrive in a later milestone.
+
+## Honest, Legible Degrade
+
+Autonomy needs a jail to run its orchestration surfaces safely. On Linux, that
+jail is built from an unprivileged user namespace. If the host preflight for
+that namespace **fails**, Comis does **not** quietly run the agent unjailed.
+Instead it downshifts that agent to the **`assistant`** profile (no orchestration
+surfaces, the agent only replies) and says so, two ways:
+
+1. A **WARN** at boot naming the downshift, with an actionable hint and
+   `errorKind: "precondition"`.
+2. A **doctor finding** an operator can read, naming the same remediation.
+
+```json
+{
+  "level": 40,
+  "submodule": "autonomy",
+  "errorKind": "precondition",
+  "hint": "Autonomy needs an unprivileged user namespace ... downshifted to the 'assistant' profile. Enable unprivileged user namespaces ... or set autonomy.profile: assistant to silence this.",
+  "msg": "Agent autonomy downshifted to the 'assistant' profile: the namespace preflight failed ..."
+}
+```
+
+To resolve it, enable unprivileged user namespaces on the host (for example,
+`sysctl kernel.unprivileged_userns_clone=1`, and on AppArmor-restricted distros
+`kernel.apparmor_restrict_unprivileged_userns=0`) and restart. If you intend to
+run an assistant-only agent, set `autonomy.profile: assistant` explicitly to
+silence the warning.
+
+<Warning>
+**There is never a silent unjailed fallback.** A failed precondition always
+lands on the `assistant` posture (orchestration disabled) -- the agent stays
+safe and you are told. The actual host probe that produces the preflight result
+ships with the sandbox jail; this release wires the downshift path and its
+logging so the behavior is legible the moment the probe lands.
+</Warning>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Capability Model" icon="key" href="/security/capability-model">
+    How capabilities are enforced by a single gate, and why no capability ever
+    implies admin access.
+  </Card>
+  <Card title="Safety" icon="shield-check" href="/agents/safety">
+    The budget cap, circuit breaker, and rate limits that bound an autonomous
+    agent.
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml#autonomy-agents-autonomy">
+    Every `autonomy.*` field, its type, and its default.
+  </Card>
+  <Card title="Security Model" icon="lock" href="/reference/security-model">
+    The orthogonal capability axis and the deny-by-origin control-plane boundary.
+  </Card>
+</CardGroup>

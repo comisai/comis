@@ -154,6 +154,9 @@ export {
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
+  // Honest legible degrade (Phase 210 / PROFILE-03) — consumed by the daemon
+  // boot log + the preflight doctor (Plan 06).
+  degradeAutonomy,
 } from "../config/index.js";
 
 export type {
@@ -306,4 +309,7 @@ export type {
   AutonomyMode,
   ResolvedAutonomy,
   ResolvedCapability,
+  // Honest legible degrade (Phase 210 / PROFILE-03)
+  AutonomyDownshift,
+  AutonomyPreflightResult,
 } from "../config/index.js";

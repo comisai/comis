@@ -2173,6 +2173,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AgentCapability",
       "ResolvedAutonomy",
       "ResolvedCapability",
+      // Honest legible degrade (Phase 210 / PROFILE-03). Consumed by the daemon
+      // boot log + the preflight doctor (Plan 06, same wave). Listed here so the
+      // type-only `AutonomyDownshift`/`AutonomyPreflightResult` (erased at runtime,
+      // never named cross-package) don't read as orphans; shrink as those callers
+      // import them by name.
+      "degradeAutonomy",
+      "AutonomyDownshift",
+      "AutonomyPreflightResult",
       // The security-layer capability primitives (Phase 210 / security/capability.ts).
       // AGENT_CAPABILITIES + AgentCapability above are imported from this same
       // canonical module (single source of truth — the config leaf no longer keeps
