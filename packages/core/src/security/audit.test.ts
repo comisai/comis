@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, expectTypeOf } from "vitest";
 import type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
-import { AuditEventSchema, createAuditEvent } from "./audit.js";
+import { AUDIT_KINDS, AuditEventSchema, createAuditEvent, kindIsSecuritySignal } from "./audit.js";
 import type { EventMap } from "../event-bus/events.js";
 
 const VALID_PARAMS: CreateAuditEventParams = {
@@ -296,5 +296,30 @@ describe("AuditEventSchema reshape (kind union + optional classification)", () =
       outcome: "success",
     };
     expect(payload.kind).toBe("secret_access");
+  });
+});
+
+// =====================================================================
+// Phase 210 — capability_denied AuditKind (T-210-03).
+//
+// A denied capability / deny-by-origin gate (emitted by Plans 04/05) must be
+// a durable, content-free SECURITY signal. The closed-union exhaustiveness
+// guard (`const _exhaustive: never`) fails the BUILD until the new member is
+// classified in kindIsSecuritySignal — that structural gate IS the RED→GREEN
+// for the member; this test pins the classification at the test level too.
+// =====================================================================
+describe("kindIsSecuritySignal — capability_denied (Phase 210)", () => {
+  it("classifies capability_denied as a security signal", () => {
+    expect(kindIsSecuritySignal("capability_denied")).toBe(true);
+  });
+
+  it("includes capability_denied in the closed AUDIT_KINDS tuple", () => {
+    expect((AUDIT_KINDS as readonly string[])).toContain("capability_denied");
+  });
+
+  it("classifies every AUDIT_KINDS member without throwing (exhaustive switch)", () => {
+    for (const kind of AUDIT_KINDS) {
+      expect(typeof kindIsSecuritySignal(kind)).toBe("boolean");
+    }
   });
 });
