@@ -201,7 +201,7 @@ import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
-import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
+import { runPreflightDoctor, buildAutonomyBootLog, buildNamespaceDownshiftFinding } from "./wiring/preflight-doctor.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -1152,6 +1152,13 @@ function emitStartupBanner(deps: {
   visionRegistry: BootContext["visionRegistry"];
   startupStartMs: number;
   instanceId: string;
+  /**
+   * PROFILE-03 host preflight RESULT — whether the unprivileged-user-namespace
+   * preflight passed. Defaults to `true` in M1 (no probe yet); Phase 211
+   * (JAIL-03) supplies the real value. `false` triggers the autonomy-downshift
+   * WARN naming the fall to `assistant`.
+   */
+  namespacePreflightOk?: boolean;
 }): void {
   const {
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
@@ -1185,6 +1192,31 @@ function emitStartupBanner(deps: {
     logLevel: container.config.logLevel ?? "debug", nodeVersion: process.versions.node,
     manifest,
   }, "Comis daemon started");
+  // PROFILE-03 — legible resolved-autonomy boot logging. One INFO line per agent
+  // stating the resolved profile, the caps it enabled, the budget ceiling, and
+  // the ONE field to change it (`autonomy.profile`) + the M1 over-grant notice
+  // for unattended/max. Promoted to INFO (CLAUDE.md): an operator must read what
+  // each agent was granted, and how to change it, from boot logs alone — no
+  // logLevel:debug. Then, if the namespace preflight failed, a WARN naming the
+  // downshift to `assistant`. The preflight RESULT is an input that defaults to
+  // OK in M1; the bubblewrap/namespace probe that fills it is Phase 211
+  // (JAIL-03), wired through `namespacePreflightOk` without re-plumbing here.
+  const namespacePreflightOk = deps.namespacePreflightOk ?? true;
+  for (const rec of buildAutonomyBootLog(agents)) {
+    daemonLogger.info({
+      agentId: rec.agentId, module: "autonomy",
+      profile: rec.profile, enabled: rec.enabled, capabilities: rec.capabilities,
+      aggregateBudgetUsd: rec.aggregateBudgetUsd, changeField: rec.changeField,
+      ...(rec.m1Notice !== undefined ? { m1Notice: rec.m1Notice } : {}),
+    }, "Resolved agent autonomy profile");
+  }
+  const downshiftFinding = buildNamespaceDownshiftFinding({ namespacePreflightOk });
+  if (downshiftFinding) {
+    daemonLogger.warn({
+      module: "autonomy", errorKind: downshiftFinding.errorKind,
+      hint: downshiftFinding.hint,
+    }, downshiftFinding.message);
+  }
   // Docker-only: surface restart-policy requirement immediately after the
   // startup banner. No-op outside containers. Wired here so the WARN lands
   // in `docker logs` next to the banner, where operators look first.
