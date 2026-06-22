@@ -33,6 +33,7 @@ import {
   SlackActionContract,
   WhatsappActionContract,
   stripInternalFields,
+  requireCapability,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -158,6 +159,11 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
   return {
     [MessageSendContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:message is enforced here, reading the injected
+      // _capabilities from raw params BEFORE the strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
@@ -185,6 +191,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReplyContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
@@ -214,6 +223,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReactContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       assertCapability("message.react", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -236,6 +248,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     // AUDIT(498): All text->channel paths verified. sendMessage uses deliverToChannel
     // (formats internally). editMessage formats here. sendAttachment is binary-only.
     [MessageEditContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       assertCapability("message.edit", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -257,6 +272,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageDeleteContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -296,6 +314,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageAttachContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;

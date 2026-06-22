@@ -16,6 +16,7 @@ import {
   safePath,
   formatSessionKey,
   systemNowMs,
+  resolveAutonomy,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
@@ -315,8 +316,21 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     return svc;
   }
 
-  /** Create an agent-scoped rpcCall that injects _agentId, _callerSessionKey, and _deliveryTarget into every call. (O3/WR-01 Phase-157 producer hook: inject resolved capabilityClass on graph.* params here — see graph-helpers.ts.) */
+  /** Create an agent-scoped rpcCall that injects _agentId, _capabilities, _callerSessionKey, and _deliveryTarget into every call. (O3/WR-01 Phase-157 producer hook: inject resolved capabilityClass on graph.* params here — see graph-helpers.ts.) */
   function createAgentRpcCall(agentId: string): RpcCall {
+    // CAP-03: resolve the agent's held capability set ONCE per closure — the
+    // in-process injection point for _capabilities (v8 §3.1, beside _agentId).
+    // A zero-config agent resolves to the `standard` profile (MIG-01: an
+    // explicit grant via the default posture, not a back-compat shim), whose
+    // floor set keeps its orchestration tools reachable now that they are
+    // capability-gated. Caps do not change mid-turn (RESEARCH Open Q1); the
+    // lease in Phase 211 carries the authoritative caps for the socket path.
+    // The bare cap-string list is what the handler-boundary requireCapability
+    // predicate reads (the per-cap autoApprovable detail stays on the resolver
+    // result for Plan 06's auto-allow door).
+    const heldCapabilities = resolveAutonomy(
+      (agents[agentId] ?? agents[defaultAgentId])?.autonomy,
+    ).capabilities;
     return async (method, params) => {
       const ctx = tryGetContext();
       // Build delivery target from context for cron job routing
@@ -337,6 +351,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return rpcCall(method, {
         ...params,
         _agentId: agentId,
+        _capabilities: heldCapabilities,
         ...(ctx?.sessionKey && { _callerSessionKey: ctx.sessionKey }),
         ...(deliveryTarget && { _deliveryTarget: deliveryTarget }),
         ...(origin && { _callerChannelType: origin.channelType }),

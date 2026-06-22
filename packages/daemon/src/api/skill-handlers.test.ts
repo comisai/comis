@@ -25,9 +25,19 @@ vi.mock("../skills/bundle-install-helper.js", () => ({
   runBundleInstallHook: mockRunBundleInstallHook,
 }));
 
-import { createSkillHandlers, type SkillHandlerDeps } from "./skill-handlers.js";
+import { createSkillHandlers as createSkillHandlersRaw, type SkillHandlerDeps } from "./skill-handlers.js";
 import type { AppContainer } from "@comis/core";
 import { CapabilityDeniedError } from "@comis/core";
+import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+
+// CAP-03: the gated skills.* handlers now require an injected _capabilities
+// (production supplies it via createAgentRpcCall). The existing body-tests below
+// call handlers directly, so wrap the bound record to grant the held set each
+// gated method needs — exercising the handler BODY, not the gate. The dedicated
+// CAP-05 describe block uses the RAW (unwrapped) factory to prove the gate.
+function createSkillHandlers(deps: SkillHandlerDeps): Record<string, import("./types.js").RpcHandler> {
+  return withHeldCapabilities(createSkillHandlersRaw(deps));
+}
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1002,7 +1012,9 @@ describe("skills.create capability gate (CAP-05)", () => {
   it("throws CapabilityDeniedError when _capabilities is absent (undefined held set)", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
-    const handlers = createSkillHandlers(
+    // RAW factory (no held-caps wrapper) so the absent-_capabilities path is the
+    // real one the in-process bypass would hit if the injector were skipped.
+    const handlers = createSkillHandlersRaw(
       makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
     );
     await expect(
