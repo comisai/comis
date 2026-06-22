@@ -4,6 +4,8 @@ import {
   AutonomyConfigSchema,
   AUTONOMY_PROFILES,
   resolveAutonomy,
+  degradeAutonomy,
+  type AutonomyDownshift,
 } from "./schema-agent-autonomy.js";
 
 // ---------------------------------------------------------------------------
@@ -123,5 +125,76 @@ describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => 
 
   it("PROFILE-01-S13: resolveAutonomy is pure — same input yields a deeply-equal result", () => {
     expect(resolveAutonomy({ profile: "standard" })).toEqual(resolveAutonomy({ profile: "standard" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROFILE-03 (Phase 210): honest, LEGIBLE degrade. When a host precondition for
+// the jail fails — the namespace/`unshare` preflight — the resolved posture must
+// downshift to `assistant` (enabled === false, zero caps) AND SAY SO: it returns
+// a structured `AutonomyDownshift` signal (downshiftedFrom/To, reason, hint,
+// errorKind:"precondition") so the daemon can emit a WARN + a doctor finding.
+// There is NEVER a silent unjailed fallback (an enabled-but-unjailed posture).
+//
+// The downshift is driven by a preflight-RESULT INPUT (a boolean the resolver
+// receives), NOT a live bwrap probe — that probe is Phase 211 (JAIL-03). This
+// keeps `degradeAutonomy` PURE (AGENTS §2.2): a function of (resolved, preflight)
+// only. These cases are RED until `degradeAutonomy` + `AutonomyDownshift` exist.
+// ---------------------------------------------------------------------------
+describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed preflight)", () => {
+  it("PROFILE-03-S1: namespacePreflightOk:false downshifts standard → assistant (enabled false, zero caps)", () => {
+    const std = resolveAutonomy({ profile: "standard" });
+    const { resolved } = degradeAutonomy(std, { namespacePreflightOk: false });
+    expect(resolved.profile).toBe("assistant");
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.capabilities.length).toBe(0);
+  });
+
+  it("PROFILE-03-S2: the downshift SURFACES a structured signal (never a silent swap)", () => {
+    const std = resolveAutonomy({ profile: "standard" });
+    const { downshift } = degradeAutonomy(std, { namespacePreflightOk: false });
+    expect(downshift).toBeDefined();
+    const signal = downshift as AutonomyDownshift;
+    expect(signal.downshiftedFrom).toBe("standard");
+    expect(signal.downshiftedTo).toBe("assistant");
+    expect(signal.reason).toBe("namespace_preflight_failed");
+    expect(signal.errorKind).toBe("precondition");
+    // The hint must be actionable (name a remediation), not empty.
+    expect(typeof signal.hint).toBe("string");
+    expect(signal.hint.length).toBeGreaterThan(0);
+  });
+
+  it("PROFILE-03-S3: namespacePreflightOk:true (the 210 default) leaves the resolved profile UNCHANGED + no signal", () => {
+    const std = resolveAutonomy({ profile: "standard" });
+    const { resolved, downshift } = degradeAutonomy(std, { namespacePreflightOk: true });
+    expect(resolved).toEqual(std);
+    expect(downshift).toBeUndefined();
+  });
+
+  it("PROFILE-03-S4: the downshift NEVER yields an enabled-but-unjailed posture (no silent unjailed fallback)", () => {
+    // Even from `max` (the most-privileged selectable profile), a failed
+    // preflight must land on the assistant posture — enabled false.
+    const max = resolveAutonomy({ profile: "max" });
+    const { resolved, downshift } = degradeAutonomy(max, { namespacePreflightOk: false });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.capabilities.length).toBe(0);
+    expect((downshift as AutonomyDownshift).downshiftedFrom).toBe("max");
+  });
+
+  it("PROFILE-03-S5: an already-assistant posture is a no-op downshift (idempotent, no spurious signal)", () => {
+    const asst = resolveAutonomy({ profile: "assistant" });
+    const { resolved, downshift } = degradeAutonomy(asst, { namespacePreflightOk: false });
+    expect(resolved.profile).toBe("assistant");
+    expect(resolved.enabled).toBe(false);
+    // Already at the floor — nothing was taken away, so no downshift signal.
+    expect(downshift).toBeUndefined();
+  });
+
+  it("PROFILE-03-S6: the m1Notice rides the resolved result so the boot log can print it (unattended/max)", () => {
+    // Re-assert (PROFILE-03 reads this at boot): `max` carries the M2/M3 notice
+    // on the resolved posture, which the legible boot log surfaces.
+    const max = resolveAutonomy({ profile: "max" });
+    expect(max.m1Notice).toBeTruthy();
+    expect(max.m1Notice).toMatch(/M2|M3/);
   });
 });
