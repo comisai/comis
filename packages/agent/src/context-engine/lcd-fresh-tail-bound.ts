@@ -24,11 +24,13 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS, CHARS_PER_TOKEN_RATIO } from "./constants.js";
 import {
   createToolResultSizeGuard,
   type ContentBlock,
 } from "../safety/tool-result-size-guard.js";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 
 /**
  * B-8: the single shared tool-result size guard for the dag assembler's fresh-tail
@@ -194,4 +196,61 @@ export function boundFreshTailMessages(
     return { ...(m as object), content: result.content } as unknown as AgentMessage;
   });
   return { freshTail: bounded, boundedResults, boundedMessages, charsRemoved };
+}
+
+/** Read a message's `role` without widening to the concrete pi-ai union. */
+function roleOf(m: AgentMessage): string | undefined {
+  return (m as unknown as { role?: string }).role;
+}
+
+/**
+ * ISSUE #1 (2026-06-22): bound the PROTECTED fresh tail's TOTAL tokens to
+ * `residualTokens` by dropping the OLDEST whole STEP at a time, keeping the newest
+ * contiguous run that fits. The fresh tail ships UNCONDITIONALLY (the eviction cannot
+ * trim it), and {@link boundFreshTailMessages} (B-8) bounds only individual oversized
+ * MESSAGES — not the SUM across turns — so on a tiny window where the system prompt
+ * dominates, a handful of small recent turns accumulate past the residual and overflow
+ * the window (the live nano failure: freshTail grew 1438→2369→3488…→exhaust). This
+ * enforces the total directly.
+ *
+ * Operates on the ALREADY per-message-bounded fresh tail (call AFTER
+ * boundFreshTailMessages) so a single oversized message B-8 shrank to fit is counted at
+ * its bounded size, NOT dropped (Issue1-A/D). ALWAYS keeps the LAST step (the current
+ * live turn ships even when it alone exceeds the residual — the pre-flight then degrades
+ * it honestly as oversized_input, never silently). A STEP is a leading non-`toolResult`
+ * message plus its immediately-following `toolResult`s (mirrors
+ * lcd-budget-eviction.groupIntoSteps / freshTailBoundaryIndex) so a tool_use/tool_result
+ * pair is never split. Pure: reads the input, returns a NEW array (or the same ref when
+ * nothing is dropped — the A1 no-op for everything that fits).
+ *
+ * @param freshTail - the per-message-bounded fresh-tail messages (B-8 output).
+ * @param residualTokens - the room the protected tail may occupy (≈ window − S − floorHeadroom − preamble).
+ * @returns the newest contiguous fresh-tail steps that fit (≥ the last step).
+ */
+export function boundFreshTailTotalToResidual(
+  freshTail: AgentMessage[],
+  residualTokens: number,
+): AgentMessage[] {
+  if (freshTail.length === 0) return freshTail;
+  // Step START indices within the fresh tail (a step begins at a non-toolResult msg).
+  const stepStarts: number[] = [];
+  for (let i = 0; i < freshTail.length; i++) {
+    if (roleOf(freshTail[i]!) !== "toolResult") stepStarts.push(i);
+  }
+  if (stepStarts.length <= 1) return freshTail; // one step (or all toolResults) — keep whole.
+  const tokensFrom = (from: number): number => {
+    let sum = 0;
+    for (let i = from; i < freshTail.length; i++) {
+      sum += estimateMessageTokens(freshTail[i] as unknown as Message);
+    }
+    return sum;
+  };
+  // Advance past the oldest steps while the remaining tail exceeds the residual; NEVER
+  // drop the last step (stepStarts.at(-1) is the current turn — always kept).
+  let s = 0;
+  while (s < stepStarts.length - 1 && tokensFrom(stepStarts[s]!) > residualTokens) {
+    s++;
+  }
+  if (s === 0) return freshTail; // nothing dropped — A1 no-op (same reference).
+  return freshTail.slice(stepStarts[s]!);
 }

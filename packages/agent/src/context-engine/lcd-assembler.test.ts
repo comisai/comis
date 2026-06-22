@@ -608,17 +608,18 @@ describe("fresh-tail oversized-MESSAGE bounding (Issue 1: one oversized message 
     // pre-flight fit check throws ContextExhaustionError. Post-patch: bounded.
     const out = await engine.transformContext(live);
 
-    const outUser = out.find((m) => roleOf(m) === "user" && textOf(m).length > 200);
-    expect(outUser).toBeDefined();
-    const boundedText = textOf(outUser as AgentMessage);
-    expect(boundedText.length).toBeLessThan(HUGE.length); // genuinely shrunk
-    // Honest marker advertising lossless recovery (parity with the B-8 wording).
-    expect(boundedText).toContain("truncated");
-    expect(boundedText.toLowerCase()).toContain("lossless");
-    // The head of the message is still processed (not a hard refusal).
-    expect(boundedText.startsWith("The semiconductor sector")).toBe(true);
-
-    // The assembled input now fits the small window minus headroom:
+    // ISSUE #1 (2026-06-22) changed the resolution for an oversized OLD turn: the
+    // protected fresh tail is now bounded to the residual room, so the 170K-char
+    // message (turn 1, NOT the current turn) is DEMOTED out of the protected tail to
+    // the evictable prefix, where the eviction drops it (it alone dwarfs the window).
+    // The CURRENT turn ("2 + 2") is always protected and ships, so the turn assembles
+    // instead of throwing — the brick is still prevented, just by eviction rather than
+    // by char-bounding an old turn that could never fit a 32K window anyway. (The
+    // CURRENT-message-oversized char-bounding path — B-8 — is exercised by Issue1-D's
+    // current-turn variant and the brick repro Issue1-B.)
+    const outCurrent = out.find((m) => roleOf(m) === "user" && textOf(m).includes("2 + 2"));
+    expect(outCurrent).toBeDefined(); // the current turn ships
+    // The assembled input fits the small window minus headroom (no exhaustion):
     // headroomBound = 32000 (small cap) − computeOutputHeadroom("none","medium")=768.
     expect(onAssembledInputTokens).toHaveBeenCalled();
     const reported = onAssembledInputTokens.mock.calls[0]![0];
@@ -894,6 +895,195 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     expect(texts).not.toContain("a0");
     // The assembled array is no larger than the fresh-tail span (prefix fully dropped).
     expect(out.length).toBeLessThan(live.length);
+  });
+
+  // ISSUE #1 (multi-turn nano, 2026-06-22): on a small window where systemTokens
+  // dominates, accumulated EVICTABLE history must be capped to the residual room so
+  // the SHIPPED assembled prompt stays under the pre-flight bound across N turns —
+  // and the assembler must NEVER throw on evictable history. Pre-fix the assembler
+  // evicted `budgeted` under the looser token-budget H (W−S−O−M−R−P + the 8K-starve
+  // add-back ≈ 4096 on an 8192 nano window) while the pre-flight bound only tolerated
+  // ~1900, so the shipped history overflowed (and the pre-flight threw — without a
+  // canary the harder-eviction rung was skipped entirely). Drives the REAL assembler.
+  it("Plan05 Test B2 (ISSUE #1): nano 8192, S dominates — shipped history is bounded to the residual room across many turns, no throw", async () => {
+    // Per-message tokenCount ~300 (the budget authority for evictable history), so a
+    // long conversation genuinely accumulates past the room. Append 20 turns.
+    const TURN_TOKENS = 300;
+    const TURNS = 20;
+    const msgs: Message[] = [];
+    for (let i = 0; i < TURNS; i++) {
+      msgs.push(userMsg(`u${i}`));
+      msgs.push(assistantText(`a${i}`));
+    }
+    for (let i = 0; i < msgs.length; i++) {
+      store.append({
+        scope: SCOPE,
+        seq: i,
+        role: (msgs[i] as Message).role,
+        tokenCount: TURN_TOKENS,
+        createdAt: FIXED_CREATED_AT,
+        parts: messageToParts(msgs[i] as Message),
+      });
+    }
+    const live: AgentMessage[] = msgs as AgentMessage[];
+
+    const logger = createMockLogger();
+    // nano 8192, systemTokens 5210 (the live VPS value), NO securityPinMarkers.
+    // relevanceFirst:true + the real scorer → the PRODUCTION nano path
+    // (evictUnderArbiter / marginArbitrate), NOT the recency path. (codex nano has
+    // no prompt cache → resolveScaffoldDefaults sets relevanceFirst true.)
+    const deps: ContextEngineDeps = {
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 4_096 }),
+      getSystemTokensEstimate: () => 5_210,
+      getThinkingLevel: () => "off",
+      contextStore: store,
+      conversationId: CONVERSATION_ID,
+      agentId: "agent_a",
+      tenantId: "tenant_a",
+      sessionKey: "sess-a",
+      relevanceFirst: true,
+      relevanceScorer: scoreRelevance,
+    };
+    const engine = createLcdContextEngine(dagConfig(2), deps);
+
+    // Must NOT throw — accumulated evictable history is trimmed, never exhausts.
+    const out = await engine.transformContext(live);
+
+    // The SHIPPED history (everything the assembler kept) must leave room: the
+    // assembled estimate + systemTokens must stay under the pre-flight bound
+    // (window − minVisibleOutputTokens floor 768 = 7424). Estimate the kept history
+    // tokens via the same per-message authority. The fresh tail (freshTailTurns=2)
+    // is tiny ("a18"/"a19" region). Assert the kept set is bounded (NOT all 20 turns).
+    expect(out.length).toBeLessThan(live.length); // oldest turns evicted
+    // Residual history room ≈ 7424 − 5210 − (tiny freshTail) ≈ ~2000 → at 300/msg the
+    // kept history is on the order of ~6 messages, NOT 40. Pin a generous bound.
+    const keptHistoryTokens = out.length * TURN_TOKENS;
+    expect(keptHistoryTokens).toBeLessThan(7_424 - 5_210 + 2 * TURN_TOKENS); // fits the bound with fresh-tail slack
+  });
+
+  it("Plan05 Test B3 (ISSUE #1): GROWING history across sequential turns never throws (sliding window)", async () => {
+    // Simulate turns 1..8, each adding 2 messages (~600 tok/turn) of UNBOUNDED
+    // growth, re-running the REAL assembler each turn. None may throw.
+    const TURN_TOKENS = 300;
+    const live: AgentMessage[] = [];
+    for (let turn = 1; turn <= 8; turn++) {
+      const u = userMsg(`u${turn}`);
+      const a = assistantText(`a${turn}`);
+      const baseSeq = (turn - 1) * 2;
+      store.append({ scope: SCOPE, seq: baseSeq, role: u.role, tokenCount: TURN_TOKENS, createdAt: FIXED_CREATED_AT, parts: messageToParts(u) });
+      store.append({ scope: SCOPE, seq: baseSeq + 1, role: a.role, tokenCount: TURN_TOKENS, createdAt: FIXED_CREATED_AT, parts: messageToParts(a) });
+      live.push(u as AgentMessage, a as AgentMessage);
+
+      const logger = createMockLogger();
+      const deps: ContextEngineDeps = {
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 4_096 }),
+        getSystemTokensEstimate: () => 5_210,
+        getThinkingLevel: () => "off",
+        contextStore: store,
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        tenantId: "tenant_a",
+        sessionKey: "sess-a",
+        relevanceFirst: true, // the production nano path (arbiter)
+        relevanceScorer: scoreRelevance,
+      };
+      const engine = createLcdContextEngine(dagConfig(2), deps);
+      await expect(
+        engine.transformContext([...live]),
+        `turn ${turn} must not context-exhaust on accumulated history`,
+      ).resolves.toBeDefined();
+    }
+  });
+
+  // ISSUE #1 — THE REAL ROOT CAUSE (lead's live lcd-evict, 2026-06-22): the
+  // PROTECTED fresh tail grows unbounded on a tiny window, NOT the evictable history
+  // (B2/B3 above bounded the evictable band but missed this). resolveClampedFreshTailTurns
+  // budgeted 30% of the RAW 8192 window (~6 turns) blind to systemTokens(5210) — so
+  // ~6 recent turns sat in the un-evictable fresh tail and grew ~900/turn. assembled
+  // = S + budgetedHistory(bounded) + freshTail(UNBOUNDED) → exhausts at turn 3.
+  // This test sizes each turn ~285 tok and asserts the ASSEMBLED MESSAGE TOTAL (history
+  // + protected fresh tail — everything `out` carries, which sits ALONGSIDE S in the
+  // window) PLATEAUS ≤ the residual room (window − headroom − S ≈ 2214) across many
+  // turns. RED pre-fix (the fresh tail grows past it). The protected fresh tail must be
+  // bounded to the residual so it ALWAYS fits.
+  it("Plan05 Test B4 (ISSUE #1): the protected fresh tail is bounded to the residual room — assembled message total plateaus across turns", async () => {
+    const TURN_CHARS = 1_000; // ~285 tok per message → ~570/turn, grows fast on a tiny window
+    const TURNS = 12;
+    const live: AgentMessage[] = [];
+    const W = 8_192;
+    const S = 5_210;
+    // The assembled message array (history + fresh tail) rides ALONGSIDE S in the
+    // window; the pre-flight enforces S + assembled ≤ window − headroom, so the
+    // assembled total is bounded — this test asserts it PLATEAUS (never throws).
+
+    let maxAssembledMsgTokens = 0;
+    const perTurnAssembled: number[] = [];
+    for (let turn = 0; turn < TURNS; turn++) {
+      const u = userMsg(`question ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const a = assistantText(`answer ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const baseSeq = turn * 2;
+      store.append({ scope: SCOPE, seq: baseSeq, role: u.role, tokenCount: estimateMessageTokens(u), createdAt: FIXED_CREATED_AT, parts: messageToParts(u) });
+      store.append({ scope: SCOPE, seq: baseSeq + 1, role: a.role, tokenCount: estimateMessageTokens(a), createdAt: FIXED_CREATED_AT, parts: messageToParts(a) });
+      live.push(u as AgentMessage, a as AgentMessage);
+
+      const logger = createMockLogger();
+      // The reconciled nano profile codex carries on the VPS (contextWindow = the 8192
+      // effective window). modelProfile.contextWindow drives the fresh-tail residual.
+      const nanoProfile: ModelProfile = {
+        ...FAIL_CLOSED_PROFILE,
+        capabilityClass: "nano" as const,
+        contextWindow: W,
+        maxOutputTokens: 4_096,
+        reasoningStyle: "none" as const,
+      };
+      const deps: ContextEngineDeps = {
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getModel: () => ({ reasoning: false, contextWindow: W, maxTokens: 4_096 }),
+        getSystemTokensEstimate: () => S,
+        getThinkingLevel: () => "off",
+        modelProfile: nanoProfile,
+        contextStore: store,
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        tenantId: "tenant_a",
+        sessionKey: "sess-a",
+        relevanceFirst: true, // the production nano path
+        relevanceScorer: scoreRelevance,
+      };
+      const engine = createLcdContextEngine(dagConfig(8), deps); // configured freshTailTurns=8 (the default)
+      // PRIMARY INVARIANT: transformContext must NOT throw on ANY turn — the awaited
+      // call rejects with ContextExhaustionError pre-fix (turn ~4 on da254cea). A
+      // throw here fails the test.
+      const out = await engine.transformContext([...live]);
+
+      // The assembled message total (the WHOLE `out` — kept history + protected fresh
+      // tail), measured by estimateMessageTokens. Tracked to assert it PLATEAUS (the
+      // fix bounds both the protected fresh tail and the evictable history, so the
+      // total stops growing) rather than climbing monotonically with the conversation.
+      const assembledMsgTokens = out.reduce(
+        (sum, m) => sum + estimateMessageTokens(m as unknown as Message),
+        0,
+      );
+      perTurnAssembled.push(assembledMsgTokens);
+      maxAssembledMsgTokens = Math.max(maxAssembledMsgTokens, assembledMsgTokens);
+    }
+    // PRIMARY: no turn threw (the awaited transformContext above) — the exhaustion is
+    // GONE. That is the guarantee the lead's live re-test checks (4+ turns, no exhaust).
+    //
+    // PLATEAU: the assembled total stays BOUNDED — it does NOT track the conversation's
+    // unbounded growth. By turn 12 the raw conversation is ~12 × 570 ≈ 6840 tok; the
+    // assembled total stays well under that (fresh tail capped to the residual + older
+    // history evicted), and under the window (pre-fix it blew past 8192 and threw).
+    const rawConversationTokens = TURNS * 2 * estimateMessageTokens(userMsg(`question 0 `.repeat(Math.ceil(TURN_CHARS / 12))));
+    expect(maxAssembledMsgTokens).toBeLessThan(W);
+    expect(maxAssembledMsgTokens).toBeLessThan(rawConversationTokens); // bounded < the full conversation
+    // Steady state: the last 3 turns are within ~one turn of each other (the total has
+    // settled, not climbing ~570/turn as the bug did).
+    const tail3 = perTurnAssembled.slice(-3);
+    const tailSpan = Math.max(...tail3) - Math.min(...tail3);
+    expect(tailSpan).toBeLessThanOrEqual(2 * 285 + 50); // ≤ ~one turn of jitter
   });
 
   it("Plan05 Test C: no-summary path still assembles 1:1 (the 128 round-trip invariant holds under context_items resolution)", async () => {
@@ -1743,7 +1933,7 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
     const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
-    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).availableHistoryTokens as number;
     // Frontier cap = ∞ → effectiveWindow = 200000 → budget is deterministic from W=200000, S=0, P=0
     // H = max(0, 200000 - 0 - 8192 - max(ceil(200000*5/100),2048) - ceil(200000*25/100) - 0)
     //   = max(0, 200000 - 8192 - 10000 - 50000) = 131808
@@ -1766,7 +1956,7 @@ describe("CWF-01 characterization — frontier/mid byte-identity (no-regression)
     const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
-    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).availableHistoryTokens as number;
     // Mid cap = ∞ (same as frontier) — same W=200000, S=0, P=0 → same budget = 131808
     // Byte-identical to frontier: any cap applied to mid would break this test.
     expect(budgetTokens).toBe(131808);
@@ -1807,7 +1997,7 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
     const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
-    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).availableHistoryTokens as number;
     // The fail-closed nano cap fired (visible in the lcd-evict log before the throw):
     // budgetTokens = max(0, 16000 - 25584 - 8192 - 2048 - 4000 - 166) = 0 (was 57808 uncapped pre-Phase-165).
     expect(budgetTokens).toBe(0);
@@ -1844,7 +2034,7 @@ describe("CWF-01 RED tests — small cap + undefined profile fail-closed (Phase 
     const evictCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCalls.length).toBeGreaterThan(0);
-    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).budgetTokens as number;
+    const budgetTokens = (evictCalls[0]![0] as Record<string, unknown>).availableHistoryTokens as number;
     expect(budgetTokens).toBeLessThan(16_000);
   });
 });
@@ -2038,19 +2228,14 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     expect(governorFired).toBe(true);
   });
 
-  it("CWF-02-E: infeasible turn even at low-effort → throws ContextExhaustionError", async () => {
-    // ContextExhaustionError triggers when assembled tokens exceed the floor headroomBound
-    // even after down-shifting thinking to "low".
-    // W=32768, reasoningStyle="native", floor="low"
-    // effectiveWindow = min(32768, 32000) = 32000 (small cap)
-    // computeOutputHeadroom("native","low") = 1024 + 768 = 1792
-    // headroomBound_low = 32000 − 1792 = 30208
-    //
-    // The fresh tail must exceed even the "low" headroomBound through the AGGREGATE of
-    // individually-fitting messages (a single huge message is bounded by the Issue-1
-    // fresh-tail guard before the pre-flight ever sees it — that class no longer
-    // throws). 3 × 40000 chars = 120000 / 3.5 ≈ 34286 tokens > 30208 (and > every
-    // down-shift bound); each message stays below the per-message cap (≈50K chars).
+  it("CWF-02-E (ISSUE #1): an AGGREGATE of older fresh-tail turns is TRIMMED to fit — the turn assembles, no longer throws", async () => {
+    // PRE-ISSUE#1 this aggregate (3 × 40000 chars ≈ 34286 tok > the 30208 low bound)
+    // threw ContextExhaustionError — the protected fresh tail was un-trimmable. ISSUE #1
+    // (2026-06-22) bounds the protected fresh tail's TOTAL to the residual: the OLDER
+    // large turns are dropped (trimmed) while the CURRENT turn ships, so the turn
+    // ASSEMBLES instead of throwing. Accumulated trimmable fresh-tail turns must NEVER
+    // exhaust — only the non-evictable fixed overhead (S) or an oversized CURRENT message
+    // still throws (covered by lcd-preflight.test.ts fixed_overhead / oversized_input).
     const VERY_LARGE_CONTENT = "X".repeat(40_000);
 
     const nativeSmallProfile: ModelProfile = {
@@ -2083,10 +2268,17 @@ describe("Phase 166 CWF-02: pre-flight fit check + security-pin", () => {
     };
 
     const engine = createLcdContextEngine(dagConfig(8), deps);
-    await expect(engine.transformContext(live)).rejects.toThrow(ContextExhaustionError);
-    // Also verify the error name
-    const engine2 = createLcdContextEngine(dagConfig(8), deps);
-    await expect(engine2.transformContext(live)).rejects.toMatchObject({ name: "ContextExhaustionError" });
+    // Assembles (trimmed) — no exhaustion.
+    const out = await engine.transformContext(live);
+    expect(out.length).toBeGreaterThan(0);
+    // The current turn's assistant ("done") ships; older large turns were trimmed.
+    const textOfMsg = (m: AgentMessage): string => {
+      const c = (m as unknown as { content: unknown }).content;
+      if (typeof c === "string") return c;
+      if (!Array.isArray(c)) return "";
+      return (c as { type: string; text?: string }[]).map((b) => (b.type === "text" && b.text ? b.text : "")).join("");
+    };
+    expect(out.some((m) => roleOf(m) === "assistant" && textOfMsg(m).includes("done"))).toBe(true);
   });
 
   it("CWF-02-F (T-S4): security-pinned message survives aggressive eviction under tight 8K window", async () => {
@@ -2774,7 +2966,7 @@ describe("RETR-02/03/05: margin arbiter at the evict seam (frontier byte-identic
       .find(([p]) => (p as Record<string, unknown>)?.step === "lcd-evict");
     expect(evictCall).toBeDefined();
     const ev = evictCall![0] as Record<string, unknown>;
-    const pool = ev.budgetTokens as number;
+    const pool = ev.shipHistoryBudget as number;
     const keptCount = ev.keptCount as number;
     // kept history tokens = keptCount × 600 ≤ pool (no over-allocate-then-reclaim).
     expect(keptCount * 600).toBeLessThanOrEqual(pool);
@@ -3127,17 +3319,26 @@ describe("fit guarantee honest for a Hebrew-saturated prompt at the small cap in
     };
 
     const engine = createLcdContextEngine(dagConfig(1), deps);
-    // The honest degrade is a DOWNSHIFT, not a failure: the turn still
-    // assembles (the ladder fits it at "medium").
+    // The honest degrade still assembles a running turn (never throws).
     const out = await engine.transformContext(live);
     expect(out.length).toBeGreaterThan(0);
 
-    // THE PHASE ASSERTION: the ladder engaged. Pre-patch: the stored flat
-    // under-counts keep assembledInputTokens below headroomBound — neither the
-    // callback nor the event fires → FAILS (RED).
-    const ladderEngaged =
+    // THE PHASE ASSERTION (TOK-01): the honest factored counts ENGAGE A DEGRADE
+    // where the flat stored under-counts silently passed. Pre-179 the flat sum
+    // (~15934) fit H (17856) with NOTHING evicted; the factored sum (~28.9K)
+    // overfills H so OLD history MUST be evicted. ISSUE #1 (2026-06-22) changed
+    // the degrade SHAPE: the unconditional harder-eviction rung now trims history
+    // to fit the headroom bound BEFORE the thinking governor would fire, so the
+    // honest-math degrade manifests as EVICTION (fewer kept messages) rather than a
+    // thinking down-shift — evicting cheap old history is preferable to degrading
+    // reasoning. Either signal proves the factored math bit; assert the union so the
+    // test is robust to which rung absorbs the overflow.
+    const persistedRows = 62; // 31 turns × 2
+    const keptHistory = out.length - 2; // minus the 2-message fresh tail (a"ok"/heFresh region)
+    const evictionEngaged = keptHistory < persistedRows; // factored sum forced eviction (flat would keep all)
+    const downshiftEngaged =
       downshiftSpy.mock.calls.length > 0 ||
       eventBusEmit.mock.calls.some(([name]) => name === "context:thinking_downshifted");
-    expect(ladderEngaged).toBe(true);
+    expect(evictionEngaged || downshiftEngaged).toBe(true);
   });
 });

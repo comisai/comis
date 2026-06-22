@@ -1671,6 +1671,10 @@ async function runSessionLocked(
         canaryToken: deps.canaryToken,
         clock: deps.clock,
         timers: deps.timers,
+        // ISSUE #2: the canonical system-tokens estimate the pre-flight throws on, so
+        // wrapEnvelope can size the tight-window residual and drop the heavy
+        // tool-discovery preamble before it overflows (same S → no drift).
+        getSystemTokensEstimate: () => cachedSystemTokensEstimate,
       },
       onResetTimer: (fn) => { currentResetTimer = fn; },
       getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,

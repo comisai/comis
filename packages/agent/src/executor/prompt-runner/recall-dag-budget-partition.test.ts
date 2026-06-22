@@ -54,8 +54,12 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
       "messageText = `[System context]\\n${fullDynamicPreamble}\\n[End system context]\\n\\n${messageText}`",
     );
     // fullDynamicPreamble is the dynamicPreamble (first element of the concat).
+    // ISSUE #2: the capability-index/deferred components are now passed through the
+    // tight-window drop first (keptCapabilityIndex/keptDeferred); dynamicPreamble (which
+    // carries the recalled-memory block) is ALWAYS the first element and is never dropped,
+    // so the recall→H budgeting invariant this test guards is unchanged.
     expect(envelopeSource).toContain(
-      "const fullDynamicPreamble = [dynamicPreamble, capabilityIndexContext, deferredContext]",
+      "const fullDynamicPreamble = [dynamicPreamble, keptCapabilityIndex, keptDeferred]",
     );
   });
 

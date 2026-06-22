@@ -159,27 +159,43 @@ export function runPreflightFitCheck(
   };
 
   if (assembledInputTokens > headroomBound) {
-    // (a) Evict harder with security-pinned messages excluded (T-S4).
+    // (a) Evict harder against the room that ACTUALLY remains after the
+    // non-evictable S (system+tools) and the unconditionally-shipped fresh tail.
+    //
+    // ISSUE #1 (multi-turn nano, 2026-06-22): this rung MUST run UNCONDITIONALLY.
+    // It was previously gated on `if (deps.securityPinMarkers)`, so on a fresh
+    // session with no canary (markers undefined — the common case) the harder
+    // eviction was SKIPPED entirely: the looser history-budget eviction from the
+    // assembler (H = W−S−O−M−R−P + the 8K-starvation add-back ≈ 4096 on an 8192
+    // nano window) leaked through, assembled stayed > the bound, and the turn threw
+    // on EVICTABLE history that could have been trimmed. Accumulated evictable
+    // history must NEVER cause exhaustion — it evicts down to whatever fits (even
+    // to near-zero → a degraded-but-running stateless turn). Security-pinned
+    // messages (T-S4) are still excluded from the harder pass when markers exist;
+    // with no markers, NO item is pinned (pinnedItems = [], pinnedTokens = 0) and
+    // ALL evictable history is trimmed under the tighter budget.
     const markers = deps.securityPinMarkers;
-    if (markers) {
-      const pinnedItems = evictable.filter((item) =>
-        isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
-      );
-      const nonPinnedItems = evictable.filter((item) =>
-        !isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
-      );
-      const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
-      // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
-      // budget so history is evicted against the room that ACTUALLY remains.
-      const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
-      const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
-      // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
-      // were kept (newest keptNonPinned items from nonPinnedItems).
-      const keptNonPinned = hardEvictedMsgs.length;
-      const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
-      const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
-      assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
-    }
+    const pinnedItems = markers
+      ? evictable.filter((item) =>
+          isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
+        )
+      : [];
+    const nonPinnedItems = markers
+      ? evictable.filter((item) =>
+          !isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
+        )
+      : evictable;
+    const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
+    // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
+    // budget so history is evicted against the room that ACTUALLY remains.
+    const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
+    const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
+    // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
+    // were kept (newest keptNonPinned items from nonPinnedItems).
+    const keptNonPinned = hardEvictedMsgs.length;
+    const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
+    const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
+    assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
 
     // (c) Down-shift thinking level if reasoningStyle === "native" and still over headroomBound.
     if (assembledInputTokens > headroomBound && reasoningStyle === "native") {
@@ -239,15 +255,30 @@ export function runPreflightFitCheck(
       // is the WINDOW or the agent's tool/prompt footprint — never the message.
       const singleItemBound = finalBound - systemTokens;
       const lastUserIdx = findLastUserIndex(freshTail);
+      // ISSUE #2b (2026-06-22): when history is FULLY evicted (keptCount==0 and nothing
+      // evictable remains — Fix C did its job) and the protected fresh tail is the SOLE
+      // overflow, "aggregate" misleads: the remedy is to shrink the user's input, not to
+      // reset a (now-empty) conversation. Reclassify as oversized_input when the LAST
+      // user message DOMINATES the fresh-tail tokens (> half) — distinguishing "one large
+      // current message (+ a tiny recent turn)" from a genuine many-comparable-messages
+      // aggregate (the live turn-14 residual after the preamble drop: a ~2000-tok message
+      // just under the single-item bound + a small prior turn). The dominance test keeps
+      // the existing aggregate case (5 comparable messages, each ~20% of the sum) intact.
+      const lastUserTokens = lastUserIdx >= 0 ? (freshTailMsgTokens[lastUserIdx] ?? 0) : 0;
+      const historyFullyGone = keptCount === 0 && evictable.length === 0;
+      const freshTailDominatedByInput =
+        historyFullyGone && freshTailTokens > 0 && lastUserTokens * 2 > freshTailTokens;
       const cause: ContextExhaustionCause =
         systemTokens > finalBound
           ? "fixed_overhead_exceeds_window"
-          : lastUserIdx >= 0 && (freshTailMsgTokens[lastUserIdx] ?? 0) > singleItemBound
+          : lastUserIdx >= 0 && lastUserTokens > singleItemBound
             ? "oversized_input"
             : freshTailMsgTokens.some((t) => t > singleItemBound) ||
                 evictable.some((b) => b.tokens > singleItemBound)
               ? "oversized_history_message"
-              : "aggregate";
+              : freshTailDominatedByInput
+                ? "oversized_input"
+                : "aggregate";
       deps.logger.warn(
         {
           step: "lcd-pre-flight",
@@ -258,6 +289,11 @@ export function runPreflightFitCheck(
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
           assembledInputTokens,
+          systemTokens,
+          freshTailTokens,
+          budgetedHistoryTokens: budgetedTokens,
+          finalHistoryTokens: assembledInputTokens - systemTokens - freshTailTokens,
+          evictableCount: evictable.length,
           effectiveWindow,
           exhaustionCause: cause,
           ...(capInfo !== undefined && {
