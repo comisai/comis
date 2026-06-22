@@ -176,7 +176,7 @@ import { createEmptyBootContext } from "./daemon-boot-context.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countPricingGaps } from "./observability/build-config-posture-record.js";
+import { emitConfigPostureRecord } from "./wiring/emit-config-posture.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2848,37 +2848,8 @@ async function bootShutdown(
   const posture = checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
 
   // 9.2. I3 — config-posture SNAPSHOT (one-shot boot record, NOT an event).
-  // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
-  // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
-  // the fleet lens can query a daemon's posture without grepping daemon.log.
-  // TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS decision:
-  // `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts on, but the
-  // gateway's resolved `tls ? https : http` branch (hono-server.ts) is internal
-  // and NOT exposed on GatewayServerHandle, and threading it back out is the deep
-  // cross-package plumbing this phase's KISS constraint forbids. This recompute
-  // matches the listener's posture today; it only diverges if the gateway gains a
-  // TLS path that bypasses config (an injected cert / env override) — a future
-  // change should thread the gateway's resolved boolean here (WR-02).
-  // canaryFallbackActive is a daemon-global presence proxy: CANARY_SECRET is
-  // folded into `boot.env`/mergedEnv store-wins (buildMergedEnv), so this env read
-  // already honors an encrypted/file secret-store entry — the same source the
-  // per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set ⇒
-  // every agent uses the deterministic fallback. KISS — no deep per-agent plumbing.
-  const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
-  const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
-  const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
-  // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
-  const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  // Thread the proxy boot posture (from bootFoundation) into the config_posture
-  // obs record. Only when configured (the zero-config gate).
-  const proxyInstallerStatus =
-    boot.proxyBootPosture?.configured === true
-      ? {
-          installerError: boot.proxyBootPosture.installerError ?? null,
-          effectiveLoopbackMode: boot.proxyBootPosture.loopbackMode ?? "gateway-only",
-        }
-      : undefined;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), proxyInstallerStatus }, boot.clock);
+  // See wiring/emit-config-posture.ts for the derivation + rationale.
+  emitConfigPostureRecord(boot, posture.findings);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

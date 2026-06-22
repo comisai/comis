@@ -41,6 +41,13 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         wsHeartbeatMs: 30000,
         ...gatewayOverrides,
       },
+      // Present because the real bootstrap always defaults it (schema-proxy.ts:
+      // a config.yaml without a proxy: key yields this shape). installProxyAtBoot
+      // in bootFoundation reads config.proxy, so the mock must carry it.
+      proxy: {
+        enabled: false,
+        loopbackMode: "gateway-only" as const,
+      },
       memory: {
         dbPath: ":memory:",
         walMode: false,
