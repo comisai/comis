@@ -3,6 +3,10 @@
 
 export { safePath, PathTraversalError } from "./safe-path.js";
 
+// JAIL-03 bind-mount validator (Phase 211) — pure denylist backstop reusing the
+// safe-path symlink-resolve-through-ancestors primitive.
+export { validateBindMount } from "./bind-mount-validator.js";
+
 // Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "./master-key.js";
 export type { MasterKeyWriteResult } from "./master-key.js";
