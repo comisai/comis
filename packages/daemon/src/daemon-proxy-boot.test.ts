@@ -249,6 +249,15 @@ describe("installProxyAtBoot — zero-config no-op (D-10)", () => {
     logProxyPosture(logger as never, { configured: false, installerOk: true });
     expect(logger.info).not.toHaveBeenCalled();
   });
+
+  it("treats a missing config.proxy block as no-proxy (does not throw)", async () => {
+    // Hand-built/partial configs (and some daemon tests) omit the proxy block.
+    // Production always carries it (schema-proxy.ts default), but the installer
+    // must not crash when it is absent — absent ⇒ zero-config no-proxy.
+    const container = { config: { gateway: { host: "127.0.0.1", port: 4766 } } };
+    const posture = await installProxyAtBoot(container as never, makeMergedEnv());
+    expect(posture.configured).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

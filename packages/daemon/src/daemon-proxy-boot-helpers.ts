@@ -55,7 +55,10 @@ export interface ProxyBootPosture {
 
 interface ProxyContainerSlice {
   config: {
-    proxy: {
+    // Optional: production config always carries `proxy` (schema-proxy.ts applies
+    // a full default), but partial/hand-built configs may omit it — absent is
+    // treated as zero-config no-proxy, never a crash.
+    proxy?: {
       enabled?: boolean;
       proxyUrl?: string | { $secret: string } | unknown;
       loopbackMode?: "gateway-only" | "proxy" | "block";
@@ -92,7 +95,7 @@ export async function installProxyAtBoot(
   container: ProxyContainerSlice,
   mergedEnv: Record<string, string | undefined>,
 ): Promise<ProxyBootPosture> {
-  const proxyCfg = container.config.proxy;
+  const proxyCfg = container.config.proxy ?? {};
   const gw = container.config.gateway;
 
   const proxyUrl =
