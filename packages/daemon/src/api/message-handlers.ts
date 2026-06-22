@@ -248,9 +248,12 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     // AUDIT(498): All text->channel paths verified. sendMessage uses deliverToChannel
     // (formats internally). editMessage formats here. sendAttachment is binary-only.
     [MessageEditContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
-      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
-
+      // 210-GAP / §3.5: message.edit is admin-only (deny-by-origin), NOT part of
+      // orch:message. No in-handler cap gate — an agent origin is rejected at the
+      // rpc-dispatch chokepoint (scopes:["admin"]); a legitimate admin gateway
+      // caller (whose _capabilities is stripped at the boundary) must NOT be
+      // forced through a cap gate it can never satisfy. The §3.5 send subset
+      // (send/reply/react) keeps its orch:message gate; edit/delete/attach do not.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.edit", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -272,9 +275,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageDeleteContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
-      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
-
+      // 210-GAP / §3.5: message.delete is admin-only (deny-by-origin), NOT part
+      // of orch:message — see message.edit. No in-handler cap gate.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -314,9 +316,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageAttachContract.method]: async (rawParams) => {
-      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
-      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
-
+      // 210-GAP / §3.5: message.attach is admin-only (deny-by-origin), NOT part
+      // of orch:message — see message.edit. No in-handler cap gate.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;

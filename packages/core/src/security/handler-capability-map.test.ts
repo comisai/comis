@@ -40,15 +40,14 @@ describe("HANDLER_CAPABILITY_MAP", () => {
     const cronMutating = ["cron.add", "cron.update", "cron.remove", "cron.run"];
     for (const m of cronMutating) expect(HANDLER_CAPABILITY_MAP[m]).toBe("orch:cron");
 
-    const messageOutward = [
-      "message.send",
-      "message.reply",
-      "message.react",
-      "message.edit",
-      "message.delete",
-      "message.attach",
-    ];
+    // 210-GAP / §3.5: orch:message exposes ONLY the genuinely-outward send
+    // subset (send/reply/react). edit/delete/fetch/attach stay admin-only
+    // (deny-by-origin) and are NOT part of the cap.
+    const messageOutward = ["message.send", "message.reply", "message.react"];
     for (const m of messageOutward) expect(HANDLER_CAPABILITY_MAP[m]).toBe("orch:message");
+
+    const messageAdminOnly = ["message.edit", "message.delete", "message.attach", "message.fetch"];
+    for (const m of messageAdminOnly) expect(HANDLER_CAPABILITY_MAP[m]).toBe("deny-by-origin");
 
     const skillsMutating = [
       "skills.create",
@@ -58,6 +57,18 @@ describe("HANDLER_CAPABILITY_MAP", () => {
       "skills.upload",
     ];
     for (const m of skillsMutating) expect(HANDLER_CAPABILITY_MAP[m]).toBe("orch:skill");
+  });
+
+  it("210-GAP MD-01: the arbitrary-session lifecycle ops (in-handler admin check) are deny-by-origin; the agent-reachable reads are ungated", () => {
+    // delete/export/reset_conversation carry an in-handler _trustLevel === "admin"
+    // check and target an ARBITRARY session by key → genuine control plane.
+    for (const m of ["session.delete", "session.export", "session.reset_conversation"]) {
+      expect(HANDLER_CAPABILITY_MAP[m], `${m} must be deny-by-origin`).toBe("deny-by-origin");
+    }
+    // list/compact/reset have NO in-handler admin check → agent-reachable reads.
+    for (const m of ["session.list", "session.compact", "session.reset"]) {
+      expect(HANDLER_CAPABILITY_MAP[m], `${m} must be ungated`).toBe("ungated");
+    }
   });
 
   it("never assigns a value that is a typo'd capability (every cap ∈ AGENT_CAPABILITIES)", () => {
@@ -74,10 +85,27 @@ describe("HANDLER_CAPABILITY_MAP", () => {
   it("classifies read-only orchestration methods as ungated (proves the three-way classification is real)", () => {
     // At least one read-only method per family is explicitly ungated. Adding a
     // gated method without classifying it must NOT silently inherit a cap.
-    expect(HANDLER_CAPABILITY_MAP["message.fetch"]).toBe("ungated");
+    // (message.fetch is NOT here — §3.5 keeps it admin-only / deny-by-origin.)
+    expect(HANDLER_CAPABILITY_MAP["session.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["graph.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["cron.list"]).toBe("ungated");
     expect(HANDLER_CAPABILITY_MAP["skills.list"]).toBe("ungated");
+  });
+
+  it("210-GAP / §3.5: classifies the admin-only / deny-by-origin methods (proves the deny-by-origin class is populated)", () => {
+    // The deny-by-origin class is now non-empty (210-GAP): the message subset
+    // §3.5 keeps admin-only + the arbitrary-session lifecycle ops.
+    for (const m of [
+      "message.edit",
+      "message.delete",
+      "message.attach",
+      "message.fetch",
+      "session.delete",
+      "session.export",
+      "session.reset_conversation",
+    ]) {
+      expect(HANDLER_CAPABILITY_MAP[m], `${m} must be deny-by-origin`).toBe("deny-by-origin");
+    }
   });
 
   it("is exhaustive over the orchestration gated table (each gated method is a key with the expected cap)", () => {
@@ -97,12 +125,10 @@ describe("HANDLER_CAPABILITY_MAP", () => {
       "cron.update": "orch:cron",
       "cron.remove": "orch:cron",
       "cron.run": "orch:cron",
+      // §3.5: only the genuinely-outward send subset is gated on orch:message.
       "message.send": "orch:message",
       "message.reply": "orch:message",
       "message.react": "orch:message",
-      "message.edit": "orch:message",
-      "message.delete": "orch:message",
-      "message.attach": "orch:message",
       "skills.create": "orch:skill",
       "skills.update": "orch:skill",
       "skills.delete": "orch:skill",

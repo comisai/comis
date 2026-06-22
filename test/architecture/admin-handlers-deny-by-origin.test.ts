@@ -37,7 +37,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { API_CONTRACTS_ORDERED } from "@comis/core";
+import { API_CONTRACTS_ORDERED, HANDLER_CAPABILITY_MAP, AGENT_CAPABILITIES } from "@comis/core";
 import { formatViolations, type ViolationCitation } from "../support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -218,6 +218,77 @@ describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", 
         designRef: "v8 ORIGIN-01 / T-210-24",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("210-GAP — the deny-by-origin set is the TRUE control plane (orch/agent-reachable methods are NOT denied)", () => {
+  /** The runtime admin-method set the chokepoint derives (scopes.includes("admin")). */
+  const ADMIN: ReadonlySet<string> = EXPECTED_ADMIN;
+  const CAP_SET: ReadonlySet<string> = new Set<string>(AGENT_CAPABILITIES);
+
+  it("210-GAP CR-01/MD-01: NO method classified gated (orch:*) or ungated in HANDLER_CAPABILITY_MAP is in the deny-by-origin (admin) set", () => {
+    // The keystone reconciliation: a method the capability model OWNS (a held cap
+    // gates it) or an agent-self read (ungated) MUST be agent-reachable — i.e.
+    // NOT in the admin deny set, else deny-by-origin throws before the cap gate /
+    // before the read runs. This is exactly the CR-01 regression (message.send /
+    // skills.* / session.list were scopes:["admin"] while the gate/read expected
+    // them reachable). Drift-proof: re-scoping any of them back to admin fails here.
+    const violations: ViolationCitation[] = Object.entries(HANDLER_CAPABILITY_MAP)
+      .filter(([, cls]) => CAP_SET.has(cls) || cls === "ungated")
+      .filter(([method]) => ADMIN.has(method))
+      .map(([method, cls]) => ({
+        file: "packages/core/src/api-contracts/ (contract scope) + handler-capability-map.ts",
+        line: 0,
+        snippet: `"${method}" is classified "${cls}" (agent-reachable) but is scopes:["admin"] → in the deny-by-origin set → an agent origin is denied BEFORE the gate/read. Re-scope its contract to ["rpc"].`,
+      }));
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "A capability-gated or agent-read orchestration method is in the deny-by-origin (admin) set, so an agent origin is denied before its own cap gate / self-read can run (the CR-01/MD-01 regression).",
+        violations,
+        suggestedFix:
+          "Re-scope the method's contract scopes admin→rpc. The deny-by-origin set must be the TRUE control plane (secrets/tokens/config/agents/mcp/auth + the message §3.5 admin subset + arbitrary-session lifecycle), never the orchestration surface the capability model governs.",
+        designRef: "210-GAP CR-01/MD-01 / v8 §3.1 (in-process bypass) / §3.5",
+      }),
+    ).toEqual([]);
+  });
+
+  it("210-GAP: every method classified deny-by-origin in HANDLER_CAPABILITY_MAP IS in the admin deny set (kept control plane)", () => {
+    // The inverse drift guard: a method the map declares control-plane-only
+    // (message.edit/delete/fetch/attach per §3.5; session.delete/export/
+    // reset_conversation per the in-handler admin check) MUST keep scopes:["admin"]
+    // so the chokepoint actually denies an agent origin. Dropping its admin scope
+    // would silently open it to agents.
+    const violations: ViolationCitation[] = Object.entries(HANDLER_CAPABILITY_MAP)
+      .filter(([, cls]) => cls === "deny-by-origin")
+      .filter(([method]) => !ADMIN.has(method))
+      .map(([method]) => ({
+        file: "packages/core/src/api-contracts/ (contract scope) + handler-capability-map.ts",
+        line: 0,
+        snippet: `"${method}" is classified "deny-by-origin" but is NOT scopes:["admin"] → the chokepoint does NOT cover it → an agent origin could reach it.`,
+      }));
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "A deny-by-origin-classified method lost its admin scope, so the chokepoint no longer denies an agent origin (a silent privilege widening).",
+        violations,
+        suggestedFix:
+          "Keep the method's contract scopes as [\"admin\"] so it stays in the deny-by-origin set covered by the chokepoint.",
+        designRef: "210-GAP / v8 §3.1 / §3.5",
+      }),
+    ).toEqual([]);
+  });
+
+  it("210-GAP (non-vacuity): the deny-by-origin class is populated AND the agent-reachable class is populated", () => {
+    // Guard against a vacuous pass if the map were emptied/restructured.
+    const denyByOrigin = Object.values(HANDLER_CAPABILITY_MAP).filter((c) => c === "deny-by-origin");
+    const reachable = Object.values(HANDLER_CAPABILITY_MAP).filter(
+      (c) => CAP_SET.has(c) || c === "ungated",
+    );
+    expect(denyByOrigin.length, "deny-by-origin class must be non-empty (210-GAP populated it)").toBeGreaterThan(0);
+    expect(reachable.length, "agent-reachable class must be non-empty").toBeGreaterThan(0);
   });
 });
 

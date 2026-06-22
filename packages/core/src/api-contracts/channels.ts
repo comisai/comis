@@ -373,7 +373,12 @@ export const MessageSendContract = defineContract({
     messageId: z.string(),
     channelId: z.string(),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP CR-01: orchestration surface (the genuinely-outward send subset,
+  // §3.5), NOT control plane. Re-scoped admin→rpc so the deny-by-origin
+  // chokepoint (keyed on scopes.includes("admin")) no longer denies an agent its
+  // own granted orch:message before the requireCapability gate runs. The handler
+  // still gates on orch:message; admin gateway tokens carry rpc so are unaffected.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -407,7 +412,9 @@ export const MessageReplyContract = defineContract({
     messageId: z.string(),
     channelId: z.string(),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP CR-01: outward send subset (§3.5) → orchestration surface, rpc-scoped
+  // (governed by orch:message), not control plane. See message.send rationale.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -438,7 +445,9 @@ export const MessageReactContract = defineContract({
     messageId: z.string(),
     emoji: z.string(),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP CR-01: outward send subset (§3.5) → orchestration surface, rpc-scoped
+  // (governed by orch:message), not control plane. See message.send rationale.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -448,6 +457,10 @@ export const MessageReactContract = defineContract({
 /**
  * `message.edit` — Edit an existing message. Admin-only. Handler path:
  * message-handlers.ts:163-175.
+ *
+ * 210-GAP / §3.5: edit/delete/fetch/attach STAY admin-only (deny-by-origin) and
+ * are NOT part of `orch:message` — the cap exposes only the genuinely-outward
+ * send subset (send/reply/react). An agent origin is denied at the chokepoint.
  *
  * Capability-gated (`editMessages` feature). Resolves inbound UUID. Text is
  * formatted via `formatForChannel` before adapter.editMessage call.

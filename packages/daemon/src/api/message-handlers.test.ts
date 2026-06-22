@@ -9,11 +9,12 @@ import { withHeldCapabilities } from "../../../../test/support/held-capabilities
 import { ok } from "@comis/shared";
 import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
 
-// CAP-03: the gated message.send/reply/react/edit/delete/attach handlers now
-// require an injected _capabilities (production supplies it via
-// createAgentRpcCall). Wrap the bound record so these body-tests reach the
-// handler BODY, not the gate (proven RED-first in the CAP-05 tests).
-// message.fetch (read-only) passes through unchanged.
+// CAP-03 / 210-GAP §3.5: the orch:message-gated handlers are message.send/
+// reply/react ONLY (the genuinely-outward send subset). They require an injected
+// _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
+// record so these body-tests reach the handler BODY, not the gate. message.edit/
+// delete/fetch/attach are admin-only (deny-by-origin) and carry NO in-handler
+// cap gate — the wrapper's injected caps are inert for them.
 function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
   return withHeldCapabilities(createMessageHandlersRaw(deps));
 }

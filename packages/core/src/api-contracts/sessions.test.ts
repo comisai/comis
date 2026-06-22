@@ -61,7 +61,12 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
     ]));
   });
 
-  it("partitions scopes correctly (6 rpc + 7 admin per setup-gateway-api.ts)", () => {
+  it("partitions scopes correctly (9 rpc + 4 admin per setup-gateway-api.ts)", () => {
+    // 210-GAP MD-01: session.list/compact/reset re-scoped admin→rpc (agent-self
+    // reads/lifecycle, classified "ungated", NO in-handler admin check). The
+    // three that STAY admin (delete/export/reset_conversation) carry an
+    // in-handler `_trustLevel === "admin"` check + target an ARBITRARY session →
+    // genuine control plane / deny-by-origin. agents.list stays admin.
     const byScope = new Map<string, string[]>();
     for (const c of SESSIONS_CONTRACTS) {
       const scope = c.scopes[0]!;
@@ -69,7 +74,10 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
       byScope.get(scope)!.push(c.method);
     }
     expect(byScope.get("rpc")?.sort()).toEqual([
+      "session.compact",
       "session.history",
+      "session.list",
+      "session.reset",
       "session.run_status",
       "session.search",
       "session.send",
@@ -78,11 +86,8 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
     ]);
     expect(byScope.get("admin")?.sort()).toEqual([
       "agents.list",
-      "session.compact",
       "session.delete",
       "session.export",
-      "session.list",
-      "session.reset",
       "session.reset_conversation",
     ]);
   });

@@ -11,11 +11,13 @@
  *     `requireCapability(rawParams._capabilities, <cap>)` near its top (the
  *     in-process gate, because the agent loop skips `checkScope`).
  *   - `"deny-by-origin"` — an admin/control-plane method un-grantable to an
- *     agent origin (Plan 05 enforces the `_agentId`-reject; NONE are listed
- *     here in 210 — this classification exists so the table is total and Plan
- *     05 can extend it).
+ *     agent origin (the `rpc-dispatch.ts` chokepoint rejects an `_agentId`-bearing
+ *     call for every scopes:["admin"] method). 210-GAP populates this class with
+ *     the message subset §3.5 keeps admin-only (edit/delete/fetch/attach) + the
+ *     arbitrary-session lifecycle ops carrying an in-handler `_trustLevel`-admin
+ *     check (session.delete/export/reset_conversation).
  *   - `"ungated"` — a read-only / lifecycle method governed by neither a cap
- *     nor deny-by-origin in 210.
+ *     nor deny-by-origin (agent-reachable, rpc-scoped contract).
  *
  * This is consumed by two tests that keep the gate and the table from drifting:
  *   1. `test/architecture/gated-handlers-require-capability.test.ts` AST-asserts
@@ -58,16 +60,22 @@ export type HandlerCapabilityClassification = AgentCapability | "deny-by-origin"
  */
 export const HANDLER_CAPABILITY_MAP = {
   // ── session ── only session.spawn is an orch cap; session.send is governed by
-  // the agentToAgent policy gate, the rest are read-only / lifecycle.
+  // the agentToAgent policy gate. The read/lifecycle ops split two ways
+  // (210-GAP MD-01): list/compact/reset/history/run_status/search/status are
+  // "ungated" (agent-reachable self-scoped reads, rpc-scoped contracts), while
+  // delete/export/reset_conversation are "deny-by-origin" — they carry an
+  // in-handler `_trustLevel === "admin"` check AND target an ARBITRARY session
+  // by key (not the caller's own), so they are genuine control plane and stay
+  // scopes:["admin"]; an agent origin is denied at the chokepoint.
   "session.spawn": "orch:spawn",
   "session.send": "ungated",
   "session.compact": "ungated",
-  "session.delete": "ungated",
-  "session.export": "ungated",
+  "session.delete": "deny-by-origin",
+  "session.export": "deny-by-origin",
   "session.history": "ungated",
   "session.list": "ungated",
   "session.reset": "ungated",
-  "session.reset_conversation": "ungated",
+  "session.reset_conversation": "deny-by-origin",
   "session.run_status": "ungated",
   "session.search": "ungated",
   "session.status": "ungated",
@@ -94,14 +102,20 @@ export const HANDLER_CAPABILITY_MAP = {
   "cron.status": "ungated",
   "cron.runs": "ungated",
 
-  // ── message ── outward set → orch:message; message.fetch is read-only.
+  // ── message ── 210-GAP / §3.5: `orch:message` exposes ONLY the
+  // genuinely-outward send subset (send/reply/react). edit/delete/fetch/attach
+  // are admin-only and NOT part of the cap → "deny-by-origin" (they stay
+  // scopes:["admin"]; an agent origin is denied at the chokepoint, NOT
+  // cap-gated). This corrects the prior over-broad gating that (a) put
+  // edit/delete/attach behind a cap no profile grants and (b) made a
+  // _capabilities-stripped admin gateway caller throw on the (undefined) cap.
   "message.send": "orch:message",
   "message.reply": "orch:message",
   "message.react": "orch:message",
-  "message.edit": "orch:message",
-  "message.delete": "orch:message",
-  "message.attach": "orch:message",
-  "message.fetch": "ungated",
+  "message.edit": "deny-by-origin",
+  "message.delete": "deny-by-origin",
+  "message.attach": "deny-by-origin",
+  "message.fetch": "deny-by-origin",
 
   // ── skills ── mutating set → orch:skill; skills.list is read-only.
   "skills.create": "orch:skill",
