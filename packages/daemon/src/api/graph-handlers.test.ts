@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createGraphHandlers, transformNodes, validateGraphWarnings, schemaToExample, type GraphHandlerDeps } from "./graph-handlers/index.js";
+import { createGraphHandlers as createGraphHandlersRaw, transformNodes, validateGraphWarnings, schemaToExample, type GraphHandlerDeps } from "./graph-handlers/index.js";
 import { ok } from "@comis/shared";
 import type { NodeExecutionState } from "@comis/core";
 import { z } from "zod";
 import { createAgentDriver } from "../graph/drivers/agent-driver.js";
 import { createDebateDriver } from "../graph/drivers/debate-driver.js";
+import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+
+// CAP-03: the gated graph.define/execute/save/load/delete/cancel/deleteRun
+// handlers require an injected `_capabilities` (orch:graph) at their top.
+// Production supplies it via createAgentRpcCall (setup-tools-capabilities.ts);
+// these body-tests call the handlers directly, so wrap the bound record to
+// carry the held cap each method needs (read-only graph methods pass through
+// unchanged, and a test's own `_capabilities` is left intact).
+function createGraphHandlers(deps: GraphHandlerDeps): ReturnType<typeof createGraphHandlersRaw> {
+  return withHeldCapabilities(createGraphHandlersRaw(deps));
+}
 
 // ---------------------------------------------------------------------------
 // Mock coordinator
