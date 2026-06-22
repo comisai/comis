@@ -62,7 +62,7 @@ so you are told rather than over-granted.
 
 ### What `standard` turns on
 
-The `standard` profile resolves these eight floor capabilities:
+The `standard` profile resolves these nine floor capabilities:
 
 | Capability | What it permits |
 |------------|-----------------|
@@ -74,6 +74,13 @@ The `standard` profile resolves these eight floor capabilities:
 | `orch:graph` | Run execution graphs |
 | `orch:cron` | Author and run scheduled jobs |
 | `orch:skill` | Invoke skills |
+| `orch:message` | Send a message to the agent's **own origin channel** (the channel it was spoken to) under an hourly quota |
+
+`orch:message` is on by default but scoped to the agent's **origin channel
+only** -- it answers where it was spoken to. The cap covers the genuinely-outward
+send subset (`message.send`/`reply`/`react`); editing, deleting, fetching, and
+attaching stay admin-only. A send to a **new** channel always escalates for
+approval (it is never auto-decided), configured via `message.channels`.
 
 Two surfaces are **off** in every default profile because they are outward and
 hard to reverse: `orch:browse` (a real browser) and messaging a **new** channel

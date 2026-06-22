@@ -37,7 +37,7 @@ inferred from it, so the two can never drift.
 | `orch:graph` | Run execution graphs |
 | `orch:cron` | Author and run scheduled jobs |
 | `orch:skill` | Invoke skills |
-| `orch:message` | Send outward messages (origin channel by default) |
+| `orch:message` | Send a message to the agent's origin channel (the outward send subset: `message.send`/`reply`/`react`). Editing, deleting, fetching, and attaching stay admin-only and are not part of this capability. |
 | `orch:browse` | Drive a real browser (outward; off in every default profile) |
 
 Every member is namespaced `orch:`. None of them is, or implies, a gateway
@@ -87,6 +87,15 @@ what an agent may **never** do regardless of capabilities: **reach the control
 plane.** Administrative handlers (the ones that manage secrets, tokens, config,
 channels, and the other privileged-surface methods) reject any call that carries
 an agent-origin marker outright -- before any capability is even consulted.
+
+The deny-by-origin set is exactly the **true control plane** -- the
+`admin`-scoped methods. The orchestration surface an agent legitimately reaches
+(its granted `orch:*` methods, and its own session reads) is **not** in this set:
+those are capability-gated or agent-reachable, not denied by origin. A handful of
+methods stay control-plane-only even within otherwise-agent-facing namespaces:
+the message subset that is not part of `orch:message`
+(`message.edit`/`delete`/`fetch`/`attach`) and the lifecycle ops that delete or
+export an **arbitrary** session (`session.delete`/`export`/`reset_conversation`).
 
 This is sound because of how agent origin is established:
 
