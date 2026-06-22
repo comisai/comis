@@ -24,13 +24,14 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { ComisLogger } from "@comis/core";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS, CHARS_PER_TOKEN_RATIO } from "./constants.js";
 import {
   createToolResultSizeGuard,
   type ContentBlock,
 } from "../safety/tool-result-size-guard.js";
-import { estimateMessageTokens } from "../safety/token-estimator.js";
+import { factoredMessageTokens } from "./factored-message-tokens.js";
+import { computeFloorOutputHeadroom } from "./output-headroom.js";
 
 /**
  * B-8: the single shared tool-result size guard for the dag assembler's fresh-tail
@@ -238,10 +239,16 @@ export function boundFreshTailTotalToResidual(
     if (roleOf(freshTail[i]!) !== "toolResult") stepStarts.push(i);
   }
   if (stepStarts.length <= 1) return freshTail; // one step (or all toolResults) — keep whole.
+  // ISSUE #3 (2026-06-22): measure with the SAME factored estimator the pre-flight uses
+  // (factoredMessageTokens) — NOT estimateMessageTokens (4:1). Estimator PARITY means the
+  // bound enforced here EQUALS the pre-flight's measure for ANY system-prompt size, so no
+  // fudge factor is needed on the residual (the caller passes the exact pre-flight residual).
+  // Pre-fix the 4:1↔3.5:1 gap scaled with the residual: on a small S (large residual) the
+  // bounded tail still measured over the bound at the pre-flight's ratio → exhaustion.
   const tokensFrom = (from: number): number => {
     let sum = 0;
     for (let i = from; i < freshTail.length; i++) {
-      sum += estimateMessageTokens(freshTail[i] as unknown as Message);
+      sum += factoredMessageTokens(freshTail[i]!);
     }
     return sum;
   };
@@ -253,4 +260,111 @@ export function boundFreshTailTotalToResidual(
   }
   if (s === 0) return freshTail; // nothing dropped — A1 no-op (same reference).
   return freshTail.slice(stepStarts[s]!);
+}
+
+/**
+ * ISSUE #1/#3/#3b: compute the protected-fresh-tail residual and trim the tail to it.
+ *
+ * The residual = effectiveWindow − systemTokens − FLOOR output headroom − preamble. The
+ * floor headroom comes from {@link computeFloorOutputHeadroom} with the model's ACTUAL
+ * reasoningStyle — the IDENTICAL value the pre-flight throws against (#3b: a native model
+ * reserves the native "low" floor incl. the reasoning reserve; under-counting it ships a
+ * tail the pre-flight exhausts on). The trim measures with the SAME factored estimator the
+ * pre-flight uses (#3: estimator parity, no fudge). Frontier/mid: an Infinite window → the
+ * residual is undefined → returns the tail UNCHANGED (no-op → byte-identical, LOCKED #2).
+ *
+ * Owns the diagnostic DEBUG (`step:lcd-freshtail-bound`) so the assembler body stays thin
+ * and the residual inputs (reasoningStyle / floorHeadroom / residual / before+after factored
+ * sizes) are one-read visible — the obs-excellence loop for this bug class.
+ *
+ * @param freshTail - the per-message-bounded (B-8) fresh-tail messages.
+ * @param ctx - window/S/reasoningStyle/preamble + logging context.
+ * @returns the trimmed fresh tail (or the same reference on a no-op).
+ */
+export function boundProtectedFreshTail(
+  freshTail: AgentMessage[],
+  ctx: {
+    effectiveWindow: number;
+    systemTokens: number;
+    reasoningStyle: "none" | "native";
+    minVisibleOutputTokens: number | undefined;
+    freshTailPreambleTokens: number;
+    logger: ComisLogger;
+    agentId: string | undefined;
+    sessionKey: string | undefined;
+  },
+): AgentMessage[] {
+  if (!isFinite(ctx.effectiveWindow) || freshTail.length <= 1) return freshTail;
+  const floorHeadroom = computeFloorOutputHeadroom(ctx.reasoningStyle, ctx.minVisibleOutputTokens);
+  const residual = Math.max(
+    0,
+    ctx.effectiveWindow - ctx.systemTokens - floorHeadroom - ctx.freshTailPreambleTokens,
+  );
+  const before = freshTail.reduce((s, m) => s + factoredMessageTokens(m), 0);
+  const bounded = boundFreshTailTotalToResidual(freshTail, residual);
+  const after = bounded.reduce((s, m) => s + factoredMessageTokens(m), 0);
+
+  // INSTRUMENTATION (lead's mandate, 2026-06-22): after 5 test-green/live-fail cycles,
+  // log the EXACT trim mechanics on EVERY call so the next live re-test SHOWS why the
+  // protected tail is/isn't trimmed — not a hypothesis. Per-step factored sizes +
+  // kept/dropped counts disambiguate the 4 candidate causes (giant step / wrong residual
+  // / preamble / keep-last-too-much). `roleOf` mirrors the function's own grouping so the
+  // logged stepCount IS what the trim saw.
+  const roleAt = (m: AgentMessage): string | undefined => (m as { role?: string }).role;
+  const stepStartIdx: number[] = [];
+  for (let i = 0; i < freshTail.length; i++) {
+    if (roleAt(freshTail[i]!) !== "toolResult") stepStartIdx.push(i);
+  }
+  // Per-step factored size = sum over [thisStart, nextStart).
+  const stepSizes = stepStartIdx.map((start, k) => {
+    const end = k + 1 < stepStartIdx.length ? stepStartIdx[k + 1]! : freshTail.length;
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += factoredMessageTokens(freshTail[i]!);
+    return sum;
+  });
+  const keptSteps = bounded === freshTail
+    ? stepStartIdx.length
+    : (() => {
+        // bounded is a suffix slice; count its step starts.
+        let n = 0;
+        for (let i = 0; i < bounded.length; i++) if (roleAt(bounded[i]!) !== "toolResult") n++;
+        return n;
+      })();
+  // The smoking-gun fields: did the trim actually fit the tail under the residual? A WARN
+  // when it did NOT (after > residual despite trimming) means the trim COULD NOT reduce
+  // below the residual — i.e., the always-kept last step alone exceeds it (oversized_input),
+  // OR the grouping sees one un-droppable giant step. Either way the pre-flight will throw.
+  const fitsResidual = after <= residual;
+  const logPayload = {
+    step: "fresh-tail-bound",
+    reasoningStyle: ctx.reasoningStyle,
+    floorHeadroom,
+    freshTailResidual: residual,
+    systemTokens: ctx.systemTokens,
+    freshTailPreambleTokens: ctx.freshTailPreambleTokens,
+    effectiveWindow: ctx.effectiveWindow,
+    stepCount: stepStartIdx.length,
+    stepSizes,                         // each step's factored tokens — exposes a giant un-droppable step
+    keptSteps,
+    droppedSteps: stepStartIdx.length - keptSteps,
+    freshTailFactoredBefore: before,
+    freshTailFactoredAfter: after,     // the bounded total — should be ≤ residual when trimmable
+    fitsResidual,
+    agentId: ctx.agentId,
+    sessionKey: ctx.sessionKey,
+  };
+  if (fitsResidual) {
+    ctx.logger.debug(logPayload, "lcd protected fresh tail bounded to the pre-flight residual");
+  } else {
+    // Diagnosable-by-default: the case that EXHAUSTS rides a WARN (visible without debug level).
+    ctx.logger.warn(
+      {
+        ...logPayload,
+        errorKind: "resource" as const,
+        hint: "protected fresh tail could NOT be trimmed below the residual — the kept (current) step(s) exceed it; the pre-flight will exhaust. Check stepSizes for a single giant step (grouping) vs a genuinely oversized current turn (oversized_input).",
+      },
+      "lcd protected fresh tail STILL exceeds the residual after trimming",
+    );
+  }
+  return bounded;
 }

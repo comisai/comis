@@ -43,6 +43,8 @@ import { scoreRelevance } from "../rag/relevance-scorer.js";
 // TOK-01 (Phase 179): the factored family-2 root — the read-time max() at
 // resolveContextItem compares stored counts against THIS estimator.
 import { estimateMessageTokens } from "../safety/token-estimator.js";
+import { factoredMessageTokens } from "./factored-message-tokens.js";
+import { boundFreshTailTotalToResidual } from "./lcd-fresh-tail-bound.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1084,6 +1086,220 @@ describe("createLcdContextEngine context_items + eviction (Plan 05, C3/A3)", () 
     const tail3 = perTurnAssembled.slice(-3);
     const tailSpan = Math.max(...tail3) - Math.min(...tail3);
     expect(tailSpan).toBeLessThanOrEqual(2 * 285 + 50); // ≤ ~one turn of jitter
+  });
+
+  // ISSUE #3 — THE GAP B4 MISSED (lead's live OpenAI gpt-5-nano @8192, 2026-06-22): B4
+  // used a LARGE S (5210 → small residual ~2214), where Fix C's ×0.83 estimator-gap
+  // fudge happened to cover the absolute gap. With a SMALL S (the reduced nano prompt:
+  // ~1145 → LARGE residual ~6279) the absolute gap between Fix C's estimator
+  // (estimateMessageTokens 4:1) and the pre-flight's (factored 3.5:1) scales with the
+  // residual and EXCEEDS the 17% the fudge covers → the bounded fresh tail measures
+  // higher at the pre-flight's ratio than the cap → t6 EXHAUSTS (live: freshTail 5407 >
+  // the 5212 ×0.83 cap, assembled 6552 of an 8192 window). The fix is estimator PARITY:
+  // boundFreshTailTotalToResidual must measure with the SAME factored estimator the
+  // pre-flight uses, so the bound == the pre-flight's measure for ANY S. RED pre-fix.
+  it("Plan05 Test B5 (ISSUE #3): the protected fresh tail fits under a SMALL S (large residual) — no exhaustion across 10 turns", async () => {
+    const TURN_CHARS = 2_400; // ~685 tok/msg → ~1370/turn — fills the large residual fast
+    const TURNS = 10;
+    const live: AgentMessage[] = [];
+    const W = 8_192;
+    const S = 1_145; // the reduced nano prompt (OpenAI gpt-5-nano pinned nano) → residual ~6279
+    for (let turn = 0; turn < TURNS; turn++) {
+      const u = userMsg(`question ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const a = assistantText(`answer ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const baseSeq = turn * 2;
+      store.append({ scope: SCOPE, seq: baseSeq, role: u.role, tokenCount: estimateMessageTokens(u), createdAt: FIXED_CREATED_AT, parts: messageToParts(u) });
+      store.append({ scope: SCOPE, seq: baseSeq + 1, role: a.role, tokenCount: estimateMessageTokens(a), createdAt: FIXED_CREATED_AT, parts: messageToParts(a) });
+      live.push(u as AgentMessage, a as AgentMessage);
+
+      const logger = createMockLogger();
+      const nanoProfile: ModelProfile = {
+        ...FAIL_CLOSED_PROFILE,
+        capabilityClass: "nano" as const,
+        contextWindow: W,
+        maxOutputTokens: 4_096,
+        reasoningStyle: "none" as const,
+      };
+      const deps: ContextEngineDeps = {
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getModel: () => ({ reasoning: false, contextWindow: W, maxTokens: 4_096 }),
+        getSystemTokensEstimate: () => S,
+        getThinkingLevel: () => "off",
+        modelProfile: nanoProfile,
+        contextStore: store,
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        tenantId: "tenant_a",
+        sessionKey: "sess-a",
+        relevanceFirst: true,
+        relevanceScorer: scoreRelevance,
+      };
+      const engine = createLcdContextEngine(dagConfig(8), deps);
+      // PRIMARY INVARIANT (the live guarantee — "8+ turns must answer with no
+      // exhaustion"): transformContext must NOT throw on ANY turn. Pre-fix, the ×0.83
+      // fudge capped the protected fresh tail by the 4:1 estimator, but the pre-flight
+      // re-measured it at the factored 3.5:1 ratio — and on this SMALL S (large residual
+      // ~6279) the absolute gap pushed the bounded tail's factored measure over the
+      // bound → ContextExhaustionError. The awaited call below rejects on a throw → fails.
+      const out = await engine.transformContext([...live]);
+      expect(out.length, `turn ${turn} must assemble (not throw)`).toBeGreaterThan(0);
+      // The protected fresh tail must carry the CURRENT turn's user message (it is never
+      // dropped — only OLDER steps are trimmed to fit the residual).
+      const carriesCurrentTurn = out.some(
+        (m) => factoredMessageTokens(m) > 0 && (m as { role?: string }).role === "user",
+      );
+      expect(carriesCurrentTurn, `turn ${turn} must still carry a user message`).toBe(true);
+    }
+    // Reaching here = all 10 turns assembled with NO ContextExhaustionError under a small
+    // S / large residual — the exact configuration the ×0.83 fudge could not bound and
+    // estimator parity fixes.
+  });
+
+  it("Plan05 Test B5-bound (ISSUE #3): boundFreshTailTotalToResidual + the pre-flight measure agree (no estimator gap) for a small S", () => {
+    // Unit-level estimator-parity proof: a fresh tail that exceeds the residual is
+    // trimmed by boundFreshTailTotalToResidual, and the pre-flight's OWN factored measure
+    // of the trimmed tail is ≤ the residual — for a SMALL S (large residual). Pre-fix the
+    // bound used estimateMessageTokens (4:1) so the factored (3.5:1) measure of the
+    // trimmed tail exceeded the residual; with parity they agree exactly.
+    const W = 8_192, S = 1_145, HEADROOM = 768;
+    const residual = W - S - HEADROOM; // 6279
+    const tail: AgentMessage[] = [];
+    for (let i = 0; i < 12; i++) {
+      tail.push(userMsg(`q${i} `.repeat(500)) as AgentMessage); // ~1500 chars → ~430 factored tok
+      tail.push(assistantText(`a${i} `.repeat(500)) as AgentMessage);
+    }
+    const fullFactored = tail.reduce((s, m) => s + factoredMessageTokens(m), 0);
+    expect(fullFactored).toBeGreaterThan(residual); // the full tail genuinely overflows ~10K > 6279
+    const bounded = boundFreshTailTotalToResidual(tail, residual);
+    const boundedFactored = bounded.reduce((s, m) => s + factoredMessageTokens(m), 0);
+    // The trimmed tail's factored measure (== the pre-flight's measure) fits the residual.
+    // Allow the last-step-always-kept slack (one user+assistant step).
+    expect(boundedFactored).toBeLessThanOrEqual(
+      residual + factoredMessageTokens(userMsg(`q0 `.repeat(500)) as AgentMessage) + factoredMessageTokens(assistantText(`a0 `.repeat(500)) as AgentMessage),
+    );
+  });
+
+  // ISSUE #3b — THE GAP B5 MISSED (lead's live OpenAI gpt-5-nano NATIVE, 2026-06-22): B5
+  // used a reasoningStyle="none" nano profile, whose floor headroom (768) matched Fix C's
+  // assumption. gpt-5-nano is a REASONING model (reasoningStyle="native") — the pre-flight
+  // reserves the native floor headroom (computeOutputHeadroom("native","low") = 1024+768 =
+  // 1792) that Fix C's residual must ALSO subtract. If Fix C subtracts only 768 (the none
+  // floor), its residual is ~873 too large → it does NOT trim a fresh tail the pre-flight
+  // (headroom 1792) then exhausts on (live t6: freshTail 5407, assembled 6552 > the native
+  // bound 6400). This drives the REAL assembler with a NATIVE nano profile at a SMALL S
+  // (large residual) → must NOT exhaust across 10 turns. RED pre-fix.
+  it("Plan05 Test B6 (ISSUE #3b): a NATIVE-reasoning nano model at a small S does not exhaust — Fix C subtracts the native floor headroom the pre-flight reserves", async () => {
+    const TURN_CHARS = 2_400;
+    const TURNS = 10;
+    const live: AgentMessage[] = [];
+    const W = 8_192;
+    const S = 1_145; // reduced nano prompt; native floor headroom 1792 → residual ~5255
+    for (let turn = 0; turn < TURNS; turn++) {
+      const u = userMsg(`question ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const a = assistantText(`answer ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const baseSeq = turn * 2;
+      store.append({ scope: SCOPE, seq: baseSeq, role: u.role, tokenCount: estimateMessageTokens(u), createdAt: FIXED_CREATED_AT, parts: messageToParts(u) });
+      store.append({ scope: SCOPE, seq: baseSeq + 1, role: a.role, tokenCount: estimateMessageTokens(a), createdAt: FIXED_CREATED_AT, parts: messageToParts(a) });
+      live.push(u as AgentMessage, a as AgentMessage);
+
+      const logger = createMockLogger();
+      // gpt-5-nano shape: NATIVE reasoning (the pre-flight reserves the native floor headroom).
+      const nativeNanoProfile: ModelProfile = {
+        ...FAIL_CLOSED_PROFILE,
+        capabilityClass: "nano" as const,
+        contextWindow: W,
+        maxOutputTokens: 4_096,
+        reasoningStyle: "native" as const,
+      };
+      const deps: ContextEngineDeps = {
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getModel: () => ({ reasoning: true, contextWindow: W, maxTokens: 4_096 }),
+        getSystemTokensEstimate: () => S,
+        getThinkingLevel: () => "medium", // the configured level; the governor down-shifts toward the floor
+        modelProfile: nativeNanoProfile,
+        contextStore: store,
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        tenantId: "tenant_a",
+        sessionKey: "sess-a",
+        relevanceFirst: true,
+        relevanceScorer: scoreRelevance,
+      };
+      const engine = createLcdContextEngine(dagConfig(8), deps);
+      // Must NOT throw — Fix C must subtract the SAME native floor headroom the pre-flight
+      // reserves, so the protected fresh tail is trimmed to fit the native-headroom bound.
+      const out = await engine.transformContext([...live]);
+      expect(out.length, `turn ${turn} (native nano) must assemble`).toBeGreaterThan(0);
+    }
+  });
+
+  // ISSUE #3c — THE CONFIRMED ROOT CAUSE (lead's lcd-freshtail-bound DEBUG: window=16000,
+  // 2026-06-22): the capabilityClass=nano pin gives a model a RAW contextWindow (16000)
+  // LARGER than effectiveContextCapNano (8192). The pre-flight throws against the CAPPED
+  // window (budget.windowTokens = min(16000, 8192) = 8192), but Fix C read the raw 16000 →
+  // residual ~12865 (huge) → never trimmed → the pre-flight (effective 8192) exhausted.
+  // Fix C must use budget.windowTokens (the capped value). This drives the REAL assembler
+  // with contextWindow 16000 + effectiveContextCapNano 8192 → Fix C must bound to the
+  // CAPPED 8192 (the fresh-tail-bound log shows effectiveWindow:8192, NOT 16000) and NOT
+  // exhaust. The codex test couldn't expose this (codex raw window == 8192 == the cap).
+  it("Plan05 Test B7 (ISSUE #3c): a nano pin with raw window > cap bounds to the CAPPED window, not the raw — no exhaustion", async () => {
+    const RAW_WINDOW = 16_000; // the nano-pin raw contextWindow
+    const CAP = 8_192;          // effectiveContextCapNano
+    const S = 1_145;
+    const TURN_CHARS = 2_400;
+    const TURNS = 10;
+    // dag config carrying the nano cap (the assembler reads config.budget.effectiveContextCapNano).
+    const cfgWithCap = {
+      enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag", freshTailTurns: 8,
+      budget: { effectiveContextCapNano: CAP, effectiveContextCapSmall: 32_000 },
+    } as unknown as Parameters<typeof createLcdContextEngine>[0];
+    const live: AgentMessage[] = [];
+    let sawCappedWindow = false;
+    for (let turn = 0; turn < TURNS; turn++) {
+      const u = userMsg(`question ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const a = assistantText(`answer ${turn} `.repeat(Math.ceil(TURN_CHARS / 12)));
+      const baseSeq = turn * 2;
+      store.append({ scope: SCOPE, seq: baseSeq, role: u.role, tokenCount: estimateMessageTokens(u), createdAt: FIXED_CREATED_AT, parts: messageToParts(u) });
+      store.append({ scope: SCOPE, seq: baseSeq + 1, role: a.role, tokenCount: estimateMessageTokens(a), createdAt: FIXED_CREATED_AT, parts: messageToParts(a) });
+      live.push(u as AgentMessage, a as AgentMessage);
+
+      const logger = createMockLogger();
+      const pinnedNanoProfile: ModelProfile = {
+        ...FAIL_CLOSED_PROFILE,
+        capabilityClass: "nano" as const,
+        contextWindow: RAW_WINDOW, // RAW 16000 > the 8192 cap — the divergence trigger
+        maxOutputTokens: 4_096,
+        reasoningStyle: "native" as const,
+      };
+      const deps: ContextEngineDeps = {
+        logger: logger as unknown as ContextEngineDeps["logger"],
+        getModel: () => ({ reasoning: true, contextWindow: RAW_WINDOW, maxTokens: 4_096 }),
+        getSystemTokensEstimate: () => S,
+        getThinkingLevel: () => "medium",
+        modelProfile: pinnedNanoProfile,
+        contextStore: store,
+        conversationId: CONVERSATION_ID,
+        agentId: "agent_a",
+        tenantId: "tenant_a",
+        sessionKey: "sess-a",
+        relevanceFirst: true,
+        relevanceScorer: scoreRelevance,
+      };
+      const engine = createLcdContextEngine(cfgWithCap, deps);
+      // Must NOT throw — Fix C bounds to the CAPPED 8192 window (not the raw 16000).
+      const out = await engine.transformContext([...live]);
+      expect(out.length, `turn ${turn} (capped nano) must assemble`).toBeGreaterThan(0);
+      // The fresh-tail-bound diagnostic must report the CAPPED window (8192), proving Fix C
+      // reads budget.windowTokens — the live bug logged 16000 here.
+      const ftCall =
+        (logger.debug as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => (c[0] as { step?: string })?.step === "fresh-tail-bound") ??
+        (logger.warn as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => (c[0] as { step?: string })?.step === "fresh-tail-bound");
+      if (ftCall) {
+        expect((ftCall[0] as { effectiveWindow: number }).effectiveWindow).toBe(CAP);
+        sawCappedWindow = true;
+      }
+    }
+    expect(sawCappedWindow, "the fresh-tail-bound log must have fired with the capped window").toBe(true);
   });
 
   it("Plan05 Test C: no-summary path still assembles 1:1 (the 128 round-trip invariant holds under context_items resolution)", async () => {

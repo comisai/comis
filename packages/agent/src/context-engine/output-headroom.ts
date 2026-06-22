@@ -59,6 +59,32 @@ export function computeOutputHeadroom(
   return THINKING_RESERVE_TOKENS[reasoningStyle][thinkingLevel] + visibleOutputFloor;
 }
 
+/**
+ * The FLOOR output headroom — the minimum the thinking-effort governor can reach.
+ *
+ * ISSUE #3b (2026-06-22): the SINGLE source for "how much headroom is reserved at the
+ * floor", used by BOTH the pre-flight (the bound it ultimately throws against, after the
+ * governor down-shifts as far as it can) AND the fresh-tail residual
+ * (boundFreshTailTotalToResidual via lcd-assembler) so the two can NEVER diverge.
+ *
+ * The governor bottoms out at "low" for a native-reasoning model (downshiftThinkingLevel:
+ * …→medium→low→undefined) and at "off" for a non-reasoning model. So the floor reserve is
+ * the native "low" thinking reserve (1024) for native, 0 for none — PLUS the visible
+ * output floor. A native model that omits this reserve under-counts by ~1024+ and ships a
+ * fresh tail the pre-flight then exhausts on (the live gpt-5-nano t6: Fix C used the none
+ * floor 768, the pre-flight reserved the native floor 1792 → an ~873 gap → overflow).
+ *
+ * @param reasoningStyle - the model's ACTUAL reasoning style ("none" | "native").
+ * @param visibleOutputFloor - minVisibleOutputTokens (defaults to MIN_VISIBLE_OUTPUT_TOKENS).
+ * @returns the floor output headroom in tokens.
+ */
+export function computeFloorOutputHeadroom(
+  reasoningStyle: "none" | "native",
+  visibleOutputFloor: number = MIN_VISIBLE_OUTPUT_TOKENS,
+): number {
+  return computeOutputHeadroom(reasoningStyle, reasoningStyle === "native" ? "low" : "off", visibleOutputFloor);
+}
+
 /** The governor's down-shift order — the meaningful thinking levels
  *  (low through xhigh) that the thinking-effort governor can operate on. */
 export const MIN_THINKING_LEVELS = ["low", "medium", "high", "xhigh"] as const;

@@ -245,6 +245,7 @@ Multi-agent configuration map. Each key is an agent ID, and the value is a `PerA
 | `name` | `string` | `"Comis"` | Display name for the agent |
 | `model` | `string` | `"default"` | LLM model identifier. `"default"` resolves via `models.defaultModel`. |
 | `provider` | `string` | `"default"` | LLM provider. `"default"` resolves via `models.defaultProvider`. |
+| `capabilityClass` | `enum` | _(unset)_ | Pin the model's capability class: `frontier`, `mid`, `small`, `nano`. When unset, the class is derived from the provider family (openai/anthropic/google → `frontier`). When set, it overrides that heuristic so the reduced prompt, small/nano tool deferral, and the `contextEngine.budget.effectiveContextCap{Small,Nano}` caps apply on **any** provider/model — e.g. `capabilityClass: nano` + `effectiveContextCapNano: 8192` forces a small-window nano treatment on a large-window model (gpt-5-nano, claude-haiku, gemini-flash). Takes precedence over the provider-level `providers.<id>.capabilityClass`. |
 | `maxSteps` | `number` | `150` | Maximum reasoning steps per execution |
 | `thinkingLevel` | `enum` | _(unset)_ | SDK thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `maxTokens` | `number` | _(unset)_ | SDK max tokens override |

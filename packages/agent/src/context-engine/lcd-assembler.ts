@@ -80,7 +80,7 @@ import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
 import {
   computeFreshTailCapChars,
   boundFreshTailMessages,
-  boundFreshTailTotalToResidual,
+  boundProtectedFreshTail,
 } from "./lcd-fresh-tail-bound.js";
 import type { ContextEngine, ContextEngineDeps } from "./types.js";
 
@@ -253,37 +253,15 @@ export function createLcdContextEngine(
       // EFF-02: clamp freshTailTurns to what the effective window can afford.
       // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
       const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
-      // ISSUE #1 (2026-06-22): the PROTECTED fresh tail ships UNCONDITIONALLY (the
-      // eviction cannot trim it), so on a tiny window where the system prompt consumes
-      // most of it the protected tail must be bounded to the RESIDUAL room it may
-      // occupy alongside S — else it grows past the window and the pre-flight throws
-      // (the live nano failure: S=5210 of 8192 → ~1300 room, yet the protected fresh
-      // tail grew ~900/turn). The enforcement is the PRECISE post-B-8 total bound
-      // (boundFreshTailTotalToResidual, below) — NOT a turn-count clamp here (a
-      // turn-count estimate is skewed by a single oversized message, which B-8 bounds
-      // anyway). The clamp keeps its original 30%-of-window upper bound; freshTailResidual
-      // (window − S − headroom − preamble) is the exact room the total bound enforces.
-      // headroom mirrors the pre-flight (reasoningStyle/thinkingLevel/minVisibleFloor).
-      // Frontier/mid: effectiveWindow is Infinity → residual undefined → no total bound
-      // → byte-identical (LOCKED #2).
-      const clampS = deps.getSystemTokensEstimate?.() ?? 0;
-      const clampPreamble = deps.getFreshTailPreambleTokensEstimate?.() ?? 0;
-      // Reserve the FLOOR output headroom — the minimum after the thinking-effort
-      // governor down-shifts all the way (native → "low"; none → visible floor). Using
-      // the floor (not the current thinking level) makes the content-trim the LAST
-      // resort: the pre-flight's governor gets to trade thinking headroom for content
-      // FIRST, and only genuinely-unfittable content is trimmed. (CWF-02-D: a fresh tail
-      // that fits under "low" but not "high" must trigger a DOWN-SHIFT, not a content
-      // trim — the trim using the high headroom would pre-empt the governor.)
-      const clampReasoning = (deps.modelProfile?.reasoningStyle ?? "none") as "none" | "native";
-      const clampFloorHeadroom = computeOutputHeadroom(
-        clampReasoning,
-        clampReasoning === "native" ? "low" : "off",
-        deps.minVisibleOutputTokens,
-      );
-      const freshTailResidual = isFinite(effectiveWindow)
-        ? Math.max(0, effectiveWindow - clampS - clampFloorHeadroom - clampPreamble)
-        : undefined;
+      // ISSUE #1/#3b: the PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot
+      // trim it), so on a tight window it is bounded to the RESIDUAL room
+      // (boundFreshTailTotalToResidual, below). The residual (= window − S − floor headroom
+      // − preamble) is computed JUST BEFORE the bound — AFTER `profile` is resolved — so it
+      // reads `profile.reasoningStyle`, the EXACT value the pre-flight uses (ISSUE #3b: a
+      // pre-resolution `deps.modelProfile` read could diverge from the pre-flight's `profile`
+      // and under-count the native reasoning reserve → overflow). The clamp here keeps only
+      // its original 30%-of-window upper bound (no residual input — a turn-count estimate is
+      // skewed by a single oversized message, which B-8 bounds anyway).
       const clampedFreshTailTurns = resolveClampedFreshTailTurns(
         effectiveWindow,
         config.freshTailTurns,
@@ -466,30 +444,35 @@ export function createLcdContextEngine(
         );
       }
 
-      // ISSUE #1 (multi-turn nano, 2026-06-22): bound the PROTECTED fresh tail's TOTAL
-      // tokens to the residual room. B-8 above bounds each oversized MESSAGE, but NOT
-      // the SUM across turns — on a tiny window (S=5210 of 8192 → ~2200 room) a handful
-      // of small recent turns accumulate in the un-evictable fresh tail (~900/turn) and
-      // overflow, since the eviction can only trim the EVICTABLE prefix, never the
-      // protected tail (the live failure: freshTail grew 1438→2369→3488… → exhaust).
-      // Drop the OLDEST fresh-tail STEP while the (already per-message-bounded) tail
-      // exceeds the residual, ALWAYS keeping the last step (the current turn ships even
-      // when it alone exceeds the residual — the pre-flight then degrades it honestly as
-      // oversized_input, never silently). Runs AFTER B-8 so it measures bounded sizes —
-      // a single oversized message B-8 already shrank to fit is NOT dropped (Issue1-A/D).
-      // Frontier/mid: freshTailResidual is undefined (Infinite window) → no-op → byte-
-      // identical (LOCKED #2). The residual reserves headroom + a small margin for the
-      // pre-flight's factored (3.5×) estimate vs estimateMessageTokens (4:1) here.
-      if (freshTailResidual !== undefined && freshTail.length > 1) {
-        // 0.83 ≈ 1/1.2 covers the estimator gap: this trim measures with
-        // estimateMessageTokens (4:1 text), while the pre-flight measures the SAME
-        // fresh tail with the factored chars/(3.5×scriptFactor) ≈ 14% MORE, so trimming
-        // to the bare residual leaves the pre-flight's measure marginally over (observed
-        // 2232 vs a 2214 residual → 18-token overflow). The 20% headroom guarantees the
-        // pre-flight's measure of the trimmed tail is ≤ its bound. Conservative-only:
-        // slightly fewer protected turns, never an overflow.
-        freshTail = boundFreshTailTotalToResidual(freshTail, Math.floor(freshTailResidual * 0.83));
-      }
+      // ISSUE #1/#3/#3b/#3c: bound the PROTECTED fresh tail's TOTAL tokens to the residual
+      // (window − S − floor headroom − preamble). B-8 above bounds each oversized MESSAGE
+      // but not the SUM across turns; the protected tail ships UNCONDITIONALLY, so on a
+      // tight window it must be trimmed to fit or the pre-flight throws. boundProtectedFreshTail
+      // (lcd-fresh-tail-bound.ts) owns the residual math + the trim + the diagnostic — it
+      // reads the SAME `profile.reasoningStyle` the pre-flight uses (#3b: identical floor
+      // headroom, incl. the native reasoning reserve) and measures with the SAME factored
+      // estimator (#3: no fudge).
+      //
+      // ISSUE #3c (2026-06-22): pass budget.windowTokens — the CAPPED effective window the
+      // pre-flight throws against (computeTokenBudgetForProfile applies
+      // effectiveContextCap{Nano,Small}: min(rawContextWindow, cap)) — NOT the raw
+      // profile.contextWindow. The capabilityClass=nano pin gives gpt-5-nano a raw window of
+      // 16000, capped to 8192 ONLY on the pre-flight path; Fix C read the pre-cap 16000 →
+      // residual ~12865 (huge) → never trimmed the 5407 tail → the pre-flight (effective
+      // 8192) exhausted (live, the lcd-freshtail-bound DEBUG showed window=16000). Using
+      // budget.windowTokens makes Fix C's window IDENTICAL to the pre-flight's. (codex didn't
+      // hit this: its raw window IS 8192 == the cap → the two were already equal.) Frontier/mid:
+      // budget.windowTokens is the wide window → huge residual → no trim (practical no-op).
+      freshTail = boundProtectedFreshTail(freshTail, {
+        effectiveWindow: budget.windowTokens,
+        systemTokens: S,
+        reasoningStyle: (profile.reasoningStyle ?? "none") as "none" | "native",
+        minVisibleOutputTokens: deps.minVisibleOutputTokens,
+        freshTailPreambleTokens,
+        logger: deps.logger,
+        agentId: deps.agentId,
+        sessionKey: deps.sessionKey,
+      });
 
       // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
       // the EXISTING recency call VERBATIM — same call, same args → referentially the

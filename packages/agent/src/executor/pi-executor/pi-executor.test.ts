@@ -6920,3 +6920,38 @@ describe("normalizeModelCompat call-site wiring guard (175-04)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Source-text wiring guard: agent-level capabilityClass pin (2026-06-22)
+// The agents.<id>.capabilityClass operator pin must (a) take precedence over the
+// provider-level value when resolving explicitClass, AND (b) flow into BOTH the
+// capabilityCap derivation and the resolveModelProfile override — so a pinned
+// class forces the reduced prompt + nano deferral + effectiveContextCap on ANY
+// provider. RED on pre-patch code (explicitClass read only the provider-level
+// value; the override passed deps.providerCapabilities?.capabilityClass directly).
+// A built-but-not-wired guard: the schema field is inert unless the call site reads it.
+// ---------------------------------------------------------------------------
+
+describe("capabilityClass pin call-site wiring guard", () => {
+  it("resolves explicitClass with config.capabilityClass taking precedence over the provider-level value", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+    expect(src).toContain(
+      "const explicitClass = config.capabilityClass ?? deps.providerCapabilities?.capabilityClass;",
+    );
+  });
+
+  it("passes the resolved explicitClass (NOT the raw provider-level value) into resolveModelProfile", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+    const callStart = src.indexOf("resolveModelProfile(");
+    expect(callStart).toBeGreaterThan(-1);
+    const callEnd = src.indexOf(");", callStart);
+    expect(callEnd).toBeGreaterThan(callStart);
+    const callBlock = src.slice(callStart, callEnd);
+    // The override arg is the resolved explicitClass; the raw provider read must NOT
+    // be passed directly here (that would ignore the agent-level pin).
+    expect(callBlock).toContain("explicitClass");
+    expect(callBlock).not.toContain("deps.providerCapabilities?.capabilityClass");
+  });
+});
