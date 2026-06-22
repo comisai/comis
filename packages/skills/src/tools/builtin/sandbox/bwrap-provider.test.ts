@@ -506,6 +506,186 @@ describe("BwrapProvider", () => {
       });
     });
 
+    // -- §4.7 hardening: --seccomp fd (JAIL-01) --
+
+    describe("--seccomp fd emission (JAIL-01)", () => {
+      it("emits --seccomp <fd> when a seccomp fd is provided", () => {
+        // The provider/caller resolves the fd via loadSeccompProfileFd() and
+        // passes it in; buildArgs is PURE (no live fs probe). The fd rides
+        // beside --new-session/--die-with-parent.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ seccompFd: 7 }));
+
+        const seccompIdx = args.indexOf("--seccomp");
+        expect(seccompIdx).toBeGreaterThan(0);
+        expect(args[seccompIdx + 1]).toBe("7");
+      });
+
+      it("OMITS --seccomp when no fd is provided (degrade, not crash)", () => {
+        // loadSeccompProfileFd returns null when the BPF blob is absent →
+        // buildArgs must omit --seccomp entirely; the other §4.7 controls hold.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts());
+
+        expect(args).not.toContain("--seccomp");
+      });
+
+      it("OMITS --seccomp when the fd is explicitly null", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ seccompFd: null }));
+
+        expect(args).not.toContain("--seccomp");
+      });
+    });
+
+    // -- §4.7 hardening: validateBindMount screening (JAIL-03) --
+
+    describe("validateBindMount screening (JAIL-03)", () => {
+      it("THROWS at jail construction when a host bind resolves into a denylisted dir", () => {
+        // A denylisted bind (here a system /etc/* path supplied as a shared path)
+        // is a misconfig that must FAIL LOUD — never silently emitted as a hole.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() =>
+          provider.buildArgs(makeOpts({ sharedPaths: ["/etc/cron.d"] })),
+        ).toThrow(/unsafe jail bind/i);
+      });
+
+      it("THROWS when a host bind is a credential dir under HOME (~/.ssh)", () => {
+        vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() =>
+          provider.buildArgs(makeOpts({ sharedPaths: ["/home/testuser/.ssh"] })),
+        ).toThrow(/unsafe jail bind/i);
+      });
+
+      it("does NOT throw for a safe workspace bind", () => {
+        vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() => provider.buildArgs(makeOpts())).not.toThrow();
+      });
+    });
+
+    // -- §4.7 hardening: writable-path audit (JAIL-02) --
+    //
+    // The audit asserts the emitted bind list for a typical autonomy jail does
+    // NOT RW-bind any host-trusted writable path enumerated by ROADMAP
+    // success-criterion 4 / JAIL-02. Each ROADMAP target is a NAMED case (no
+    // shorthand subset): config, hooks, cron, ~/.nvm, learned-memory/skill,
+    // execPath. AND a RO-bound parent must not let a nonexistent child config be
+    // created (the CVE-2026-25725 hole).
+
+    describe("writable-path audit (JAIL-02) — full ROADMAP success-criterion-4 enumeration", () => {
+      const HOME = "/home/testuser";
+
+      /** True iff `target` appears as the source of a `--bind` (RW) triple. */
+      function isRwBound(args: string[], target: string): boolean {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /** True iff `target` appears as the source of a `--ro-bind` (RO) triple. */
+      function isRoBound(args: string[], target: string): boolean {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /**
+       * Build a typical autonomy jail with EVERYTHING on disk (worst case) so the
+       * audit proves the bind list excludes the trusted writable paths even when
+       * they exist — not merely because existsSync filtered them out.
+       */
+      function autonomyJailArgs(): string[] {
+        vi.mocked(os.homedir).mockReturnValue(HOME);
+        vi.mocked(existsSync).mockReturnValue(true);
+        const provider = createAvailableProvider();
+        return provider.buildArgs(
+          makeOpts({ workspacePath: `${HOME}/.comis/workspace-agent`, cwd: `${HOME}/.comis/workspace-agent` }),
+        );
+      }
+
+      it("does NOT RW-bind the agent config dir/file (config)", () => {
+        const args = autonomyJailArgs();
+        // The ~/.comis config tree must not be writable from inside the jail.
+        expect(isRwBound(args, `${HOME}/.comis/config.yaml`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.comis`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.config`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the hooks dir (hooks)", () => {
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, `${HOME}/.comis/hooks`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the cron dir (cron)", () => {
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, `${HOME}/.comis/cron`)).toBe(false);
+      });
+
+      it("does NOT RW-bind ~/.nvm (the Node toolchain is RO, never writable)", () => {
+        const args = autonomyJailArgs();
+        // ~/.nvm is RO-bound by getUserRoPaths; it must NEVER be RW-bound (a
+        // writable Node toolchain is a host-RCE persistence vector).
+        expect(isRwBound(args, `${HOME}/.nvm`)).toBe(false);
+      });
+
+      it("does NOT RW-bind learned-memory / learned-skill files", () => {
+        const args = autonomyJailArgs();
+        // The agent's learned memory + skills are host-trusted state; a jailed
+        // surface must not be able to rewrite them (poisoning vector).
+        expect(isRwBound(args, `${HOME}/.comis/memory.db`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.comis/skills`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the bound execPath (the Node binary is never writable)", () => {
+        // A writable interpreter binary is a host-RCE vector. The default
+        // autonomy jail never RW-binds the daemon's process.execPath. (The
+        // JAIL-04 bind mode that RO-binds execPath when node is absent on the
+        // jail PATH is asserted in the Node-runtime-honesty suite.)
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, process.execPath)).toBe(false);
+        expect(isRwBound(args, "/usr/local/bin/node")).toBe(false);
+      });
+
+      it("does NOT RO-bind a PARENT that lets a nonexistent child config be created (CVE-2026-25725)", () => {
+        // The CVE-2026-25725 hole: a RO-bind of a parent dir whose named child
+        // config does NOT yet exist still lets the child be CREATED inside the
+        // jail (bwrap RO-binds the dir, not the absent file). The audit forbids
+        // RO-binding the ~/.comis parent (which would expose config/hooks/cron
+        // creation) — only specific existing leaves may be bound.
+        vi.mocked(os.homedir).mockReturnValue(HOME);
+        // ~/.comis exists but the config FILE does not (the nonexistent child).
+        vi.mocked(existsSync).mockImplementation((p) => String(p) !== `${HOME}/.comis/config.yaml`);
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ workspacePath: `${HOME}/.comis/workspace-agent`, cwd: `${HOME}/.comis/workspace-agent` }),
+        );
+        // Neither RW nor RO bind of the ~/.comis parent (which would smuggle a
+        // creatable config child).
+        expect(isRwBound(args, `${HOME}/.comis`)).toBe(false);
+        expect(isRoBound(args, `${HOME}/.comis`)).toBe(false);
+      });
+    });
+
     it("includes --chdir with opts.cwd", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 
