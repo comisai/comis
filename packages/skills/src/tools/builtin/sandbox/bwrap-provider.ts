@@ -13,9 +13,59 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 
+import { join } from "node:path";
+
 import { safePath, validateBindMount } from "@comis/core";
 
-import type { SandboxOptions, SandboxProvider } from "./types.js";
+import type { JailNodeResolution, SandboxOptions, SandboxProvider } from "./types.js";
+
+/**
+ * JAIL-04 / v8 §4.6 — Node-runtime honesty. Surfaces 2/3 (orchestrate / CLI)
+ * need a `node` INSIDE the jail; there is NO bundled Node. Resolve, in order:
+ *   1. PROBE — a `node` executable resolves under one of the bound RO `pathDirs`
+ *      (the SYSTEM_RO_PATHS + ~/.nvm binds put one there on most hosts) → "path"
+ *      (no bind needed).
+ *   2. BIND — else, if the daemon's `execPath` exists, RO-bind it into the jail
+ *      (precedent: the terminal-driver execPath binds) → "bind".
+ *   3. UNAVAILABLE — else surfaces 2/3 cannot run jailed; the caller surfaces a
+ *      loud doctor/boot signal. The hint NEVER claims a bundled Node and NEVER
+ *      implies a silent unjailed fallback (T-211-21 spoofing). Surface 1
+ *      (in-process typed tools) still works.
+ *
+ * PURE: the only I/O is the injected `exists` predicate (defaults to
+ * `existsSync`), so the resolver is macOS-unit-testable with a fake PATH/execPath.
+ */
+export function resolveJailNode(opts: {
+  readonly pathDirs: readonly string[];
+  readonly execPath?: string;
+  /** Existence predicate (defaults to fs.existsSync) — injected for unit tests. */
+  readonly exists?: (p: string) => boolean;
+}): JailNodeResolution {
+  const exists = opts.exists ?? existsSync;
+
+  // 1. PROBE the bound RO PATH dirs for a node executable.
+  for (const dir of opts.pathDirs) {
+    if (exists(join(dir, "node"))) {
+      return { mode: "path" };
+    }
+  }
+
+  // 2. BIND the daemon's own node binary when it is present on disk.
+  if (opts.execPath && exists(opts.execPath)) {
+    return { mode: "bind", execPath: opts.execPath };
+  }
+
+  // 3. UNAVAILABLE — honest degrade. NEVER a bundled-Node claim.
+  return {
+    mode: "unavailable",
+    hint:
+      "Surfaces 2/3 (orchestrate/CLI) need node inside the jail; none found on the " +
+      "jail PATH and process.execPath was not bindable — these surfaces are " +
+      "UNAVAILABLE (surface 1 still works). Install node or ensure the daemon node " +
+      "binary is bindable. There is NEVER a bundled Node and NEVER a silent " +
+      "unjailed fallback.",
+  };
+}
 
 /**
  * Screen a caller-controlled host bind path through the JAIL-03 denylist
@@ -230,6 +280,17 @@ export class BwrapProvider implements SandboxProvider {
         screenBind(ro, home); // JAIL-03: discovery/operator-supplied → screened.
         args.push("--ro-bind", ro, ro);
       }
+    }
+
+    // -- Node runtime (JAIL-04 / v8 §4.6) --
+    // When the resolved Node mode is "bind", RO-bind the daemon's node binary so
+    // surfaces 2/3 (orchestrate/CLI) have a node inside the jail. READ-ONLY only
+    // — a writable interpreter binary is a host-RCE vector. "path" (node already
+    // resolves on the jail PATH) and "unavailable" (caller surfaces a loud
+    // doctor/boot signal) emit no execPath bind. The mode is a RESOLVED INPUT
+    // (resolveJailNode), never a live fs probe inside this pure arg generator.
+    if (opts.jailNode?.mode === "bind") {
+      args.push("--ro-bind", opts.jailNode.execPath, opts.jailNode.execPath);
     }
 
     // -- Isolation flags --

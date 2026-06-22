@@ -151,15 +151,52 @@ The exec sandbox provides **filesystem isolation only**. It does not restrict ot
 
 ## Network Modes and Credential Broker
 
-The exec sandbox supports three network modes via `SandboxOptions.network`:
+The exec sandbox supports four network modes via `SandboxOptions.network`:
 
 | Mode | bwrap args | Description |
 |------|-----------|-------------|
 | `open` (default) | `--unshare-all --share-net` | Standard sandbox; full network access |
 | `broker-only` | `--unshare-all --unshare-net --bind <socketPath> <socketPath>` | Driven-CLI sandbox; only the broker unix socket is reachable via bind-mount |
 | `none` | `--unshare-all --unshare-net` | Kernel-enforced deny-all egress (no socket, no proxy). Used by the verified-learning skill-validation jail so a synthesized script cannot reach the network during dynamic validation. |
+| `cap-socket` | `--unshare-all --unshare-net --bind <capSocketPath> <capSocketPath>` | Autonomy/orchestrate jail; only the capability-lease loopback endpoint's unix socket is reachable via bind-mount. All general IP egress is cut. |
 
-The `broker-only` mode is set automatically for driven API-key CLI spawns. It is not a user-configurable option — the daemon sets it when it launches a credentialed CLI through the broker. The `none` mode is set automatically by the skill-validation sandbox (it is likewise not user-configurable).
+The `broker-only` mode is set automatically for driven API-key CLI spawns. It is not a user-configurable option — the daemon sets it when it launches a credentialed CLI through the broker. The `none` mode is set automatically by the skill-validation sandbox (it is likewise not user-configurable). The `cap-socket` mode is set automatically by the daemon when it launches an autonomy-bearing orchestrate surface; the socket path is daemon-minted per run.
+
+<Info>
+A kernel network namespace (`--unshare-net`) blocks **IP** sockets only — a
+**bound unix socket** stays reachable. That is why `broker-only` and `cap-socket`
+can hand the jailed process a single unix-socket channel (the broker, or the
+lease endpoint) while every TCP/UDP path to the outside is hard-cut. The socket
+`--bind` is emitted **after** `--unshare-net` so bwrap applies it inside the new
+namespace.
+</Info>
+
+## §4.7 Autonomy Jail Hardening
+
+The autonomy/orchestrate jail layers these kernel- and validator-level controls
+on top of the baseline filesystem isolation. Each is defense-in-depth — it holds
+independently of the others:
+
+| Control | bwrap arg / mechanism | Protects against |
+|---------|-----------------------|------------------|
+| New session | `--new-session` | TIOCSTI keystroke-injection escape (CVE-2017-5226) — the child has no controlling TTY |
+| Die-with-parent | `--die-with-parent` | Orphaned jail surviving the daemon |
+| Seccomp profile | `--seccomp <fd>` (raw-BPF blob, optional) | Dangerous syscalls (keyring / `ptrace` / `perf_event_open` / `bpf` / module loading; the CVE-2024-1086 class). Absent blob → degrade (no `--seccomp`), never crash |
+| Bind-mount validator | every dynamic bind screened before mount | Binding a system/credential dir, a parent that covers a blocked descendant, or a symlinked leaf resolving to a blocked path — **refused at construction**, fails loud |
+| Writable-path audit | bind-list invariant | A host-trusted writable path (config / hooks / cron / `~/.nvm` / learned-memory/skill / bound `execPath`) being RW-bound, or a RO parent letting a nonexistent child config be created (CVE-2026-25725) |
+| Egress cut | `--unshare-net` (no allowlist) | Network exfiltration with no allowlist-empty=allow-all failure mode (CVE-2025-66479 class) |
+| Namespace preflight | startup probe → assistant downshift | A host that cannot build an unprivileged userns silently running unjailed — instead the posture **downshifts to assistant** with a remediation hint |
+| Node-runtime honesty | probe PATH → RO-bind `execPath` → unavailable | A false "bundled Node" claim or a silent unjailed Node — surfaces 2/3 are marked **unavailable** with a loud signal when no jailed `node` is resolvable |
+
+The bind-mount validator's denylist is a **backstop** on top of the allow-list
+binds, never the primary boundary. The daemon-minted broker/cap sockets and the
+curated system read-only paths (e.g. `/etc/resolv.conf`) are the trusted
+allow-list and are not re-screened.
+
+The four CVE-class containment claims (TIOCSTI, CVE-2026-25725 writable-path,
+symlink-escape, CVE-2025-66479 egress) are proven by Linux-gated `.linux.test.ts`
+suites that run on the production host class (`pnpm validate:full`); they skip on
+macOS where a real `bwrap` namespace cannot be built.
 
 **Secure credential home** (`secureCredentialHome: true`): When set, the following bind mounts are omitted from the sandbox, so credential files are unreachable inside:
 

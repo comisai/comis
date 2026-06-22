@@ -61,7 +61,29 @@ export interface SandboxOptions {
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
   seccompFd?: number | null;
+  /**
+   * Resolved Node-runtime placement for the jail (JAIL-04 / v8 §4.6).
+   * The provider resolves this via resolveJailNode() (probe node on the jail
+   * PATH → bind process.execPath → mark unavailable) and passes the result in,
+   * so buildArgs stays a pure arg generator (no live fs probe). buildArgs emits
+   * `--ro-bind execPath execPath` ONLY when mode === "bind" (the binary is bound
+   * READ-ONLY — a writable interpreter is a host-RCE vector). "path" means node
+   * already resolves under the bound RO paths (no bind needed); "unavailable"
+   * means surfaces 2/3 (orchestrate/CLI) cannot run inside the jail — the caller
+   * surfaces a loud doctor/boot signal and NEVER claims a bundled Node.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  jailNode?: JailNodeResolution;
 }
+
+/**
+ * The three-mode result of resolveJailNode() (JAIL-04). Exhaustive: there is no
+ * "bundled Node" mode — that claim is a spoofing vector (T-211-21).
+ */
+export type JailNodeResolution =
+  | { mode: "path" }
+  | { mode: "bind"; execPath: string }
+  | { mode: "unavailable"; hint: string };
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */
 export interface SandboxProvider {

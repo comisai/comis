@@ -1024,4 +1024,12 @@ describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
     });
     expect(result.mode).toBe("unavailable");
   });
+
+  it("defaults to fs.existsSync when no exists predicate is injected", () => {
+    // Production omits the predicate → the resolver uses the real existsSync
+    // (mocked here). Mock says /usr/bin/node exists → "path".
+    vi.mocked(existsSync).mockImplementation((p) => String(p) === "/usr/bin/node");
+    const result = resolveJailNode({ pathDirs: ["/usr/bin"], execPath: "/opt/node" });
+    expect(result.mode).toBe("path");
+  });
 });
