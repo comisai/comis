@@ -53,7 +53,7 @@
       {
         "tab": "Agents",
         "groups": [
-          { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/routing", "agents/slash-commands"] },
+          { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/autonomy", "agents/routing", "agents/slash-commands"] },
           { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/context-management", "agents/compaction", "agents/rag", "agents/queue"] },
           { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
           { "group": "Memory", "pages": ["agents/memory", "agents/memory-config", "agents/search", "agents/embeddings", "agents/memory-benchmarks"] },
@@ -104,7 +104,7 @@
       {
         "tab": "Security",
         "groups": [
-          { "group": "Overview", "pages": ["security/index", "security/threat-model", "security/defense-in-depth"] },
+          { "group": "Overview", "pages": ["security/index", "security/threat-model", "security/capability-model", "security/defense-in-depth"] },
           { "group": "Features", "pages": ["security/secrets", "security/oauth", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/credential-broker", "security/hardening"] }
         ]
       },
