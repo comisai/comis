@@ -224,7 +224,7 @@
     "mailparser": "3.9.9",
     "music-metadata": "11.12.3",
     "node-llama-cpp": "3.18.1",
-    "nodemailer": "8.0.10",
+    "nodemailer": "9.0.1",
     "open": "10.2.0",
     "openai": "6.39.1",
     "ora": "9.4.0",
