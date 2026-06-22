@@ -158,6 +158,16 @@ export const AutonomyConfigSchema = z.strictObject({
   maxSelfSpawnRatePerMin: z.number().int().positive().optional(),
   /** Max agent-authored cron jobs (§8). */
   cronSelfMax: z.number().int().positive().optional(),
+  /**
+   * Capability-lease posture (§4.2 / LEASE-02). The nested `lease` sub-block —
+   * `autonomy.lease.{ leaseMaxTtlMin }` — bounds how long a renewable lease can
+   * live. `leaseMaxTtlMin` is the renewal CEILING in MINUTES (a positive int);
+   * the LeaseManager (211-01) clamps each renew to a `maxExpiresAt` derived from
+   * it, so revoke actually STOPS renewal (no unbounded re-lease). Omitted → the
+   * profile default (60). Modeled as a nested object (the `message:` sub-block
+   * precedent above) per REQUIREMENTS.md `autonomy.lease.{...}`.
+   */
+  lease: z.object({ leaseMaxTtlMin: z.number().int().positive().optional() }).optional(),
   /** Origin-channel outward-message posture (§3.5/§8.4). */
   message: AutonomyMessageConfigSchema.default(() => AutonomyMessageConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap (§3.3 "one cap model") ──
@@ -198,6 +208,8 @@ interface ProfileEntry {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
+  readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
   /** Present for `unattended`/`max` in M1: the "available in M2/M3" clamp notice. */
   readonly m1Notice?: string;
@@ -209,6 +221,9 @@ const STANDARD_GUARDS = {
   maxConcurrentSelfAgents: 4,
   maxSelfSpawnRatePerMin: 30,
   cronSelfMax: 8,
+  // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
+  // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
+  leaseMaxTtlMin: 60,
 } as const;
 
 const STANDARD_MESSAGE: AutonomyMessageConfig = { channels: ["origin"], maxPerHour: 20 };
@@ -290,6 +305,8 @@ export interface ResolvedAutonomy {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
+  readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
   /** Present for `unattended`/`max` in M1 — the clamp notice. */
   readonly m1Notice?: string;
@@ -363,6 +380,7 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     maxConcurrentSelfAgents: cfg?.maxConcurrentSelfAgents ?? base.maxConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
+    leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
     ...(base.m1Notice !== undefined ? { m1Notice: base.m1Notice } : {}),
   };
