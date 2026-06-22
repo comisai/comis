@@ -56,7 +56,9 @@ describe("Config Schema Validation", () => {
       // the unified credential storage), dropping this from 42 → 41.
       // v2.27 P2 (Phase 174) added the top-level `orchestration` section
       // (authoring gates, shipped gated-off), bringing this back to 42.
-      expect(allKeys).toHaveLength(42);
+      // The global egress-proxy feature added the top-level `proxy` section
+      // (env-first, zero-config default), bringing this to 43.
+      expect(allKeys).toHaveLength(43);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {
