@@ -91,6 +91,16 @@ const SAFE_PATH_ALLOWLIST: readonly string[] = [
   // (verified by the "symlink deduplication" tests in discovery.test.ts and
   // skill-registry.test.ts). All other call sites in this file use safePath.
   "skills/src/skills/registry/discovery.ts",
+  // JAIL-03 bind-mount validator (Phase 211): a path-VALIDATOR (the inverse of
+  // safePath) that intentionally reasons over NON-base-confined absolute system
+  // and credential paths (/etc, /proc, ~/.ssh, ...). safePath(base, ...) would
+  // throw on any path outside `base`, which is exactly the set this validator
+  // must inspect, and it resolves symlinks-through-ancestors via realpathSync to
+  // reject escapes (safePath's confinement check would mis-handle the
+  // intentional symlink-to-blocked-target cases the deny-branch tests assert).
+  // Same justification class as safe-path.ts above. Covered by
+  // bind-mount-validator.test.ts (all three deny branches + allow cases).
+  "core/src/security/bind-mount-validator.ts",
 ] as const;
 
 /**

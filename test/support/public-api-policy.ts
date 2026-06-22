@@ -811,6 +811,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── JAIL-03 bind-mount validator (Phase 211) ──
+      // validateBindMount is the pure denylist backstop the bwrap-provider calls
+      // before emitting any bind. It lands in @comis/core (211-03) so the jail
+      // wiring (211-05) consumes it; until that plan lands, the only callers are
+      // its own deny-branch tests (intra-core, excluded from the consumer scan).
+      // Shrink this entry once 211-05 wires it into the bwrap provider.
+      "validateBindMount",
       // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
       // gate ships GATED-OFF (every flag .default(false); the 173 gate returned

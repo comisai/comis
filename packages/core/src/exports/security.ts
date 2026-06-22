@@ -2,6 +2,8 @@
 // @comis/core exports — Security utilities
 
 export { safePath, PathTraversalError } from "../security/index.js";
+// JAIL-03 bind-mount validator (Phase 211) — consumed by 211-05 (bwrap-provider).
+export { validateBindMount } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "../security/index.js";
 export type { MasterKeyWriteResult } from "../security/index.js";
