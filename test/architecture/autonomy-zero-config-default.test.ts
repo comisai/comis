@@ -39,8 +39,20 @@ const DESIGN_REF = "v8 §3.8 (zero-config standard) / MIG-01 / T-210-15";
  * the explicit-grant target a no-block agent regains via `standard`. (The full
  * standard floor set is pinned by `autonomy-profile-floor.test.ts`; here we
  * assert the orchestration-reachability subset the gate enforces.)
+ *
+ * `orch:message` is INCLUDED (210-GAP MIG-01 / ROADMAP SC #4): the §3.8 standard
+ * profile turns ON origin-channel messaging, and Plan 04 gates message.send on
+ * `requireCapability(_, "orch:message")`. A zero-config agent sends a message to
+ * its origin channel today via the bypass — so it is precisely a "regain exactly
+ * those capabilities" case. Without it in the standard grant the most fundamental
+ * agent action (sending a message) throws CapabilityDeniedError.
  */
-const REQUIRED_ORCH_CAPS: readonly AgentCapability[] = ["orch:spawn", "orch:graph", "orch:cron"];
+const REQUIRED_ORCH_CAPS: readonly AgentCapability[] = [
+  "orch:spawn",
+  "orch:graph",
+  "orch:cron",
+  "orch:message",
+];
 
 describe("MIG-01 — a zero-config agent resolves to standard and keeps its orchestration tools", () => {
   it("PROFILE-01: resolveAutonomy(undefined) resolves to the `standard` profile (zero-config default)", () => {

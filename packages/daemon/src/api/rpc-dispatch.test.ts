@@ -53,6 +53,10 @@ vi.mock("./session-handlers/index.js", () => ({
     "session.list": vi.fn(async () => ({ sessions: [] })),
     "session.get": vi.fn(async () => ({ session: null })),
     "session.delete": vi.fn(async () => ({ deleted: true })),
+    "session.export": vi.fn(async () => ({ messages: [] })),
+    "session.reset": vi.fn(async () => ({ reset: true })),
+    "session.compact": vi.fn(async () => ({ compactionTriggered: true })),
+    "session.reset_conversation": vi.fn(async () => ({ reset: true })),
     "session.send_cross": vi.fn(async () => ({ sent: true })),
   })),
 }));
@@ -60,6 +64,12 @@ vi.mock("./session-handlers/index.js", () => ({
 vi.mock("./message-handlers.js", () => ({
   createMessageHandlers: vi.fn(() => ({
     "message.send": vi.fn(async () => ({ sent: true })),
+    "message.reply": vi.fn(async () => ({ sent: true })),
+    "message.react": vi.fn(async () => ({ reacted: true })),
+    "message.edit": vi.fn(async () => ({ edited: true })),
+    "message.delete": vi.fn(async () => ({ deleted: true })),
+    "message.attach": vi.fn(async () => ({ sent: true })),
+    "message.fetch": vi.fn(async () => ({ messages: [] })),
   })),
 }));
 
@@ -168,6 +178,12 @@ vi.mock("./heartbeat-handlers.js", () => ({
 vi.mock("./skill-handlers.js", () => ({
   createSkillHandlers: vi.fn(() => ({
     "skill.list": vi.fn(async () => ({ skills: [] })),
+    "skills.list": vi.fn(async () => ({ skills: [] })),
+    "skills.create": vi.fn(async () => ({ created: true })),
+    "skills.update": vi.fn(async () => ({ updated: true })),
+    "skills.delete": vi.fn(async () => ({ deleted: true })),
+    "skills.import": vi.fn(async () => ({ imported: true })),
+    "skills.upload": vi.fn(async () => ({ uploaded: true })),
   })),
 }));
 
@@ -681,6 +697,136 @@ describe("createRpcDispatch", () => {
     ).resolves.toBeDefined();
     const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
     expect(denials).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // 210-GAP CR-01/MD-01: the deny-by-origin chokepoint must NOT swallow an
+  // agent's OWN granted orchestration surface (message.send/reply/react +
+  // skills.* mutating) nor its agent-self reads (message.fetch, session.list/
+  // compact/reset). These are the orchestration plane the capability gate
+  // owns — not control plane. This test dispatches an _agentId+_capabilities
+  // call through the REAL createRpcDispatch closure and asserts it REACHES the
+  // mocked handler (resolves), NOT a deny-by-origin throw.
+  //
+  // This closes the test-layer gap the 210-REVIEW identified: the chokepoint
+  // (rpc-dispatch.test) and the per-handler cap gate (message-handlers.test)
+  // were tested in two separate layers that never met — no test dispatched an
+  // _agentId-bearing call to an orch method through the full closure. RED on
+  // pre-fix HEAD (these methods are scopes:["admin"] → in ADMIN_METHODS →
+  // assertNotAgentOrigin throws before the handler).
+  // -----------------------------------------------------------------------
+
+  /** The orch-gated/agent-read methods that MUST stay reachable from an agent origin. */
+  const AGENT_REACHABLE_WITH_CAP: ReadonlyArray<readonly [string, string]> = [
+    // outward message subset (§3.5) → orch:message
+    ["message.send", "orch:message"],
+    ["message.reply", "orch:message"],
+    ["message.react", "orch:message"],
+    // skills mutating set → orch:skill
+    ["skills.create", "orch:skill"],
+    ["skills.update", "orch:skill"],
+    ["skills.delete", "orch:skill"],
+    ["skills.import", "orch:skill"],
+    ["skills.upload", "orch:skill"],
+  ];
+
+  /** Agent-self read/lifecycle ops (ungated) — reachable WITHOUT any cap.
+   *  (message.fetch is INTENTIONALLY excluded — §3.5 keeps fetch admin-only.) */
+  const AGENT_REACHABLE_UNGATED: ReadonlyArray<string> = [
+    "session.list",
+    "session.compact",
+    "session.reset",
+  ];
+
+  it("210-GAP CR-01: an agent-origin call to its OWN orch-gated method (with the cap held) REACHES the handler, not a deny-by-origin throw", async () => {
+    for (const [method, cap] of AGENT_REACHABLE_WITH_CAP) {
+      vi.clearAllMocks();
+      const dispatch = await getDispatch();
+      // Production-shaped agent params: _agentId present (in-process origin) +
+      // the granted cap injected. Must resolve (reach the mocked handler), and
+      // must emit NO deny-by-origin denial.
+      await expect(
+        dispatch(method, { _agentId: "agentA", _capabilities: [cap] }),
+        `${method} (cap ${cap}) must be reachable from an agent origin`,
+      ).resolves.toBeDefined();
+      const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+      expect(denials, `${method} must not trip deny-by-origin`).toHaveLength(0);
+    }
+  });
+
+  it("210-GAP MD-01: an agent-origin agent-self read (ungated) REACHES the handler, not a deny-by-origin throw", async () => {
+    for (const method of AGENT_REACHABLE_UNGATED) {
+      vi.clearAllMocks();
+      const dispatch = await getDispatch();
+      await expect(
+        dispatch(method, { _agentId: "agentA" }),
+        `${method} (ungated agent-self read) must be reachable from an agent origin`,
+      ).resolves.toBeDefined();
+      const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+      expect(denials, `${method} must not trip deny-by-origin`).toHaveLength(0);
+    }
+  });
+
+  it("210-GAP: the two gates are DISTINGUISHABLE — an agent WITHOUT orch:message is denied by requireCapability (the cap gate), NOT deny-by-origin", async () => {
+    // Wire the REAL requireCapability into the message.send mock so the cap gate
+    // actually runs. Post-fix, message.send is rpc-scoped (NOT in ADMIN_METHODS),
+    // so an agent origin PASSES deny-by-origin and reaches the handler; the
+    // handler's requireCapability then throws CapabilityDeniedError because the
+    // agent does not hold orch:message. This proves the gates are separable: the
+    // origin check (deny-by-origin) and the held-cap check (requireCapability)
+    // are two distinct seams — a missing cap is a CapabilityDeniedError, NOT a
+    // "not reachable from an agent origin" throw.
+    const { requireCapability, CapabilityDeniedError } = await import("@comis/core");
+    const { createMessageHandlers } = await import("./message-handlers.js");
+    (createMessageHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "message.send": vi.fn(async (p: Record<string, unknown>) => {
+        requireCapability(p._capabilities as string[] | undefined, "orch:message");
+        return { sent: true };
+      }),
+    });
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    // Agent origin, but NO orch:message held → denied by the CAP gate.
+    await expect(
+      dispatch("message.send", { _agentId: "agentA", _capabilities: ["orch:read"] }),
+    ).rejects.toThrow(CapabilityDeniedError);
+    // It must NOT be the deny-by-origin throw (that proves the methods were
+    // re-scoped off the admin deny set; otherwise this would never reach the gate).
+    await expect(
+      dispatch("message.send", { _agentId: "agentA", _capabilities: ["orch:read"] }),
+    ).rejects.not.toThrow(/not reachable from an agent origin/i);
+    // No deny-by-origin audit fired — the denial came from the cap gate.
+    const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+    expect(denials.filter((a) => a.metadata && (a.metadata as Record<string, unknown>).reason === "agent_origin_admin")).toHaveLength(0);
+  });
+
+  it("210-GAP: the TRUE control plane (incl. arbitrary-session lifecycle) STILL denies an agent origin", async () => {
+    // These remain scopes:["admin"] + deny-by-origin: real control plane plus
+    // the arbitrary-session lifecycle ops carrying an in-handler admin check
+    // (session.delete/export/reset_conversation) and the message subset §3.5
+    // keeps admin-only (edit/delete/attach). An agent origin must be denied.
+    const STILL_DENIED = [
+      "secrets.set",
+      "session.delete",
+      "session.export",
+      "session.reset_conversation",
+      // §3.5: edit/delete/fetch/attach stay admin-only, NOT part of orch:message.
+      "message.edit",
+      "message.delete",
+      "message.attach",
+      "message.fetch",
+    ];
+    for (const method of STILL_DENIED) {
+      vi.clearAllMocks();
+      const dispatch = await getDispatch();
+      await expect(
+        dispatch(method, { _agentId: "agentA", _trustLevel: "admin" }),
+        `${method} must stay denied from an agent origin`,
+      ).rejects.toThrow(/not reachable from an agent origin/i);
+      const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+      expect(denials, `${method} must audit the deny-by-origin denial`).toHaveLength(1);
+    }
   });
 });
 
