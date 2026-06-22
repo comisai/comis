@@ -111,28 +111,33 @@ function mintValidLease(
 // ---------------------------------------------------------------------------
 
 describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
+  // The real audience surface (HANDLER_CAPABILITY_MAP) maps exactly 5 caps to
+  // methods: orch:cron→cron.*, orch:graph→graph.*, orch:message→message.send/…,
+  // orch:skill→skills.*, orch:spawn→session.spawn. So in-audience test methods
+  // MUST come from that set; `cron.add` (orch:cron) is the canonical valid call.
+
   // ENDPOINT-01: a valid lease over an in-audience method dispatches with the
   // injected _agentId + _capabilities (mirroring createAgentRpcCall).
   it("dispatches a valid lease call injecting _agentId and _capabilities from the lease", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    const caps: AgentCapability[] = ["orch:read"];
+    const caps: AgentCapability[] = ["orch:cron"];
     const bearer = mintValidLease(leaseManager, caps, "agent-42");
 
     const rpcCall = vi.fn(async (_method: string, _params: Record<string, unknown>) => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    // memory.search is an orch:read method (in audience for caps=["orch:read"]).
-    const result = await endpoint.handleCapCall(bearer, "memory.search", { query: "x" });
+    // cron.add is an orch:cron method (in audience for caps=["orch:cron"]).
+    const result = await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
 
     expect(rpcCall).toHaveBeenCalledTimes(1);
     const [calledMethod, calledParams] = rpcCall.mock.calls[0];
-    expect(calledMethod).toBe("memory.search");
+    expect(calledMethod).toBe("cron.add");
     // The Pitfall-2 injection: BOTH _agentId AND _capabilities, from the lease.
     expect(calledParams._agentId).toBe("agent-42");
-    expect(calledParams._capabilities).toEqual(["orch:read"]);
+    expect(calledParams._capabilities).toEqual(["orch:cron"]);
     // The original params survive the spread.
-    expect(calledParams.query).toBe("x");
+    expect(calledParams.schedule).toBe("x");
     expect(result).toEqual({ ok: true });
   });
 
@@ -144,7 +149,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    await expect(endpoint.handleCapCall("not-a-real-bearer", "memory.search", {})).rejects.toThrow();
+    await expect(endpoint.handleCapCall("not-a-real-bearer", "cron.add", {})).rejects.toThrow();
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
@@ -152,16 +157,16 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
   it("denies an expired lease and never dispatches", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    // Advance past the default 15-min soft TTL (but the lease was minted at t0;
+    // Advance past the default 15-min soft TTL (the lease was minted at t0;
     // the default maxTtl is also 15 min, so advancing 16 min soft-then-hard
     // expires it — either way validate returns null).
     clock.advance(16 * 60 * 1000);
 
-    await expect(endpoint.handleCapCall(bearer, "memory.search", {})).rejects.toThrow();
+    await expect(endpoint.handleCapCall(bearer, "cron.add", {})).rejects.toThrow();
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
@@ -171,7 +176,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     const leaseManager = createLeaseManager({ clock });
     const { bearer, leaseId } = leaseManager.mintLease({
       agentId: "agent-r",
-      caps: ["orch:read"],
+      caps: ["orch:cron"],
       budgetRef: "b",
       sessionKey: "t:c:u",
       rootRunId: "run-r",
@@ -180,7 +185,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    await expect(endpoint.handleCapCall(bearer, "memory.search", {})).rejects.toThrow();
+    await expect(endpoint.handleCapCall(bearer, "cron.add", {})).rejects.toThrow();
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
@@ -190,113 +195,108 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
   it("denies a valid lease replayed at a method outside its capability audience", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    // caps grant orch:read only; cron.add requires orch:cron → out of audience.
-    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+    // caps grant orch:cron only; graph.define requires orch:graph → out of audience.
+    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    await expect(endpoint.handleCapCall(bearer, "cron.add", {})).rejects.toThrow();
+    await expect(endpoint.handleCapCall(bearer, "graph.define", {})).rejects.toThrow();
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
   // ENDPOINT-02 (denylist): a denylisted tool is denied by the pre-check BEFORE
-  // dispatch (the rpcCall is never reached) — even with a valid lease.
-  it("denies a denylisted tool via the pre-check before dispatch", async () => {
+  // dispatch (the rpcCall is never reached) — even with a lease minted for it.
+  // skills.create is the LOAD-BEARING case: it is orch:skill (so a lease holding
+  // orch:skill PASSES audience) AND non-admin (so deny-by-origin does NOT fire) —
+  // ONLY the SUB_AGENT_TOOL_DENYLIST pre-check stops it.
+  it("denies a denylisted skills.create via the pre-check before dispatch even with an in-audience lease", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+    // The lease HOLDS orch:skill — so audience for skills.create would pass; the
+    // denylist pre-check is the only thing that can deny it.
+    const bearer = mintValidLease(leaseManager, ["orch:skill"]);
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
-    // agents.create maps to the denylisted `agents_manage` tool family.
-    await expect(endpoint.handleCapCall(bearer, "agents.create", {})).rejects.toThrow();
+    await expect(endpoint.handleCapCall(bearer, "skills.create", {})).rejects.toThrow(/denylist/);
     expect(rpcCall).not.toHaveBeenCalled();
   });
 
-  // ENDPOINT-02 (cap-not-held): the endpoint injects the lease caps VERBATIM, so
-  // the shipped per-handler requireCapability fires for a cap the lease lacks.
-  // Proven by dispatching through a sink whose handler runs the REAL
-  // requireCapability against the injected _capabilities.
+  // ENDPOINT-02 (denylist, admin family): a denylisted admin tool (agents.create)
+  // is also denied by the pre-check before dispatch (defense-in-depth on top of
+  // the audience + deny-by-origin boundaries).
+  it("denies a denylisted agents.create via the pre-check before dispatch", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await expect(endpoint.handleCapCall(bearer, "agents.create", {})).rejects.toThrow(/denylist/);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  // ENDPOINT-02 (cap-not-held): the endpoint injects the lease caps VERBATIM and
+  // adds NO second gate, so the shipped per-handler requireCapability fires for a
+  // cap the lease lacks. Proven by dispatching through a sink whose handler runs
+  // the REAL requireCapability against the injected _capabilities. The lease
+  // holds orch:cron (so cron.add passes audience); the handler requires orch:graph
+  // (a cap the lease does NOT hold) → CapabilityDeniedError.
   it("passes lease caps through faithfully so a cap-not-held call hits requireCapability", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    // The lease holds orch:read; the handler will require orch:cron.
-    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
 
-    // A sink whose cron.add handler runs the REAL requireCapability against the
-    // injected _capabilities (exactly as the shipped handler does).
     const sink = createRealSinkOver({
       "cron.add": async (params: Record<string, unknown>) => {
-        requireCapability(params._capabilities as string[], "orch:cron");
-        return { ran: true };
-      },
-    });
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall: sink });
-
-    // Use a lease whose caps INCLUDE orch:cron for audience, but the handler
-    // requires a DIFFERENT cap to prove pass-through. Simpler: mint a lease that
-    // is in audience for cron.add (holds orch:cron) but assert the handler sees
-    // exactly the injected caps. We instead assert the cap-not-held path:
-    // mint a lease holding orch:cron (so audience passes) and have the handler
-    // require a cap the lease does NOT hold.
-    const bearerCron = mintValidLease(leaseManager, ["orch:cron"]);
-    const sink2 = createRealSinkOver({
-      "cron.add": async (params: Record<string, unknown>) => {
-        // The handler requires orch:graph, which the lease (orch:cron only) lacks.
+        // The injected _capabilities are exactly the lease caps (orch:cron only);
+        // requiring orch:graph proves the endpoint did NOT broaden them and the
+        // shipped gate fires on a cap-not-held.
+        expect(params._capabilities).toEqual(["orch:cron"]);
         requireCapability(params._capabilities as string[], "orch:graph");
         return { ran: true };
       },
     });
-    const endpoint2 = createCapabilityEndpoint({ leaseManager, rpcCall: sink2 });
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall: sink });
 
-    await expect(endpoint2.handleCapCall(bearerCron, "cron.add", {})).rejects.toBeInstanceOf(
+    await expect(endpoint.handleCapCall(bearer, "cron.add", {})).rejects.toBeInstanceOf(
       CapabilityDeniedError,
     );
-    // And the in-audience+held case dispatches cleanly (sanity: pass-through is faithful).
-    void bearer;
-    void endpoint;
-    void sink;
   });
 
-  // ENDPOINT-02 (unknown method): a valid bearer over a method ABSENT from the
-  // handler map is denied by the REAL dispatch sink's `if (!handler) throw` —
-  // distinct from the denylist pre-check and NOT satisfied by a valid lease.
+  // ENDPOINT-02 (unknown method): a valid bearer over an IN-AUDIENCE method that
+  // is nonetheless ABSENT from the handler map is denied by the REAL dispatch
+  // sink's `if (!handler) throw` — distinct from the denylist pre-check and NOT
+  // satisfied by a valid lease alone (FIX-1 in the plan revision).
   it("denies an unknown method through the real dispatch sink's !handler throw", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    // The lease is in-audience for memory.search (orch:read); the unknown method
-    // we route is a SYNTHETIC orch:read-shaped method absent from handlers[].
-    // We craft a lease + a method that passes audience but is not in the map.
-    // memory.search IS in HANDLER_CAPABILITY_MAP (orch:read) and passes audience;
-    // route it through a sink whose handler map LACKS memory.search.
-    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+    // The lease is in-audience for cron.add (orch:cron) — so validate PASSES; the
+    // deny must come from the sink because cron.add is absent from handlers[].
+    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
     const sink = createRealSinkOver({
-      // intentionally NO "memory.search" entry — only an unrelated handler.
-      "memory.get": async () => ({ unused: true }),
+      // intentionally NO "cron.add" entry — only an unrelated handler.
+      "graph.list": async () => ({ unused: true }),
     });
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall: sink });
 
-    await expect(endpoint.handleCapCall(bearer, "memory.search", {})).rejects.toThrow(
+    await expect(endpoint.handleCapCall(bearer, "cron.add", {})).rejects.toThrow(
       /Unknown RPC method/,
     );
   });
 
-  // ENDPOINT-02 (admin deny-by-origin): because the endpoint injects _agentId, a
-  // call routed to an ADMIN method through the REAL sink is rejected by the REAL
-  // assertNotAgentOrigin chokepoint (Pitfall 2). We pick an admin method that is
-  // ALSO in audience for the lease so the ONLY thing that can deny is the origin
-  // guard — proving the _agentId injection is load-bearing.
-  it("denies an admin method by origin because the endpoint injects _agentId", async () => {
-    // Find an admin method that maps to an orch:* cap (so audience can pass) —
-    // if none exists, fall back to asserting an admin method is denied at all.
+  // ENDPOINT-02 (admin → denied): an admin method is DENIED through the endpoint.
+  // By design NO admin method maps to an orch:* cap (the capability model grants
+  // only non-admin orchestration), so the lease audience denies every admin
+  // method at `validate` (the first gate) — the handler is never reached, with
+  // ALL caps granted. (The deny-by-origin chokepoint is the defense-in-depth
+  // SECOND gate, proven independently below.)
+  it("denies an admin method (out of every lease's audience) and never dispatches", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
 
-    // Pick the first admin method and grant the lease ALL caps so audience cannot
-    // be the reason for denial; the deny must come from assertNotAgentOrigin.
-    const adminMethod = [...ADMIN_METHODS][0];
-    expect(adminMethod).toBeDefined();
-
+    // Grant the lease ALL caps so audience cannot be circumvented by a missing
+    // cap — yet an admin method is still denied (no admin method is in audience).
     const allCaps: AgentCapability[] = [
       "orch:spawn",
       "orch:graph",
@@ -311,17 +311,42 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     ];
     const bearer = mintValidLease(leaseManager, allCaps);
 
-    // A sink that HAS a handler for the admin method (so the deny is the origin
-    // guard, not !handler). The handler would succeed if reached.
+    // gateway.restart is an admin method (and denylisted) — denied long before
+    // any handler. Pick a NON-denylisted admin method too to prove the audience
+    // gate (not only the denylist) denies admin. `secrets.get` is admin and not
+    // in DENYLISTED_RPC_METHODS, so its deny is the audience gate.
+    const adminNonDenylisted = "secrets.get";
+    expect(ADMIN_METHODS.has(adminNonDenylisted)).toBe(true);
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await expect(endpoint.handleCapCall(bearer, adminNonDenylisted, {})).rejects.toThrow();
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  // ENDPOINT-02 (Pitfall 2 — the deny-by-origin chokepoint is load-bearing):
+  // the endpoint injects _agentId, so IF an _agentId-bearing call reached an
+  // admin method at the dispatch sink, the REAL assertNotAgentOrigin would deny
+  // it by origin. This proves the second gate fires on exactly the shape the
+  // endpoint injects (independent of the audience gate above).
+  it("the injected _agentId triggers the real assertNotAgentOrigin at an admin method in the sink", async () => {
+    const adminMethod = [...ADMIN_METHODS][0];
+    expect(adminMethod).toBeDefined();
+
     const sink = createRealSinkOver({
       [adminMethod]: async () => ({ shouldNotReach: true }),
     });
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall: sink });
 
-    // If the admin method happens to be out of audience, validate denies it
-    // (also a correct deny); if in audience, assertNotAgentOrigin denies it.
-    // Either way the admin method must be DENIED and the handler never returns.
-    await expect(endpoint.handleCapCall(bearer, adminMethod, {})).rejects.toThrow();
+    // The exact params the endpoint injects (the _agentId is the agent-origin
+    // signal assertNotAgentOrigin reads). The sink must deny-by-origin.
+    await expect(sink(adminMethod, { _agentId: "agent-x", _capabilities: [] })).rejects.toThrow(
+      /not reachable from an agent origin/,
+    );
+
+    // And the SAME admin method with NO _agentId (operator origin) passes the
+    // chokepoint — proving the guard keys on the injected _agentId, not the method.
+    await expect(sink(adminMethod, {})).resolves.toEqual({ shouldNotReach: true });
   });
 });
 
