@@ -358,12 +358,7 @@ export const PerAgentSchedulerConfigSchema = z.strictObject({
 export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** Per-agent skills configuration (toolPolicy, builtinTools, discoveryPaths) */
   skills: SkillsConfigSchema.optional(),
-  /**
-   * Per-agent autonomy posture (v8 §3.8 named profiles). NOT .optional() —
-   * §6.4 means consumers always see a fully-defaulted block, and a missing
-   * block must resolve to the `standard` profile (the zero-config default +
-   * the MIG-01 migration target). Resolve via `resolveAutonomy(...)`.
-   */
+  /** Per-agent autonomy posture (v8 §3.8 named profiles). NOT .optional(): §6.4 — a missing block resolves to the `standard` default (zero-config + MIG-01). Resolve via `resolveAutonomy(...)`. */
   autonomy: AutonomyConfigSchema.default(() => AutonomyConfigSchema.parse({})),
   /** Per-agent scheduler configuration (cron settings) */
   scheduler: PerAgentSchedulerConfigSchema.optional(),
