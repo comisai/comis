@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * LeaseManager — the run-scoped, multi-use, revocable, audience-bound
+ * capability lease (LEASE-01 / LEASE-02 / LEASE-03; v8 §4.2).
+ *
+ * A `SessionManager` variant: same factory shape, same length-guarded
+ * timing-safe `tokenEquals`, same lazy-TTL reaper — but the lease is the
+ * authentication boundary for the jailed script surface, so it diverges in
+ * four security-load-bearing ways:
+ *   - MULTI-use: a lease is NOT consumed on first use (the jailed child
+ *     dispatches many calls per run). The single-use `active=false` flip of
+ *     SessionManager is deliberately removed.
+ *   - REVOCABLE: a `revoked` flag gates BOTH `validate` AND `renew` (a
+ *     compromised agent must not be able to keep renewing after revoke).
+ *   - maxExpiresAt-bounded: `renew` clamps the new expiry to a hard ceiling
+ *     and refuses once the clock is at/past it (no renew-forever).
+ *   - AUDIENCE-bound (RFC 8707): each `validate` derives the required cap from
+ *     `HANDLER_CAPABILITY_MAP[method]` and rejects if the lease does not hold
+ *     it — a captured lease replayed at a foreign method is denied. Deriving
+ *     the audience from the shipped map (not a bespoke audience claim) means
+ *     caps and audience cannot drift.
+ *
+ * In-memory only (a `Map`, like SessionManager) — M1 does NOT persist in-flight
+ * run state (that is M2). The operator-facing revoke RPC + cascade are Phase
+ * 213; this module ships the `revoked` field + the revocation-respecting paths.
+ *
+ * SECURITY: bearer minted via `generateStrongToken()` (CSPRNG, never
+ * `Math.random`); stored as a Buffer for `timingSafeEqual`; the length-guard in
+ * `tokenEquals` rejects empty/short/long bearers without throwing.
+ *
+ * @module
+ */
+import { timingSafeEqual, randomUUID } from "node:crypto";
+import {
+  generateStrongToken,
+  HANDLER_CAPABILITY_MAP,
+  type ClockPort,
+  type AgentCapability,
+} from "@comis/core";
+
+/** Internal lease entry — not exported. */
+interface LeaseEntry {
+  tokenBuf: Buffer;
+  leaseId: string;
+  agentId: string;
+  caps: readonly AgentCapability[];
+  budgetRef: string;
+  sessionKey: string;
+  rootRunId: string;
+  parentLeaseId?: string;
+  expiresAtMs: number;
+  maxExpiresAtMs: number;
+  revoked: boolean;
+}
+
+/** Input to mint a new lease (LEASE-01). */
+export interface MintLeaseInput {
+  agentId: string;
+  caps: readonly AgentCapability[];
+  budgetRef: string;
+  sessionKey: string;
+  rootRunId: string;
+  parentLeaseId?: string;
+  /** Soft TTL — the per-use validity window. Defaults to `defaultTtlMs`. */
+  ttlMs?: number;
+  /** Hard ceiling — `renew` can never push expiry past `now + maxTtlMs`. */
+  maxTtlMs?: number;
+}
+
+/** The minted lease handle returned to the broker. */
+export interface IssuedLease {
+  leaseId: string;
+  /** base64url bearer — injected as `COMIS_CAP_LEASE` into the jailed child. */
+  bearer: string;
+}
+
+/** The validated lease projection handed to the endpoint (no secret material). */
+export interface LeaseInfo {
+  leaseId: string;
+  agentId: string;
+  caps: readonly AgentCapability[];
+  budgetRef: string;
+  sessionKey: string;
+  rootRunId: string;
+  parentLeaseId?: string;
+}
+
+export interface LeaseManager {
+  mintLease(input: MintLeaseInput): IssuedLease;
+  /** Timing-safe + not-expired + not-revoked + audience-matched, else null. */
+  validate(rawBearer: string, requestedMethod: string): LeaseInfo | null;
+  /** Renew the soft expiry, clamped to maxExpiresAt; null if revoked/at-ceiling/unknown. */
+  renew(leaseId: string): { expiresAtMs: number } | null;
+  /** Mark the lease revoked — denies the next validate AND renew. */
+  revoke(leaseId: string): void;
+}
+
+export interface LeaseManagerDeps {
+  clock: ClockPort;
+  /** Default soft TTL when `mintLease` omits `ttlMs`. Default 15 min. */
+  defaultTtlMs?: number;
+}
+
+/**
+ * Length-guarded timing-safe buffer comparison.
+ * MUST check length equality FIRST — timingSafeEqual throws on unequal lengths.
+ *
+ * Copied verbatim from session-manager.ts — the length-guard is load-bearing.
+ */
+function tokenEquals(candidate: Buffer, stored: Buffer): boolean {
+  if (candidate.length !== stored.length) return false; // length-guard FIRST
+  return timingSafeEqual(candidate, stored);
+}
+
+export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
+  const { clock, defaultTtlMs = 15 * 60 * 1000 } = deps;
+  const leases = new Map<string, LeaseEntry>();
+
+  return {
+    mintLease(input: MintLeaseInput): IssuedLease {
+      const leaseId = randomUUID();
+      const bearer = generateStrongToken();
+      const tokenBuf = Buffer.from(bearer, "base64url");
+      const now = clock.now();
+      const maxExpiresAtMs = now + (input.maxTtlMs ?? defaultTtlMs);
+      // The soft expiry can never start beyond the hard ceiling.
+      const expiresAtMs = Math.min(now + (input.ttlMs ?? defaultTtlMs), maxExpiresAtMs);
+      leases.set(leaseId, {
+        tokenBuf,
+        leaseId,
+        agentId: input.agentId,
+        caps: input.caps,
+        budgetRef: input.budgetRef,
+        sessionKey: input.sessionKey,
+        rootRunId: input.rootRunId,
+        ...(input.parentLeaseId !== undefined ? { parentLeaseId: input.parentLeaseId } : {}),
+        expiresAtMs,
+        maxExpiresAtMs,
+        revoked: false,
+      });
+      return { leaseId, bearer };
+    },
+
+    validate(rawBearer: string, requestedMethod: string): LeaseInfo | null {
+      // An empty or malformed base64url string produces an empty/short Buffer —
+      // the length-guard in tokenEquals rejects it without throwing.
+      const candidateBuf = Buffer.from(rawBearer, "base64url");
+
+      for (const [id, entry] of leases) {
+        // Lazy hard-TTL eviction: once past the maxExpiresAt ceiling the lease
+        // is dead forever (renew cannot revive it) — reap it.
+        if (clock.now() > entry.maxExpiresAtMs) {
+          leases.delete(id);
+          continue;
+        }
+        // Soft expiry: past the per-use window but still before the ceiling →
+        // denied for this use, but a renew can revive it (so do NOT delete).
+        if (clock.now() > entry.expiresAtMs) {
+          continue;
+        }
+        // Revocation gate (multi-use: do NOT flip any field to consume).
+        if (entry.revoked) {
+          continue;
+        }
+        if (!tokenEquals(candidateBuf, entry.tokenBuf)) {
+          continue;
+        }
+        // Audience binding (RFC 8707): the requested method's required cap must
+        // be one the lease holds. A non-cap method ("deny-by-origin"/"ungated")
+        // or an unknown method has no orch:* cap → out of audience → deny.
+        const requiredCap =
+          HANDLER_CAPABILITY_MAP[requestedMethod as keyof typeof HANDLER_CAPABILITY_MAP];
+        if (
+          typeof requiredCap !== "string" ||
+          !requiredCap.startsWith("orch:") ||
+          !entry.caps.includes(requiredCap as AgentCapability)
+        ) {
+          return null;
+        }
+        return {
+          leaseId: entry.leaseId,
+          agentId: entry.agentId,
+          caps: entry.caps,
+          budgetRef: entry.budgetRef,
+          sessionKey: entry.sessionKey,
+          rootRunId: entry.rootRunId,
+          ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),
+        };
+      }
+
+      return null;
+    },
+
+    renew(leaseId: string): { expiresAtMs: number } | null {
+      const entry = leases.get(leaseId);
+      // Revocation gates renew (not only validate) — a revoked lease is dead.
+      if (!entry || entry.revoked) {
+        return null;
+      }
+      // Already at/past the hard ceiling → cannot extend.
+      if (clock.now() >= entry.maxExpiresAtMs) {
+        return null;
+      }
+      const candidate = clock.now() + defaultTtlMs;
+      entry.expiresAtMs = Math.min(candidate, entry.maxExpiresAtMs);
+      return { expiresAtMs: entry.expiresAtMs };
+    },
+
+    revoke(leaseId: string): void {
+      // Keep the entry (do NOT delete) so validate's `revoked` check denies it;
+      // the lazy-TTL reaper removes it once past maxExpiresAt, by which point
+      // the bearer is dead anyway. A randomUUID() id is never reused.
+      const entry = leases.get(leaseId);
+      if (entry) {
+        entry.revoked = true;
+      }
+    },
+  };
+}

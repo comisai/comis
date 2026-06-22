@@ -17,13 +17,23 @@ export { createSystemClock } from "./runtime/clock.js";
 export { createSystemEnv } from "./runtime/env.js";
 export { createSystemTimers } from "./runtime/timers.js";
 
-// Credential broker (MITM proxy runtime + CA manager)
-export { createSessionManager, createMitmBroker, createNodeCaManager } from "./credential-broker/index.js";
+// Credential broker (MITM proxy runtime + CA manager + capability lease)
+export {
+  createSessionManager,
+  createLeaseManager,
+  createMitmBroker,
+  createNodeCaManager,
+} from "./credential-broker/index.js";
 export type {
   SessionManager,
   SessionManagerDeps,
   IssuedSession,
   SessionInfo,
+  LeaseManager,
+  LeaseManagerDeps,
+  MintLeaseInput,
+  IssuedLease,
+  LeaseInfo,
   MitmBrokerPort,
   MitmBrokerDeps,
   NodeCaManagerDeps,
