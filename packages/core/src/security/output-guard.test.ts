@@ -518,4 +518,91 @@ describe("createOutputGuard", () => {
       }
     });
   });
+
+  // -------------------------------------------------------------------------
+  // registerSecret — the ENDPOINT-03 mint-time registration API (Phase 211).
+  // RESEARCH Pitfall 1: createOutputGuard binds knownSecrets ONCE in a closure;
+  // registerSecret must push the value in (live-read on the next scan), keeping
+  // the KNOWN_SECRET_MIN_LENGTH (8) floor + longest-first ordering.
+  // -------------------------------------------------------------------------
+
+  describe("registerSecret", () => {
+    it("redacts a bearer registered after construction on the next scan", () => {
+      const bearer = "lease_bearer_abcdef0123456789"; // >= 8 chars
+      const g = createOutputGuard({ knownSecrets: [] });
+      g.registerSecret(bearer);
+      const result = g.scan(`leaked: ${bearer} oops`);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        expect(result.value.sanitized).toContain("[REDACTED:known_secret]");
+        expect(result.value.sanitized).not.toContain(bearer);
+      }
+    });
+
+    it("redacts a registered secret even when the guard had no prior knownSecrets", () => {
+      // Proves the scan reads the live closure array, not a constructor snapshot.
+      const bearer = "no_constructor_secret_98765432";
+      const g = createOutputGuard(); // no opts at all
+      g.registerSecret(bearer);
+      const result = g.scan(`value is ${bearer}`);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        expect(result.value.sanitized).not.toContain(bearer);
+        expect(result.value.sanitized).toContain("[REDACTED:known_secret]");
+      }
+    });
+
+    it("ignores a short value below the min-length floor (never redacts text)", () => {
+      const shortValue = "abc1234"; // 7 chars, below KNOWN_SECRET_MIN_LENGTH=8
+      const g = createOutputGuard();
+      g.registerSecret(shortValue);
+      const result = g.scan(`harmless ${shortValue} word`);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // The short value must NOT be redacted (it could match ordinary text).
+        expect(result.value.sanitized).toContain(shortValue);
+        const known = result.value.findings.filter((f) => f.pattern === "known_secret");
+        expect(known).toHaveLength(0);
+      }
+    });
+
+    it("ignores empty and whitespace-only values registered as secrets", () => {
+      const g = createOutputGuard();
+      g.registerSecret("");
+      g.registerSecret("        ");
+      const response = "A perfectly normal sentence with no secrets at all here.";
+      const result = g.scan(response);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.safe).toBe(true);
+        expect(result.value.sanitized).toBe(response);
+      }
+    });
+
+    it("deduplicates a secret registered twice and keeps longest-first ordering", () => {
+      // Register a longer secret that CONTAINS a shorter (>=8) secret as a
+      // substring; longest-first ordering must redact the longer one whole so the
+      // shorter's redaction cannot leave a dangling fragment of the longer.
+      const shortSecret = "abcdefgh12"; // 10 chars, >= 8
+      const longSecret = "abcdefgh1234567890XYZ"; // contains shortSecret as a prefix
+      const g = createOutputGuard();
+      g.registerSecret(shortSecret);
+      g.registerSecret(longSecret);
+      g.registerSecret(longSecret); // duplicate — must be ignored (dedup)
+      const result = g.scan(`token=${longSecret} end`);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        // The full long secret is gone (no leftover tail like "1234567890XYZ").
+        expect(result.value.sanitized).not.toContain(longSecret);
+        expect(result.value.sanitized).not.toContain("1234567890XYZ");
+        expect(result.value.sanitized).toContain("[REDACTED:known_secret]");
+        // Dedup: exactly one known_secret finding for the single long-secret hit.
+        const known = result.value.findings.filter((f) => f.pattern === "known_secret");
+        expect(known).toHaveLength(1);
+      }
+    });
+  });
 });
