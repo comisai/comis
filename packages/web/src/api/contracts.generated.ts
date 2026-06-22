@@ -6652,7 +6652,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.reply": {
@@ -6735,7 +6735,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.send": {
@@ -6814,7 +6814,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "models.list": {
@@ -9807,7 +9807,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.delete": {
@@ -10156,7 +10156,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset": {
@@ -10196,7 +10196,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset_conversation": {
@@ -10596,7 +10596,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.delete": {
@@ -10639,7 +10639,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.import": {
@@ -10697,7 +10697,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.list": {
@@ -10808,7 +10808,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.upload": {
@@ -10878,7 +10878,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "slack.action": {

@@ -6530,7 +6530,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.reply": {
@@ -6613,7 +6613,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.send": {
@@ -6692,7 +6692,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "models.list": {
@@ -9685,7 +9685,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.delete": {
@@ -10034,7 +10034,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset": {
@@ -10074,7 +10074,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset_conversation": {
@@ -10474,7 +10474,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.delete": {
@@ -10517,7 +10517,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.import": {
@@ -10575,7 +10575,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.list": {
@@ -10686,7 +10686,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.upload": {
@@ -10756,7 +10756,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "slack.action": {

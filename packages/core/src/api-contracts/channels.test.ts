@@ -422,7 +422,7 @@ describe("MessageSendContract", () => {
     ).toThrow();
   });
 
-  it("accepts response", () => {
+  it("accepts a well-formed message.send response", () => {
     expect(() =>
       MessageSendContract.response.parse({ messageId: "msg-1", channelId: "123" })
     ).not.toThrow();
@@ -453,7 +453,7 @@ describe("MessageReplyContract", () => {
 });
 
 describe("MessageReactContract", () => {
-  it("accepts request", () => {
+  it("accepts a well-formed message.react request", () => {
     expect(() =>
       MessageReactContract.request.parse({
         channel_type: "telegram",
