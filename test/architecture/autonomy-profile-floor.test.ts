@@ -28,11 +28,17 @@ import { formatViolations } from "../support/architecture-helpers.js";
 
 const DESIGN_REF = "v8 §3.8 (named profiles) / §22.3 (structural floor)";
 
-// The eight FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
+// The nine FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
 // §22.3). Hardcoded here as the independent source of truth: the resolver must
-// stay a subset of these in M1. `orch:message` rides the separate `message:`
-// block (origin-only is auto-allowable; a NEW channel is an
-// `autoApprovable:false` floor item, §3.5/§22.3) — it is NOT a member here.
+// stay a subset of these in M1. `orch:message` IS a member (210-GAP MIG-01 / v8
+// §3.8 line 253 profile table): the standard profile turns ON origin-channel
+// messaging. The ORIGIN-vs-new-channel scoping rides `message.channels`
+// (`["origin"]` default) — origin sends are auto-allowable under quota; a NEW
+// channel is an `autoApprovable:false` floor item (§3.5/§22.3) enforced by the
+// message config + the §8.4 per-target grant, NOT by removing the cap. So the
+// cap-literal is floor-contained + `autoApprovable:true`; only the non-origin
+// target escalates (asserted via ALWAYS_ESCALATE below, which `orch:message` is
+// NOT a member of).
 const FLOOR_CONTAINED: ReadonlySet<AgentCapability> = new Set<AgentCapability>([
   "orch:read",
   "orch:web",
@@ -42,6 +48,7 @@ const FLOOR_CONTAINED: ReadonlySet<AgentCapability> = new Set<AgentCapability>([
   "orch:graph",
   "orch:cron",
   "orch:skill",
+  "orch:message",
 ]);
 
 // The §22.3 caps that are `autoApprovable:false` in EVERY profile forever

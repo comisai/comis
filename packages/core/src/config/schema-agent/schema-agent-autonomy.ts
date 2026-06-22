@@ -40,15 +40,24 @@ import { z } from "zod";
 import { AGENT_CAPABILITIES, type AgentCapability } from "../../security/capability.js";
 
 /**
- * The eight FLOOR-CONTAINED orchestration caps the `standard` profile turns on
+ * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
  * (v8 §3.8 / §22.3). A profile MAY auto-allow these because the non-removable
  * §22.3 floor (deny-by-origin, secrets/host unreachability, the always-on
  * budget/rate/spawn-ceiling, live revoke) bounds their blast radius.
  *
- * `orch:message` is intentionally NOT in this list — it rides the separate
- * `message:` block. Origin-channel sends are auto-allowable under quota; a send
- * to a NEW channel is an `autoApprovable:false` floor item (§3.5/§22.3), so the
- * message cap is modeled by the message config, not by membership here.
+ * `orch:message` IS a member (210-GAP MIG-01 / v8 §3.8 line 253 profile table /
+ * §3.3 line 190): the `standard` profile turns ON origin-channel messaging, and
+ * Plan 04 gates `message.send/reply/react` on `requireCapability(_,
+ * "orch:message")`. The held cap is what lets the most fundamental agent action
+ * — sending a message to the channel it was spoken to — pass that gate. The
+ * ORIGIN-vs-new-channel scoping rides the separate `message.channels` config
+ * (`["origin"]` by default): origin sends are auto-allowable under quota, while
+ * a send to a NEW channel is an `autoApprovable:false` floor item (§3.5/§22.3)
+ * enforced by the message config + the §8.4 per-target grant — NOT by removing
+ * the cap from the held set. The cap-literal `orch:message` is therefore
+ * floor-contained + `autoApprovable:true` (origin); only its non-origin TARGET
+ * escalates. (§3.5: the cap covers the genuinely-outward subset send/reply/react
+ * ONLY — edit/delete/fetch/attach stay admin-only and are not part of it.)
  */
 export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:read",
@@ -59,6 +68,7 @@ export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:graph",
   "orch:cron",
   "orch:skill",
+  "orch:message",
 ] as const satisfies readonly AgentCapability[];
 
 /**
@@ -68,10 +78,15 @@ export const STANDARD_FLOOR_CAPABILITIES = [
  * that opts one IN (e.g. an explicit `browse: true`) still resolves it with
  * `autoApprovable:false`.
  *
- * `orch:message` to a NON-origin channel is the third floor item; it is not an
- * `AgentCapability` literal of its own (the cap is `orch:message`, the target
- * scoping rides the `message.channels` config), so the always-false set here
- * carries the two cap-literal members. `report:issue` is a Phase-215 deputy cap
+ * `orch:browse` (the browser) is the always-escalate cap-LITERAL member.
+ * `orch:message` is deliberately NOT here: per §22.3 the floor item is
+ * "orch:message to a NON-ORIGIN channel", and that target scoping rides the
+ * `message.channels` config (`["origin"]` default + the §8.4 per-target grant),
+ * NOT the cap literal. The cap-literal `orch:message` is auto-approvable to the
+ * agent's OWN origin channel under quota (the §3.8 capable default), so it
+ * resolves `autoApprovable:true` here while the non-origin send is gated by the
+ * message config — modeling it as an always-escalate cap-literal would
+ * incorrectly forbid even origin sends. `report:issue` is a Phase-215 deputy cap
  * outside this milestone's `orch:*` vocabulary.
  */
 const ALWAYS_ESCALATE_CAPABILITIES = ["orch:browse"] as const satisfies readonly AgentCapability[];
@@ -115,6 +130,16 @@ export const AutonomyConfigSchema = z.strictObject({
    * Whether autonomy surfaces are on. Optional at the config layer — the
    * resolver fills it from the profile when omitted (`standard` → true,
    * `assistant` → false). An explicit value overrides the profile.
+   *
+   * IN-01 SEMANTICS (210-GAP, design option (a)): a per-surface toggle
+   * (`web`/`analyze`/`write`/`browse`) is the ENABLE SIGNAL FOR THAT SURFACE and
+   * OVERRIDES `enabled`. So `{ profile: "assistant", web: true }` resolves
+   * `enabled:false` but STILL grants `orch:web` — progressive disclosure: an
+   * operator who turned one surface ON gets that one cap, not silence. `enabled`
+   * is the profile-level autonomy posture; it does NOT zero an explicitly-toggled
+   * surface (that would surprise an operator who set `web:true`). The §22.3 floor
+   * still bounds every granted cap regardless. Pinned by `schema-agent-autonomy`
+   * resolver tests (the toggle-overrides-enabled case).
    */
   enabled: z.boolean().optional(),
   /**
@@ -201,8 +226,8 @@ const M1_CLAMP_NOTICE =
  * The resolved cap/guard sets for the four named profiles (v8 §3.8).
  *
  * - `assistant`: enabled off, zero orchestration surfaces.
- * - `standard` (default): enabled on, the eight floor-contained caps, guards
- *   ON, origin-only message.
+ * - `standard` (default): enabled on, the nine floor-contained caps (incl.
+ *   origin-channel `orch:message`), guards ON, origin-only message.
  * - `unattended` / `max`: CLAMPED to `standard`'s cap set in M1 + the notice
  *   (Pitfall 4 / §3.8 + ROADMAP criterion 5 — no larger cap set).
  */

@@ -22,10 +22,12 @@ import {
 // function of its config input (no env/clock/fs — AGENTS §2.2).
 // ---------------------------------------------------------------------------
 
-// The eight FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
-// §22.3). `orch:message` is NOT in this list — it rides the separate
-// `message:` block (origin-channel-only is auto-allowable; a NEW channel is an
-// `autoApprovable:false` floor item, §3.5/§22.3).
+// The nine FLOOR-CONTAINED orchestration caps `standard` turns on (v8 §3.8 /
+// §22.3). `orch:message` IS a member (210-GAP MIG-01 / §3.8 line 253): the
+// standard profile turns ON origin-channel messaging. The ORIGIN-vs-new scoping
+// rides `message.channels` (`["origin"]` default); origin sends are
+// auto-allowable under quota, a NEW channel is an `autoApprovable:false` floor
+// item (§3.5/§22.3) — so the cap-literal is floor-contained + autoApprovable.
 const STANDARD_FLOOR_CAPS = [
   "orch:read",
   "orch:web",
@@ -35,6 +37,7 @@ const STANDARD_FLOOR_CAPS = [
   "orch:graph",
   "orch:cron",
   "orch:skill",
+  "orch:message",
 ] as const;
 
 describe("AutonomyConfigSchema (PROFILE-01 — zero-config default → standard)", () => {
@@ -64,16 +67,38 @@ describe("AUTONOMY_PROFILES (the §3.8 resolved cap/guard sets)", () => {
 });
 
 describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => {
-  it("PROFILE-01-S4: resolveAutonomy(undefined) → standard, caps include orch:spawn/orch:graph/orch:cron", () => {
+  it("PROFILE-01-S4: resolveAutonomy(undefined) → standard, caps include orch:spawn/orch:graph/orch:cron/orch:message", () => {
     const r = resolveAutonomy(undefined);
     expect(r.profile).toBe("standard");
     expect(r.enabled).toBe(true);
-    expect(r.capabilities).toEqual(expect.arrayContaining(["orch:spawn", "orch:graph", "orch:cron"]));
+    expect(r.capabilities).toEqual(
+      expect.arrayContaining(["orch:spawn", "orch:graph", "orch:cron", "orch:message"]),
+    );
   });
 
-  it("PROFILE-01-S5: standard resolves to exactly the eight floor-contained caps", () => {
+  it("PROFILE-01-S5: standard resolves to exactly the nine floor-contained caps (incl. origin orch:message)", () => {
     const r = resolveAutonomy({ profile: "standard" });
     expect([...r.capabilities].sort()).toEqual([...STANDARD_FLOOR_CAPS].sort());
+  });
+
+  it("210-GAP MIG-01: standard's orch:message is autoApprovable:true (origin-channel auto-send), NOT an always-escalate floor cap", () => {
+    // The cap-literal is auto-allowable to the OWN origin channel under quota
+    // (§3.8 capable default); the non-origin TARGET escalates via the message
+    // config, NOT by marking the cap autoApprovable:false. orch:browse stays the
+    // only always-escalate cap-literal.
+    const r = resolveAutonomy({ profile: "standard" });
+    const msg = r.resolvedCapabilities.find((c) => c.capability === "orch:message");
+    expect(msg, "standard must resolve an orch:message cap").toBeDefined();
+    expect(msg!.autoApprovable).toBe(true);
+  });
+
+  it("210-GAP IN-01: a per-surface toggle OVERRIDES enabled — { profile: assistant, web: true } resolves enabled:false but STILL grants orch:web", () => {
+    // The toggle IS the enable signal for that surface (design option (a)):
+    // enabled:false does NOT zero an explicitly-toggled surface (progressive
+    // disclosure). The §22.3 floor still bounds the granted cap.
+    const r = resolveAutonomy({ profile: "assistant", web: true });
+    expect(r.enabled).toBe(false);
+    expect(r.capabilities).toContain("orch:web");
   });
 
   it("PROFILE-01-S6: assistant → enabled false, zero orchestration surfaces", () => {
