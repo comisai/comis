@@ -427,6 +427,85 @@ describe("BwrapProvider", () => {
       expect(args).toContain("--new-session");
     });
 
+    // -- Network modes (ENDPOINT-03: cap-socket bind for the lease endpoint) --
+
+    describe("network modes", () => {
+      /** Locate the index of the "--bind <path> <path>" triple, or -1. */
+      function bindTripleIndex(args: string[], target: string): number {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      it("cap-socket mode binds the socket after --unshare-all then --unshare-net (arg-order)", () => {
+        // ENDPOINT-03: the lease endpoint listens on a unix socket the jailed
+        // child must reach. netns affects IP sockets only, so a bound unix path
+        // stays reachable under --unshare-net — but the --bind MUST follow the
+        // --unshare-net so bwrap applies it inside the new namespace (mirrors
+        // broker-only). With no cap-socket branch the _exhaustive guard throws.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ network: { mode: "cap-socket", capSocketPath: "/run/cap.sock" } }),
+        );
+
+        const unshareAllIdx = args.indexOf("--unshare-all");
+        const unshareNetIdx = args.indexOf("--unshare-net");
+        const capBindIdx = bindTripleIndex(args, "/run/cap.sock");
+
+        expect(unshareAllIdx).toBeGreaterThan(0);
+        expect(unshareNetIdx).toBeGreaterThan(0);
+        expect(capBindIdx).toBeGreaterThan(0);
+        // Arg-order is load-bearing: --unshare-all, then --unshare-net, then the bind.
+        expect(unshareNetIdx).toBeGreaterThan(unshareAllIdx);
+        expect(capBindIdx).toBeGreaterThan(unshareNetIdx);
+
+        // cap-socket must NOT re-share the net (no --share-net) and still hardens.
+        expect(args).not.toContain("--share-net");
+        expect(args).toContain("--new-session");
+        expect(args).toContain("--die-with-parent");
+      });
+
+      it("open mode is unregressed (--share-net, no --unshare-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ network: { mode: "open" } }));
+
+        expect(args).toContain("--share-net");
+        expect(args).not.toContain("--unshare-net");
+      });
+
+      it("broker-only mode is unregressed (binds broker socket after --unshare-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ network: { mode: "broker-only", brokerSocketPath: "/run/broker.sock" } }),
+        );
+
+        const unshareNetIdx = args.indexOf("--unshare-net");
+        const brokerBindIdx = bindTripleIndex(args, "/run/broker.sock");
+        expect(unshareNetIdx).toBeGreaterThan(0);
+        expect(brokerBindIdx).toBeGreaterThan(unshareNetIdx);
+        expect(args).not.toContain("--share-net");
+      });
+
+      it("none mode is unregressed (--unshare-net, no socket bind, no --share-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ network: { mode: "none" } }));
+
+        expect(args).toContain("--unshare-net");
+        expect(args).not.toContain("--share-net");
+      });
+    });
+
     it("includes --chdir with opts.cwd", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 

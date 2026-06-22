@@ -31,9 +31,18 @@ export interface SandboxOptions {
    * "none" = --unshare-net with NO socket and NO proxy (kernel-enforced deny-all
    *   egress; the skill-validation jail uses this so a synthesized script cannot
    *   reach the network to exfiltrate during dynamic validation, T-201-35).
+   * "cap-socket" = --unshare-net + unix-socket bind for the capability-lease
+   *   loopback endpoint (Phase 211, ENDPOINT-03). Mirrors broker-only arg-order:
+   *   the bound unix socket stays reachable under netns (netns affects IP sockets
+   *   only) so the jailed orchestrate child can dial the lease endpoint while all
+   *   general IP egress stays cut.
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
-  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string } | { mode: "none" };
+  network?:
+    | { mode: "open" }
+    | { mode: "broker-only"; brokerSocketPath: string }
+    | { mode: "none" }
+    | { mode: "cap-socket"; capSocketPath: string };
   /**
    * When true, skip the ~/.local/share RW bind so credential material living
    * under that XDG dir is not read-write-exposed inside the sandbox.
