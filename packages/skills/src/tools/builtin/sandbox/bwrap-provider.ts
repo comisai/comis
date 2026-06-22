@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
+// @allow-throw: (1) exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever(). (2) JAIL-03 screenBind() fails LOUD at jail construction on a denylisted bind — a misconfig must never be a silently-emitted hole.
 /**
  * BwrapProvider -- Linux sandbox provider using Bubblewrap (bwrap).
  *
@@ -13,9 +13,36 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 
-import { safePath } from "@comis/core";
+import { safePath, validateBindMount } from "@comis/core";
 
 import type { SandboxOptions, SandboxProvider } from "./types.js";
+
+/**
+ * Screen a caller-controlled host bind path through the JAIL-03 denylist
+ * backstop (validateBindMount) before it is emitted as a `--bind`/`--ro-bind`.
+ *
+ * Scope (v8 invariant 10 — the validator is a DENYLIST BACKSTOP on the ALLOW-LIST
+ * binds, NOT the primary boundary): this screens the DYNAMIC, caller/agent-supplied
+ * binds — the workspace, the temp dir, operator/graph shared paths, and skill
+ * discovery read-only paths — which are the attack surface (an agent/operator
+ * could supply `~/.ssh` or `/etc`). Intentionally NOT screened:
+ *   - The CURATED system allow-lists (SYSTEM_RO_PATHS, getUserRoPaths,
+ *     getDevToolRwPaths) — the vetted boundary itself (they include
+ *     `/etc/resolv.conf` etc. the denylist would false-positive on).
+ *   - The broker / cap unix sockets — DAEMON-MINTED per-run paths the agent
+ *     cannot influence (conventionally under `/run/comis`, which the denylist
+ *     refuses for caller binds); they are part of the trusted allow-list.
+ *
+ * A denylisted bind is a MISCONFIG that must FAIL LOUD — never a silently-emitted
+ * hole. Throws at jail construction (this provider already carries the
+ * file-level `@allow-throw` exhaustiveness annotation).
+ */
+function screenBind(hostPath: string, home: string): void {
+  const verdict = validateBindMount(hostPath, home);
+  if (!verdict.ok) {
+    throw new Error(`refusing unsafe jail bind: ${hostPath} — ${verdict.reason}`);
+  }
+}
 
 /**
  * System paths to bind read-only. Filtered by existsSync once at
@@ -139,8 +166,11 @@ export class BwrapProvider implements SandboxProvider {
 
   buildArgs(opts: SandboxOptions): string[] {
     const args: string[] = [this.bwrapPath!];
+    const home = os.homedir();
 
     // -- System paths (read-only, cached at first call) --
+    // CURATED allow-list — the vetted boundary itself; NOT screened by the
+    // JAIL-03 denylist backstop (it would false-positive on /etc/resolv.conf).
     for (const sysPath of this.getSystemPaths()) {
       args.push("--ro-bind", sysPath, sysPath);
     }
@@ -153,19 +183,25 @@ export class BwrapProvider implements SandboxProvider {
     // -- Temp directory (read-write) --
     args.push("--tmpfs", "/tmp");
     if (opts.tempDir && opts.tempDir !== "/tmp") {
+      screenBind(opts.tempDir, home); // JAIL-03: caller-controlled → screened.
       args.push("--bind", opts.tempDir, opts.tempDir);
     }
 
     // -- Workspace (read-write) --
+    screenBind(opts.workspacePath, home); // JAIL-03: caller-controlled → screened.
     args.push("--bind", opts.workspacePath, opts.workspacePath);
 
     // -- Shared paths (read-write) --
     for (const sp of opts.sharedPaths) {
+      screenBind(sp, home); // JAIL-03: operator/graph-supplied → screened.
       args.push("--bind", sp, sp);
     }
 
     // -- User config paths (read-only) --
-    for (const up of getUserRoPaths(os.homedir())) {
+    // CURATED allow-list (~/.gitconfig, ~/.config/git, ~/.local, ~/.nvm) — the
+    // vetted boundary; NOT screened (~/.config is denylisted for CALLER binds but
+    // this curated entry is intentional and scoped).
+    for (const up of getUserRoPaths(home)) {
       args.push("--ro-bind", up, up);
     }
 
@@ -182,8 +218,8 @@ export class BwrapProvider implements SandboxProvider {
     // bind is the safest correct option; dev tools can still use
     // workspace-redirected paths from wrapEnv() (XDG_DATA_HOME, UV_TOOL_DIR,
     // PIPX_HOME, etc.).
-    const localSharePath = safePath(os.homedir(), ".local", "share");
-    for (const dp of getDevToolRwPaths(os.homedir())) {
+    const localSharePath = safePath(home, ".local", "share");
+    for (const dp of getDevToolRwPaths(home)) {
       if (opts.secureCredentialHome && dp === localSharePath) continue;
       args.push("--bind", dp, dp);
     }
@@ -191,6 +227,7 @@ export class BwrapProvider implements SandboxProvider {
     // -- Read-only paths (discovery paths, custom) --
     for (const ro of opts.readOnlyPaths) {
       if (existsSync(ro)) {
+        screenBind(ro, home); // JAIL-03: discovery/operator-supplied → screened.
         args.push("--ro-bind", ro, ro);
       }
     }
@@ -205,6 +242,10 @@ export class BwrapProvider implements SandboxProvider {
       // bind-mounted unix socket only. No general internet egress.
       args.push("--unshare-net");
       const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
+      // NOT screened: the broker socket is a DAEMON-MINTED per-run path (the
+      // agent cannot influence it), conventionally under /run/comis — exactly a
+      // path the denylist backstop refuses for CALLER binds. It is part of the
+      // trusted allow-list, not the agent-supplied attack surface.
       args.push("--bind", brokerSocketPath, brokerSocketPath);
     } else if (networkMode === "none") {
       // none: kernel-enforced deny-all egress — --unshare-all already dropped the
@@ -220,6 +261,10 @@ export class BwrapProvider implements SandboxProvider {
       // so the bound unix path stays reachable while all general IP egress is cut.
       args.push("--unshare-net");
       const { capSocketPath } = opts.network as { mode: "cap-socket"; capSocketPath: string };
+      // NOT screened: like the broker socket, the cap socket is a DAEMON-MINTED
+      // per-run path (conventionally /run/comis or the data dir) — part of the
+      // trusted allow-list, not the agent-supplied attack surface the denylist
+      // backstop guards. The endpoint (211-06) chooses this path, not the agent.
       args.push("--bind", capSocketPath, capSocketPath);
     } else {
       // exhaustiveness guard — TypeScript will flag this if the
@@ -231,6 +276,16 @@ export class BwrapProvider implements SandboxProvider {
       "--die-with-parent",
       "--new-session",
     );
+
+    // -- Seccomp profile (JAIL-01) --
+    // bwrap --seccomp takes an FD to raw BPF bytecode (resolved by the caller via
+    // loadSeccompProfileFd(); buildArgs stays a pure arg generator). Emit ONLY
+    // when an fd is provided — a null/absent blob degrades to NO --seccomp (the
+    // other §4.7 controls above still apply). The .linux.test.ts proves the blob
+    // actually blocks the dangerous syscalls on the VPS.
+    if (typeof opts.seccompFd === "number") {
+      args.push("--seccomp", String(opts.seccompFd));
+    }
 
     // -- Working directory --
     args.push("--chdir", opts.cwd);

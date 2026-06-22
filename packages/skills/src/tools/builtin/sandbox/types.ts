@@ -51,6 +51,16 @@ export interface SandboxOptions {
    * flag no longer needs to gate them.)
    */
   secureCredentialHome?: boolean;
+  /**
+   * Open file descriptor to a precompiled raw-BPF seccomp blob (JAIL-01).
+   * bwrap `--seccomp N` takes an FD to raw BPF bytecode (NOT a JSON profile).
+   * The caller/provider resolves this via loadSeccompProfileFd() (so buildArgs
+   * stays a PURE arg generator with no live fs probe). When a number, buildArgs
+   * emits `--seccomp <fd>`; when undefined/null the blob is absent and buildArgs
+   * OMITS --seccomp (graceful degrade — the other §4.7 controls still apply).
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  seccompFd?: number | null;
 }
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */

@@ -449,13 +449,17 @@ describe("BwrapProvider", () => {
         vi.mocked(existsSync).mockReturnValue(false);
 
         const provider = createAvailableProvider();
+        // The cap socket is a DAEMON-MINTED per-run path (conventionally under
+        // /run/comis) — it is NOT screened by validateBindMount even though /run
+        // is denylisted for caller binds (it is part of the trusted allow-list).
+        const capSock = "/run/comis/cap.sock";
         const args = provider.buildArgs(
-          makeOpts({ network: { mode: "cap-socket", capSocketPath: "/run/cap.sock" } }),
+          makeOpts({ network: { mode: "cap-socket", capSocketPath: capSock } }),
         );
 
         const unshareAllIdx = args.indexOf("--unshare-all");
         const unshareNetIdx = args.indexOf("--unshare-net");
-        const capBindIdx = bindTripleIndex(args, "/run/cap.sock");
+        const capBindIdx = bindTripleIndex(args, capSock);
 
         expect(unshareAllIdx).toBeGreaterThan(0);
         expect(unshareNetIdx).toBeGreaterThan(0);
@@ -484,12 +488,14 @@ describe("BwrapProvider", () => {
         vi.mocked(existsSync).mockReturnValue(false);
 
         const provider = createAvailableProvider();
+        // Daemon-minted broker socket — also under /run/comis, also un-screened.
+        const brokerSock = "/run/comis/broker.sock";
         const args = provider.buildArgs(
-          makeOpts({ network: { mode: "broker-only", brokerSocketPath: "/run/broker.sock" } }),
+          makeOpts({ network: { mode: "broker-only", brokerSocketPath: brokerSock } }),
         );
 
         const unshareNetIdx = args.indexOf("--unshare-net");
-        const brokerBindIdx = bindTripleIndex(args, "/run/broker.sock");
+        const brokerBindIdx = bindTripleIndex(args, brokerSock);
         expect(unshareNetIdx).toBeGreaterThan(0);
         expect(brokerBindIdx).toBeGreaterThan(unshareNetIdx);
         expect(args).not.toContain("--share-net");

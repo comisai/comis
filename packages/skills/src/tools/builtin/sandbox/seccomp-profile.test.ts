@@ -14,8 +14,15 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { openSync, writeSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { loadSeccompProfileFd, closeSeccompProfileFd } from "./seccomp-profile.js";
+import {
+  loadSeccompProfileFd,
+  closeSeccompProfileFd,
+  seccompBlobPath,
+} from "./seccomp-profile.js";
 
 describe("loadSeccompProfileFd (JAIL-01)", () => {
   it("returns null (never throws) when the BPF blob is absent", () => {
@@ -26,8 +33,28 @@ describe("loadSeccompProfileFd (JAIL-01)", () => {
     expect(fd === null || typeof fd === "number").toBe(true);
   });
 
+  it("seccompBlobPath resolves beside the module and names the .bpf blob", () => {
+    const p = seccompBlobPath();
+    expect(p.endsWith("seccomp-orchestrate.bpf")).toBe(true);
+  });
+
   it("closeSeccompProfileFd tolerates null and a never-opened fd", () => {
     // Defensive: closing a null/degraded result must be a no-op, not a throw.
     expect(() => closeSeccompProfileFd(null)).not.toThrow();
+  });
+
+  it("closeSeccompProfileFd closes a real fd without throwing (and tolerates a double-close)", () => {
+    // Exercise the non-null close branch with a genuine fd (a temp file stands
+    // in for the blob fd) — proves the cleanup path is a no-op-on-error.
+    const dir = mkdtempSync(join(tmpdir(), "comis-seccomp-fd-"));
+    try {
+      const fd = openSync(join(dir, "blob"), "w");
+      writeSync(fd, Buffer.from([0])); // make it a real, open fd
+      expect(() => closeSeccompProfileFd(fd)).not.toThrow();
+      // A second close of the same (now-closed) fd must be swallowed, not throw.
+      expect(() => closeSeccompProfileFd(fd)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
