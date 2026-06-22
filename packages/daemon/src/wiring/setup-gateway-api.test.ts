@@ -228,7 +228,10 @@ describe("registerRpcMethods", () => {
     const adminMethods = [
       "admin.approval.pending", "admin.approval.resolve", "admin.approval.clearDenialCache",
       "agents.create", "agents.get", "agents.update", "agents.delete", "agents.suspend", "agents.resume",
-      "session.list", "session.delete", "session.reset", "session.export", "session.compact",
+      // 210-GAP MD-01: session.list/reset/compact moved to rpc (agent-self
+      // reads/lifecycle). delete/export stay admin (in-handler admin check +
+      // arbitrary-session targeting → deny-by-origin).
+      "session.delete", "session.export",
       "memory.stats", "memory.browse", "memory.delete", "memory.flush", "memory.export", "memory.store",
       "models.list", "models.test",
       "tokens.list", "tokens.create", "tokens.revoke", "tokens.rotate",
@@ -238,6 +241,16 @@ describe("registerRpcMethods", () => {
       const call = calls.find(([m]: [string]) => m === name);
       expect(call, `expected ${name} to be registered`).toBeDefined();
       expect(call![1]).toBe("admin");
+    }
+  });
+
+  it("210-GAP MD-01: session.list/reset/compact are registered as rpc passthroughs (agent-reachable self reads/lifecycle)", () => {
+    registerRpcMethods(deps);
+    const calls = registerMethod.mock.calls;
+    for (const name of ["session.list", "session.reset", "session.compact"]) {
+      const call = calls.find(([m]: [string]) => m === name);
+      expect(call, `expected ${name} to be registered`).toBeDefined();
+      expect(call![1]).toBe("rpc");
     }
   });
 
@@ -253,13 +266,16 @@ describe("registerRpcMethods", () => {
     expect(call![1]).toBe("rpc");
   });
 
-  it("registers skills.upload/import/delete as admin passthroughs", () => {
+  it("210-GAP CR-01: skills.upload/import/delete are registered as rpc passthroughs (orch:skill surface)", () => {
+    // Re-scoped admin→rpc so the deny-by-origin chokepoint no longer denies an
+    // agent its own orch:skill grant. Admin gateway tokens carry rpc, so the
+    // web-UI skills manager (which calls these) is unaffected.
     registerRpcMethods(deps);
     const calls = registerMethod.mock.calls;
     for (const name of ["skills.upload", "skills.import", "skills.delete"]) {
       const call = calls.find(([m]: [string]) => m === name);
       expect(call, `expected ${name} to be registered`).toBeDefined();
-      expect(call![1]).toBe("admin");
+      expect(call![1]).toBe("rpc");
     }
   });
 
