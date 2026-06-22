@@ -300,6 +300,7 @@ behavior.
 | `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. |
 | `maxSelfSpawnRatePerMin` | `number` | `30` | Self-spawn rate limit per minute (distinct from the concurrency cap). |
 | `cronSelfMax` | `number` | `8` | Maximum agent-authored cron jobs. |
+| `lease.leaseMaxTtlMin` | `number` | `60` | Capability-lease renewal ceiling, in minutes. A jailed-surface lease renews on a shorter per-renew TTL but never past this maximum, so revoking a lease actually stops its renewal (no unbounded re-lease). Positive integer. |
 | `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
 | `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
 | `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |

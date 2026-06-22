@@ -104,7 +104,9 @@ agents:
 
 The per-surface toggles (`web`, `analyze`, `write`, `browse`) each map to the
 matching `orch:*` capability. The scalar guard rails (`aggregateBudgetUsd`,
-`maxConcurrentSelfAgents`, `maxSelfSpawnRatePerMin`, `cronSelfMax`) and the
+`maxConcurrentSelfAgents`, `maxSelfSpawnRatePerMin`, `cronSelfMax`), the
+`lease.leaseMaxTtlMin` renewal ceiling (in minutes -- the maximum a jailed-surface
+capability lease can renew up to, so revoke actually stops renewal), and the
 `message` block (`channels`, `maxPerHour`) are all individually overridable. See
 the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
