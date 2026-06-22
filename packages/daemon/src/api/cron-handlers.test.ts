@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCronHandlers } from "./cron-handlers.js";
+import { createCronHandlers as createCronHandlersRaw } from "./cron-handlers.js";
 import type { CronHandlerDeps } from "./cron-handlers.js";
+import type { RpcHandler } from "./types.js";
+import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+
+// CAP-03: the gated cron.add/update/remove/run handlers now require an injected
+// _capabilities (production supplies it via createAgentRpcCall). Wrap the bound
+// record so these body-tests reach the handler BODY, not the gate (which is
+// proven RED-first in the CAP-05 tests). Read-only cron methods pass through.
+function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
+  return withHeldCapabilities(createCronHandlersRaw(deps));
+}
 
 // ---------------------------------------------------------------------------
 // Mocks

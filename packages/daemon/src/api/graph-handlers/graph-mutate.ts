@@ -25,6 +25,7 @@ import {
   GraphDeleteContract,
   GraphDeleteRunContract,
   stripInternalFields,
+  requireCapability,
   systemNowMs,
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
@@ -172,6 +173,11 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
 
   return {
     [GraphDefineContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:graph is enforced here, reading the injected
+      // _capabilities from raw params BEFORE the strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
       // messages matching existing handler-test assertions —
       // "Missing required parameter: nodes" rather than Zod's JSON dump).
@@ -235,6 +241,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphExecuteContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       if (!deps.securityConfig.agentToAgent?.enabled) {
         throw new Error("Agent-to-agent messaging is disabled by policy.");
@@ -372,6 +381,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphCancelContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       if (!deps.securityConfig.agentToAgent?.enabled) {
         throw new Error("Agent-to-agent messaging is disabled by policy.");
@@ -405,6 +417,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     // -----------------------------------------------------------------
 
     [GraphSaveContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       if (!deps.namedGraphStore) {
         throw new Error("Named graph storage not available");
@@ -446,6 +461,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphDeleteContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       if (!deps.namedGraphStore) {
         throw new Error("Named graph storage not available");
@@ -471,6 +489,10 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphDeleteRunContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see graph.define).
+      // graph.deleteRun is a mutating graph op → orch:graph (HANDLER_CAPABILITY_MAP).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       const graphId = rawParams.graphId ?? rawParams.graph_id;
       if (!graphId || typeof graphId !== "string") {

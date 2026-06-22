@@ -3,9 +3,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createMessageHandlers, type MessageHandlerDeps } from "./message-handlers.js";
+import { createMessageHandlers as createMessageHandlersRaw, type MessageHandlerDeps } from "./message-handlers.js";
+import type { RpcHandler } from "./types.js";
+import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { ok } from "@comis/shared";
 import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
+
+// CAP-03: the gated message.send/reply/react/edit/delete/attach handlers now
+// require an injected _capabilities (production supplies it via
+// createAgentRpcCall). Wrap the bound record so these body-tests reach the
+// handler BODY, not the gate (proven RED-first in the CAP-05 tests).
+// message.fetch (read-only) passes through unchanged.
+function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
+  return withHeldCapabilities(createMessageHandlersRaw(deps));
+}
 
 // MessageHandlerDeps requires a DeliveryService. The fake delegates to
 // adapter.sendMessage so existing message.send / message.reply assertions on

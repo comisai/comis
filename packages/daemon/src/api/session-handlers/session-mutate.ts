@@ -17,6 +17,7 @@ import {
   SessionSpawnContract,
   SessionCompactContract,
   stripInternalFields,
+  requireCapability,
   computeReachableToolNames,
   tryGetContext,
 } from "@comis/core";
@@ -61,7 +62,13 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionSpawnContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod: agent-to-agent policy check FIRST.
+      // CAP-03/05 (v8 §3.7): the capability gate lives HERE because the agent
+      // loop reaches handlers without passing checkScope (the in-process
+      // bypass). Read the injected _capabilities from raw params BEFORE the
+      // strip; throws CapabilityDeniedError when orch:spawn is not held.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:spawn");
+
+      // Bespoke pre-Zod: agent-to-agent policy check.
       if (!deps.securityConfig.agentToAgent?.enabled) {
         throw new Error("Agent-to-agent messaging is disabled by policy.");
       }

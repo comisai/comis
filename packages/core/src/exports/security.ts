@@ -14,6 +14,9 @@ export type { AuditEvent, AuditKind, CreateAuditEventParams } from "../security/
 // Agent orchestration capabilities (Phase 210)
 export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError } from "../security/index.js";
 export type { AgentCapability } from "../security/index.js";
+// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
+export { HANDLER_CAPABILITY_MAP } from "../security/index.js";
+export type { HandlerCapabilityClassification, GatedMethodName } from "../security/index.js";
 export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.

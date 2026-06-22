@@ -32,6 +32,7 @@ import {
   CronRunContract,
   SchedulerWakeContract,
   stripInternalFields,
+  requireCapability,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -151,6 +152,11 @@ function normalizeCronAddParams(params: Record<string, unknown>): Record<string,
 export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
   return {
     [CronAddContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:cron is enforced here, reading the injected
+      // _capabilities from raw params BEFORE the strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
+
       // Normalize WEB shape (nested schedule + message) into flat shape
       // BEFORE the bespoke duplicate-name guard so the name reads
       // consistently. The legacy flat shape passes through unchanged.
@@ -283,6 +289,9 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronUpdateContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
+
       const userParams = stripInternalFields(rawParams);
       CronUpdateContract.request.parse(userParams);
 
@@ -328,6 +337,9 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronRemoveContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
+
       const userParams = stripInternalFields(rawParams);
       CronRemoveContract.request.parse(userParams);
 
@@ -377,6 +389,9 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
     },
 
     [CronRunContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see cron.add).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
+
       const userParams = stripInternalFields(rawParams);
       const params = CronRunContract.request.parse(userParams);
 

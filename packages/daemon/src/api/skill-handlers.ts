@@ -52,6 +52,7 @@ import {
   SkillsCreateContract,
   SkillsUpdateContract,
   stripInternalFields,
+  requireCapability,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -156,6 +157,11 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsUploadContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:skill is enforced here, reading the injected
+      // _capabilities from raw params BEFORE the strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
+
       // Resolve calling agent from RAW params (covers _agentId fallback)
       const callingAgentId = resolveCallingAgentId(rawParams);
 
@@ -314,6 +320,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsImportContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see skills.upload).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
+
       const callingAgentId = resolveCallingAgentId(rawParams);
 
       const userParams = stripInternalFields(rawParams);
@@ -466,6 +475,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsDeleteContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see skills.upload).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
+
       const callingAgentId = resolveCallingAgentId(rawParams);
 
       const userParams = stripInternalFields(rawParams);
@@ -552,6 +564,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsCreateContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see skills.upload).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
+
       const callingAgentId = resolveCallingAgentId(rawParams);
 
       const userParams = stripInternalFields(rawParams);
@@ -665,6 +680,9 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsUpdateContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see skills.upload).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
+
       const callingAgentId = resolveCallingAgentId(rawParams);
 
       const userParams = stripInternalFields(rawParams);
