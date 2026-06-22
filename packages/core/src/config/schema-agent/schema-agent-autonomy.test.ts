@@ -223,3 +223,57 @@ describe("degradeAutonomy (PROFILE-03 — honest legible degrade on a failed pre
     expect(max.m1Notice).toMatch(/M2|M3/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// LEASE-02 (Phase 211): the `autonomy.lease.leaseMaxTtlMin` renewal ceiling. A
+// nested `autonomy.lease.{ leaseMaxTtlMin }` sub-block (REQUIREMENTS.md:111 /
+// v8 §3.3) — the bounded positive-int (MINUTES) maximum a renewable lease can
+// live. The LeaseManager (211-01) clamps each renew to a `maxExpiresAt` derived
+// from it, so revoke actually STOPS renewal (no unbounded re-lease). Defaults to
+// 60 under every autonomy-bearing profile so `ResolvedAutonomy` stays total.
+//
+// These cases are RED until the field is threaded through the schema +
+// ProfileEntry + STANDARD_GUARDS + the resolver merge: `result.leaseMaxTtlMin`
+// is `undefined` (≠ 60) and the field is absent from the resolved type.
+// ---------------------------------------------------------------------------
+describe("resolveAutonomy (LEASE-02 — autonomy.lease.leaseMaxTtlMin renewal ceiling)", () => {
+  it("LEASE-02-S1: zero-config (→ standard) resolves leaseMaxTtlMin to the default 60 (a 1-hour ceiling)", () => {
+    const r = resolveAutonomy(undefined);
+    expect(r.leaseMaxTtlMin).toBe(60);
+  });
+
+  it("LEASE-02-S2: an explicit lease.leaseMaxTtlMin OVERRIDES the profile default (progressive disclosure)", () => {
+    const r = resolveAutonomy({ profile: "standard", lease: { leaseMaxTtlMin: 30 } });
+    expect(r.leaseMaxTtlMin).toBe(30);
+  });
+
+  it("LEASE-02-S3: every profile exposes a numeric leaseMaxTtlMin — the resolved type is TOTAL (assistant included)", () => {
+    // assistant mints no lease, but the field is harmless and keeps the resolved
+    // posture total (no `number | undefined` at the LeaseManager call site).
+    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+      const r = resolveAutonomy({ profile });
+      expect(typeof r.leaseMaxTtlMin, `${profile} must expose a numeric leaseMaxTtlMin`).toBe(
+        "number",
+      );
+      expect(r.leaseMaxTtlMin).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("AutonomyConfigSchema (LEASE-02 — the nested lease sub-block is positive-int guarded)", () => {
+  it("LEASE-02-S4: accepts a positive-int lease.leaseMaxTtlMin", () => {
+    expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 120 } }).success).toBe(true);
+  });
+
+  it("LEASE-02-S5: rejects leaseMaxTtlMin = 0 (must be a positive renewal ceiling)", () => {
+    expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 0 } }).success).toBe(false);
+  });
+
+  it("LEASE-02-S6: rejects a negative leaseMaxTtlMin", () => {
+    expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: -5 } }).success).toBe(false);
+  });
+
+  it("LEASE-02-S7: rejects a non-integer leaseMaxTtlMin (minutes are whole)", () => {
+    expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 1.5 } }).success).toBe(false);
+  });
+});
