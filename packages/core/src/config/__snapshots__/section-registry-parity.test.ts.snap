@@ -122,6 +122,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.autonomy.lease",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.lease.leaseMaxTtlMin",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
     "path": "agents.autonomy.maxConcurrentSelfAgents",
     "type": "integer"
   },
@@ -16099,6 +16109,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "enabled": {
           "type": "boolean"
         },
+        "lease": {
+          "additionalProperties": false,
+          "properties": {
+            "leaseMaxTtlMin": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "maxConcurrentSelfAgents": {
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
@@ -27307,6 +27328,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               },
               "enabled": {
                 "type": "boolean"
+              },
+              "lease": {
+                "additionalProperties": false,
+                "properties": {
+                  "leaseMaxTtlMin": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
               },
               "maxConcurrentSelfAgents": {
                 "exclusiveMinimum": 0,
