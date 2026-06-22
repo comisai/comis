@@ -67,7 +67,7 @@
     "eslint-plugin-security": "4.0.0",
     "globals": "17.6.0",
     "grammy": "1.43.0",
-    "hono": "4.12.23",
+    "hono": "4.12.25",
     "madge": "8.0.0",
     "node-llama-cpp": "3.18.1",
     "nodemailer": "8.0.10",

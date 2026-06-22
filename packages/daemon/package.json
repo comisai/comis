@@ -52,7 +52,7 @@
     "@google/genai": "1.52.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "better-sqlite3": "12.10.0",
-    "hono": "4.12.23",
+    "hono": "4.12.25",
     "openai": "6.39.1",
     "pino": "10.3.1",
     "pino-roll": "4.0.0",
