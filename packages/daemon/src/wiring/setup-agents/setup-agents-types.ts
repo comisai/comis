@@ -25,6 +25,7 @@ import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
 import type {
   AgentExecutor,
   ActiveRunRegistry,
+  AuthStorage,
   ProviderHealthMonitor,
   LastKnownModelTracker,
   createBudgetGuard,
@@ -300,5 +301,5 @@ export interface SingleAgentResult {
    * memory.ask dialectic OAuth resolver can call resolveProviderApiKey → authStorage.setRuntimeApiKey
    * (the runtime-override the dialectic's pi model reads). Always present (every runtime builds one).
    */
-  authStorage: import("@earendil-works/pi-coding-agent").AuthStorage;
+  authStorage: AuthStorage;
 }

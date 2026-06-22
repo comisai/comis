@@ -34,6 +34,7 @@ import {
   createMemoryRecall,
   resolveProviderApiKey,
   buildScoringAlphas,
+  type AuthStorage,
   type MemoryRecall,
   type DialecticParsed,
   type DialecticSeamDeps,
@@ -175,7 +176,7 @@ export interface DialecticBootSlice {
    *  `resolveProviderApiKey` calls `authStorage.setRuntimeApiKey(token)` so the dialectic's pi model
    *  picks up the OAuth bearer (the PROVEN main-agent path; passing the token as `apiKey` does NOT work
    *  for openai-codex — empirically verified live 2026-06-22). Threaded beside `oauthManagers`. */
-  authStorages?: Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>;
+  authStorages?: Map<string, AuthStorage>;
   container: {
     secretManager: { get: (name: string) => string | undefined };
     config: {

@@ -169,11 +169,10 @@ export async function setupSingleAgent(
   });
   agentLogger.debug({ agentId, allowPatterns: agentSecrets.allow }, "Per-agent ScopedSecretManager created");
 
-  // Per-agent auth + model registry (moved from shared to per-agent for credential isolation).
-  // Custom YAML providers under `providers.entries.*` are wired into both auth (runtime API
-  // key overrides) and the registry (so `find(provider, modelId)` succeeds) -- without this,
-  // pi-coding-agent silently falls back to whatever built-in provider has env-var auth (e.g.,
-  // GEMINI_API_KEY → google), bypassing the configured provider entirely.
+  // Per-agent auth + model registry (per-agent for credential isolation). Custom YAML providers
+  // under `providers.entries.*` are wired into both auth (runtime API key overrides) and the
+  // registry (so `find(provider, modelId)` succeeds) -- without this, pi-coding-agent silently
+  // falls back to a built-in provider with env-var auth (e.g. GEMINI_API_KEY → google).
   const customProviderEntries = container.config.providers?.entries ?? {};
   const piAuthStorage = createAuthStorageAdapter({
     secretManager: scopedManager,
@@ -388,15 +387,12 @@ export async function setupSingleAgent(
   // (resolvedDescriptions + the shared convertTools closure are created above,
   // before the boot-window honesty block — WR-03.)
 
-  // Tool pipeline for PiExecutor.
-  // Platform tools (memory, cron, messaging, sessions) come per-request via
-  // executor.execute(msg, sessionKey, tools) -- assembled by setupTools which
-  // runs after setupAgents. The convertTools callback converts per-request
-  // AgentTool[] to ToolDefinition[] inside PiExecutor without agent->skills dep.
-  // customTools here is empty -- per-request tools provide the full pipeline.
-  // No wrapWithAudit: PiEventBridge already emits tool:executed for ALL tools.
-  // tools: [] -- all tools come exclusively through customTools where the full
-  // Comis security pipeline (safePath + tool policy + audit) is enforced.
+  // Tool pipeline for PiExecutor. Platform tools (memory, cron, messaging, sessions) come
+  // per-request via executor.execute(msg, sessionKey, tools) -- assembled by setupTools (runs
+  // after setupAgents). The convertTools callback converts per-request AgentTool[] to
+  // ToolDefinition[] inside PiExecutor without an agent->skills dep. customTools here is empty;
+  // per-request tools provide the full pipeline, where the Comis security pipeline (safePath +
+  // tool policy + audit) is enforced. No wrapWithAudit: PiEventBridge emits tool:executed for all.
 
   // Model failover: convert config FallbackModel[] to "provider:modelId" strings
   // and create auth rotation adapter for multi-key providers.

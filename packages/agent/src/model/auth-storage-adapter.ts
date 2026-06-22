@@ -11,6 +11,11 @@
 import { AuthStorage, InMemoryAuthStorageBackend } from "@earendil-works/pi-coding-agent";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL, type SecretManager } from "@comis/core";
 
+/** Re-export pi-coding-agent's `AuthStorage` type so daemon consumers (which already
+ *  depend on @comis/agent) can reference it without declaring @earendil-works/pi-coding-agent
+ *  themselves — it is the return type of `createAuthStorageAdapter` below. */
+export type { AuthStorage } from "@earendil-works/pi-coding-agent";
+
 /** Default provider-to-env-var mapping for known LLM providers. */
 export const DEFAULT_PROVIDER_KEYS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",

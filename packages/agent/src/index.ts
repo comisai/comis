@@ -481,7 +481,7 @@ export type { PiEventBridgeDeps, PiEventBridgeResult } from "./bridge/pi-event-b
 
 // Auth storage adapter (SecretManager to pi-coding-agent AuthStorage)
 export { createAuthStorageAdapter, DEFAULT_PROVIDER_KEYS } from "./model/auth-storage-adapter.js";
-export type { AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js";
+export type { AuthStorage, AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js";
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
 export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel, normalizeOpenAICompatBaseUrl } from "./model/model-registry-adapter.js";

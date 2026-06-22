@@ -36,6 +36,7 @@ import {
   setToolNormalizationLogger,
   type AgentExecutor,
   type ActiveRunRegistry,
+  type AuthStorage,
   type ProviderHealthMonitor,
 } from "@comis/agent";
 // Symbols imported directly from @comis/core — the daemon composition
@@ -99,12 +100,9 @@ export interface AgentsResult {
   skillWatcherHandles: Map<string, SkillWatcherHandle>;
   /** Per-agent skill registries for skills.list RPC method. */
   skillRegistries: Map<string, SkillRegistry>;
-  /**
-   * Per-agent ToolCapabilityPort instances. Consumed by setupTools via the
-   * getCapabilityPortForAgent closure on ToolsDeps; mutated by hot-add /
-   * hot-remove in daemon.ts to keep the parallel map consistent with
-   * skillRegistries.
-   */
+  /** Per-agent ToolCapabilityPort instances. Consumed by setupTools via the
+   * getCapabilityPortForAgent closure on ToolsDeps; mutated by hot-add / hot-remove in daemon.ts
+   * to keep the parallel map consistent with skillRegistries. */
   toolCapabilityPorts: Map<string, ToolCapabilityPort>;
   /** Periodic lock cleanup timer (cleared on shutdown). */
   lockCleanupTimer: import("@comis/core").TimerHandle;
@@ -112,33 +110,23 @@ export interface AgentsResult {
   singleAgentDeps: SingleAgentDeps;
   /** Global provider health monitor for daemon-level health metrics */
   providerHealth: ProviderHealthMonitor;
-  /**
-   * Daemon-level OAuthCredentialStore handle. Threaded into
-   * RpcDispatchDeps so agents.update can validate oauthProfiles patches
-   * via has().
-   */
+  /** Daemon-level OAuthCredentialStore handle. Threaded into RpcDispatchDeps so agents.update
+   * can validate oauthProfiles patches via has(). */
   oauthCredentialStore: OAuthCredentialStorePort;
-  /** Per-agent OAuthTokenManager instances (184) — the SAME managers the
-   * executors use (no 2nd instance). daemon.ts threads the DEFAULT agent's into
-   * buildImageGenBundle → the Codex image adapter (CDX-01). Only OAuth-configured
-   * agents appear (setupSingleAgent's `oauth` is undefined otherwise). */
+  /** Per-agent OAuthTokenManager instances (184) — the SAME managers the executors use (no 2nd
+   * instance). daemon.ts threads the DEFAULT agent's into buildImageGenBundle → the Codex image
+   * adapter (CDX-01). Only OAuth-configured agents appear (setupSingleAgent's `oauth` is undefined). */
   oauthManagers: Map<string, OAuthTokenManager>;
-  /** FLAG-3: per-agent pi AuthStorage (piAuthStorage) → the memory.ask dialectic OAuth credential
-   *  resolver's runtime-override target. Mirrors oauthManagers (every agent has one). */
-  authStorages: Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>;
-  /**
-   * Session-scoped trajectory recorder registry. Daemon shutdown MUST
-   * call `closeAll()` to flush every open per-session recorder.
-   */
+  /** FLAG-3: per-agent pi AuthStorage (piAuthStorage) → the memory.ask dialectic OAuth resolver's
+   *  runtime-override target. Mirrors oauthManagers (every agent has one). */
+  authStorages: Map<string, AuthStorage>;
+  /** Session-scoped trajectory recorder registry. Daemon shutdown MUST call `closeAll()` to
+   * flush every open per-session recorder. */
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
-  /**
-   * Per-agent ExecutionPlanHolder reference (typed as the read-only port).
-   * Surfaced so daemon.ts can thread the DEFAULT agent's
-   * holder into ChannelsDeps.executionPlanPort. Same reference flows into
-   * PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort
-   * (Pitfall 1: a parallel holder constructed at the chat path would always
-   * read empty since SEP publishes into THIS one).
-   */
+  /** Per-agent ExecutionPlanHolder reference (typed as the read-only port). Surfaced so daemon.ts
+   * can thread the DEFAULT agent's holder into ChannelsDeps.executionPlanPort. Same reference flows
+   * into PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (Pitfall 1: a parallel
+   * holder constructed at the chat path would always read empty since SEP publishes into THIS one). */
   executionPlanPorts: Map<string, import("@comis/core").ExecutionPlanPort>;
 }
 
@@ -352,7 +340,7 @@ export async function setupAgents(deps: {
   // Per-agent OAuthTokenManager map (184) — see AgentsResult.oauthManagers.
   const oauthManagers = new Map<string, OAuthTokenManager>();
   // FLAG-3: per-agent pi AuthStorage map — see AgentsResult.authStorages.
-  const authStorages = new Map<string, import("@earendil-works/pi-coding-agent").AuthStorage>();
+  const authStorages = new Map<string, AuthStorage>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
