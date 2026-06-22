@@ -9,9 +9,9 @@
  * test is insufficient — the load-bearing assertion is a SEEDED, deterministic
  * fuzz of >=1000 iterations over random (parent, requested) subsets of the closed
  * `AGENT_CAPABILITIES` universe, holding the subset-of-parent invariant on EVERY
- * iteration. `fast-check` is NOT a dependency (RESEARCH Pitfall 5); the PRNG is a
- * tiny inline mulberry32 with a FIXED seed so any failure reproduces exactly
- * (matching the codebase's existing loop-based fuzz convention).
+ * iteration. No property-testing library (it is not a dependency — RESEARCH
+ * Pitfall 5); the PRNG is a tiny inline mulberry32 with a FIXED seed so any
+ * failure reproduces exactly (matching the codebase's existing loop-fuzz convention).
  *
  * These cases fail on the pre-patch tree: `attenuateCaps` is not yet exported
  * (TS2305 on the import) — RED proof.
@@ -21,7 +21,7 @@
 import { describe, it, expect } from "vitest";
 import { AGENT_CAPABILITIES, attenuateCaps, type AgentCapability } from "./capability.js";
 
-// ── A deterministic, seeded PRNG (mulberry32) — NO Math.random, NO fast-check ──
+// ── A deterministic, seeded PRNG (mulberry32) — NO Math.random, no fuzz library ──
 //
 // 32-bit state, ~2^32 period, uniform in [0,1). Fixed seed below so a failing
 // iteration is reproducible from the test commit alone (AGENTS §2.5 determinism).

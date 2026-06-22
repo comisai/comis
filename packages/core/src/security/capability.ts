@@ -78,6 +78,26 @@ export function checkCapability(
 }
 
 /**
+ * Mint attenuation — the single trust boundary against capability broadening
+ * down a delegation tree (LEASE-04, v8 §4.2). Pure set-intersection: the result
+ * is exactly `parent ∩ requested`, so a child lease can NEVER hold a cap the
+ * parent does not, and never a cap that was not requested. This is the only
+ * broadening-prevention an opaque lease has, which is why it is property/fuzz-
+ * tested over 1000+ random (parent, requested) pairs rather than by example.
+ *
+ * Same discipline as {@link checkCapability}: a plain membership filter with NO
+ * wildcard branch (CAP-02) — no member implies admin/rpc/all-authority. The
+ * requested order is preserved on the surviving subset.
+ */
+export function attenuateCaps(
+  parent: readonly AgentCapability[],
+  requested: readonly AgentCapability[],
+): AgentCapability[] {
+  const parentSet = new Set(parent);
+  return requested.filter((c) => parentSet.has(c)); // intersection; never broadens
+}
+
+/**
  * @allow-throw: thrown at the daemon RPC handler boundary by
  * {@link requireCapability}; `rpc-dispatch.ts` converts it to a JSON-RPC error
  * response (mirrors `RequiredToolsUnreachableError`).
