@@ -30,7 +30,7 @@ import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { SkillSynthesisPort, SynthesisInput, CandidateSkill } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { SKILL_SYNTHESIS_PROMPT, parseSynthesisResult } from "./skill-synthesis-prompt.js";
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ export function createLlmSkillSynthesisAdapter(deps: LlmSkillSynthesisAdapterDep
         },
         {
           apiKey,
-          temperature: SYNTHESIS_TEMPERATURE,
+          ...temperatureOption(model, SYNTHESIS_TEMPERATURE),
           maxTokens: SYNTHESIS_MAX_TOKENS,
           signal: controller.signal,
         },

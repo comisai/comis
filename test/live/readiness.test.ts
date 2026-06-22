@@ -60,6 +60,33 @@ describe("buildReadinessRecord — keyless sandbox build (honest)", () => {
   });
 });
 
+describe("buildReadinessRecord — Cat K (Channels) reports an honest Stage-B-certified verdict (DOC-01)", () => {
+  it("Cat K carries the Stage-B-certified reason — the HONEST middle, distinct from the generic PARTIAL reason", () => {
+    const { categories, reasons } = buildReadinessRecord({ isLive: false });
+    // The channel surface is Stage-B certified (the v2.28 milestone): Cat K's REASON
+    // says so explicitly. RED-first (Pitfall 2): before the Cat-K wiring, Cat K gets
+    // the generic PARTIAL reason and this `Stage-B certified` match FAILS — flip to
+    // green by assigning CHANNELS_STAGE_B_REASON. The reason names the deterministic
+    // surfaces that are green and the operator-gated Stage-C legs.
+    expect(reasons["K"], "Cat K reason must certify the channel surface Stage-B").toMatch(/Stage-B certified/);
+    expect(reasons["K"]).toMatch(/group\/forum|fallback|classification|reconfigure/);
+    expect(reasons["K"], "Stage-C must stay operator-gated, not claimed").toMatch(/Stage-C|operator-gated|COMIS_LIVE/);
+    // It is a DISTINCT reason — NOT the generic "Stage-C deferred to an operator live
+    // run" partial reason every other deferred category carries.
+    expect(reasons["K"]).not.toBe(
+      "deterministic Stage-A/B certified green; real-provider Stage-C deferred to an operator live run (pnpm test:live all with COMIS_LIVE + keys on Linux, §20)",
+    );
+  });
+
+  it("Cat K's VERDICT stays a non-CERTIFIED honest middle (the !isLive honesty gate is intact)", () => {
+    const { categories } = buildReadinessRecord({ isLive: false });
+    // Stage-B certified is carried by the REASON; the VERDICT must NOT be a faked
+    // CERTIFIED in the keyless build (green-by-omission is forbidden — T-208-21).
+    expect(categories["K"], "Cat K must not be faked CERTIFIED in the keyless build").not.toBe("CERTIFIED");
+    expect(categories["K"]).toBe("PARTIAL");
+  });
+});
+
 describe("writeReadinessReport — writes an honest, secret-free READINESS.md", () => {
   it("writes every category + per-story verdicts; no CERTIFIED; secret-free", () => {
     const dir = mkdtempSync(join(tmpdir(), "readiness-test-"));

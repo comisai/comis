@@ -65,7 +65,7 @@ export async function setupDeliveryQueue(deps: {
    */
   recordOutboundMessage?: (
     messageId: string,
-    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
 }): Promise<DeliveryQueueResult> {
   const { db, config, eventBus, logger, channelAdapters, recordOutboundMessage } = deps;
@@ -209,7 +209,7 @@ export async function drainDeliveryQueue(deps: {
    */
   recordOutboundMessage?: (
     messageId: string,
-    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string },
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
 }): Promise<{ hadEntries: boolean }> {
   const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts, recordOutboundMessage } = deps;
@@ -284,11 +284,19 @@ export async function drainDeliveryQueue(deps: {
       // learning-outcome is disabled for all agents → zero extra work (byte-identity).
       const recordAgentId = typeof options.agentId === "string" ? options.agentId : undefined;
       if (entry.traceId !== null && recordAgentId !== undefined && recordOutboundMessage !== undefined) {
+        // FLAG-2: carry the conversation participant (the inbound sender) persisted
+        // into optionsJson at enqueue (delivery-service.ts) so a reaction resolved
+        // via this drain path is participant-aware — an unmapped group bystander
+        // resolves to "external" (inert) and cannot spoof reaction-learning. Absent
+        // on legacy/pre-threading rows → undefined → the trust resolution fails safe
+        // to the prior defaultTrustLevel-for-unmapped behavior.
+        const recordParticipantId = typeof options.participantId === "string" ? options.participantId : undefined;
         recordOutboundMessage(sendResult.value, {
           traceId: entry.traceId,
           tenantId: entry.tenantId,
           agentId: recordAgentId,
           sessionId: entry.traceId, // session identity falls back to the trajectory id (scope-consistent)
+          participantId: recordParticipantId,
         });
       }
 

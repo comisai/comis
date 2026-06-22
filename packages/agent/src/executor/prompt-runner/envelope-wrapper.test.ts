@@ -37,12 +37,14 @@ const sourcePath = resolve(here, "envelope-wrapper.ts");
 const source = readFileSync(sourcePath, "utf-8");
 
 describe("envelope-wrapper.ts — capability-index threading", () => {
-  it("dynamic preamble uses array-concat [dynamicPreamble, capabilityIndexContext, deferredContext].filter(Boolean)", () => {
+  it("dynamic preamble uses array-concat [dynamicPreamble, keptCapabilityIndex, keptDeferred].filter(Boolean)", () => {
     // Source-grep: structural lock on the array-concat shape. Behavioral
     // verification of the rendered output lives in the renderer unit test
     // (capability-index-context.test.ts) and integration tests.
+    // ISSUE #2: capability-index/deferred flow through the tight-window drop first
+    // (kept* aliases); dynamicPreamble stays the first element (never dropped).
     expect(source).toMatch(
-      /\[\s*dynamicPreamble\s*,\s*capabilityIndexContext\s*,\s*deferredContext\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
+      /\[\s*dynamicPreamble\s*,\s*keptCapabilityIndex\s*,\s*keptDeferred\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
     );
   });
 
@@ -472,6 +474,145 @@ describe("S7: OutputGuard canary oracle — image-borne instruction caught", () 
 // ---------------------------------------------------------------------------
 // TOK-01: script-aware preamble token estimate (179-06)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ISSUE #2 (2026-06-22): drop the heavy preamble (capability-index +
+// deferred-tools) when the protected fresh tail (preamble + current message)
+// can't fit a tight window. Live turn-14: a ~1744-tok message + an 888-tok
+// preamble exhausted nano 8192 (S=5210); WITHOUT the preamble it fits. The
+// capability-index/deferred-tools context is non-essential for answering, so
+// it is dropped FIRST (keeping the tiny dynamicPreamble date/metadata) rather
+// than exhausting. Uses the canonical S (getSystemTokensEstimate) to match the
+// pre-flight's residual, so the decision can't drift.
+// ---------------------------------------------------------------------------
+
+/** Build RunPromptParams for the ISSUE #2 tight-window preamble-drop tests. */
+function makeTightWindowParams(opts: {
+  contextWindow: number;
+  systemTokens: number;
+  /** capability-index text (heavy, droppable). */
+  capabilityIndexText: string;
+  /** deferred-tools context (heavy, droppable). */
+  deferredContext: string | undefined;
+  /** the tiny date/metadata preamble (kept). */
+  dynamicPreamble: string | undefined;
+  msgText: string;
+}): RunPromptParams {
+  const modelProfile: ModelProfile = {
+    contextWindow: opts.contextWindow,
+    maxOutputTokens: 4_096,
+    capabilityClass: "nano",
+    scaffoldLevel: "max",
+    securityLevel: "locked",
+    supportsVision: false,
+    supportsTools: true,
+    supportsPromptCache: false,
+    supportsServerToolSearch: false,
+    supportsStructuredOutput: false,
+    reasoningStyle: "none",
+  };
+  return {
+    msg: { text: opts.msgText, metadata: {} } as RunPromptParams["msg"],
+    session: {} as RunPromptParams["session"],
+    config: {} as RunPromptParams["config"],
+    sessionKey: "agent:discord:chan" as unknown as RunPromptParams["sessionKey"],
+    formattedKey: "agent:discord:chan",
+    agentId: "agent",
+    result: {} as RunPromptParams["result"],
+    executionOverrides: undefined,
+    executionStartMs: 0,
+    effectiveTimeout: { promptTimeoutMs: 30000, retryPromptTimeoutMs: 30000 },
+    executionId: "exec-tight",
+    bridge: { getResult: () => ({}) } as RunPromptParams["bridge"],
+    dynamicPreamble: opts.dynamicPreamble,
+    deferredContext: opts.deferredContext,
+    capabilityIndexResult: {
+      text: opts.capabilityIndexText,
+      capabilityIndexTokens: 0, clusterCount: 1,
+      activeToolCount: 0, deferredToolCount: 0, promptSkillCount: 0,
+    },
+    inlineMemory: undefined,
+    systemPrompt: undefined,
+    mergedCustomTools: [],
+    cmdResult: { hasCommandDirective: false },
+    sepEnabled: true,
+    executionPlanRef: { current: undefined },
+    _directives: undefined,
+    _prevTimestamp: undefined,
+    resolvedModel: undefined,
+    modelProfile,
+    deps: {
+      eventBus: { emit: vi.fn() } as unknown as RunPromptParams["deps"]["eventBus"],
+      logger: makeLogger() as unknown as RunPromptParams["deps"]["logger"],
+      budgetGuard: { getSnapshot: () => ({ perExecution: 0 }), checkBudget: () => ({ ok: true }) } as unknown as RunPromptParams["deps"]["budgetGuard"],
+      costTracker: {} as RunPromptParams["deps"]["costTracker"],
+      modelRegistry: {} as RunPromptParams["deps"]["modelRegistry"],
+      clock: { nowMs: () => 0, nowMonotonicMs: () => 0 } as unknown as RunPromptParams["deps"]["clock"],
+      timers: {} as RunPromptParams["deps"]["timers"],
+      getSystemTokensEstimate: () => opts.systemTokens,
+    } as unknown as RunPromptParams["deps"],
+    onResetTimer: vi.fn(),
+  };
+}
+
+describe("ISSUE #2: tight-window preamble drop", () => {
+  // ~888-tok capability-index + deferred context, ~1744-tok message (the live turn-14 shape).
+  const HEAVY_CAPABILITY = "capability cluster: tool entry description ".repeat(60); // ~heavy
+  const HEAVY_DEFERRED = "<deferred-tools>\n" + "deferred_tool_name — does a thing; ".repeat(60) + "\n</deferred-tools>";
+  const DATE_PREAMBLE = "Current date: 2026-06-22. Channel: discord.";
+  const BIG_MESSAGE = "Please analyze this in detail: " + "word ".repeat(1400); // ~1744 tok
+
+  it("drops the capability-index + deferred-tools context on a nano 8192 window where preamble + message would exhaust", () => {
+    const params = makeTightWindowParams({
+      contextWindow: 8192,
+      systemTokens: 5210,
+      capabilityIndexText: HEAVY_CAPABILITY,
+      deferredContext: HEAVY_DEFERRED,
+      dynamicPreamble: DATE_PREAMBLE,
+      msgText: BIG_MESSAGE,
+    });
+    const result = wrapEnvelope(params);
+    // The heavy, non-essential context is dropped so the message fits.
+    expect(result.messageText).not.toContain("capability cluster");
+    expect(result.messageText).not.toContain("deferred_tool_name");
+    // The user's actual question survives verbatim.
+    expect(result.messageText).toContain("Please analyze this in detail");
+    // The factored token estimate of the composed message now fits the residual
+    // (window − S − floorHeadroom = 8192 − 5210 − 768 = 2214).
+    const composedTokens = Math.ceil(
+      result.messageText.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(result.messageText)),
+    );
+    expect(composedTokens).toBeLessThanOrEqual(2214);
+  });
+
+  it("KEEPS the full preamble on a wide window — the drop is a no-op when everything fits", () => {
+    const params = makeTightWindowParams({
+      contextWindow: 200_000,
+      systemTokens: 5210,
+      capabilityIndexText: HEAVY_CAPABILITY,
+      deferredContext: HEAVY_DEFERRED,
+      dynamicPreamble: DATE_PREAMBLE,
+      msgText: BIG_MESSAGE,
+    });
+    const result = wrapEnvelope(params);
+    // Plenty of room → the preamble rides as before (byte-identical composition).
+    expect(result.messageText).toContain("capability cluster");
+    expect(result.messageText).toContain("deferred_tool_name");
+  });
+
+  it("KEEPS the preamble when the message alone is small enough that preamble + message fits", () => {
+    const params = makeTightWindowParams({
+      contextWindow: 8192,
+      systemTokens: 5210,
+      capabilityIndexText: HEAVY_CAPABILITY,
+      deferredContext: HEAVY_DEFERRED,
+      dynamicPreamble: DATE_PREAMBLE,
+      msgText: "What is the capital of France?", // tiny → preamble fits alongside it
+    });
+    const result = wrapEnvelope(params);
+    expect(result.messageText).toContain("capability cluster");
+  });
+});
 
 describe("TOK-01: emitPreambleDebug script-aware token estimate", () => {
   it("reports fullPreambleTokens at or above the factored bound for a Hebrew dynamic preamble", () => {

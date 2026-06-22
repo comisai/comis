@@ -111,6 +111,15 @@ export interface RunPromptParams {
     clock: ClockPort;
     /** Timer scheduling. */
     timers: TimerPort;
+    /**
+     * ISSUE #2: the canonical system-tokens (system prompt + tools) estimate the
+     * pre-flight throws on (cachedSystemTokensEstimate). Lets wrapEnvelope size the
+     * tight-window residual (window − S − floorHeadroom) and drop the heavy
+     * tool-discovery preamble before it overflows — using the SAME S so the decision
+     * cannot drift from the assembler. Absent ⇒ the drop is skipped (no S → can't size
+     * the residual → never drop, byte-identical to pre-ISSUE#2).
+     */
+    getSystemTokensEstimate?: () => number;
   };
   // Callbacks
   onResetTimer: (fn: (() => void) | undefined) => void;

@@ -5,9 +5,18 @@
  *
  * This test validates the FND infrastructure itself:
  *   - daemon boots from a clean temp data dir
- *   - health RPC responds
+ *   - a liveness RPC (`system.ping`) responds over the gateway transport
  *   - log oracle passes (no unexpected ERRORs)
  *   - persistence oracle passes (SQLite integrity on fresh data dir)
+ *
+ * Transport note (205-07): `rpcRequest` drives the gateway over WebSocket
+ * (`/ws?token=`), the SAME transport the production `comis` CLI uses — the
+ * generic JSON-RPC dispatch has no `POST /rpc` route. The liveness check calls
+ * `system.ping` (a REAL registered dispatch method → `{pong:true}`); the prior
+ * bare `"health"` was NOT a registered method (it is an HTTP route, not a WS
+ * dispatch key — it returns `-32601` over WS), so that assertion was latent-
+ * broken and only masked because this whole file is COMIS_LIVE-gated (it never
+ * ran in CI). Fixed to a real method as part of the AUTO-01 transport repair.
  *
  * costTier: "$0" — no real LLM or provider calls are made.
  * Uses the in-process daemon harness with an isolated temp data dir (T-134-21).
@@ -89,14 +98,18 @@ describe.skipIf(!isLive)("Live — smoke (FND rig self-validation)", () => {
     await runLogOracle(logLines, { expectedErrors: [] });
   });
 
-  it("returns a truthy response when daemon boots and health RPC is called", async () => {
-    const health = await rpcRequest(
+  it("a liveness RPC (system.ping) responds over the gateway WS transport when the daemon boots", async () => {
+    // `system.ping` is a REAL registered dispatch method (→ `{pong:true,ts}`).
+    // rpcRequest routes over WS (205-07); the old bare `"health"` was not a WS
+    // method (it is an HTTP route → `-32601` over WS) — see the module note.
+    const ping = (await rpcRequest(
       handle.gatewayUrl,
-      "health",
+      "system.ping",
       {},
       handle.authToken,
-    );
-    expect(health).toBeTruthy();
+    )) as { pong?: boolean };
+    expect(ping).toBeTruthy();
+    expect(ping.pong).toBe(true);
   });
 
   it("persistence oracle passes on a fresh data dir", async () => {

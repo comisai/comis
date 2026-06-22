@@ -521,25 +521,23 @@ export interface BootContext {
   toolCapabilityPorts?: Awaited<ReturnType<typeof setupAgents>>["toolCapabilityPorts"];
   /** Session-scoped trajectory recorder registry. Drained on shutdown. */
   trajectoryRegistry?: Awaited<ReturnType<typeof setupAgents>>["trajectoryRegistry"];
-  /** Per-agent ExecutionPlanHolder reference map (typed as the read-only port).
-   * Surfaces the per-agent holder so the daemon can thread the DEFAULT
-   * agent's reference into ChannelsDeps.executionPlanPort. Same object the
-   * createAcpWiring path already shares (the single-shared-holder invariant). */
+  /** Per-agent ExecutionPlanHolder reference map (typed as the read-only port). Surfaces the
+   * per-agent holder so the daemon can thread the DEFAULT agent's reference into
+   * ChannelsDeps.executionPlanPort — the SAME object createAcpWiring shares (single-shared-holder). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
-  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is
-   * threaded into buildImageGenBundle → the Codex image adapter so the image
-   * path resolves its OAuth bearer (CDX-01/CRED-01). Populated by bootAgents'
-   * setupAgents Object.assign; read by bootChannels' image bundle. */
+  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is threaded into
+   * buildImageGenBundle → the Codex image adapter so the image path resolves its OAuth bearer
+   * (CDX-01/CRED-01). Populated by bootAgents' setupAgents Object.assign; read by bootChannels. */
   oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
+  /** FLAG-3: per-agent pi AuthStorage map — assigned alongside oauthManagers (above); the
+   * memory.ask dialectic OAuth resolver's runtime-override target. */
+  authStorages?: Awaited<ReturnType<typeof setupAgents>>["authStorages"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
-  /**
-   * The ONE mode-selected MCP OAuth token store (selectMcpTokenStore),
-   * constructed at the composition root in bootAgents and threaded as the SAME
-   * instance into both consumers: setupMcp's manager wiring (consumed at
-   * construction) AND the login/handler path (buildRpcDispatchDeps reads this to
-   * build the createTokenStore pass-through). Undefined in env mode (no writable
-   * MCP OAuth persistence). Kills the encrypted-mode split-brain.
-   */
+  /** The ONE mode-selected MCP OAuth token store (selectMcpTokenStore), constructed at the
+   * composition root in bootAgents and threaded as the SAME instance into both consumers:
+   * setupMcp's manager wiring (consumed at construction) AND the login/handler path
+   * (buildRpcDispatchDeps reads it for the createTokenStore pass-through). Undefined in env mode
+   * (no writable MCP OAuth persistence). Kills the encrypted-mode split-brain. */
   mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
   /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured
    *  comparison per provider, populated in setup-agents beside the per-agent

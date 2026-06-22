@@ -377,6 +377,29 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
+  /**
+   * REACT-04 / WR-01 (Verified Learning, Phase 206-05): a minted agent-reply
+   * messageId was bound to its trajectory scope on the PRIMARY inbound-reply
+   * (direct-ack) path — the positive proof that the reaction->trajectory
+   * binding fired. Emitted right after `recordOutboundMessage` in the
+   * fail-closed branch (a successful ack with a non-null traceId AND agentId),
+   * so a later reaction map-miss is one-call diagnosable: a `delivery:reply_bound`
+   * for the messageId means the bind fired (a subsequent miss is an eviction,
+   * not a never-bound), and its absence means the bind never fired. Shares the
+   * `messageId` with the `delivery:acked` event emitted on the same chunk, so
+   * the attribution is reconstructable from the event trail. COUNTS/IDS/closed-
+   * scalars ONLY — never a message body or a secret (§2.7 / SEC-01); the
+   * `agentId` is the REAL agent partition (never the tenantId).
+   */
+  "delivery:reply_bound": {
+    messageId: string;
+    channelId: string;
+    channelType: string;
+    traceId: string;
+    agentId: string;
+    timestamp: number;
+  };
+
   /** Queue entry nacked for transient failure -- scheduled for retry. */
   "delivery:nacked": {
     entryId: string;

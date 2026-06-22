@@ -439,6 +439,47 @@ describe("executeAndDeliver", () => {
       expect(callArgs[1]).toBe("Agent response text"); // text
     });
 
+    it("REACT-04 (206-04): the delivery stage runs under a request context carrying the resolved agentId (so deliverToChannel can bind the reply → trajectory)", async () => {
+      // The delivery happens AFTER executeLlm returns (outside the executor's
+      // runWithContext) and would otherwise inherit the channel-ingress ALS,
+      // which has NO agentId (context.ts:38). deliverToChannel reads ctx.agentId
+      // to persist the REAL agent into the queue optionsJson AND bind the minted
+      // reply id → trajectory (the reaction-attribution keystone). This test
+      // captures the ctx.agentId visible INSIDE deliverToChannel — RED on
+      // pre-patch (undefined, because the delivery ran in the ingress context).
+      let agentIdInDelivery: string | undefined = "SENTINEL_NOT_SET";
+      const capturingDelivery: DeliveryService = {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
+        deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
+          agentIdInDelivery = tryGetContext()?.agentId;
+          const result = await adapter.sendMessage(channelId, text, undefined);
+          return ok({
+            ok: result.ok,
+            totalChunks: 1,
+            deliveredChunks: result.ok ? 1 : 0,
+            failedChunks: result.ok ? 0 : 1,
+            chunks: [{ ok: result.ok, messageId: result.ok ? result.value : undefined, error: result.ok ? undefined : result.error, charCount: text.length, retried: false }],
+            totalChars: text.length,
+          });
+        }),
+        drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+      };
+      const deps = makeDeps({ deliveryService: capturingDelivery });
+
+      await executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), makeExecutor(),
+        makeSessionKey(), "mldag", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(capturingDelivery.deliverToChannel).toHaveBeenCalled();
+      // The delivery stage must see the resolved agentId on the ALS — NOT
+      // undefined (which fail-closes both reaction-binding paths).
+      expect(
+        agentIdInDelivery,
+        "deliverToChannel must run under a context carrying the resolved agentId (else the reply→trajectory binding fail-closes and reactions never attribute)",
+      ).toBe("mldag");
+    });
+
     it("emits diagnostic:message_processed event after execution", async () => {
       const eventBus = makeEventBus();
       const deps = makeDeps({ eventBus });

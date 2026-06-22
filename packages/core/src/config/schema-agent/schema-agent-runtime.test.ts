@@ -175,3 +175,32 @@ describe("DET-02 — agents.<id>.language config key", () => {
     expect(bad.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-provider stress enabler (2026-06-22): agents.<id>.capabilityClass —
+// an operator pin for the capability class. Without it only codex models are
+// naturally nano-classed, so the small-window context-fit fixes can't be
+// exercised against OpenAI/Anthropic/Google (all resolve to "frontier" with a
+// large window). When set it threads into resolveModelProfile's
+// capabilityClassOverride (the reduced prompt + nano deferral + effectiveContextCap
+// then apply on ANY provider). Mirrors the provider-level enum
+// (provider-capabilities.ts:68). AGENTS.md §7 config-test triplet:
+// default (absent) / valid / invalid. RED on the pre-patch schema (no field).
+// ---------------------------------------------------------------------------
+describe("per-agent capabilityClass pin", () => {
+  it("is optional — absent on a bare config (auto-detect heuristic, byte-identical default)", () => {
+    const cfg = PerAgentConfigSchema.parse({});
+    expect(cfg.capabilityClass).toBeUndefined();
+  });
+
+  it("accepts each valid class (nano/small/mid/frontier)", () => {
+    for (const cls of ["nano", "small", "mid", "frontier"] as const) {
+      expect(PerAgentConfigSchema.parse({ capabilityClass: cls }).capabilityClass).toBe(cls);
+    }
+  });
+
+  it("rejects an invalid class", () => {
+    expect(PerAgentConfigSchema.safeParse({ capabilityClass: "tiny" }).success).toBe(false);
+    expect(PerAgentConfigSchema.safeParse({ capabilityClass: 1 }).success).toBe(false);
+  });
+});

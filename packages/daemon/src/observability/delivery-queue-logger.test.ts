@@ -74,7 +74,7 @@ describe("setupDeliveryQueueLogging", () => {
     setupDeliveryQueueLogging({ eventBus: eventBus as any, logger });
   });
 
-  it("subscribes to all 7 delivery queue events", () => {
+  it("subscribes to all 8 delivery queue / reply-binding events", () => {
     const events = eventBus.registeredEvents();
     expect(events).toContain("delivery:enqueued");
     expect(events).toContain("delivery:acked");
@@ -83,7 +83,8 @@ describe("setupDeliveryQueueLogging", () => {
     expect(events).toContain("delivery:queue_drained");
     expect(events).toContain("delivery:hook_cancelled");
     expect(events).toContain("delivery:aborted");
-    expect(events).toHaveLength(7);
+    expect(events).toContain("delivery:reply_bound");
+    expect(events).toHaveLength(8);
   });
 
   // -------------------------------------------------------------------------
@@ -297,6 +298,36 @@ describe("setupDeliveryQueueLogging", () => {
         totalChunks: 5,
         durationMs: 1200,
         origin: "agent-response",
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // delivery:reply_bound -> DEBUG (WR-01 breadcrumb)
+  // -------------------------------------------------------------------------
+
+  describe("delivery:reply_bound", () => {
+    it("logs at DEBUG (not INFO) with counts/ids only — the reaction-attribution breadcrumb", () => {
+      eventBus.emit("delivery:reply_bound", {
+        messageId: "reply-msg-700",
+        channelId: "ch-700",
+        channelType: "telegram",
+        traceId: "trace-700",
+        agentId: "mldag",
+        timestamp: Date.now(),
+      });
+
+      // DEBUG, never INFO — a per-reply signal must not flood the INFO stream.
+      expect(childLog.debug).toHaveBeenCalledTimes(1);
+      expect(childLog.info).not.toHaveBeenCalled();
+      const [fields, msg] = childLog.debug.mock.calls[0];
+      expect(msg).toBe("Agent reply bound to trajectory for reaction attribution");
+      expect(fields).toMatchObject({
+        messageId: "reply-msg-700",
+        channelType: "telegram",
+        channelId: "ch-700",
+        traceId: "trace-700",
+        agentId: "mldag",
       });
     });
   });

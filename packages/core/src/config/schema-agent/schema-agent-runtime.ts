@@ -82,6 +82,19 @@ export const AgentConfigSchema = z.strictObject({
     model: z.string().min(1).default("default"),
     /** LLM provider — "default" resolves via models.defaultProvider (e.g. "anthropic", "openai") */
     provider: z.string().min(1).default("default"),
+    /**
+     * Operator pin for the model's capability class. When set, it OVERRIDES the
+     * provider-family heuristic (which classes openai/anthropic/google as "frontier")
+     * and threads into resolveModelProfile's capabilityClassOverride — so the
+     * reduced prompt + nano/small tool deferral + the contextEngine.budget
+     * effectiveContextCap{Small,Nano} apply on ANY provider/model. Primary use:
+     * forcing a small-window nano/small treatment on a large-window model
+     * (e.g. gpt-5-nano = 400K) to stress the context-fit path provider-agnostically.
+     * Unset → today's heuristic (byte-identical, no regression). Takes precedence
+     * over the provider-level providers.entries.<id>.capabilities.capabilityClass.
+     * Enum mirrors provider-capabilities.ts (frontier/mid/small/nano).
+     */
+    capabilityClass: z.enum(["frontier", "mid", "small", "nano"]).optional(),
     /** Maximum reasoning steps per execution */
     maxSteps: z.number().int().positive().default(150),
     /** SDK thinking level override (off/minimal/low/medium/high/xhigh). Optional -- only overrides when set. */

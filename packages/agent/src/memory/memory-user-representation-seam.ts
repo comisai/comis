@@ -29,7 +29,7 @@
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import {
   buildUserRepresentationPrompt,
   parseUserRepresentationOutput,
@@ -144,7 +144,7 @@ export function createUserRepresentationSeam(
         },
         {
           apiKey,
-          temperature: 0.2,
+          ...temperatureOption(model, 0.2),
           maxTokens: maxOutputTokens,
           signal: controller.signal,
         },

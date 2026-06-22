@@ -726,6 +726,47 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // orchestrator and these entries are removed.
       "PacerConfig",
       "TELEGRAM_THREAD_META_KEYS",
+      // Telegram thread-context builders (the General-Topic id=1 asymmetry).
+      // Surfaced on the public barrel for the v2.28 channel-emulation harness's
+      // GROUP-03 HARD assertion (it drives the REAL SEND-omits / TYPING-includes
+      // routing through the dist-aliased @comis/channels, not a re-implementation).
+      // The only consumers are test/live/** scenarios + the channels index.test.ts
+      // barrel check — both of which the public-export-consumers AST walker
+      // excludes (it scans packages/*/src/** and skips *.test.ts). Mirrors the
+      // TELEGRAM_THREAD_META_KEYS precedent directly above. Shrink if a
+      // cross-package production consumer lands.
+      "buildSendThreadParams",
+      "buildTypingThreadParams",
+      "resolveTelegramThreadContext",
+      "TelegramThreadScope",
+      "TelegramThreadContext",
+      // Telegram error classifier (the structural GrammyError →
+      // ActivityRenderError mapping: 429→rate_limited / 400-edit→
+      // not_supported{edit} / 403→permission / default→internal). Surfaced on
+      // the public barrel for the v2.28 channel-emulation harness's FAULT-02
+      // assertion (it drives the REAL classifier through the dist-aliased
+      // @comis/channels, not a re-implementation). The only consumers are
+      // test/live/** scenarios + the channels index.test.ts barrel check — both
+      // excluded by the public-export-consumers AST walker (it scans
+      // packages/*/src/** and skips *.test.ts). Mirrors the thread-context
+      // builders precedent directly above. Shrink if a cross-package
+      // production consumer lands.
+      "classifyTelegramError",
+      // Signal wire types (the adapter's OWN signal-cli envelope/attachment
+      // interface, defined in signal/signal-client.ts). Surfaced TYPE-ONLY on the
+      // public barrel for the v2.28 channel-emulation harness's CHAN2-01 I4
+      // discipline — the Signal emulator's payload builders
+      // (test/live/emulators/signal/signal-payloads.ts) return-annotate against
+      // them so an envelope wire-shape drift is a compile error, and the
+      // dist-aliased @comis/channels barrel is the only import path the test/live
+      // vitest alias exposes. `export type` is erased at build (no runtime export
+      // added → SEC-02-safe). The only consumers are test/live/** scenarios + the
+      // channels index.test.ts barrel check — both excluded by the
+      // public-export-consumers AST walker (it scans packages/*/src/** and skips
+      // *.test.ts). Mirrors the thread-context builders / classifyTelegramError
+      // precedents directly above. Shrink if a cross-package production consumer lands.
+      "SignalEnvelope",
+      "SignalAttachment",
       // Discord channel narrowing surface. Consumed to retarget the 18
       // `as any` casts in `discord-actions.ts` + the 5 thread-iteration
       // sites. The 4 entries are removed once discord-actions.ts is

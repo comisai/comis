@@ -48,4 +48,25 @@ describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey (UX
     expect(parsed!.userId).toBe("678314278");
     expect(parsed!.channelId).toBe("telegram");
   });
+
+  // The DM/peer case the UX-1 fix MISSED: a filename carrying the ~peer~ encoding
+  // (sessions/{tenant}/{channel}/{userId~peer~peerId}.jsonl) must decode to the
+  // CANONICAL formatSessionKey form `tenant:user:channel:peer:peerId` — NOT the
+  // hybrid `tenant:(userId~peer~peerId):channel` that `explain`/`mirror`/`reset`
+  // reject. Live 2026-06-21 (rig Phase-0): `session.list` returned
+  // `default:111~peer~111:424242`, so `tg explain`/`tg mirror` map-missed ("no
+  // trajectory found") on a session whose stored key is `default:111:424242:peer:111`.
+  it("decodes the ~peer~ filename to the canonical peer-tagged key (the DM gap UX-1 missed)", () => {
+    writeSession("default", "424242", "111~peer~111.jsonl");
+    const s = scanWorkspaceSessions(dir).find((r) => r.sessionKey.includes("424242"))!;
+    expect(s).toBeDefined();
+    expect(s.sessionKey).toBe("default:111:424242:peer:111");
+    const parsed = parseFormattedSessionKey(s.sessionKey);
+    expect(parsed).toBeDefined();
+    expect(parsed!.userId).toBe("111");
+    expect(parsed!.channelId).toBe("424242");
+    expect(parsed!.peerId).toBe("111");
+    // userId must be the decoded user, not the hardcoded "unknown"
+    expect(s.userId).toBe("111");
+  });
 });

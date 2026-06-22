@@ -369,7 +369,15 @@ export function createPiExecutor(
       // CR-01 fix: when no explicit capabilityClass is present (e.g. plain anthropic/openai
       // provider with no providers.entries block), treat the cap as Infinity (no constraint).
       // Only apply a class-derived cap when the operator explicitly set capabilityClass.
-      const explicitClass = deps.providerCapabilities?.capabilityClass;
+      // Cross-provider stress enabler (2026-06-22): the AGENT-level pin
+      // (agents.<id>.capabilityClass) takes precedence over the PROVIDER-level
+      // value (providers.entries.<id>.capabilities.capabilityClass), so an operator
+      // can force a small-window nano/small treatment on a large-window model
+      // (gpt-5-nano/claude-haiku/gemini-flash) to exercise the context-fit path on
+      // ANY provider. Resolved ONCE here so the capabilityCap below and the
+      // resolveModelProfile override agree on the same class. Unset on both →
+      // undefined → the provider-family heuristic (byte-identical).
+      const explicitClass = config.capabilityClass ?? deps.providerCapabilities?.capabilityClass;
       const capabilityCap = explicitClass != null
         ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
         : Infinity;
@@ -435,7 +443,9 @@ export function createPiExecutor(
         resolvedModel
           ? { ...resolvedModel, contextWindow: effectiveContextWindowResult.effectiveWindow }
           : undefined,
-        deps.providerCapabilities?.capabilityClass,
+        // Use the resolved explicitClass (agent-level pin > provider-level) so the
+        // pinned class drives BOTH the capabilityCap above and the profile here.
+        explicitClass,
       );
 
       // 5. Execute within session adapter (use ephemeral adapter if provided)
@@ -1675,6 +1685,10 @@ async function runSessionLocked(
         canaryToken: deps.canaryToken,
         clock: deps.clock,
         timers: deps.timers,
+        // ISSUE #2: the canonical system-tokens estimate the pre-flight throws on, so
+        // wrapEnvelope can size the tight-window residual and drop the heavy
+        // tool-discovery preamble before it overflows (same S → no drift).
+        getSystemTokensEstimate: () => cachedSystemTokensEstimate,
       },
       onResetTimer: (fn) => { currentResetTimer = fn; },
       getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,

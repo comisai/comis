@@ -61,10 +61,16 @@ export interface DegradedReplyStrings {
   capKnobAdviceDefault: string;
   /** Knob-present advice, oversized-history form ("Alternatively raise {knob} (0 = uncapped)."). */
   capKnobAdviceHistory: string;
+  /** Knob-present advice, fixed-overhead form: the system prompt + tools alone
+   *  overflow, so "narrowing the ask" is meaningless — the remedy is the window /
+   *  tool footprint / a larger model. NEVER suggests shortening the message. */
+  capKnobAdviceFixedOverhead: string;
   /** No-knob advice, default form (the historical generic advice). */
   genericAdviceDefault: string;
   /** No-knob advice, oversized-history form. */
   genericAdviceHistory: string;
+  /** No-knob advice, fixed-overhead form (window / tools / larger model). */
+  genericAdviceFixedOverhead: string;
   /** The output-starved annotation (APPENDED to truncated partial text). */
   outputStarvedAnnotation: string;
   /** The loop-detected reply (APPEND/REPLACE for a no-progress halt). */
@@ -88,13 +94,21 @@ const EN: DegradedReplyStrings = {
       "A previous message in this session exceeds this model's context window, " +
       "so every new turn overflows regardless of its size — reset the session " +
       "to clear it. ",
+    fixed_overhead_exceeds_window:
+      "This model's context window is too small for the agent's system prompt " +
+      "and tools — the fixed overhead overflows before your message is even " +
+      "considered, so the size of your message makes no difference. ",
     aggregate: "",
   },
   capKnobAdviceDefault:
     "Try raising {knob} (0 = uncapped), reducing the agent's active tools, or narrowing the ask.",
   capKnobAdviceHistory: "Alternatively raise {knob} (0 = uncapped).",
+  capKnobAdviceFixedOverhead:
+    "Raise {knob} (0 = uncapped) or the model's context window, reduce the agent's active tools, or use a model with a larger context window.",
   genericAdviceDefault: "Try raising the agent's context engine settings or narrowing the ask.",
   genericAdviceHistory: "Alternatively raise the agent's context engine settings.",
+  genericAdviceFixedOverhead:
+    "Raise the model's context window, reduce the agent's active tools, or use a model with a larger context window.",
   outputStarvedAnnotation:
     "\n\n⚠️ My answer was cut off at the model's output limit — too many tools are " +
     "loaded for this model's context window. Narrow the ask or raise the model's context size.",
@@ -116,12 +130,16 @@ const HE: DegradedReplyStrings = {
       "ההודעה שלך לבדה גדולה מחלון ההקשר של המודל הזה — שלח הודעה קצרה יותר או פצל אותה לחלקים. ",
     oversized_history_message:
       "הודעה קודמת בשיחה הזו חורגת מחלון ההקשר של המודל, ולכן כל תור חדש עולה על גדותיו ללא תלות בגודלו — אפס את השיחה כדי לנקות אותה. ",
+    fixed_overhead_exceeds_window:
+      "חלון ההקשר של המודל הזה קטן מדי עבור הנחיית המערכת והכלים של הסוכן — התקורה הקבועה עולה על גדותיה עוד לפני שההודעה שלך נלקחת בחשבון, ולכן גודל ההודעה אינו משנה. ",
     aggregate: "",
   },
   capKnobAdviceDefault: "נסה להעלות את {knob} (0 = uncapped), לצמצם את הכלים הפעילים של הסוכן, או לצמצם את הבקשה.",
   capKnobAdviceHistory: "לחלופין העלה את {knob} (0 = uncapped).",
+  capKnobAdviceFixedOverhead: "העלה את {knob} (0 = uncapped) או את חלון ההקשר של המודל, צמצם את הכלים הפעילים של הסוכן, או השתמש במודל עם חלון הקשר גדול יותר.",
   genericAdviceDefault: "נסה להעלות את הגדרות מנוע ההקשר של הסוכן או לצמצם את הבקשה.",
   genericAdviceHistory: "לחלופין העלה את הגדרות מנוע ההקשר של הסוכן.",
+  genericAdviceFixedOverhead: "הגדל את חלון ההקשר של המודל, צמצם את הכלים הפעילים של הסוכן, או השתמש במודל עם חלון הקשר גדול יותר.",
   outputStarvedAnnotation:
     "\n\n⚠️ התשובה שלי נקטעה במגבלת הפלט של המודל — נטענו יותר מדי כלים עבור חלון ההקשר של המודל הזה. " +
     "צמצם את הבקשה או הגדל את גודל ההקשר של המודל.",
@@ -141,12 +159,16 @@ const AR: DegradedReplyStrings = {
       "رسالتك وحدها أكبر من نافذة السياق لهذا النموذج — أرسل رسالة أقصر أو قسّمها إلى أجزاء. ",
     oversized_history_message:
       "رسالة سابقة في هذه الجلسة تتجاوز نافذة السياق لهذا النموذج، لذا يفيض كل دور جديد بغض النظر عن حجمه — أعد ضبط الجلسة لمسحها. ",
+    fixed_overhead_exceeds_window:
+      "نافذة السياق لهذا النموذج صغيرة جداً على موجّه نظام الوكيل وأدواته — يفيض الحِمل الثابت قبل أخذ رسالتك بعين الاعتبار، لذا لا يهم حجم رسالتك. ",
     aggregate: "",
   },
   capKnobAdviceDefault: "حاول رفع {knob} (0 = uncapped)، أو تقليل الأدوات النشطة للوكيل، أو تضييق الطلب.",
   capKnobAdviceHistory: "بدلاً من ذلك ارفع {knob} (0 = uncapped).",
+  capKnobAdviceFixedOverhead: "ارفع {knob} (0 = uncapped) أو نافذة سياق النموذج، أو قلّل الأدوات النشطة للوكيل، أو استخدم نموذجاً بنافذة سياق أكبر.",
   genericAdviceDefault: "حاول رفع إعدادات محرك السياق للوكيل أو تضييق الطلب.",
   genericAdviceHistory: "بدلاً من ذلك ارفع إعدادات محرك السياق للوكيل.",
+  genericAdviceFixedOverhead: "زِد نافذة سياق النموذج، أو قلّل الأدوات النشطة للوكيل، أو استخدم نموذجاً بنافذة سياق أكبر.",
   outputStarvedAnnotation:
     "\n\n⚠️ اقتُطعت إجابتي عند حد الإخراج للنموذج — حُمّلت أدوات كثيرة جداً على نافذة السياق لهذا النموذج. " +
     "ضيّق الطلب أو زِد حجم سياق النموذج.",
@@ -166,12 +188,16 @@ const RU: DegradedReplyStrings = {
       "Само ваше сообщение больше окна контекста этой модели — отправьте более короткое сообщение или разбейте его на части. ",
     oversized_history_message:
       "Предыдущее сообщение в этой сессии превышает окно контекста модели, поэтому каждый новый ход переполняется независимо от его размера — сбросьте сессию, чтобы очистить его. ",
+    fixed_overhead_exceeds_window:
+      "Окно контекста этой модели слишком мало для системного промпта и инструментов агента — фиксированные накладные расходы переполняют его ещё до того, как учитывается ваше сообщение, поэтому его размер не имеет значения. ",
     aggregate: "",
   },
   capKnobAdviceDefault: "Попробуйте увеличить {knob} (0 = uncapped), сократить активные инструменты агента или сузить запрос.",
   capKnobAdviceHistory: "Либо увеличьте {knob} (0 = uncapped).",
+  capKnobAdviceFixedOverhead: "Увеличьте {knob} (0 = uncapped) или окно контекста модели, сократите активные инструменты агента или используйте модель с бо́льшим окном контекста.",
   genericAdviceDefault: "Попробуйте увеличить настройки движка контекста агента или сузить запрос.",
   genericAdviceHistory: "Либо увеличьте настройки движка контекста агента.",
+  genericAdviceFixedOverhead: "Увеличьте окно контекста модели, сократите активные инструменты агента или используйте модель с бо́льшим окном контекста.",
   outputStarvedAnnotation:
     "\n\n⚠️ Мой ответ был обрезан на пределе вывода модели — для окна контекста этой модели загружено слишком много инструментов. " +
     "Сузьте запрос или увеличьте размер контекста модели.",
@@ -251,14 +277,24 @@ export function selectContextExhaustedReply(
     opts.capabilityClass !== undefined ? CAP_KNOB_BY_CLASS[opts.capabilityClass] : undefined;
   // Issue-6: "narrowing the ask" only belongs when the ask/aggregate is the
   // problem — for an oversized history message it is the misleading clause.
+  // Root-cause fix (2026-06-22): for fixed_overhead_exceeds_window the message
+  // size is irrelevant entirely, so the advice points at the window / tool
+  // footprint / a larger model — never "shorten your message" or "narrow the ask".
   let advice: string;
   if (knob !== undefined) {
     advice =
-      cause === "oversized_history_message"
-        ? t.capKnobAdviceHistory.replace("{knob}", knob)
-        : t.capKnobAdviceDefault.replace("{knob}", knob);
+      cause === "fixed_overhead_exceeds_window"
+        ? t.capKnobAdviceFixedOverhead.replace("{knob}", knob)
+        : cause === "oversized_history_message"
+          ? t.capKnobAdviceHistory.replace("{knob}", knob)
+          : t.capKnobAdviceDefault.replace("{knob}", knob);
   } else {
-    advice = cause === "oversized_history_message" ? t.genericAdviceHistory : t.genericAdviceDefault;
+    advice =
+      cause === "fixed_overhead_exceeds_window"
+        ? t.genericAdviceFixedOverhead
+        : cause === "oversized_history_message"
+          ? t.genericAdviceHistory
+          : t.genericAdviceDefault;
   }
   // eslint-disable-next-line security/detect-object-injection -- cause is a closed ContextExhaustionCause union (defaulted to "aggregate"), never user-controlled
   return t.contextExhaustedBase + t.causeLead[cause] + advice + incidentRef(opts.traceId);
