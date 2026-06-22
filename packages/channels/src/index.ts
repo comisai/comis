@@ -10,12 +10,7 @@ export { mapGrammyToNormalized } from "./telegram/message-mapper.js";
 export { buildAttachments } from "./telegram/media-handler.js";
 export { validateBotToken, validateWebhookSecret } from "./telegram/credential-validator.js";
 export type { BotInfo } from "./telegram/credential-validator.js";
-export {
-  CredentialValidationError,
-  classifyValidationError,
-  classifiedValidationErr,
-} from "./shared/credential-validation-error.js";
-export type { ValidationFailureKind } from "./shared/credential-validation-error.js";
+export { CredentialValidationError } from "./shared/credential-validation-error.js";
 export { createTelegramResolver } from "./telegram/telegram-resolver.js";
 export type { TelegramResolverDeps } from "./telegram/telegram-resolver.js";
 

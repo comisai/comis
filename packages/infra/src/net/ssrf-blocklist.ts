@@ -7,13 +7,6 @@
 import type { Dispatcher } from "undici";
 import { isSsrfBlocked } from "@comis/core";
 
-/**
- * Type alias for undici's compose-compatible interceptor function.
- * Equivalent to `Dispatcher.DispatcherComposeInterceptor`.
- * @deprecated Use `Dispatcher.DispatcherComposeInterceptor` directly from undici.
- */
-export type DispatchFn = Dispatcher["dispatch"];
-
 // ---------------------------------------------------------------------------
 // ssrfBlockInterceptor — compose-compatible dispatch interceptor
 // blocks BEFORE connect; wired onto the dispatcher at install time.
