@@ -604,6 +604,84 @@ describe("createRpcDispatch", () => {
     // A non-media method's ordinary param IS still on the log line (diagnostic).
     expect(logSerialized).toContain(ID_SENTINEL);
   });
+
+  // -----------------------------------------------------------------------
+  // ORIGIN-01: the single deny-by-origin chokepoint in the dispatch closure.
+  //
+  // CRITICAL: these tests call dispatch() DIRECTLY — i.e. they exercise the
+  // IN-PROCESS dispatch path the agent's call actually traverses
+  // (createAgentRpcCall -> the SAME injected rpcCall -> this dispatch closure),
+  // NOT the gateway/method-router leg (which the in-process loop bypasses). A
+  // method-router-only chokepoint would MISS this path; the chokepoint MUST
+  // live here in createRpcDispatch. The admin set is derived once from
+  // API_CONTRACTS_ORDERED (scopes.includes("admin")) so ALL ~146 admin methods
+  // are covered by the one check, not a hand-picked subset.
+  // -----------------------------------------------------------------------
+
+  /** Pull only the captured `audit:event` payloads off the mock eventBus. */
+  function capturedAudits(): Array<Record<string, unknown>> {
+    const emit = mockDeps.container.eventBus.emit as ReturnType<typeof vi.fn>;
+    return emit.mock.calls
+      .filter((c: unknown[]) => c[0] === "audit:event")
+      .map((c: unknown[]) => c[1] as Record<string, unknown>);
+  }
+
+  it("ORIGIN-01: an _agentId-carrying admin call on the IN-PROCESS dispatch path is denied + audited (the bypass the agent actually traverses)", async () => {
+    const dispatch = await getDispatch();
+    // secrets.get is admin-scoped. _trustLevel:"admin" is the agent's ALS
+    // trust — deny-by-origin must fire on the ORIGIN regardless. We dispatch()
+    // directly: this is the in-process leg, not the gateway.
+    await expect(
+      dispatch("secrets.set", { _agentId: "forged", _trustLevel: "admin", name: "X", value: "Y" }),
+    ).rejects.toThrow(/not reachable from an agent origin/i);
+
+    const audits = capturedAudits();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.kind).toBe("capability_denied");
+    expect(audits[0]!.outcome).toBe("denied");
+    expect(audits[0]!.actionType).toBe("secrets.set");
+  });
+
+  it("ORIGIN-01: the chokepoint denies across ≥3 DIFFERENT admin scope families (whole admin set, not a subset)", async () => {
+    // Three admin methods from distinct domains: secrets.*, auth.*, mcp.* —
+    // all contract-declared `scopes:["admin"]` and present in the mock maps.
+    const adminMethods = ["secrets.delete", "auth.logout", "mcp.oauth_login"];
+    for (const method of adminMethods) {
+      vi.clearAllMocks();
+      const dispatch = await getDispatch();
+      await expect(
+        dispatch(method, { _agentId: "forged", _trustLevel: "admin" }),
+      ).rejects.toThrow(/not reachable from an agent origin/i);
+      const audits = capturedAudits();
+      expect(audits, `audit for ${method}`).toHaveLength(1);
+      expect(audits[0]!.actionType, `actionType for ${method}`).toBe(method);
+      expect(audits[0]!.outcome).toBe("denied");
+    }
+  });
+
+  it("ORIGIN-01 (Pitfall 2): a NON-admin self-scoped method with _agentId PASSES the chokepoint (agent self-reads still work)", async () => {
+    const dispatch = await getDispatch();
+    // cron.list is scopes:["rpc"] (NON-admin) — the agent's own _agentId rides
+    // it for tenant self-scoping and must NOT be denied. The chokepoint keys on
+    // ADMIN_METHODS membership, so a non-admin method's _agentId is untouched.
+    await expect(
+      dispatch("cron.list", { _agentId: "self" }),
+    ).resolves.toBeDefined();
+    // No deny-by-origin audit fired for the allowed self-scoped read.
+    const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+    expect(denials).toHaveLength(0);
+  });
+
+  it("ORIGIN-01: an admin method WITHOUT _agentId (operator/gateway origin) passes the deny-by-origin chokepoint", async () => {
+    const dispatch = await getDispatch();
+    // No _agentId == operator/gateway origin. The chokepoint must NOT throw the
+    // deny-by-origin error (the mocked handler resolves normally).
+    await expect(
+      dispatch("secrets.delete", { _trustLevel: "admin", name: "X" }),
+    ).resolves.toBeDefined();
+    const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+    expect(denials).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
