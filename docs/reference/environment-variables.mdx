@@ -210,6 +210,38 @@ export COMIS_CONFIG_AUDIT_LOG=/var/log/comis/config-audit.jsonl
 
 Source: `packages/daemon/src/wiring/setup-broker-activation.ts:79`
 
+### `COMIS_CAP_LEASE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The jailed `orchestrate(script)` surface (daemon-spawned, sandboxed) |
+| **Format** | Opaque bearer token string |
+| **Default** | (set internally by the daemon per root-run) |
+
+**Internal use only.** The capability-lease bearer the daemon mints per root-run and injects into the jailed script surface's spawn environment so it can authenticate to the loopback capability endpoint (`COMIS_ORCH_SOCKET`). Multi-use, bounded, revocable, and audience-bound — a captured lease cannot be replayed at a foreign method. Registered with the OutputGuard at mint so it is never logged. Set internally by the daemon — operators do not set this variable directly.
+
+**Trusted-source preservation:** this var rides the daemon's own trusted injection path (the `placeholders` slot, merged last). The terminal-driver / exec env scrub **preserves** `COMIS_CAP_LEASE` on that inherited path while **fail-closed-blocking** the entire `COMIS_*` prefix from an untrusted workspace-loaded `.env` (see [the env-scrub note below](#child-env-scrub-jailed-surfaces)), so attacker-supplied workspace content can never forge or smuggle a lease into the jail.
+
+### `COMIS_ORCH_SOCKET`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The jailed `orchestrate(script)` surface (daemon-spawned, sandboxed) |
+| **Format** | Absolute Unix-socket path (mode 0600) |
+| **Default** | (set internally by the daemon per jail) |
+
+**Internal use only.** The filesystem path of the loopback capability endpoint's Unix socket (`0600`, owner-only), bind-mounted into the jail and injected alongside [`COMIS_CAP_LEASE`](#comis_cap_lease). The jailed surface dials this socket, presents the lease bearer, and the endpoint resolves the lease's capabilities and dispatches through the same handler gates as every other origin. Set internally by the daemon per jail — operators do not set this variable directly. Like `COMIS_CAP_LEASE`, it rides the trusted inherited path and is preserved by the env scrub while the `COMIS_*` prefix is blocked from a workspace `.env`.
+
+### Child-env scrub (jailed surfaces)
+
+When the daemon spawns a sandboxed child — a driven CLI via the [terminal-driver](/agent-tools/terminal-driver), or the jailed `orchestrate(script)` surface — it **scrubs the spawn environment** before the jail starts, because bubblewrap inherits the spawner env by default. The scrub is a blocklist (strip the known-dangerous keys, keep the rich env a TUI needs):
+
+- **Interpreter-control vars are stripped unconditionally** — `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, the JVM `*_OPTIONS` set, and the prefix families **`LD_*`**, **`DYLD_*`**, **`PIP_*`**, **`UV_*`**. These instruct a runtime to load attacker-controlled code at startup (dynamic-linker preload, package-index redirection) → remote code execution, so they never reach the child regardless of where they came from.
+- **The `COMIS_*` prefix is fail-closed-blocked from an untrusted workspace `.env`.** A `COMIS_`-prefixed key loaded from workspace content is dropped, so attacker-supplied workspace content cannot forge a runtime-control variable (e.g. a fake `COMIS_CAP_LEASE`) into the jail.
+- **The daemon's own injection is preserved.** `COMIS_CAP_LEASE` / `COMIS_ORCH_SOCKET` minted by the daemon ride a separate trusted path and **survive** the scrub — blocking them would break the capability socket. Only the untrusted workspace source is blocked; the trusted daemon-injected source is allowed.
+
+Source: `packages/skills/src/tools/builtin/terminal-driver/terminal-env-scrub.ts`
+
 ## Secret Variables
 
 ### `SECRETS_MASTER_KEY`
