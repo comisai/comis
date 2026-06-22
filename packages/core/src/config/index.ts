@@ -131,6 +131,13 @@ export {
   SourceGateConfigSchema,
   ToolLifecycleConfigSchema,
   TracingConfigSchema,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  AutonomyConfigSchema,
+  AutonomyMessageConfigSchema,
+  AUTONOMY_PROFILES,
+  AGENT_CAPABILITIES,
+  STANDARD_FLOOR_CAPABILITIES,
+  resolveAutonomy,
 } from "./schema-agent/index.js";
 export { ChannelConfigSchema, ChannelEntrySchema, AckReactionConfigSchema, MediaProcessingSchema, ChannelHealthCheckSchema, EmailChannelEntrySchema } from "./schema-channel.js";
 export {
@@ -294,6 +301,14 @@ export type {
   SourceGateConfig,
   ToolLifecycleConfig,
   TracingConfig,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  AutonomyConfig,
+  AutonomyMessageConfig,
+  AutonomyProfileName,
+  AutonomyMode,
+  AgentCapability,
+  ResolvedAutonomy,
+  ResolvedCapability,
 } from "./schema-agent/index.js";
 export type {
   AppConfig,

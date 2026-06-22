@@ -146,6 +146,15 @@ export {
   // Public so downstream packages (Plans 02-05) read the gate from @comis/core.
   OrchestrationConfigSchema,
   OrchestrationAuthoringConfigSchema,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8). Public so the
+  // daemon (Plan 04 cap injection, Plan 06 boot logging) + the PROFILE-02
+  // arch-test read the resolver + the resolved cap/guard table from @comis/core.
+  AutonomyConfigSchema,
+  AutonomyMessageConfigSchema,
+  AUTONOMY_PROFILES,
+  AGENT_CAPABILITIES,
+  STANDARD_FLOOR_CAPABILITIES,
+  resolveAutonomy,
 } from "../config/index.js";
 
 export type {
@@ -291,4 +300,12 @@ export type {
   OrchestrationAuthoringConfig,
   // Spend kill-switch config (Phase 177)
   SpendConfig,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  AutonomyConfig,
+  AutonomyMessageConfig,
+  AutonomyProfileName,
+  AutonomyMode,
+  AgentCapability,
+  ResolvedAutonomy,
+  ResolvedCapability,
 } from "../config/index.js";
