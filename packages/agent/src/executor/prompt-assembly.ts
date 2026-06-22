@@ -587,6 +587,23 @@ export interface PromptAssemblyParams {
    *  downgrade is applied (fail-open for the mode selection, fail-closed at the security
    *  level via the assembler's default "standard" securityLevel). */
   modelProfile?: ModelProfile;
+  /** Degenerate-window compact-prompt fallback budget (2026-06-22 root-cause
+   *  context-exhaustion fix, Part 2 extension). When provided AND the resolved-mode
+   *  system prompt cannot fit the effective window —
+   *  `systemPromptOnlyTokens + outputHeadroom + messageFloorTokens > effectiveWindow`,
+   *  i.e. even zero tools won't fit — the assembler re-assembles in the existing
+   *  `compact-secure` mode (security floor intact, ~700 tok) so the agent still
+   *  runs instead of context-exhausting on its fixed overhead. Absent ⇒ no
+   *  window-fit check (byte-identical to pre-fix; the assembler is window-agnostic).
+   *  Already-compact modes (`compact-secure`, `none`) are never re-assembled. */
+  windowFitBudget?: {
+    /** The effective context window in tokens (min(configured, served, capabilityCap)). */
+    effectiveWindow: number;
+    /** Output headroom tokens reserved for the reply (+thinking block). */
+    outputHeadroom: number;
+    /** Minimum tokens reserved for the user message + a little history. */
+    messageFloorTokens: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1550,7 +1567,71 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // Build structured blocks for multi-block cache_control injection.
   // Uses the same assemblerParams as assembleRichSystemPrompt() -- identity guaranteed
   // by shared buildAllSections().
-  const systemPromptBlocks = assembleRichSystemPromptBlocks(assemblerParams);
+  let systemPromptBlocks = assembleRichSystemPromptBlocks(assemblerParams);
+
+  // ROOT-CAUSE context-exhaustion guard — degenerate-window compact fallback
+  // (2026-06-22). The window-aware tool-budget fit pass (executor-tool-assembly)
+  // defers tools to fit, but the system prompt itself is non-evictable: a model
+  // whose effective window is SMALLER than its full prompt (e.g. an ~8K window
+  // mid-class model with a ~10K prompt — compact-secure never fires for mid/
+  // frontier) still overflows even with zero tools, and the pre-flight throws
+  // fixed_overhead_exceeds_window. The user's hard requirement is that the agent
+  // NEVER context-exhausts. So when the resolved-mode prompt cannot fit —
+  // systemPromptOnlyTokens + outputHeadroom + messageFloorTokens > effectiveWindow —
+  // re-assemble in the existing compact-secure mode (security floor intact,
+  // ~700 tok), a CHEAP pure re-call (no RAG re-run). This only fires in the
+  // genuinely-degenerate case, so normal windows stay byte-identical (the
+  // window-agnostic baseline when windowFitBudget is absent). compact-secure and
+  // none are already minimal — never re-shrunk.
+  const fitBudget = params.windowFitBudget;
+  if (
+    fitBudget !== undefined &&
+    promptMode !== "compact-secure" &&
+    promptMode !== "none"
+  ) {
+    // TOK-01: factor the prompt's own script (dense non-Latin prompts carry more
+    // tokens/char), matching estimateSystemTokensFactored at toolOverheadChars=0.
+    const systemPromptOnlyTokens = Math.ceil(
+      systemPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPrompt)),
+    );
+    const minFixed = systemPromptOnlyTokens + fitBudget.outputHeadroom + fitBudget.messageFloorTokens;
+    if (minFixed > fitBudget.effectiveWindow) {
+      const compactParams = { ...assemblerParams, promptMode: "compact-secure" as PromptMode };
+      const compactPrompt = assembleRichSystemPrompt(compactParams);
+      const compactTokens = Math.ceil(
+        compactPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(compactPrompt)),
+      );
+      logger.warn(
+        {
+          step: "prompt-compact-fallback",
+          errorKind: "resource" as const,
+          hint:
+            `System prompt (~${systemPromptOnlyTokens} tok) + output headroom (${fitBudget.outputHeadroom}) ` +
+            `+ message floor (${fitBudget.messageFloorTokens}) exceeds the effective window ` +
+            `(${fitBudget.effectiveWindow}); fell back to the compact-secure prompt (~${compactTokens} tok) so ` +
+            `the agent still runs. Raise the model's context window or use a larger model to restore the full prompt.`,
+          agentId: agentId ?? config.name,
+          fromPromptMode: promptMode,
+          effectiveWindow: fitBudget.effectiveWindow,
+          fullPromptTokens: systemPromptOnlyTokens,
+          compactPromptTokens: compactTokens,
+          outputHeadroom: fitBudget.outputHeadroom,
+          messageFloorTokens: fitBudget.messageFloorTokens,
+        },
+        "prompt compact-fallback: full prompt too large for window, using compact-secure",
+      );
+      deps.eventBus?.emit("context:overflow", {
+        agentId: agentId ?? config.name,
+        sessionKey: formatSessionKey(sessionKey),
+        contextTokens: minFixed,
+        budgetTokens: fitBudget.effectiveWindow,
+        recoveryAction: "strip_skills",
+        timestamp: deps.clock?.now() ?? systemNowMs(),
+      });
+      systemPrompt = compactPrompt;
+      systemPromptBlocks = assembleRichSystemPromptBlocks(compactParams);
+    }
+  }
 
   // 6. Run before_agent_start hook
   const hookResult = await deps.hookRunner?.runBeforeAgentStart(

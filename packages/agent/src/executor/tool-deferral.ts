@@ -24,9 +24,13 @@ import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
-import { toolDefOverheadChars } from "./tool-overhead.js";
+import { toolDefOverheadChars, DEFERRAL_STUB_MARKER_KEY } from "./tool-overhead.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { scriptTokenFactor } from "@comis/core";
+import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
+import { computeOutputHeadroom } from "../context-engine/output-headroom.js";
+import type { ModelProfile } from "./model-profile.js";
+import type { WindowProvenance } from "../context-engine/types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -580,6 +584,76 @@ function toolCorpusTokens(tools: ReadonlyArray<ToolDefinition>): number {
   return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
 }
 
+/**
+ * Minimum tokens the window-aware fit passes reserve for the user message + a
+ * little history, on top of the system prompt and output headroom. Both the
+ * prompt-fit fallback (prompt-assembly.ts) and the tool-budget fit pass
+ * (enforceToolBudgetFit) defer/shrink until
+ * `systemPromptOnly + activeTools + outputHeadroom + MESSAGE_FLOOR ≤ window`, so
+ * this is the floor of usable room a normal turn keeps.
+ *
+ * 2048 is the smallest reserve that comfortably runs a normal turn on the
+ * tightest real window we target — a nano model (~16K effective window, ~10K
+ * prompt). Sized in the spirit of MIN_SAFETY_MARGIN_TOKENS (2048): large enough a
+ * real message is never starved, small enough not to over-defer on adequate
+ * windows. Frontier/mid windows are so wide the passes are no-ops, so this only
+ * bites small/nano + degenerate windows.
+ */
+export const MESSAGE_FLOOR_TOKENS = 2_048;
+
+/** The window-fit budget shared by the prompt-fit fallback and the tool-budget
+ *  fit pass — one computation, so the two passes can never diverge. */
+export interface WindowFitBudget {
+  /** Effective context window in tokens (min(configured, served, capabilityCap)). */
+  effectiveWindow: number;
+  /** Output headroom tokens reserved for the reply (+thinking block). */
+  outputHeadroom: number;
+  /** Minimum tokens reserved for the user message + a little history. */
+  messageFloorTokens: number;
+}
+
+/** Valid thinking-level union (mirrors output-headroom.ts / lcd-preflight.ts). */
+type FitThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+const FIT_THINKING_LEVELS: readonly string[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
+/**
+ * Compute the {@link WindowFitBudget} for a turn — the single source the
+ * degenerate-window prompt fallback AND the tool-budget fit pass both consume, so
+ * the prompt-fit and tool-fit decisions are guaranteed consistent.
+ *
+ * The effective window is `computeTokenBudgetForProfile(...).windowTokens`, which
+ * is INPUT-INDEPENDENT of the systemTokens/preamble args (it is
+ * min(configured, served, capabilityCap)) — so passing 0/0 here yields the SAME
+ * window the per-turn budget call reports. Output headroom mirrors lcd-preflight.ts
+ * exactly (same reasoningStyle / thinkingLevel / minVisibleFloor).
+ */
+export function computeWindowFitBudget(params: {
+  profile: ModelProfile;
+  thinkingLevel?: string;
+  minVisibleOutputTokens?: number;
+  effectiveContextCapSmall?: number;
+  effectiveContextCapNano?: number;
+  windowProvenance?: WindowProvenance;
+}): WindowFitBudget {
+  const effectiveWindow = computeTokenBudgetForProfile(
+    params.profile,
+    0,
+    0,
+    -1,
+    params.effectiveContextCapSmall,
+    params.effectiveContextCapNano,
+    params.windowProvenance,
+  ).windowTokens;
+  const level: FitThinkingLevel = FIT_THINKING_LEVELS.includes(params.thinkingLevel ?? "")
+    ? (params.thinkingLevel as FitThinkingLevel)
+    : "medium";
+  return {
+    effectiveWindow,
+    outputHeadroom: computeOutputHeadroom(params.profile.reasoningStyle, level, params.minVisibleOutputTokens),
+    messageFloorTokens: MESSAGE_FLOOR_TOKENS,
+  };
+}
+
 /** Parameters for {@link enforceToolBudgetFit}. */
 export interface EnforceToolBudgetFitParams {
   /** The post-deferral ACTIVE tool set (active + discovered + discover_tools) —
@@ -814,10 +888,22 @@ export function applyToolBudgetFit(
   // budget is so tiny nothing fits (the degenerate window), drop discover_tools
   // too: a chat reply needs no tools, and re-adding it would re-overflow.
   const discoverWasDropped = fit.newlyDeferred.includes("discover_tools");
+  const newlyDeferredSet = new Set(fit.newlyDeferred);
+  const survivingNames = new Set(fit.activeTools.map((t) => t.name));
   const discoveredNames = new Set(deferralResult.discoveredTools.map((d) => d.name));
   deferralResult.activeTools = fit.activeTools.filter(
     (t) => t.name !== "discover_tools" && !discoveredNames.has(t.name),
   );
+  // A discovered tool the fit pass DROPPED must also leave discoveredTools — else it
+  // is re-included by the line-662 mergedCustomTools rebuild AND re-counted by the
+  // post-deferral systemTokens estimate (stale-count on multi-turn discovered-tool
+  // sessions; harmless on fresh sessions where discoveredTools is empty). Keep only
+  // the discovered tools that SURVIVED the fit (still in fit.activeTools).
+  if (deferralResult.discoveredTools.some((d) => newlyDeferredSet.has(d.name))) {
+    deferralResult.discoveredTools = deferralResult.discoveredTools.filter((d) =>
+      survivingNames.has(d.name),
+    );
+  }
   deferralResult.deferredEntries = fit.deferredEntries;
   deferralResult.deferredNames = [
     ...new Set([...deferralResult.deferredNames, ...fit.newlyDeferred]),
@@ -1364,7 +1450,10 @@ function cosine(a: number[], b: number[]): number {
 // Auto-discovery stubs
 // ---------------------------------------------------------------------------
 
-export const DEFERRAL_STUB_MARKER = "__comis_deferral_stub__" as const;
+// Single-sourced from tool-overhead.ts so the marker the stub SETS and the marker
+// toolDefOverheadChars SKIPS can never drift (the stub-overcount fix relies on the
+// two being identical). tool-deferral already imports tool-overhead.
+export const DEFERRAL_STUB_MARKER = DEFERRAL_STUB_MARKER_KEY;
 
 export function createAutoDiscoveryStubs(
   deferredEntries: DeferredToolEntry[],
@@ -1384,7 +1473,20 @@ export function createAutoDiscoveryStubs(
       name: entry.name,
       label: originalLabel ?? entry.name,
       description: entry.description,
-      parameters: entry.original.parameters,
+      // ROOT-CAUSE context-exhaustion fix (2026-06-22 VPS gpt-5.3-codex): the stub
+      // carries a MINIMAL placeholder schema, NOT entry.original.parameters (the
+      // full ~195-tok schema). The stub exists ONLY so the SDK's agent-loop
+      // RESOLVES the deferred tool's NAME (prevents "Tool X not found" when a skill
+      // references it directly); createStubFilterInjector strips it from the WIRE,
+      // so the model never sees this schema and its `execute` forwards `params`
+      // VERBATIM to entry.original.execute (no local validation). The FULL schema
+      // is restored when the tool is genuinely discovered (discoveredTools re-includes
+      // entry.original). Pre-fix the full schema made the stubs ~195 tok each, so on
+      // a small window the 44 stubs (~10K) ballooned EVERY token view that counts the
+      // full mergedCustomTools (the pre-flight saw assembled 13725 > 8192 and
+      // FALSE-exhausted, silently negating the fit pass's deferral). additionalProperties
+      // lets any forwarded args through on the rare direct-reference path.
+      parameters: { type: "object" as const, properties: {}, additionalProperties: true },
       [DEFERRAL_STUB_MARKER]: true,
       async execute(
         toolCallId: string,

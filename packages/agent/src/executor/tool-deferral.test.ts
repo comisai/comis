@@ -9,6 +9,7 @@ import {
   createAutoDiscoveryStubs,
   enforceToolBudgetFit,
   applyToolBudgetFit,
+  computeWindowFitBudget,
   DEFERRAL_STUB_MARKER,
   CORE_TOOLS,
   DEFERRAL_RULES,
@@ -2719,7 +2720,7 @@ describe("createAutoDiscoveryStubs", () => {
     };
   }
 
-  it("returns stubs with correct name, description, parameters copied from entry.original", () => {
+  it("returns stubs with correct name + description and a MINIMAL placeholder schema (NOT the full original)", () => {
     const entry = makeDeferredEntry("mcp__yfinance--get_screener");
     const tracker = makeMockDiscoveryTracker();
     const logger = createMockLogger();
@@ -2730,7 +2731,12 @@ describe("createAutoDiscoveryStubs", () => {
     const stub = stubs[0];
     expect(stub.name).toBe("mcp__yfinance--get_screener");
     expect(stub.description).toBe("Lean desc for mcp__yfinance--get_screener");
-    expect(stub.parameters).toBe(entry.original.parameters);
+    // ROOT-CAUSE context-exhaustion fix (2026-06-22): the stub carries a MINIMAL
+    // schema, NOT entry.original.parameters — the stub is wire-stripped and forwards
+    // params verbatim, so the full schema (~195 tok) would only bloat token estimates
+    // (the VPS 13725 over-count). additionalProperties lets any forwarded args through.
+    expect(stub.parameters).not.toBe(entry.original.parameters);
+    expect(stub.parameters).toEqual({ type: "object", properties: {}, additionalProperties: true });
   });
 
   it("has DEFERRAL_STUB_MARKER property set to true", () => {
@@ -3380,5 +3386,147 @@ describe("applyToolBudgetFit — in-place refinement + discover_tools rebuild", 
     expect(result.activeTools).toEqual([]);
     // discover_tools was squeezed out — null, not a dangling tool with no entries.
     expect(result.discoverTool).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 18c: computeWindowFitBudget — the shared prompt-fit / tool-fit budget
+//
+// One computation feeds BOTH the degenerate-window prompt fallback
+// (prompt-assembly.ts) and the tool-budget fit pass, so the two decisions can
+// never diverge. effectiveWindow is min(configured, served, capabilityCap) and is
+// input-independent of systemTokens; headroom is reasoningStyle/thinkingLevel-aware.
+// ---------------------------------------------------------------------------
+describe("computeWindowFitBudget — shared window-fit budget", () => {
+  function makeProfile(over: Partial<import("./model-profile.js").ModelProfile> = {}): import("./model-profile.js").ModelProfile {
+    return {
+      capabilityClass: "mid",
+      scaffoldLevel: "standard",
+      securityLevel: "standard",
+      reasoningStyle: "none",
+      contextWindow: 8_000,
+      ...over,
+    } as import("./model-profile.js").ModelProfile;
+  }
+
+  it("returns the profile's effective window, a positive headroom, and the message floor", () => {
+    const b = computeWindowFitBudget({ profile: makeProfile({ contextWindow: 8_000 }) });
+    expect(b.effectiveWindow).toBe(8_000); // mid → no class cap → configured window
+    expect(b.outputHeadroom).toBeGreaterThan(0);
+    expect(b.messageFloorTokens).toBe(2_048);
+  });
+
+  it("reserves MORE headroom for native reasoning at higher thinking levels", () => {
+    const none = computeWindowFitBudget({ profile: makeProfile({ reasoningStyle: "none" }), thinkingLevel: "high" });
+    const native = computeWindowFitBudget({ profile: makeProfile({ reasoningStyle: "native" }), thinkingLevel: "high" });
+    // native/high reserves a thinking block on top of the visible floor; none reserves only the floor.
+    expect(native.outputHeadroom).toBeGreaterThan(none.outputHeadroom);
+  });
+
+  it("caps the effective window for a small class via effectiveContextCapSmall", () => {
+    const b = computeWindowFitBudget({
+      profile: makeProfile({ capabilityClass: "small", contextWindow: 200_000 }),
+      effectiveContextCapSmall: 32_000,
+    });
+    expect(b.effectiveWindow).toBe(32_000);
+  });
+
+  it("falls back to medium thinking for an invalid thinkingLevel string (no throw)", () => {
+    const b = computeWindowFitBudget({ profile: makeProfile({ reasoningStyle: "native" }), thinkingLevel: "bogus" });
+    const med = computeWindowFitBudget({ profile: makeProfile({ reasoningStyle: "native" }), thinkingLevel: "medium" });
+    expect(b.outputHeadroom).toBe(med.outputHeadroom);
+  });
+
+  // VPS DEPLOY-PROOF reproduction (2026-06-22): gpt-5.3-codex is classed FRONTIER
+  // (v2.27 provider heuristic → no nano CORE_TOOLS deferral) but has an 8K (8192)
+  // EFFECTIVE/registry window. 65 tool schemas (~12.7K tok) ship, systemPrompt is
+  // tiny (~828 tok), yet the turn context-exhausts (assembled 13725 > 8192) with NO
+  // defer WARN. This drives the REAL computeWindowFitBudget(frontier, 8192) + REAL
+  // applyToolBudgetFit over 65 big tools and asserts the post-fit active overhead
+  // fits the 8192 budget. If GREEN, the fit LOGIC is correct against 8192 → the
+  // production bug is the WINDOW VALUE fed in (a larger window reaches the fit pass
+  // than the 8192 the pre-flight throws on).
+  it("frontier 8K-effective-window + 65 large tools defers down to fit the 8192 budget (the codex repro)", () => {
+    const logger = createMockLogger();
+    const tools = Array.from({ length: 65 }, (_, i) => makeTool(`mcp__srv--tool_${i}`, 560, 120));
+    const result: ExcludeDeferralResult = {
+      activeTools: tools,
+      deferredEntries: [],
+      discoveredTools: [],
+      discoverTool: null,
+      deferredCount: 0,
+      deferredNames: [],
+    };
+    const budget = computeWindowFitBudget({
+      profile: {
+        capabilityClass: "frontier",
+        scaffoldLevel: "standard",
+        securityLevel: "standard",
+        reasoningStyle: "none",
+        contextWindow: 8_192,
+      } as import("./model-profile.js").ModelProfile,
+    });
+    expect(budget.effectiveWindow).toBe(8_192); // frontier → no class cap → the 8192 window
+    const sysChars = 2_898; // ~828 tok system prompt (the VPS value): 828*3.5
+    applyToolBudgetFit(result, {
+      systemPromptText: "x".repeat(sysChars),
+      contextWindow: budget.effectiveWindow,
+      outputHeadroom: budget.outputHeadroom,
+      messageFloorTokens: budget.messageFloorTokens,
+      recentlyUsedToolNames: new Set<string>(),
+      logger,
+    });
+    const sysTok = Math.ceil(sysChars / CHARS_PER_TOKEN_RATIO);
+    const toolBudget = 8_192 - sysTok - budget.outputHeadroom - budget.messageFloorTokens;
+    const activeOverhead = Math.ceil(toolDefOverheadChars(result.activeTools) / CHARS_PER_TOKEN_RATIO);
+    expect(activeOverhead).toBeLessThanOrEqual(toolBudget);
+    expect(result.deferredNames.length).toBeGreaterThan(40); // ~50 of 65 deferred
+    expect(result.discoverTool).not.toBeNull(); // dropped tools reachable via discovery
+  });
+
+  // The PRODUCTION two-step sequence (real applyToolDeferral → real applyToolBudgetFit),
+  // mirroring executor-tool-assembly.ts exactly: a FRONTIER agent rule-defers NOTHING
+  // (admin trust, no ceiling), so all 65 tools reach applyToolBudgetFit as active —
+  // which must then defer them to fit the 8192 window. This pins the executor's
+  // contract: the fit pass is the ONLY thing standing between 65 frontier tools and
+  // an 8K window, and it must hold.
+  it("frontier: applyToolDeferral keeps all 65 active, then applyToolBudgetFit defers them to fit 8192", () => {
+    const logger = createMockLogger();
+    const tools = Array.from({ length: 65 }, (_, i) => makeTool(`mcp__srv--tool_${i}`, 560, 120));
+    // Step 1: rule/ceiling deferral for a frontier admin — defers nothing.
+    const deferralResult = applyToolDeferral(
+      tools,
+      8_192,
+      makeContext({ trustLevel: "admin", capabilityClass: "frontier", toolNames: tools.map((t) => t.name) }),
+      logger,
+    );
+    expect(deferralResult.activeTools.length).toBe(65); // frontier defers nothing by rule/ceiling
+    // Step 2: window-aware budget fit — must defer ~50 so the active overhead fits 8192.
+    const budget = computeWindowFitBudget({
+      profile: {
+        capabilityClass: "frontier",
+        scaffoldLevel: "standard",
+        securityLevel: "standard",
+        reasoningStyle: "none",
+        contextWindow: 8_192,
+      } as import("./model-profile.js").ModelProfile,
+    });
+    const sysChars = 2_898;
+    applyToolBudgetFit(deferralResult, {
+      systemPromptText: "x".repeat(sysChars),
+      contextWindow: budget.effectiveWindow,
+      outputHeadroom: budget.outputHeadroom,
+      messageFloorTokens: budget.messageFloorTokens,
+      recentlyUsedToolNames: new Set<string>(),
+      logger,
+    });
+    const sysTok2 = Math.ceil(sysChars / CHARS_PER_TOKEN_RATIO);
+    const toolBudget2 = 8_192 - sysTok2 - budget.outputHeadroom - budget.messageFloorTokens;
+    const shipped = [
+      ...deferralResult.activeTools,
+      ...deferralResult.discoveredTools,
+      ...(deferralResult.discoverTool ? [deferralResult.discoverTool] : []),
+    ];
+    expect(Math.ceil(toolDefOverheadChars(shipped) / CHARS_PER_TOKEN_RATIO)).toBeLessThanOrEqual(toolBudget2);
   });
 });

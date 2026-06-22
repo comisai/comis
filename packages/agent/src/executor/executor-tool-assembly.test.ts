@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   createDiscoverToolMock: vi.fn(),
   createAutoDiscoveryStubsMock: vi.fn(),
   applyToolBudgetFitMock: vi.fn(),
+  computeWindowFitBudgetMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock("./tool-deferral.js", () => ({
   createDiscoverTool: mocks.createDiscoverToolMock,
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
   applyToolBudgetFit: mocks.applyToolBudgetFitMock,
+  computeWindowFitBudget: mocks.computeWindowFitBudgetMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
   // resolveModelTier has been deleted in Plan 151-03 (K1 requirement)
   CORE_TOOLS: new Set(["bash", "file_read"]),
@@ -254,6 +256,13 @@ beforeEach(() => {
   // Default: the window-aware fit pass is a no-op (active tools already fit) —
   // it mutates deferralResult in place, so the no-op default does nothing.
   mocks.applyToolBudgetFitMock.mockImplementation(() => undefined);
+  // Default window-fit budget: a wide window so neither the prompt-fit fallback
+  // nor the tool-fit pass engages (matches the real helper's shape).
+  mocks.computeWindowFitBudgetMock.mockReturnValue({
+    effectiveWindow: 200_000,
+    outputHeadroom: 768,
+    messageFloorTokens: 2_048,
+  });
   mocks.buildDeferredToolsContextMock.mockReturnValue("");
   mocks.createAutoDiscoveryStubsMock.mockReturnValue([]);
   mocks.buildCapabilityIndexContextMock.mockReturnValue({
@@ -352,6 +361,22 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
     expect(paramsArg.outputHeadroom).toBeGreaterThan(0);
     expect(typeof paramsArg.systemPromptText).toBe("string");
     expect(paramsArg.systemPromptText.length).toBeGreaterThan(0);
+  });
+
+  it("hands assembleExecutionPrompt a windowFitBudget so the degenerate-window compact fallback can engage", async () => {
+    // The Part-2 extension: the prompt-assembly degenerate fallback needs the
+    // effective window + headroom + floor. assembleTools must thread that budget
+    // into assembleExecutionPrompt (the prompt-fit pass mirrors the tool-fit pass).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await assembleTools(makeParams({ deps: makeDeps({ customTools: [makeTool("read")] as any }) }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledTimes(1);
+    const promptArg = mocks.assembleExecutionPromptMock.mock.calls[0][0] as {
+      windowFitBudget?: { effectiveWindow: number; outputHeadroom: number; messageFloorTokens: number };
+    };
+    expect(promptArg.windowFitBudget).toBeDefined();
+    expect(promptArg.windowFitBudget!.effectiveWindow).toBeGreaterThan(0);
+    expect(promptArg.windowFitBudget!.outputHeadroom).toBeGreaterThan(0);
+    expect(promptArg.windowFitBudget!.messageFloorTokens).toBe(2_048);
   });
 
   it("applies the fit pass's in-place refinement: deferring a tool shrinks the shipped set + reservation", async () => {
