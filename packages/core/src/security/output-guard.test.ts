@@ -581,16 +581,34 @@ describe("createOutputGuard", () => {
       }
     });
 
-    it("deduplicates a secret registered twice and keeps longest-first ordering", () => {
-      // Register a longer secret that CONTAINS a shorter (>=8) secret as a
-      // substring; longest-first ordering must redact the longer one whole so the
-      // shorter's redaction cannot leave a dangling fragment of the longer.
+    it("deduplicates a secret registered twice (no double finding on one hit)", () => {
+      // Registering the same value twice must not add it to the bound list twice
+      // — a single occurrence in the response yields exactly ONE known_secret
+      // finding, not two.
+      const bearer = "dedup_bearer_value_001122"; // >= 8, unique token (no substrings)
+      const g = createOutputGuard();
+      g.registerSecret(bearer);
+      g.registerSecret(bearer); // duplicate — must be ignored (dedup)
+      const result = g.scan(`one occurrence here: ${bearer} done`);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        expect(result.value.sanitized).not.toContain(bearer);
+        const known = result.value.findings.filter((f) => f.pattern === "known_secret");
+        expect(known).toHaveLength(1);
+      }
+    });
+
+    it("redacts a long secret whole when a shorter substring secret is also registered", () => {
+      // Longest-first ordering: the longer secret is redacted before the shorter
+      // one, so no dangling tail of the longer secret survives the shorter's
+      // replacement. (Both match the original response, so two findings are
+      // expected — what matters is no leftover fragment of the long secret.)
       const shortSecret = "abcdefgh12"; // 10 chars, >= 8
       const longSecret = "abcdefgh1234567890XYZ"; // contains shortSecret as a prefix
       const g = createOutputGuard();
       g.registerSecret(shortSecret);
       g.registerSecret(longSecret);
-      g.registerSecret(longSecret); // duplicate — must be ignored (dedup)
       const result = g.scan(`token=${longSecret} end`);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -599,9 +617,6 @@ describe("createOutputGuard", () => {
         expect(result.value.sanitized).not.toContain(longSecret);
         expect(result.value.sanitized).not.toContain("1234567890XYZ");
         expect(result.value.sanitized).toContain("[REDACTED:known_secret]");
-        // Dedup: exactly one known_secret finding for the single long-secret hit.
-        const known = result.value.findings.filter((f) => f.pattern === "known_secret");
-        expect(known).toHaveLength(1);
       }
     });
   });

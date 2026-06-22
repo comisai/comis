@@ -21,4 +21,12 @@ export interface OutputGuardResult {
 /** Port interface for scanning LLM output before delivery. */
 export interface OutputGuardPort {
   scan(response: string, context?: { canaryToken?: string }): Result<OutputGuardResult, Error>;
+  /**
+   * Register a runtime secret (e.g. a minted lease bearer) so subsequent scans
+   * redact it to `[REDACTED:known_secret]` — ENDPOINT-03 (Phase 211). The
+   * KNOWN_SECRET_MIN_LENGTH floor + longest-first ordering still apply: a value
+   * shorter than the floor (or empty/whitespace) is ignored, and a value already
+   * registered is deduplicated.
+   */
+  registerSecret(value: string): void;
 }

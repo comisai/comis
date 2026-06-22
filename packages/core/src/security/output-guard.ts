@@ -151,5 +151,22 @@ export function createOutputGuard(opts?: { knownSecrets?: readonly string[] }): 
       const blocked = findings.some(f => f.severity === "critical");
       return ok({ safe, blocked, findings, sanitized });
     },
+
+    // ENDPOINT-03 (Phase 211): register a runtime secret (the minted lease
+    // bearer) so the NEXT scan redacts it. scan() reads `boundKnownSecrets`
+    // live each call, so pushing here is read immediately. The same
+    // KNOWN_SECRET_MIN_LENGTH floor + longest-first ordering the constructor
+    // applies are re-applied so a short/empty value can never redact ordinary
+    // text and a substring secret is handled deterministically.
+    registerSecret(value: string): void {
+      if (typeof value !== "string" || value.trim().length < KNOWN_SECRET_MIN_LENGTH) {
+        return; // floor: short/empty/whitespace never registered
+      }
+      if (boundKnownSecrets.includes(value)) {
+        return; // dedup: already registered
+      }
+      boundKnownSecrets.push(value);
+      boundKnownSecrets.sort((a, b) => b.length - a.length); // longest-first
+    },
   };
 }
