@@ -1203,8 +1203,12 @@ function emitStartupBanner(deps: {
   // (JAIL-03), wired through `namespacePreflightOk` without re-plumbing here.
   const namespacePreflightOk = deps.namespacePreflightOk ?? true;
   for (const rec of buildAutonomyBootLog(agents)) {
+    // `submodule` (not `module`): the daemon logger already binds the parent
+    // `module` field; a payload `module:` would duplicate it on the JSON line
+    // (the no-restricted-syntax log-payload rule). `submodule` is the call-site
+    // scope tag (CLAUDE.md logging fields).
     daemonLogger.info({
-      agentId: rec.agentId, module: "autonomy",
+      agentId: rec.agentId, submodule: "autonomy",
       profile: rec.profile, enabled: rec.enabled, capabilities: rec.capabilities,
       aggregateBudgetUsd: rec.aggregateBudgetUsd, changeField: rec.changeField,
       ...(rec.m1Notice !== undefined ? { m1Notice: rec.m1Notice } : {}),
@@ -1213,7 +1217,7 @@ function emitStartupBanner(deps: {
   const downshiftFinding = buildNamespaceDownshiftFinding({ namespacePreflightOk });
   if (downshiftFinding) {
     daemonLogger.warn({
-      module: "autonomy", errorKind: downshiftFinding.errorKind,
+      submodule: "autonomy", errorKind: downshiftFinding.errorKind,
       hint: downshiftFinding.hint,
     }, downshiftFinding.message);
   }

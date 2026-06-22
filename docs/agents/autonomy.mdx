@@ -110,7 +110,7 @@ boot logs alone, without turning on debug logging:
 ```json
 {
   "level": 30,
-  "module": "autonomy",
+  "submodule": "autonomy",
   "agentId": "default",
   "profile": "standard",
   "capabilities": ["orch:read", "orch:web", "orch:write", "orch:analyze", "orch:spawn", "orch:graph", "orch:cron", "orch:skill"],
@@ -139,7 +139,7 @@ surfaces, the agent only replies) and says so, two ways:
 ```json
 {
   "level": 40,
-  "module": "autonomy",
+  "submodule": "autonomy",
   "errorKind": "precondition",
   "hint": "Autonomy needs an unprivileged user namespace ... downshifted to the 'assistant' profile. Enable unprivileged user namespaces ... or set autonomy.profile: assistant to silence this.",
   "msg": "Agent autonomy downshifted to the 'assistant' profile: the namespace preflight failed ..."
