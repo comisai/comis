@@ -9,6 +9,15 @@ export type {
   SessionInfo,
 } from "./session-manager.js";
 
+export { createLeaseManager } from "./lease-manager.js";
+export type {
+  LeaseManager,
+  LeaseManagerDeps,
+  MintLeaseInput,
+  IssuedLease,
+  LeaseInfo,
+} from "./lease-manager.js";
+
 export { createMitmBroker } from "./mitm-broker.js";
 export type { MitmBrokerPort, MitmBrokerDeps } from "./mitm-broker.js";
 
