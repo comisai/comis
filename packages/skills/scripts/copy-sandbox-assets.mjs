@@ -40,6 +40,5 @@ if (blobs.length === 0) {
 mkdirSync(distDir, { recursive: true });
 for (const blob of blobs) {
   cpSync(join(srcDir, blob), join(distDir, blob));
-  // eslint-disable-next-line no-console -- build-script progress line
   console.log(`[copy-sandbox-assets] ${blob} → dist/tools/builtin/sandbox/`);
 }
