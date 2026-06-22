@@ -27,6 +27,7 @@ vi.mock("../skills/bundle-install-helper.js", () => ({
 
 import { createSkillHandlers, type SkillHandlerDeps } from "./skill-handlers.js";
 import type { AppContainer } from "@comis/core";
+import { CapabilityDeniedError } from "@comis/core";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -941,6 +942,77 @@ describe("skills.create handler", () => {
     const skillFile = join(skillDir, "SKILL.md");
     expect(fs.statSync(skillDir).mode & 0o777).toBe(0o700);
     expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CAP-05: the orch:skill capability gate on skills.create (the in-process
+// bypass proof). The agent loop reaches handlers WITHOUT passing checkScope, so
+// the gate lives in the handler reading the injected _capabilities. The SAME
+// requireCapability predicate the would-be loopback socket (Phase 211) will use
+// is exercised here — testing it once at the handler proves the socket path
+// denies too once 211 wires it.
+// ---------------------------------------------------------------------------
+
+describe("skills.create capability gate (CAP-05)", () => {
+  it("does NOT throw CapabilityDeniedError when _capabilities holds orch:skill", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const reg = makeRegistry([]);
+    const handlers = createSkillHandlers(
+      makeDeps({
+        workspaceDirs: new Map([["agent-a", wsDir]]),
+        skillRegistries: new Map([["agent-a", reg]]),
+      }),
+    );
+    // A held-cap call may fail later for unrelated mock reasons; we assert
+    // SPECIFICALLY that it does not throw the capability gate.
+    let thrown: unknown;
+    try {
+      await handlers["skills.create"]!({
+        name: "held-cap-skill",
+        scope: "local",
+        content: "---\nname: held-cap-skill\ndescription: test skill\n---\nBody",
+        _agentId: "agent-a",
+        _capabilities: ["orch:skill"],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).not.toBeInstanceOf(CapabilityDeniedError);
+  });
+
+  it("throws CapabilityDeniedError when _capabilities lacks orch:skill (empty held set)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+    await expect(
+      handlers["skills.create"]!({
+        name: "denied-skill",
+        scope: "local",
+        content: "---\nname: denied-skill\ndescription: test skill\n---\nBody",
+        _agentId: "agent-a",
+        _capabilities: [],
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+  });
+
+  it("throws CapabilityDeniedError when _capabilities is absent (undefined held set)", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+    await expect(
+      handlers["skills.create"]!({
+        name: "no-caps-skill",
+        scope: "local",
+        content: "---\nname: no-caps-skill\ndescription: test skill\n---\nBody",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
   });
 });
 

@@ -231,6 +231,23 @@ vi.mock("@comis/core", () => ({
   // the agent's own workspace files in the per-turn tracker. Tests don't
   // exercise real workspace files, so a no-op stub is sufficient.
   registerWorkspaceFilesInTracker: vi.fn(async () => {}),
+  // CAP-03: createAgentRpcCall resolves the agent's held caps via
+  // resolveAutonomy(agents[agentId]?.autonomy).capabilities. The mock returns
+  // the `standard` floor set (the zero-config default) so the injection test
+  // can assert _capabilities carries orch:spawn. The resolver itself is unit-
+  // tested against the real schema in schema-agent-autonomy.test.ts.
+  resolveAutonomy: vi.fn((_cfg?: unknown) => ({
+    profile: "standard",
+    enabled: true,
+    capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
+    resolvedCapabilities: [],
+    mode: "accept-reversible",
+    aggregateBudgetUsd: 2.0,
+    maxConcurrentSelfAgents: 4,
+    maxSelfSpawnRatePerMin: 30,
+    cronSelfMax: 8,
+    message: { channels: ["origin"], maxPerHour: 20 },
+  })),
   // Consumed by the agents_manage onAgentCreated callback for seed-tracker
   // registration of newly-created agents. Not exercised by these tests but
   // imported at module load, so they must exist on the mock.
@@ -880,6 +897,40 @@ describe("setupTools", () => {
         schedule: "* * * * *",
       }),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // 13b. Agent-scoped rpcCall injects _capabilities (CAP-03)
+  //
+  // createAgentRpcCall resolves the agent's held capability set via
+  // resolveAutonomy(agents[agentId]?.autonomy).capabilities and injects it as
+  // the internal _capabilities field alongside _agentId. A zero-config agent
+  // resolves to `standard`, whose floor set includes orch:spawn — so the gated
+  // orchestration handlers downstream see the caps the agent legitimately holds.
+  // (RED on pre-patch: createAgentRpcCall does not inject _capabilities yet.)
+  // -------------------------------------------------------------------------
+
+  it("injects _capabilities (resolved from the agent autonomy config) into rpcCall params", async () => {
+    const rpcCall = vi.fn(async () => ({}));
+    const deps = createMinimalDeps({ rpcCall: rpcCall as any });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+    pipelineArgs.platformTools();
+
+    const agentRpc = mockCreateCronTool.mock.calls[0][0];
+    await agentRpc("session.spawn", { task: "do a thing" });
+
+    const [, forwarded] = rpcCall.mock.calls.at(-1)!;
+    expect(Array.isArray((forwarded as Record<string, unknown>)._capabilities)).toBe(true);
+    // The standard (zero-config) floor set includes the orchestration caps the
+    // gated handlers require — orch:spawn proves the held set reaches the gate.
+    expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:spawn");
+    expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:graph");
+    expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:cron");
   });
 
   // -------------------------------------------------------------------------
