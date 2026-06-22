@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   buildDeferredToolsContextMock: vi.fn(),
   createDiscoverToolMock: vi.fn(),
   createAutoDiscoveryStubsMock: vi.fn(),
+  applyToolBudgetFitMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("./tool-deferral.js", () => ({
   buildDeferredToolsContext: mocks.buildDeferredToolsContextMock,
   createDiscoverTool: mocks.createDiscoverToolMock,
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
+  applyToolBudgetFit: mocks.applyToolBudgetFitMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
   // resolveModelTier has been deleted in Plan 151-03 (K1 requirement)
   CORE_TOOLS: new Set(["bash", "file_read"]),
@@ -249,6 +251,9 @@ beforeEach(() => {
     deferredNames: [],
     discoverTool: undefined,
   }));
+  // Default: the window-aware fit pass is a no-op (active tools already fit) —
+  // it mutates deferralResult in place, so the no-op default does nothing.
+  mocks.applyToolBudgetFitMock.mockImplementation(() => undefined);
   mocks.buildDeferredToolsContextMock.mockReturnValue("");
   mocks.createAutoDiscoveryStubsMock.mockReturnValue([]);
   mocks.buildCapabilityIndexContextMock.mockReturnValue({
@@ -311,6 +316,87 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
 
     // The deferred run ships far fewer tool schemas, so its reservation must be smaller.
     expect(deferred.cachedSystemTokensEstimate).toBeLessThan(noDefer.cachedSystemTokensEstimate);
+  });
+
+  // -------------------------------------------------------------------------
+  // ROOT-CAUSE context-exhaustion guard (2026-06-22): the window-aware
+  // tool-budget fit pass must run on the SHIPPING active set (active +
+  // discovered + discover_tools), and when it defers more tools the assembly
+  // must reflect the refined partition (smaller mergedCustomTools + smaller
+  // cachedSystemTokensEstimate). Pre-patch assembleTools never called a budget
+  // fit pass, so a nano window over-shipped tools and the pre-flight threw
+  // ContextExhaustionError on every turn.
+  // -------------------------------------------------------------------------
+  it("runs the window-aware tool-budget fit pass with deferralResult + the budget terms", async () => {
+    const tools = [makeTool("read"), makeTool("mcp__srv--x")] as unknown[];
+    mocks.applyToolDeferralMock.mockImplementationOnce((t: unknown[]) => ({
+      activeTools: t,
+      discoveredTools: [],
+      deferredEntries: [{ name: "deferred_a", description: "d", original: makeTool("deferred_a") }],
+      deferredNames: ["deferred_a"],
+      discoverTool: undefined,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await assembleTools(makeParams({ deps: makeDeps({ customTools: tools as any }) }));
+    expect(mocks.applyToolBudgetFitMock).toHaveBeenCalledTimes(1);
+    const [deferralArg, paramsArg] = mocks.applyToolBudgetFitMock.mock.calls[0] as [
+      { activeTools: Array<{ name: string }> },
+      { contextWindow: number; messageFloorTokens: number; systemPromptText: string; outputHeadroom: number },
+    ];
+    // The pass receives the live deferralResult (so it can refine it in place).
+    expect(deferralArg.activeTools.map((t) => t.name)).toContain("read");
+    // And the budget terms — a positive window, message floor, output headroom,
+    // and the real system-prompt TEXT (so the fit pass factors its script).
+    expect(paramsArg.contextWindow).toBeGreaterThan(0);
+    expect(paramsArg.messageFloorTokens).toBeGreaterThan(0);
+    expect(paramsArg.outputHeadroom).toBeGreaterThan(0);
+    expect(typeof paramsArg.systemPromptText).toBe("string");
+    expect(paramsArg.systemPromptText.length).toBeGreaterThan(0);
+  });
+
+  it("applies the fit pass's in-place refinement: deferring a tool shrinks the shipped set + reservation", async () => {
+    const tools = [makeTool("read", "r".repeat(400)), makeTool("mcp__srv--x", "x".repeat(400))] as unknown[];
+    mocks.applyToolDeferralMock.mockImplementation((t: unknown[]) => ({
+      activeTools: t,
+      discoveredTools: [],
+      deferredEntries: [],
+      deferredNames: [],
+      discoverTool: undefined,
+    }));
+
+    // Run A: fit pass is a no-op → both tools ship.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noFit = await assembleTools(makeParams({ deps: makeDeps({ customTools: tools as any }) }));
+
+    // Run B: fit pass defers mcp__srv--x by MUTATING deferralResult in place
+    // (the production applyToolBudgetFit's contract).
+    mocks.applyToolBudgetFitMock.mockImplementationOnce(
+      (dr: {
+        activeTools: Array<{ name: string }>;
+        deferredEntries: Array<{ name: string }>;
+        deferredNames: string[];
+      }) => {
+        const dropped = dr.activeTools.filter((t) => t.name === "mcp__srv--x");
+        dr.activeTools = dr.activeTools.filter((t) => t.name !== "mcp__srv--x");
+        dr.deferredEntries = [
+          ...dr.deferredEntries,
+          ...dropped.map((t) => ({ name: t.name, description: "d", original: t })),
+        ];
+        dr.deferredNames = [...dr.deferredNames, "mcp__srv--x"];
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fit = await assembleTools(makeParams({ deps: makeDeps({ customTools: tools as any }) }));
+
+    const noFitNames = noFit.mergedCustomTools.map((t) => (t as { name: string }).name);
+    const fitNames = fit.mergedCustomTools.map((t) => (t as { name: string }).name);
+    expect(noFitNames).toContain("mcp__srv--x");
+    expect(fitNames).not.toContain("mcp__srv--x");
+    expect(fitNames).toContain("read");
+    // The deferred tool became reachable via the refined deferred set.
+    expect(fit.deferralResult.deferredNames).toContain("mcp__srv--x");
+    // Reservation reflects the smaller shipping set.
+    expect(fit.cachedSystemTokensEstimate).toBeLessThan(noFit.cachedSystemTokensEstimate);
   });
 
   it("merges deps.customTools with converted per-request AgentTool[] when convertTools is provided", async () => {

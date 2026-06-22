@@ -730,6 +730,96 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     expect(err.exhaustionCause).toBe("aggregate");
     expect(err.message).not.toContain("[cause:");
   });
+
+  // ROOT-CAUSE fix (2026-06-22): when the NON-EVICTABLE fixed overhead (S =
+  // system prompt + tool schemas) ALONE exceeds the bound, the failure is the
+  // overhead, NOT the message. Pre-patch this mis-classified as `oversized_input`
+  // (singleItemBound = finalBound − systemTokens goes NEGATIVE, so any message
+  // token count > negative → "oversized_input"), producing the misleading "your
+  // message alone is larger than this model's context window" reply for a
+  // 10-token "What is the capital of France?". It must classify as the new
+  // `fixed_overhead_exceeds_window`.
+  it("systemTokens ALONE exceeds the bound with a tiny message → cause fixed_overhead_exceeds_window (not oversized_input)", () => {
+    // S = 31000 on a 32000 window, "none" → bound = 32000 − 768 = 31232. S(31000)
+    // already leaves room < the tiny message but the OVERFLOW is S, not the input.
+    // Pre-patch: singleItemBound = 31232 − 31000 = 232; the 4-token message
+    // (~16 chars → ceil(16/3.5)=5 tokens) is NOT > 232, so pre-patch would land on
+    // "aggregate"… so push S above the bound itself to force the misread:
+    // S = 31500 > bound 31232 → infeasible with ZERO message tokens.
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 31_500,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, [], 0, [{ role: "user", content: "hi" }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("fixed_overhead_exceeds_window");
+    expect(err.message).toContain("[cause: fixed_overhead_exceeds_window]");
+  });
+
+  it("a genuinely oversized CURRENT message (S fits, message does not) still classifies as oversized_input", () => {
+    // Guard against over-correction: when S is small and the message itself blows
+    // the bound, the cause must remain oversized_input (the message IS the problem).
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 1_000, // S fits comfortably
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      // 140K chars → 40000 tokens, the LAST user message; bound 31232; S only 1000.
+      runPreflightFitCheck(deps, 32_000, [], 0, [{ role: "user", content: "X".repeat(140_000) }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("oversized_input");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 2 (2026-06-22) — degenerate window (window < system prompt). The
+// window-aware tool-budget fit pass (enforceToolBudgetFit) defers ALL tools when
+// the residual budget is negative, but the FIXED S term (system prompt) is
+// non-evictable, so a window smaller than S itself is genuinely infeasible. The
+// failure must be HONEST: it throws fixed_overhead_exceeds_window (not
+// oversized_input), with ZERO history and ZERO tools, even for an empty/tiny
+// message. A minimal-system-prompt fallback was considered and DEFERRED (it would
+// be deeply invasive in the 1954-line prompt-assembly.ts with its session
+// snapshot + once-per-session systemPromptOverride); the honest throw + truthful
+// degraded reply is the chosen Part-2 behavior. See the dated TODO in
+// lcd-preflight.ts.
+// ---------------------------------------------------------------------------
+describe("Part 2: degenerate window smaller than the system prompt throws honestly", () => {
+  it("throws fixed_overhead_exceeds_window with zero tools, zero history, and an empty message", () => {
+    // 4K window, S = 5000 (system prompt alone > the whole window). "none" → bound
+    // = 4000 − 768 = 3232 < S. No history, freshTail is a single empty user msg.
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      getSystemTokensEstimate: () => 5_000,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 4_000, [], 0, [{ role: "user", content: "" }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("fixed_overhead_exceeds_window");
+    // The honest message names the overhead, never the message.
+    expect(err.message).toContain("[cause: fixed_overhead_exceeds_window]");
+  });
 });
 
 // ---------------------------------------------------------------------------

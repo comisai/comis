@@ -13,6 +13,23 @@
  *
  * Separated from lcd-assembler.ts to keep that file ≤ 820 lines.
  *
+ * Root-cause context-exhaustion guard (2026-06-22): the NON-EVICTABLE fixed
+ * overhead S (system prompt + tool schemas) is the dominant term on small
+ * windows. The window-aware tool-budget fit pass (executor-tool-assembly.ts
+ * `enforceToolBudgetFit`) defers tools so S fits BEFORE this pre-flight runs,
+ * which keeps a `nano`-class model (~16K window) from throwing on every turn. The
+ * only residual infeasible case is window < system-prompt-alone — genuinely
+ * unusable. This pass throws `fixed_overhead_exceeds_window` there (honest), and
+ * the degraded reply names the window / tool footprint / a larger model — never
+ * the misleading "your message is too big".
+ *
+ * TODO(2026-Q3): a minimal-system-prompt fallback (drop verbose bootstrap/tooling
+ * guidance, keep identity + essential behavior) would let the agent still reply
+ * on a window < full-prompt. Deferred: it is deeply invasive in the 1954-line
+ * prompt-assembly.ts (per-session bootstrap snapshot + once-per-session
+ * systemPromptOverride). Tracked against the codex nano-window context-exhaustion
+ * incident. Until then the degenerate case fails honestly (above).
+ *
  * @module
  */
 
@@ -210,15 +227,27 @@ export function runPreflightFitCheck(
       // (the LAST user message in the fresh tail — "shorten your message" is
       // actionable) from an earlier message (only a session reset helps).
       // Everything else is the historical aggregate overflow.
+      //
+      // ROOT-CAUSE fix (2026-06-22): the FIXED overhead S (system prompt + tool
+      // schemas) is NON-EVICTABLE. When S alone exceeds the bound, the turn is
+      // infeasible regardless of history/thinking/message — so this must be
+      // classified FIRST, before the message/history branches. Pre-fix this fell
+      // through to oversized_input because `singleItemBound = finalBound − S`
+      // goes NEGATIVE (any message token count > a negative number), producing
+      // the misleading "your message alone is larger than this model's context
+      // window" reply for a 10-token "What is the capital of France?". The remedy
+      // is the WINDOW or the agent's tool/prompt footprint — never the message.
       const singleItemBound = finalBound - systemTokens;
       const lastUserIdx = findLastUserIndex(freshTail);
       const cause: ContextExhaustionCause =
-        lastUserIdx >= 0 && (freshTailMsgTokens[lastUserIdx] ?? 0) > singleItemBound
-          ? "oversized_input"
-          : freshTailMsgTokens.some((t) => t > singleItemBound) ||
-              evictable.some((b) => b.tokens > singleItemBound)
-            ? "oversized_history_message"
-            : "aggregate";
+        systemTokens > finalBound
+          ? "fixed_overhead_exceeds_window"
+          : lastUserIdx >= 0 && (freshTailMsgTokens[lastUserIdx] ?? 0) > singleItemBound
+            ? "oversized_input"
+            : freshTailMsgTokens.some((t) => t > singleItemBound) ||
+                evictable.some((b) => b.tokens > singleItemBound)
+              ? "oversized_history_message"
+              : "aggregate";
       deps.logger.warn(
         {
           step: "lcd-pre-flight",

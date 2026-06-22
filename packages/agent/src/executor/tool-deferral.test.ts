@@ -7,6 +7,8 @@ import {
   buildDeferredToolsContext,
   createDiscoverTool,
   createAutoDiscoveryStubs,
+  enforceToolBudgetFit,
+  applyToolBudgetFit,
   DEFERRAL_STUB_MARKER,
   CORE_TOOLS,
   DEFERRAL_RULES,
@@ -14,6 +16,8 @@ import {
   MAX_EMBED_QUERY_CHARS,
 } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
+import { toolDefOverheadChars } from "./tool-overhead.js";
+import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import type { EmbeddingPort } from "@comis/core";
 import { err } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
@@ -3112,5 +3116,269 @@ describe("applyToolDeferral - CWF-04 orchestration reachability (ceiling=24 + pi
     expect(result.deferredNames).toContain("pipeline");
     expect(result.deferredNames).not.toContain("read");
     expect(result.deferredNames).not.toContain("exec");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 18: enforceToolBudgetFit — window-aware tool-budget fit-enforcement
+//
+// THE ROOT-CAUSE FIX (2026-06-22). applyToolDeferral defers by COUNT
+// (activeToolCeiling / CORE_TOOLS heuristic), never against a token budget, so
+// nothing guarantees systemPrompt + activeTools + headroom + messageFloor ≤
+// effectiveWindow. On a nano model (~16K effective window) a ~10K system prompt
+// + a CORE_TOOLS-only active set still overflowed → ContextExhaustionError on
+// every turn, even "What is the capital of France?". This pass deterministically
+// defers MORE active tools (lowest-priority first; CORE_TOOLS preferentially
+// kept; discover_tools kept while anything stays reachable) until the active-tool
+// overhead fits the residual budget. Dropped tools join deferredEntries so they
+// stay reachable via discover_tools — no capability loss for adequate windows.
+// ---------------------------------------------------------------------------
+describe("enforceToolBudgetFit — window-aware tool-budget fit-enforcement", () => {
+  // Each makeTool(name, 0, 0) below has overhead = name.length + JSON-params
+  // (a fixed ~46-char empty-string-param object). Sizing tools explicitly via
+  // descriptionChars lets the test pin a known per-tool char cost.
+  function activeToolOverheadTokens(tools: ToolDefinition[]): number {
+    return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
+  }
+
+  it("defers low-priority active tools until system+activeTools+headroom+floor fits a 16K window", () => {
+    // 10 big non-core tools (~700 chars overhead each ≈ 200 tokens each → ~2000
+    // tokens of tools) on a 16K window with a ~10K system prompt. The fit budget
+    // for tools = 16000 − ceil(10000/3.5≈2858) − headroom(768) − floor(2048)
+    // ≈ 10326 tokens → comfortably fits here, so a NORMAL turn must NOT be
+    // forced to drop everything. Tighten below.
+    const logger = createMockLogger();
+    const bigTools = Array.from({ length: 10 }, (_, i) => makeTool(`mcp__srv--tool_${i}`, 600, 100));
+    const discover = makeTool("discover_tools", 80, 60);
+    const result = enforceToolBudgetFit({
+      activeTools: [...bigTools, discover],
+      deferredEntries: [],
+      systemPromptText: "x".repeat(10_000),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    const window = 16_000;
+    const sysOnly = Math.ceil(10_000 / CHARS_PER_TOKEN_RATIO);
+    const budget = window - sysOnly - 768 - 2_048;
+    expect(activeToolOverheadTokens(result.activeTools)).toBeLessThanOrEqual(budget);
+  });
+
+  it("defers MORE tools on a tight 16K window with a huge system prompt + many heavy tools (the live nano repro)", () => {
+    // The live failure: ~10K system prompt + ~66 tool schemas on a ~16K window.
+    // Make tools heavy enough that the full active set blows the budget; the pass
+    // must defer down until the residual tool budget is satisfied, and the dropped
+    // tools must appear in deferredEntries (reachable via discover_tools).
+    const logger = createMockLogger();
+    const heavyTools = Array.from({ length: 40 }, (_, i) => makeTool(`mcp__srv--tool_${i}`, 1_000, 400));
+    const discover = makeTool("discover_tools", 80, 60);
+    const beforeCount = heavyTools.length;
+    const result = enforceToolBudgetFit({
+      activeTools: [...heavyTools, discover],
+      deferredEntries: [],
+      systemPromptText: "x".repeat(10_000),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    const sysOnly = Math.ceil(10_000 / CHARS_PER_TOKEN_RATIO);
+    const budget = 16_000 - sysOnly - 768 - 2_048;
+    // The invariant: the shipping active-tool overhead fits the residual budget.
+    expect(activeToolOverheadTokens(result.activeTools)).toBeLessThanOrEqual(budget);
+    // Tools were actually dropped, and every dropped tool is reachable via discovery.
+    expect(result.activeTools.length).toBeLessThan(beforeCount + 1);
+    expect(result.newlyDeferred.length).toBeGreaterThan(0);
+    const deferredNames = new Set(result.deferredEntries.map((e) => e.name));
+    for (const n of result.newlyDeferred) expect(deferredNames.has(n)).toBe(true);
+    expect(result.changed).toBe(true);
+  });
+
+  it("drops non-core tools BEFORE core tools (lowest-priority-first ordering)", () => {
+    // Each makeTool(_, 1200, 400) ≈ 472 tokens. Budget sized to fit exactly ONE:
+    // sysOnly=ceil(50800/3.5)=14515, budget=16000-14515-768=717 → one 472-token
+    // tool fits, two (944) do not. The core tool must survive; the non-core one
+    // must be deferred first.
+    const logger = createMockLogger();
+    const core = makeTool("read", 1_200, 400);
+    const nonCore = makeTool("mcp__srv--weather", 1_200, 400);
+    const result = enforceToolBudgetFit({
+      activeTools: [core, nonCore],
+      deferredEntries: [],
+      systemPromptText: "x".repeat(50_800),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 0,
+      coreToolNames: new Set<string>(["read"]),
+      recentlyUsedToolNames: new Set<string>(),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    const activeNames = result.activeTools.map((t) => t.name);
+    expect(result.newlyDeferred).toContain("mcp__srv--weather");
+    expect(result.newlyDeferred).not.toContain("read");
+    expect(activeNames).toContain("read");
+  });
+
+  it("is a no-op (changed=false, identical arrays) when the active tools already fit", () => {
+    const logger = createMockLogger();
+    const tools = [makeTool("read", 50, 50), makeTool("edit", 50, 50)];
+    const result = enforceToolBudgetFit({
+      activeTools: tools,
+      deferredEntries: [],
+      systemPromptText: "x".repeat(1_000),
+      contextWindow: 200_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      coreToolNames: CORE_TOOLS,
+      recentlyUsedToolNames: new Set<string>(),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    expect(result.changed).toBe(false);
+    expect(result.newlyDeferred).toEqual([]);
+    expect(result.activeTools).toBe(tools);
+  });
+
+  it("drops discover_tools too when the budget is so tiny that nothing else remains to discover", () => {
+    // Degenerate-but-not-impossible: budget fits ~0 tools. A chat reply needs no
+    // tools, so dropping discover_tools is acceptable. deferredEntries that
+    // existed already stay reachable conceptually, but when the entire active set
+    // is squeezed out, discover_tools (which only indexes deferred entries) may go
+    // too. The pass must not infinite-loop and must leave a coherent partition.
+    const logger = createMockLogger();
+    const discover = makeTool("discover_tools", 400, 200);
+    const one = makeTool("mcp__srv--x", 800, 400);
+    const result = enforceToolBudgetFit({
+      activeTools: [one, discover],
+      deferredEntries: [{ name: "mcp__srv--y", description: "y", original: makeTool("mcp__srv--y") }],
+      // sysOnly = ceil(56000/3.5) = 16000 == window → budget = -768 (negative).
+      // Even 0 tools cannot fit the FIXED overhead — the degenerate case Part 2
+      // makes honest. Every droppable tool (incl. discover_tools) is deferred.
+      systemPromptText: "x".repeat(56_000),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 0,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    // Budget is negative → everything droppable goes. No throw, coherent result.
+    expect(result.activeTools.length).toBe(0);
+    expect(result.newlyDeferred).toContain("mcp__srv--x");
+    expect(result.newlyDeferred).toContain("discover_tools");
+    expect(result.changed).toBe(true);
+    // discover_tools is the discovery MECHANISM, not a discoverable capability —
+    // it must NOT be added to deferredEntries even when dropped.
+    expect(result.deferredEntries.map((e) => e.name)).not.toContain("discover_tools");
+  });
+
+  it("keeps recently-used tools active preferentially over cold non-core tools", () => {
+    // Budget fits exactly ONE ~472-token tool (sysOnly 14515, budget 717). The
+    // cold tool (rank 0) is deferred before the recently-used one (rank 1).
+    const logger = createMockLogger();
+    const recent = makeTool("mcp__srv--recent", 1_200, 400);
+    const cold = makeTool("mcp__srv--cold", 1_200, 400);
+    const result = enforceToolBudgetFit({
+      activeTools: [recent, cold],
+      deferredEntries: [],
+      systemPromptText: "x".repeat(50_800),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 0,
+      coreToolNames: new Set<string>(),
+      recentlyUsedToolNames: new Set<string>(["mcp__srv--recent"]),
+      discoverToolName: "discover_tools",
+      logger,
+    });
+    expect(result.newlyDeferred).toContain("mcp__srv--cold");
+    expect(result.newlyDeferred).not.toContain("mcp__srv--recent");
+    expect(result.activeTools.map((t) => t.name)).toContain("mcp__srv--recent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 18b: applyToolBudgetFit — in-place orchestrator (rebuilds discover_tools)
+//
+// The wrapper executor-tool-assembly.ts calls. It runs enforceToolBudgetFit over
+// the shipping active set and refines the ExcludeDeferralResult IN PLACE. The
+// load-bearing edge: when the fit pass newly defers tools but the deferral result
+// had NO pre-existing discover_tools (nothing was rule/ceiling-deferred), the
+// wrapper MUST build one so the newly-deferred tools stay reachable — otherwise
+// the fit pass would silently strip capability.
+// ---------------------------------------------------------------------------
+describe("applyToolBudgetFit — in-place refinement + discover_tools rebuild", () => {
+  function makeResult(activeTools: ToolDefinition[]): ExcludeDeferralResult {
+    return {
+      activeTools,
+      deferredEntries: [],
+      discoveredTools: [],
+      discoverTool: null,
+      deferredCount: 0,
+      deferredNames: [],
+    };
+  }
+
+  it("builds a discover_tools when it defers tools and none existed before (no silent capability loss)", () => {
+    const logger = createMockLogger();
+    // Two heavy tools (~472 tokens each), budget fits one → one is deferred.
+    // The deferral result starts with NO discover_tools (discoverTool: null).
+    const result = makeResult([makeTool("read", 1_200, 400), makeTool("mcp__srv--x", 1_200, 400)]);
+    applyToolBudgetFit(result, {
+      systemPromptText: "x".repeat(50_800), // sysOnly 14515 → budget 717 (fits one)
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 0,
+      recentlyUsedToolNames: new Set<string>(),
+      logger,
+    });
+    // A tool was deferred, AND discover_tools now exists to reach it.
+    expect(result.deferredNames).toContain("mcp__srv--x");
+    expect(result.deferredEntries.map((e) => e.name)).toContain("mcp__srv--x");
+    expect(result.discoverTool).not.toBeNull();
+    expect(result.discoverTool!.name).toBe("discover_tools");
+    // The deferred tool is no longer active.
+    expect(result.activeTools.map((t) => t.name)).not.toContain("mcp__srv--x");
+  });
+
+  it("is an in-place no-op when the active tools already fit (discoverTool untouched)", () => {
+    const logger = createMockLogger();
+    const result = makeResult([makeTool("read", 50, 50), makeTool("edit", 50, 50)]);
+    applyToolBudgetFit(result, {
+      systemPromptText: "x".repeat(1_000),
+      contextWindow: 200_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 2_048,
+      recentlyUsedToolNames: new Set<string>(),
+      logger,
+    });
+    expect(result.deferredNames).toEqual([]);
+    expect(result.discoverTool).toBeNull();
+    expect(result.activeTools.map((t) => t.name).sort()).toEqual(["edit", "read"]);
+  });
+
+  it("clears discover_tools when the budget is too tiny for even the discovery tool", () => {
+    const logger = createMockLogger();
+    const result = makeResult([makeTool("mcp__srv--x", 800, 400)]);
+    applyToolBudgetFit(result, {
+      // sysOnly = ceil(56000/3.5) = 16000 == window → budget = -768 → everything goes.
+      systemPromptText: "x".repeat(56_000),
+      contextWindow: 16_000,
+      outputHeadroom: 768,
+      messageFloorTokens: 0,
+      recentlyUsedToolNames: new Set<string>(),
+      logger,
+    });
+    expect(result.activeTools).toEqual([]);
+    // discover_tools was squeezed out — null, not a dangling tool with no entries.
+    expect(result.discoverTool).toBeNull();
   });
 });

@@ -22,8 +22,9 @@ import {
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
 import { formatSessionKey, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, applyToolBudgetFit, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
+import { computeOutputHeadroom } from "../context-engine/output-headroom.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -81,6 +82,24 @@ const DEFERRED_TOOLS_MAX_BY_CLASS: Readonly<Record<CapabilityClass, number>> = {
   small: 20,
   nano: 10,
 } as const;
+
+/**
+ * Minimum tokens the window-aware tool-budget fit pass (enforceToolBudgetFit)
+ * reserves for the user message + a little history, on top of the system prompt
+ * and output headroom. The ROOT-CAUSE context-exhaustion guard defers active
+ * tools until `systemPromptOnly + activeTools + outputHeadroom + MESSAGE_FLOOR ≤
+ * effectiveWindow`, so this is the floor of usable room a normal turn keeps.
+ *
+ * 2048 is the smallest reserve that comfortably runs a normal turn on the
+ * tightest real window we target — a nano model with a ~16K effective window and
+ * a ~10K system prompt: budget = 16000 − ceil(10000/3.5≈2858) − 768 headroom −
+ * 2048 ≈ 10326 tokens of tools still fit, while a several-thousand-char user
+ * message + a couple of recent turns clears the 2048 floor. Sized in the SAME
+ * spirit as MIN_SAFETY_MARGIN_TOKENS (2048) — large enough that a real message
+ * is never starved, small enough not to over-defer on adequate windows. Frontier/
+ * mid windows are so wide the fit pass is a no-op, so this only bites small/nano.
+ */
+export const MESSAGE_FLOOR_TOKENS = 2_048;
 
 // ---------------------------------------------------------------------------
 // Types — extracted to executor-tool-assembly-types.ts (file-size cap, Phase 153)
@@ -603,6 +622,42 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       activeAfterDeferral,
     );
   }
+
+  // ROOT-CAUSE context-exhaustion guard (2026-06-22): applyToolDeferral defers
+  // by COUNT (activeToolCeiling / CORE_TOOLS heuristic) and never against a token
+  // budget — its `_contextWindow` arg is ignored. So on a small window a large
+  // system prompt + even a CORE_TOOLS-only active set can exceed effectiveWindow −
+  // headroom, making the pre-flight fit check (lcd-preflight.ts) throw
+  // ContextExhaustionError on EVERY turn — even a 10-token "What is the capital of
+  // France?". The codex `nano` classes (~16K effective window) hit this on every
+  // message. applyToolBudgetFit defers MORE active tools (lowest-priority first;
+  // CORE_TOOLS preferentially kept; discover_tools dropped only when nothing
+  // remains to discover) until the SHIPPING active-tool overhead fits the residual
+  // budget, refining deferralResult in place (incl. rebuilding discover_tools over
+  // the new deferred set). Dropped tools stay reachable via discover_tools (no
+  // capability loss for adequate windows). The fixed S term is non-evictable, so
+  // the degenerate window<S case still throws — but Part 2/3 make THAT honest
+  // (cause: fixed_overhead_exceeds_window), never "your message is too big". The
+  // headroom mirrors lcd-preflight.ts exactly (same reasoningStyle / thinkingLevel
+  // / minVisibleFloor) so the two passes agree.
+  const fitThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" =
+    (validThinkingLevels as readonly string[]).includes(effectiveThinkingLevel ?? "")
+      ? (effectiveThinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
+      : "medium";
+  applyToolBudgetFit(deferralResult, {
+    systemPromptText: promptResult.systemPrompt,
+    contextWindow,
+    outputHeadroom: computeOutputHeadroom(
+      modelProfile.reasoningStyle,
+      fitThinkingLevel,
+      config.contextEngine?.budget?.minVisibleOutputTokens,
+    ),
+    messageFloorTokens: MESSAGE_FLOOR_TOKENS,
+    recentlyUsedToolNames: recentlyUsedTools,
+    logger: deps.logger,
+    embeddingPort: deps.embeddingPort,
+    scoreConfig: config.skills?.toolDiscovery,
+  });
 
   mergedCustomTools = [...deferralResult.activeTools, ...deferralResult.discoveredTools];
   if (deferralResult.discoverTool) {

@@ -33,12 +33,24 @@ export const CONTEXT_EXHAUSTION_MESSAGE_PREFIX = "Context exhausted: assembled" 
  *    only clearing the session (or raising the window) helps; with the Issue-1
  *    assembly bound in place this cause should no longer occur, but the
  *    classification stays for robustness (e.g. an operator-cranked cap).
+ *  - `fixed_overhead_exceeds_window` (2026-06-22 root-cause fix): the
+ *    NON-EVICTABLE fixed overhead — the system prompt + tool schemas (S =
+ *    getSystemTokensEstimate) — ALONE exceeds the bound, so the turn is
+ *    infeasible regardless of history, thinking level, OR message size. The
+ *    remedy is the WINDOW or the agent's tool/prompt footprint, never "shorten
+ *    your message". This is the failure a `nano`-class model (~16K effective
+ *    window) hits when its ~10K prompt + tool schemas overflow before any user
+ *    text. The window-aware tool-budget fit pass (executor-tool-assembly.ts
+ *    enforceToolBudgetFit) defers tools to prevent this on adequate windows; the
+ *    degenerate window<prompt case still throws, and this cause makes it HONEST
+ *    (it was previously mis-classified `oversized_input`, blaming the message).
  *  - `aggregate`: the conversation + tools collectively overflow — compaction /
  *    cap-raise / fewer tools advice applies (the historical behavior).
  */
 export type ContextExhaustionCause =
   | "oversized_input"
   | "oversized_history_message"
+  | "fixed_overhead_exceeds_window"
   | "aggregate";
 
 /**
@@ -49,7 +61,8 @@ export type ContextExhaustionCause =
  * cause must survive inside the message text. "aggregate" is the unmarked
  * default — historical messages (no tag) parse as aggregate.
  */
-const CAUSE_TAG_PATTERN = /\[cause: (oversized_input|oversized_history_message)\]/;
+const CAUSE_TAG_PATTERN =
+  /\[cause: (oversized_input|oversized_history_message|fixed_overhead_exceeds_window)\]/;
 
 /**
  * Recover the {@link ContextExhaustionCause} from an exhaustion message string

@@ -24,6 +24,9 @@ import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
+import { toolDefOverheadChars } from "./tool-overhead.js";
+import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
+import { scriptTokenFactor } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -562,6 +565,294 @@ export function applyToolDeferral(
     deferredCount: deferredSet.size,
     deferredNames,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Window-aware tool-budget fit-enforcement (root-cause context-exhaustion fix)
+// ---------------------------------------------------------------------------
+
+/** Token estimate for a tool corpus — machine-Latin JSON schemas, so flat
+ *  (matching estimateSystemTokensFactored's treatment of the toolOverheadChars
+ *  term). ONE ceil over the summed chars. */
+function toolCorpusTokens(tools: ReadonlyArray<ToolDefinition>): number {
+  // tool name + description + JSON.stringify(parameters) is machine-emitted Latin
+  // flat-by-design: JSON (scriptTokenFactor 1.0) — mirrors estimateSystemTokensFactored's toolOverheadChars (TOK-01)
+  return Math.ceil(toolDefOverheadChars(tools) / CHARS_PER_TOKEN_RATIO);
+}
+
+/** Parameters for {@link enforceToolBudgetFit}. */
+export interface EnforceToolBudgetFitParams {
+  /** The post-deferral ACTIVE tool set (active + discovered + discover_tools) —
+   *  the tools whose schemas actually ship on the wire. */
+  activeTools: ToolDefinition[];
+  /** The current deferred entries (reachable via discover_tools). Newly-deferred
+   *  tools are appended here so they stay discoverable. */
+  deferredEntries: DeferredToolEntry[];
+  /** The system prompt text WITHOUT tool schemas — the non-evictable fixed
+   *  overhead the fit budget must reserve. Passed as TEXT (not a char count) so
+   *  the token estimate applies scriptTokenFactor over the actual script, exactly
+   *  as estimateSystemTokensFactored does (TOK-01). */
+  systemPromptText: string;
+  /** Effective context window in tokens (min(configured, served, capabilityCap)). */
+  contextWindow: number;
+  /** Output headroom tokens reserved for the model's reply (+thinking block). */
+  outputHeadroom: number;
+  /** Minimum tokens reserved for the user message + a little history. */
+  messageFloorTokens: number;
+  /** CORE_TOOLS — kept active preferentially; dropped only as a last resort. */
+  coreToolNames: ReadonlySet<string>;
+  /** Recently-used tools — kept active preferentially (one tier above cold tools). */
+  recentlyUsedToolNames: ReadonlySet<string>;
+  /** The discover_tools tool name — kept while anything stays reachable; dropped
+   *  last (a chat reply needs no tools). */
+  discoverToolName: string;
+  logger: ComisLogger;
+}
+
+/** Result of {@link enforceToolBudgetFit}. */
+export interface EnforceToolBudgetFitResult {
+  /** The refined active tool set whose overhead fits the residual budget. */
+  activeTools: ToolDefinition[];
+  /** The deferred entries, including any tools this pass moved out of active. */
+  deferredEntries: DeferredToolEntry[];
+  /** Names of tools this pass moved from active → deferred (lowest-priority first). */
+  newlyDeferred: string[];
+  /** True iff the active set changed (tools were deferred). When false, the
+   *  returned `activeTools` is the SAME array reference (identity no-op). */
+  changed: boolean;
+  /** The computed tool-token budget (window − systemPromptOnly − headroom − floor).
+   *  May be ≤ 0 in the degenerate case (window smaller than the fixed overhead),
+   *  in which case every droppable tool is deferred. */
+  toolTokenBudget: number;
+}
+
+/**
+ * Window-aware tool-budget fit-enforcement — the ROOT-CAUSE guarantee that the
+ * agent never context-exhausts on its FIXED overhead for any window size.
+ *
+ * `applyToolDeferral` defers by COUNT (activeToolCeiling / CORE_TOOLS heuristic),
+ * never against a token budget. So on a small window a large system prompt plus
+ * even a CORE_TOOLS-only active set can exceed `effectiveWindow − headroom`,
+ * making the pre-flight fit check (lcd-preflight.ts) throw ContextExhaustionError
+ * on every turn — even a 10-token message. This pass closes the gap: it
+ * deterministically defers MORE active tools until the SHIPPING active-tool
+ * overhead fits the residual budget
+ *
+ *   toolTokenBudget = contextWindow − systemPromptOnlyTokens − outputHeadroom − messageFloor
+ *
+ * where systemPromptOnlyTokens = ceil(systemPromptChars / CHARS_PER_TOKEN_RATIO)
+ * (the same algebra as estimateSystemTokensFactored at toolOverheadChars=0).
+ *
+ * Drop order (lowest priority first, so capability loss is minimized):
+ *   1. cold non-core tools (not CORE, not recently-used, not discover_tools)
+ *   2. recently-used tools
+ *   3. CORE_TOOLS (last resort — they ARE droppable when nothing else fits)
+ *   4. discover_tools (dropped only when the budget is so tiny nothing else
+ *      remains; a chat reply needs no tools).
+ *
+ * Dropped tools join `deferredEntries`, so they stay reachable via discover_tools
+ * (no capability loss for adequately-sized windows — the discovery path is
+ * intact). Terminates: each iteration defers exactly one tool or breaks, so it
+ * runs at most `activeTools.length` times. Pure — no I/O beyond the WARN.
+ */
+export function enforceToolBudgetFit(
+  params: EnforceToolBudgetFitParams,
+): EnforceToolBudgetFitResult {
+  const {
+    activeTools, deferredEntries, systemPromptText, contextWindow,
+    outputHeadroom, messageFloorTokens, coreToolNames, recentlyUsedToolNames,
+    discoverToolName, logger,
+  } = params;
+
+  // TOK-01: the system-prompt term divides chars by the SAME script factor as
+  // estimateSystemTokensFactored (a dense Hebrew/CJK prompt carries ~2-3× tokens
+  // per char) so the residual budget is not over-stated for non-Latin prompts —
+  // under-counting here would let tools through that then overflow the window.
+  const systemPromptOnlyTokens = Math.ceil(
+    systemPromptText.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPromptText)),
+  );
+  const toolTokenBudget =
+    contextWindow - systemPromptOnlyTokens - outputHeadroom - messageFloorTokens;
+
+  // Already fits → identity no-op (same array reference; preserves cache stability).
+  if (toolCorpusTokens(activeTools) <= toolTokenBudget) {
+    return {
+      activeTools,
+      deferredEntries,
+      newlyDeferred: [],
+      changed: false,
+      toolTokenBudget,
+    };
+  }
+
+  // Priority rank: lower = dropped first. discover_tools is highest (dropped last).
+  const rankOf = (name: string): number => {
+    if (name === discoverToolName) return 3;
+    if (coreToolNames.has(name)) return 2;
+    if (recentlyUsedToolNames.has(name)) return 1;
+    return 0; // cold non-core
+  };
+
+  // Drop candidates: every active tool, lowest-priority first. Stable on ties
+  // (preserve the original order within a rank) so the drop set is deterministic.
+  const indexed = activeTools.map((t, i) => ({ t, i }));
+  const dropOrder = [...indexed].sort((a, b) => {
+    const r = rankOf(a.t.name) - rankOf(b.t.name);
+    return r !== 0 ? r : a.i - b.i;
+  });
+
+  const dropped = new Set<string>();
+  const newlyDeferred: string[] = [];
+  for (const { t } of dropOrder) {
+    if (toolCorpusTokens(activeTools.filter((a) => !dropped.has(a.name))) <= toolTokenBudget) {
+      break;
+    }
+    dropped.add(t.name);
+    newlyDeferred.push(t.name);
+  }
+
+  const refinedActive = activeTools.filter((t) => !dropped.has(t.name));
+  // Append dropped tools to the deferred set (de-duped) so discover_tools can
+  // still surface them. discover_tools itself, if dropped, is NOT a deferred
+  // entry (it is the discovery mechanism, not a discoverable capability).
+  const deferredNameSet = new Set(deferredEntries.map((e) => e.name));
+  const refinedDeferred = [...deferredEntries];
+  for (const { t } of dropOrder) {
+    if (!dropped.has(t.name) || t.name === discoverToolName) continue;
+    if (deferredNameSet.has(t.name)) continue;
+    deferredNameSet.add(t.name);
+    refinedDeferred.push({
+      name: t.name,
+      description: resolveToolDescription(t),
+      original: t,
+    });
+  }
+
+  logger.warn(
+    {
+      step: "tool-budget-fit",
+      errorKind: "resource" as const,
+      hint:
+        `Active tool schemas exceed the window's residual budget; deferred ${newlyDeferred.length} ` +
+        `tool(s) to fit. Raise the model's context window, reduce active tools, or pin a larger ` +
+        `capabilityClass. Dropped tools remain reachable via discover_tools.`,
+      contextWindow,
+      systemPromptOnlyTokens,
+      outputHeadroom,
+      messageFloorTokens,
+      toolTokenBudget,
+      droppedCount: newlyDeferred.length,
+      activeToolsAfter: refinedActive.length,
+    },
+    "tool-budget fit-enforcement deferred active tools to fit the window",
+  );
+
+  return {
+    activeTools: refinedActive,
+    deferredEntries: refinedDeferred,
+    newlyDeferred,
+    changed: newlyDeferred.length > 0,
+    toolTokenBudget,
+  };
+}
+
+/** Inputs for {@link applyToolBudgetFit} — the budget terms + the discover_tools
+ *  rebuild dependencies. */
+export interface ApplyToolBudgetFitParams {
+  systemPromptText: string;
+  contextWindow: number;
+  outputHeadroom: number;
+  messageFloorTokens: number;
+  recentlyUsedToolNames: ReadonlySet<string>;
+  logger: ComisLogger;
+  embeddingPort?: EmbeddingPort;
+  scoreConfig?: ToolDiscoveryScoreConfig;
+}
+
+/**
+ * Orchestrator wrapper around {@link enforceToolBudgetFit}: runs the pure
+ * window-aware fit pass over the SHIPPING active set (active + discovered +
+ * discover_tools), and — when it deferred more tools — refines `deferralResult`
+ * IN PLACE so the downstream mergedCustomTools assembly, deferred-tools preamble,
+ * auto-discovery stubs, and history-budget reservation all see the post-fit
+ * state. discover_tools is rebuilt over the NEW deferred set (it must index the
+ * newly-deferred tools), or cleared when the budget squeezed it out too (a tiny
+ * window where a chat reply needs no tools).
+ *
+ * Extracted from executor-tool-assembly.ts (which is at its file-size cap) so the
+ * call site is a single statement. Returns nothing — mutation is intentional and
+ * mirrors the existing in-place discover_tools rebuild at the deferral call site.
+ */
+export function applyToolBudgetFit(
+  deferralResult: ExcludeDeferralResult,
+  params: ApplyToolBudgetFitParams,
+): void {
+  const fit = enforceToolBudgetFit({
+    activeTools: [
+      ...deferralResult.activeTools,
+      ...deferralResult.discoveredTools,
+      ...(deferralResult.discoverTool ? [deferralResult.discoverTool] : []),
+    ],
+    deferredEntries: deferralResult.deferredEntries,
+    systemPromptText: params.systemPromptText,
+    contextWindow: params.contextWindow,
+    outputHeadroom: params.outputHeadroom,
+    messageFloorTokens: params.messageFloorTokens,
+    coreToolNames: CORE_TOOLS,
+    recentlyUsedToolNames: params.recentlyUsedToolNames,
+    discoverToolName: "discover_tools",
+    logger: params.logger,
+  });
+  if (!fit.changed) return;
+
+  // discover_tools was squeezed out if the budget pass DEFERRED it (it is rank 3 —
+  // dropped last, when nothing else remains). Distinct from "it never existed":
+  // when this pass newly defers tools but there was no pre-existing discover_tools,
+  // we must STILL build one so the newly-deferred tools stay reachable (otherwise
+  // the fit pass silently strips capability) — BUT only if discover_tools' own
+  // schema fits the residual budget on top of the kept active tools. When the
+  // budget is so tiny nothing fits (the degenerate window), drop discover_tools
+  // too: a chat reply needs no tools, and re-adding it would re-overflow.
+  const discoverWasDropped = fit.newlyDeferred.includes("discover_tools");
+  const discoveredNames = new Set(deferralResult.discoveredTools.map((d) => d.name));
+  deferralResult.activeTools = fit.activeTools.filter(
+    (t) => t.name !== "discover_tools" && !discoveredNames.has(t.name),
+  );
+  deferralResult.deferredEntries = fit.deferredEntries;
+  deferralResult.deferredNames = [
+    ...new Set([...deferralResult.deferredNames, ...fit.newlyDeferred]),
+  ];
+  // Observability: enforceToolBudgetFit already emitted the structured WARN
+  // (window/budget/droppedCount + actionable hint). The downstream
+  // context:budget_computed event (lcd-preflight) then reflects the corrected,
+  // smaller systemTokens reservation this pass produces.
+
+  if (discoverWasDropped || deferralResult.deferredEntries.length === 0) {
+    deferralResult.discoverTool = null;
+    return;
+  }
+  // Build discover_tools over the new deferred set (with the post-fit active names
+  // so its "already active" guidance is correct), then keep it ONLY if its own
+  // schema fits the residual budget on top of the kept active+discovered set. When
+  // the budget is so tiny nothing fits (the degenerate window), drop it too — a
+  // chat reply needs no tools, and re-adding it would re-overflow the window.
+  const activeAfterFit = new Set<string>([
+    ...deferralResult.activeTools.map((t) => t.name),
+    ...deferralResult.discoveredTools.map((t) => t.name),
+  ]);
+  const rebuiltDiscover = createDiscoverTool(
+    deferralResult.deferredEntries,
+    params.logger,
+    params.embeddingPort,
+    params.scoreConfig,
+    activeAfterFit,
+  );
+  const keptOverheadTokens = toolCorpusTokens([
+    ...deferralResult.activeTools,
+    ...deferralResult.discoveredTools,
+    rebuiltDiscover,
+  ]);
+  deferralResult.discoverTool = keptOverheadTokens <= fit.toolTokenBudget ? rebuiltDiscover : null;
 }
 
 // ---------------------------------------------------------------------------
