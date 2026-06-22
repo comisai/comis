@@ -313,7 +313,7 @@ export async function bootstrapAdapters(deps: {
         channelPlugins.set("line", plugin);
         channelsLogger.info({ channelType: "line" }, "Channel adapter initialized");
       } else {
-        channelsLogger.warn({ err: validation.error.message, hint: "Verify LINE channel access token and channel secret", errorKind: "auth" as const }, "LINE credential validation failed");
+        channelsLogger.warn(validationFailureLog(validation.error, "Verify LINE channel access token and channel secret", PROXY_HINT), "LINE credential validation failed");
       }
     } else {
       channelsLogger.warn({ hint: "Set botToken and channelSecret in channels.line config or LINE_CHANNEL_ACCESS_TOKEN/LINE_CHANNEL_SECRET env vars", errorKind: "config" as const }, "LINE enabled but credentials missing");

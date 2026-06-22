@@ -97,6 +97,23 @@ describe("validateLineCredentials", () => {
     }
   });
 
+  it("classifies an unreachable LINE API as a network failure (not a bad credential)", async () => {
+    const { CredentialValidationError } = await import("../shared/credential-validation-error.js");
+    mockGetBotInfo.mockRejectedValueOnce(new Error("fetch failed: connect ETIMEDOUT 1.2.3.4:443"));
+
+    const result = await validateLineCredentials({
+      channelAccessToken: "valid-but-unreachable",
+      channelSecret: "valid-secret",
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(CredentialValidationError);
+      expect((result.error as InstanceType<typeof CredentialValidationError>).kind).toBe("network");
+      expect(result.error.message).toContain("unreachable");
+    }
+  });
+
   it("passes baseURL to MessagingApiClient when apiRoot is provided (E2E seam)", async () => {
     // apiRoot threads through as httpClientConfig.baseURL so getBotInfo()
     // hits the 127.0.0.1 mock instead of api.line.me.

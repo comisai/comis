@@ -10,6 +10,7 @@
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { messagingApi } from "@line/bot-sdk";
+import { classifiedValidationErr } from "../shared/credential-validation-error.js";
 
 /**
  * Bot identity information returned after successful credential validation.
@@ -66,10 +67,18 @@ export async function validateLineCredentials(
     ...(opts.apiRoot ? { baseURL: opts.apiRoot } : {}),
   });
 
+  // Transport note: @line/bot-sdk v10 MessagingApiClient uses the global fetch
+  // (HTTPFetchClient), so LINE API traffic already routes through the installed
+  // undici proxy dispatcher — no explicit agent needed (unlike grammy/axios
+  // SDKs). We still classify the failure so a reachability problem (proxy down,
+  // api.line.me blocked) is reported as network, not as a bad credential.
   const result = await fromPromise(client.getBotInfo());
   if (!result.ok) {
-    const message = result.error instanceof Error ? result.error.message : String(result.error);
-    return err(new Error(`Invalid LINE credentials: ${message}`));
+    return classifiedValidationErr(
+      result.error,
+      "Invalid LINE credentials",
+      "LINE getBotInfo() unreachable (network/proxy)",
+    );
   }
 
   const botInfo = result.value;
