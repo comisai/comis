@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs.explain` handler acceptance tests — the Phase-153 centerpiece (X1/X2/X3).
+ * `obs.explain` handler acceptance tests.
  *
  * Drives the WIRED handler (resolver → readers → normalize → assemble →
- * heuristics → bound) against the two FROZEN Phase-149 fixtures via the
+ * heuristics → bound) against the two FROZEN fixtures via the
  * `incidentReader` injection seam (so the pipeline runs the REAL
  * `toIncidentSignals` + `assembleIncidentReport` + `rootCause` +
  * `boundIncidentReport` over real log-shaped records — only the file reads are
  * stubbed).
  *
- *   X3 — the 678 fixture yields content_heuristic_misclassification + degraded +
- *        a non-empty breaker timeline + costUsd 1.320669; the 503 fixture yields
- *        breaker_opened_repeated_failure + web_fetch.
- *   X1 — by-traceId == by-sessionKey: both 678 traceIds resolve (via the REAL
- *        resolveTraceToSession against a seeded session-index) to the one
- *        sessionKey → one assembler path → byte-identical reports.
- *   X2 — depth:"summary" serializes ≤6144 bytes end-to-end and NEVER inlines the
- *        678 "SECURITY NOTICE" prompt-injection block (summary AND full).
+ *   - the 678 fixture yields content_heuristic_misclassification + degraded +
+ *     a non-empty breaker timeline + costUsd 1.320669; the 503 fixture yields
+ *     breaker_opened_repeated_failure + web_fetch.
+ *   - by-traceId == by-sessionKey: both 678 traceIds resolve (via the REAL
+ *     resolveTraceToSession against a seeded session-index) to the one
+ *     sessionKey → one assembler path → byte-identical reports.
+ *   - depth:"summary" serializes ≤6144 bytes end-to-end and NEVER inlines the
+ *     678 "SECURITY NOTICE" prompt-injection block (summary AND full).
  *
- * Plus the admin gate (T-153-13) and the neither-id refine (T-153-15).
+ * Plus the admin gate and the neither-id refine.
  *
  * @module
  */
@@ -30,6 +30,8 @@ import { resolve } from "node:path";
 import type { IncidentReport } from "@comis/core";
 import { systemDateFrom, systemNowMs } from "@comis/core";
 import { bindObsExplainHandlers, assembleIncidentReportFromSources } from "./obs-explain.js";
+import { assembleIncidentReport } from "./obs-explain-assemble.js";
+import { toIncidentSignals } from "./obs-explain-signals.js";
 import type { IncidentSourceReader } from "./obs-explain-readers.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 // 5 levels up: obs-handlers → api → src → daemon → packages → repo-root.
@@ -70,7 +72,7 @@ function todayKey(): string {
 /**
  * Seed a `<dataDir>/logs/session-index.<today>.jsonl` mapping BOTH 678 traceIds
  * to the one sessionKey, so the REAL resolveTraceToSession canonicalizes either
- * traceId to SESSION_678 (the X1 structural-identity proof).
+ * traceId to SESSION_678 (the structural-identity proof).
  */
 function seedSessionIndex(): string {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-x1-"));
@@ -92,7 +94,7 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X3 — the two frozen fixtures (the centerpiece acceptance).
+  // The two frozen fixtures (the centerpiece acceptance).
   // ------------------------------------------------------------------------
 
   it("X3 (678): content_heuristic_misclassification + degraded + breaker timeline + costUsd 1.320669", async () => {
@@ -126,9 +128,9 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // QT2/QT3 — the named degradation causes surface END-TO-END through the
-  // handler: the metadata endReason flows to outcome.endReason AND drives
-  // likelyRootCause (the handler threads it into signals before rootCause).
+  // The named degradation causes surface END-TO-END through the handler: the
+  // metadata endReason flows to outcome.endReason AND drives likelyRootCause
+  // (the handler threads it into signals before rootCause).
   // ------------------------------------------------------------------------
 
   it("QT2: a context_exhausted session (no tool failures) → outcome.endReason + likelyRootCause name the cause", async () => {
@@ -175,7 +177,7 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X1 — by-traceId == by-sessionKey (both 678 traceIds → one report).
+  // by-traceId == by-sessionKey (both 678 traceIds → one report).
   // ------------------------------------------------------------------------
 
   it("X1: by-sessionKey == by-traceId(A) == by-traceId(B) — identical reports", async () => {
@@ -203,7 +205,7 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // X2 — depth:summary ≤6 KB, no raw body (end-to-end over a real fixture).
+  // depth:summary ≤6 KB, no raw body (end-to-end over a real fixture).
   // ------------------------------------------------------------------------
 
   it("X2 (summary): ≤6144 bytes, no SECURITY NOTICE inlined, errorPreview ≤200 chars", async () => {
@@ -287,8 +289,8 @@ describe("bindObsExplainHandlers", () => {
   });
 
   // ------------------------------------------------------------------------
-  // WR-04 — an unresolvable traceId must be DISTINGUISHABLE from a clean,
-  // empty session. Pre-fix both yielded the same empty report keyed on "".
+  // An unresolvable traceId must be DISTINGUISHABLE from a clean, empty
+  // session. Pre-fix both yielded the same empty report keyed on "".
   // ------------------------------------------------------------------------
 
   it("WR-04: an unresolvable traceId yields a session_not_found marker, not a silent empty report", async () => {
@@ -331,16 +333,16 @@ describe("bindObsExplainHandlers", () => {
 });
 
 // ===========================================================================
-// assembleIncidentReportFromSources — the extracted shared assembler (154-03).
+// assembleIncidentReportFromSources — the extracted shared assembler.
 // ===========================================================================
 //
 // The post-gate assembler body (resolve → read → signals → assemble →
-// rootCause + WR-04 → bound) is extracted so the admin RPC handler (which keeps
+// rootCause + not-found marker → bound) is extracted so the admin RPC handler (which keeps
 // its admin gate) AND the operator-allowlisted obs_explain MCP tool (which has
 // NO admin gate — its authorization is the per-client allowlist) share ONE
 // frozen pipeline. The extracted fn takes ALREADY-VALIDATED params and contains
 // NO admin check and NO contract.request.parse — it is reachable under daemon
-// authority directly. These tests pin that seam: the fn produces the SAME X3
+// authority directly. These tests pin that seam: the fn produces the SAME
 // report as the RPC handler for the SAME inputs, WITHOUT any _trustLevel param.
 describe("assembleIncidentReportFromSources", () => {
   it("X3 (678): produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {
@@ -381,7 +383,7 @@ describe("assembleIncidentReportFromSources", () => {
   });
 
   it("WR-04: an unresolvable traceId yields session_not_found via the extracted fn (no admin needed)", async () => {
-    // The WR-04 not-found marker logic lives INSIDE the extracted fn, so the MCP
+    // The not-found marker logic lives INSIDE the extracted fn, so the MCP
     // path inherits the honest not-found verdict. Empty dataDir → resolve "".
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-asm-unresolved-"));
     const report = await assembleIncidentReportFromSources(
@@ -399,5 +401,127 @@ describe("assembleIncidentReportFromSources", () => {
       ),
     ).toBe(true);
     expect(report.failures).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// proxyPosture — IncidentReport additive field.
+//
+// Two surfaces:
+//  1. assembleIncidentReport: spreads signals.proxyPosture presence-conditionally
+//     (the voice/learning precedent — no proxyPosture key when undefined).
+//  2. assembleIncidentReportFromSources: reads config_posture obsStore row,
+//     populates signals.proxyPosture before assembly (the handler did not
+//     previously read config_posture rows). Optional obsStore dep: absent → no
+//     proxyPosture. maskedUrl + booleans only — never a raw proxy URL.
+// ---------------------------------------------------------------------------
+
+describe("DIAG-03 — proxyPosture on IncidentReport (assembler spread + handler read)", () => {
+  /** Minimal IncidentSignals fixture for assembler tests (only required fields). */
+  function makeMinimalSignals(
+    overrides: Partial<Parameters<typeof toIncidentSignals>[0][0]> = {},
+  ) {
+    return toIncidentSignals([]);
+  }
+
+  it("assembleIncidentReport spreads proxyPosture when signals.proxyPosture is defined", () => {
+    const signals = makeMinimalSignals();
+    signals.proxyPosture = {
+      configured: true,
+      maskedUrl: "http://proxy.example.com",
+      loopbackMode: "gateway-only",
+      source: "config",
+      installerOk: true,
+    };
+    const report = assembleIncidentReport(signals, null, null, "test-session-key", 0);
+    expect((report as Record<string, unknown>)["proxyPosture"]).toEqual({
+      configured: true,
+      maskedUrl: "http://proxy.example.com",
+      loopbackMode: "gateway-only",
+      source: "config",
+      installerOk: true,
+    });
+  });
+
+  it("assembleIncidentReport does NOT include proxyPosture key when signals.proxyPosture is undefined", () => {
+    const signals = makeMinimalSignals();
+    // signals.proxyPosture is undefined (no proxy)
+    const report = assembleIncidentReport(signals, null, null, "test-session-key", 0);
+    expect(Object.prototype.hasOwnProperty.call(report, "proxyPosture")).toBe(false);
+  });
+
+  it("assembleIncidentReportFromSources populates report.proxyPosture from obsStore config_posture row", async () => {
+    const configPostureRow = {
+      timestamp: 1000,
+      category: "config_posture",
+      severity: "info" as const,
+      message: "config_posture",
+      details: JSON.stringify({
+        tlsOff: false,
+        allowInsecureHttp: false,
+        stranded: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        chimericModelCount: 0,
+        pricingGapCount: 0,
+        proxyInstallerStatus: { installerError: null, effectiveLoopbackMode: "gateway-only" },
+      }),
+    };
+    const mockObsStore = {
+      insertDiagnostic: vi.fn(),
+      queryDiagnostics: vi.fn().mockReturnValue([configPostureRow]),
+    };
+    const emptyReader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+    };
+    const report = await assembleIncidentReportFromSources(
+      emptyReader,
+      ".",
+      { sessionKey: "test-key", depth: "summary" },
+      mockObsStore as unknown as import("@comis/memory").ObservabilityStore,
+    );
+    // Proxy was configured (proxyInstallerStatus present) → proxyPosture should appear
+    expect((report as Record<string, unknown>)["proxyPosture"]).toBeDefined();
+    // SECURITY: must not expose raw URL
+    expect(JSON.stringify(report)).not.toMatch(/https?:\/\/.*@/);
+  });
+
+  it("assembleIncidentReportFromSources leaves proxyPosture absent when no config_posture row (zero-config)", async () => {
+    const mockObsStore = {
+      insertDiagnostic: vi.fn(),
+      queryDiagnostics: vi.fn().mockReturnValue([]),
+    };
+    const emptyReader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+    };
+    const report = await assembleIncidentReportFromSources(
+      emptyReader,
+      ".",
+      { sessionKey: "test-key", depth: "summary" },
+      mockObsStore as unknown as import("@comis/memory").ObservabilityStore,
+    );
+    expect(Object.prototype.hasOwnProperty.call(report, "proxyPosture")).toBe(false);
+  });
+
+  it("assembleIncidentReportFromSources leaves proxyPosture absent when obsStore is undefined (no persistence)", async () => {
+    const emptyReader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+    };
+    const report = await assembleIncidentReportFromSources(
+      emptyReader,
+      ".",
+      { sessionKey: "test-key", depth: "summary" },
+      // no obsStore
+    );
+    expect(Object.prototype.hasOwnProperty.call(report, "proxyPosture")).toBe(false);
   });
 });

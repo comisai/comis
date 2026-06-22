@@ -241,4 +241,55 @@ describe("createEmailAdapter", () => {
       }),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Proxy URL injection (nodemailer)
+  //
+  // When deps.proxyUrl is set, nodemailer.createTransport must receive
+  // proxy: <full url string>. When absent, no proxy key is present.
+  // The full credential-bearing URL is passed (not sanitized).
+  // -------------------------------------------------------------------------
+
+  describe("proxy URL injection (XPORT-05, nodemailer)", () => {
+    // Re-import nodemailer mock ref for assertion
+    let createTransportMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      const nm = await import("nodemailer");
+      createTransportMock = (nm as any).default.createTransport as ReturnType<typeof vi.fn>;
+    });
+
+    it("passes proxy: proxyUrl to createTransport when deps.proxyUrl is set", async () => {
+      const { createEmailAdapter } = await getModule();
+      const adapter = createEmailAdapter(
+        makeDeps({ proxyUrl: "http://user:pass@proxy.corp:3128" }),
+      );
+      await adapter.start();
+
+      expect(createTransportMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          proxy: "http://user:pass@proxy.corp:3128",
+        }),
+      );
+    });
+
+    it("does NOT pass proxy key to createTransport when deps.proxyUrl is undefined (zero-config D-12)", async () => {
+      const { createEmailAdapter } = await getModule();
+      const adapter = createEmailAdapter(makeDeps({ proxyUrl: undefined }));
+      await adapter.start();
+
+      const callArg = createTransportMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg).not.toHaveProperty("proxy");
+    });
+
+    it("passes full credential-bearing URL (not sanitized — Pitfall 6)", async () => {
+      const { createEmailAdapter } = await getModule();
+      const credUrl = "http://secret-user:secret-pass@proxy.corp:3128";
+      const adapter = createEmailAdapter(makeDeps({ proxyUrl: credUrl }));
+      await adapter.start();
+
+      const callArg = createTransportMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(callArg.proxy).toBe(credUrl);
+    });
+  });
 });

@@ -105,7 +105,7 @@
         "tab": "Security",
         "groups": [
           { "group": "Overview", "pages": ["security/index", "security/threat-model", "security/defense-in-depth"] },
-          { "group": "Features", "pages": ["security/secrets", "security/oauth", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/credential-broker", "security/hardening"] }
+          { "group": "Features", "pages": ["security/secrets", "security/oauth", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/credential-broker", "security/hardening", "security/network-proxy"] }
         ]
       },
       {

@@ -5,10 +5,10 @@
  * findings.
  *
  * Extracted from `fleet-findings.ts` to keep that module under the obs-handlers
- * per-subdirectory file-size cap (the ORCH-OBS three-signal additions pushed it
- * over). No behavior change — every parser relocates byte-identically.
+ * per-subdirectory file-size cap (the three-signal additions pushed it over).
+ * No behavior change — every parser relocates byte-identically.
  *
- * SECURITY INVARIANT (H1 + the 159 digest-only schema): each parser reads a
+ * SECURITY INVARIANT (the digest-only schema): each parser reads a
  * single untrusted `row.details` field DEFENSIVELY — malformed / missing folds
  * to a safe default, never throws, never echoes a raw `row.message`/`row.details`
  * body. Only closed enums + counts + short `key=` labels ever leave here.
@@ -27,9 +27,9 @@ export function healthSignalLabel(row: DiagnosticRow): string {
   }
 }
 
-/** KNOB-03: servedBelowConfiguredCount from a config_posture row's details JSON.
+/** servedBelowConfiguredCount from a config_posture row's details JSON.
  *  Defensive parse — malformed/missing folds to 0 (soft-fail, counts only;
- *  the healthSignalLabel clone, T-176-13). */
+ *  the healthSignalLabel clone). */
 export function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
   if (row.details === undefined) return 0;
   try {
@@ -41,7 +41,7 @@ export function servedBelowConfiguredFromRow(row: DiagnosticRow): number {
   }
 }
 
-/** RESOLVE-01: chimericModelCount from a config_posture row's details JSON.
+/** chimericModelCount from a config_posture row's details JSON.
  *  Defensive parse — malformed/missing folds to 0 (the servedBelowConfigured clone). */
 export function chimericModelFromRow(row: DiagnosticRow): number {
   if (row.details === undefined) return 0;
@@ -54,7 +54,7 @@ export function chimericModelFromRow(row: DiagnosticRow): number {
   }
 }
 
-/** SPEND-05: pricingGapCount from a config_posture row's details JSON — configured
+/** pricingGapCount from a config_posture row's details JSON — configured
  *  agents burning tokens on remote-unknown-priced models (resolvePricingState ==
  *  "unknown"). Defensive parse — malformed/missing folds to 0 (the chimericModelFromRow
  *  clone; counts only, never a model id / config value body). */
@@ -69,8 +69,8 @@ export function pricingGapFromRow(row: DiagnosticRow): number {
   }
 }
 
-/** T1.3 (F6): the SPECIFIC flagged config keys from a config_posture row — CLOSED labels
- *  only (never raw details / secret values, per the H1 no-body rule), so a fleet finding
+/** The SPECIFIC flagged config keys from a config_posture row — CLOSED labels
+ *  only (never raw details / secret values, per the no-body rule), so a fleet finding
  *  NAMES which knob is off instead of "the flagged config keys" (the live friction was
  *  grepping daemon.log to learn it was gateway.tls + CANARY_SECRET). served-below +
  *  chimeric have dedicated findings, so they are NOT repeated here. Malformed folds to []. */
@@ -98,11 +98,11 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
  *  means the key was absent or not a recognized value (omitted, no advisory). */
 export type MultilingualFlag = boolean | "unknown" | undefined;
 
-/** EMB-01: the two advisory multilingual flags from a model_health row's details
+/** The two advisory multilingual flags from a model_health row's details
  *  JSON. Defensive parse cloning servedBelowConfiguredFromRow — malformed/missing
  *  details folds to `{}` (soft-fail, never throws, NEVER echoes a body). A field
  *  is read only when it is a boolean or the exact string "unknown", else omitted
- *  (an old row that predates EMB-01 lacks the keys -> no advisory). */
+ *  (an old row that predates the multilingual flags lacks the keys -> no advisory). */
 export function multilingualFromRow(row: DiagnosticRow): {
   embedding: MultilingualFlag;
   reranker: MultilingualFlag;
@@ -124,25 +124,25 @@ export function multilingualFromRow(row: DiagnosticRow): {
   }
 }
 
-/** OBS-01 (Phase 180): health_signal labels that get a DEDICATED fleet finding
- *  (the KNOB-03 precedent) and are therefore EXCLUDED from the generic
+/** health_signal labels that get a DEDICATED fleet finding (the served-window
+ *  precedent) and are therefore EXCLUDED from the generic
  *  `health_signal:<label>` rollup below — listing one here without adding its
  *  dedicated branch would silently drop it, so the two move together. */
 export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "script_zero_hit",
   "summary_language_mismatch",
   "generation_quality",
-  // OBS-04 (Phase 196): voice_degraded gets the dedicated `voice_health` finding
-  // below — excluded here so it is not ALSO counted in the generic
-  // `health_signal:voice_degraded` rollup (the double-report KNOB-03 guards against).
+  // voice_degraded gets the dedicated `voice_health` finding below — excluded
+  // here so it is not ALSO counted in the generic `health_signal:voice_degraded`
+  // rollup (the double-report this guards against).
   "voice_degraded",
-  // TELEM-01 (Plan 173-03): pipeline_authoring gets the dedicated finding below
-  // (the small-tier invalid rate). Excluded here so it is NOT also rolled into the
-  // generic `health_signal:pipeline_authoring` count — the finding + this entry
-  // MOVE TOGETHER (listing it here without the dedicated branch silently drops it).
+  // pipeline_authoring gets the dedicated finding below (the small-tier invalid
+  // rate). Excluded here so it is NOT also rolled into the generic
+  // `health_signal:pipeline_authoring` count — the finding + this entry MOVE
+  // TOGETHER (listing it here without the dedicated branch silently drops it).
   "pipeline_authoring",
-  // ORCH-OBS (orchestration-observability): the three previously-dark daemon-side
-  // orchestration signals each get a dedicated finding below (named violated
+  // The three previously-dark daemon-side orchestration signals each get a
+  // dedicated finding below (named violated
   // dimensions / transient-vs-permanent split / dominant cap source). Excluded from
   // the generic rollup so they are not double-counted — each finding + its entry here
   // MOVE TOGETHER (listing without the dedicated branch silently drops it).
@@ -151,7 +151,7 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "node_budget_exceeded",
 ]);
 
-/** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
+/** The closed domain `errorKind` (an `SttErrorKind`) carried
  *  on a `voice_degraded` health_signal row's details JSON, parsed defensively
  *  (the `scriptZeroHitFromRow` clone). Returns `null` when the row is not a
  *  voice_degraded signal; returns `{ errorKind: undefined }` when it IS voice but
@@ -171,7 +171,7 @@ export function voiceDegradedFromRow(row: DiagnosticRow): { errorKind: string | 
   }
 }
 
-/** OBS-01: `{scriptClass, lane}` from a script_zero_hit row's details JSON.
+/** `{scriptClass, lane}` from a script_zero_hit row's details JSON.
  *  Defensive parse cloning healthSignalLabel's style — malformed/missing folds
  *  to null (the row is then ignored by the dedicated grouping; counts only, no
  *  body ever surfaces). Returns the closed enums verbatim (untrusted-row safe:
@@ -189,7 +189,7 @@ export function scriptZeroHitFromRow(row: DiagnosticRow): { scriptClass: string;
   }
 }
 
-/** TELEM-01 (Plan 173-03): `{tier, schemaValid}` from a pipeline_authoring row's
+/** `{tier, schemaValid}` from a pipeline_authoring row's
  *  details JSON. Defensive parse cloning `scriptZeroHitFromRow` — a non-pipeline /
  *  malformed / missing row folds to `null` (the row is then ignored by both the
  *  reducer and the dedicated finding; counts only, no body ever surfaces, never
@@ -208,7 +208,7 @@ export function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; sc
   }
 }
 
-/** ORCH-OBS: the closed violated-dimension labels from a `sandbox_downgrade_refused`
+/** The closed violated-dimension labels from a `sandbox_downgrade_refused`
  *  row's details JSON. Defensive parse cloning `pipelineAuthoringFromRow` — a
  *  non-sandbox / malformed / missing row folds to `null` (ignored; counts only, no
  *  body, never throws). Returns ONLY the closed dimension enum strings — never a
@@ -227,7 +227,7 @@ export function sandboxDowngradeFromRow(row: DiagnosticRow): { dimensions: strin
   }
 }
 
-/** ORCH-OBS: `{transient}` from a `delivery_deadlettered` row's details JSON.
+/** `{transient}` from a `delivery_deadlettered` row's details JSON.
  *  Defensive parse — non-deadletter / malformed / missing folds to `null` (ignored).
  *  `transient` true = retries exhausted, false = immediate permanent. Never reads the
  *  runId or any body (the row never carried them). */
@@ -242,7 +242,30 @@ export function deliveryDeadletteredFromRow(row: DiagnosticRow): { transient: bo
   }
 }
 
-/** ORCH-OBS: the closed `capSource` from a `node_budget_exceeded` row's details JSON.
+/** The proxy installer outcome from a `config_posture` row's
+ *  details JSON. Returns `{ installerError, effectiveLoopbackMode }` when the row
+ *  carries `proxyInstallerStatus` with a non-null `installerError` string (a failed
+ *  install); returns `null` when the field is absent (zero-config path), when
+ *  `installerError` is `null` (installer succeeded), or when the JSON is malformed
+ *  (the pricingGapFromRow clone — defensive parse, never throws, never echoes a
+ *  body; closed configKey label only, no raw proxy URL). */
+export function proxyInstallerStatusFromRow(row: DiagnosticRow): { installerError: string; effectiveLoopbackMode: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { proxyInstallerStatus?: unknown };
+    const ps = parsed.proxyInstallerStatus;
+    if (ps === null || typeof ps !== "object") return null;
+    const { installerError, effectiveLoopbackMode } = ps as Record<string, unknown>;
+    // Only surface when installerError is a non-empty string (failure path)
+    if (typeof installerError !== "string" || installerError.length === 0) return null;
+    const loopbackMode = typeof effectiveLoopbackMode === "string" && effectiveLoopbackMode.length > 0 ? effectiveLoopbackMode : "gateway-only";
+    return { installerError, effectiveLoopbackMode: loopbackMode };
+  } catch {
+    return null; // malformed details JSON — counts only, no body.
+  }
+}
+
+/** The closed `capSource` from a `node_budget_exceeded` row's details JSON.
  *  Defensive parse — non-budget / malformed / missing / unrecognized capSource folds
  *  to `null` (ignored). Returns the closed precedence enum verbatim (untrusted-row
  *  safe: only ever rendered into a count + a `capSource=` label). */

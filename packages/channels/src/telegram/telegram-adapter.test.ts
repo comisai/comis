@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -40,6 +40,9 @@ const mockEditForumTopic = vi.fn();
 const mockCloseForumTopic = vi.fn();
 const mockReopenForumTopic = vi.fn();
 
+// Track Bot constructor calls for proxy-arg assertions
+const mockBotConstructorCalls: Array<[token: string, opts?: unknown]> = [];
+
 vi.mock("grammy", () => {
   class MockBot {
     api = {
@@ -75,6 +78,10 @@ vi.mock("grammy", () => {
         use: mockConfigUse,
       },
     };
+
+    constructor(token: string, opts?: unknown) {
+      mockBotConstructorCalls.push([token, opts]);
+    }
 
     on(event: string, handler: (ctx: any) => void) {
       if (event === "message") {
@@ -166,6 +173,7 @@ function makeNormalized() {
 describe("createTelegramAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBotConstructorCalls.length = 0;
     messageHandler = null;
     editedMessageHandler = null;
     callbackQueryHandler = null;
@@ -1154,6 +1162,66 @@ describe("createTelegramAdapter", () => {
           threadParams: { message_thread_id: 42 },
         }),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Proxy-agent injection
+  //
+  // When deps.agent is set (an HttpsProxyAgent-shaped object), the grammy Bot
+  // must be constructed with client.baseFetchConfig.agent set to that agent.
+  // When deps.agent is undefined (zero-config), no baseFetchConfig key
+  // must appear in the constructor options.
+  //
+  // Strategy: deps.agent is a pre-resolved HttpsProxyAgent (or undefined)
+  // passed in by the daemon's setup-channels-adapters.ts (which CAN import
+  // @comis/infra). The adapter itself is architecture-clean: no @comis/infra
+  // import, no process.env access.
+  // ---------------------------------------------------------------------------
+
+  describe("proxy-agent injection (XPORT-01)", () => {
+    // Minimal stub shaped like HttpsProxyAgent — enough for identity assertion.
+    const fakeAgent = { constructor: { name: "HttpsProxyAgent" }, proxy: "http://proxy.corp:3128" };
+
+    it("constructs grammy Bot with baseFetchConfig.agent when deps.agent is set (no apiRoot)", () => {
+      const adapter = createTelegramAdapter(makeDeps({ agent: fakeAgent as any }));
+      // The Bot should have been constructed with a client option containing
+      // baseFetchConfig.agent. Because createTelegramAdapter constructs the
+      // Bot synchronously (before start()), the constructor call is captured.
+      expect(mockBotConstructorCalls).toHaveLength(1);
+      const [, opts] = mockBotConstructorCalls[0];
+      expect(opts).toBeDefined();
+      const clientOpts = (opts as { client?: { baseFetchConfig?: { agent?: unknown } } }).client;
+      expect(clientOpts).toBeDefined();
+      expect(clientOpts!.baseFetchConfig).toBeDefined();
+      expect(clientOpts!.baseFetchConfig!.agent).toBe(fakeAgent);
+    });
+
+    it("constructs grammy Bot with baseFetchConfig.agent when deps.agent is set AND apiRoot is set", () => {
+      const adapter = createTelegramAdapter(
+        makeDeps({ agent: fakeAgent as any, apiRoot: "http://localhost:8080" }),
+      );
+      expect(mockBotConstructorCalls).toHaveLength(1);
+      const [, opts] = mockBotConstructorCalls[0];
+      const clientOpts = (opts as { client?: { apiRoot?: string; baseFetchConfig?: { agent?: unknown } } }).client;
+      expect(clientOpts).toBeDefined();
+      expect(clientOpts!.apiRoot).toBe("http://localhost:8080");
+      expect(clientOpts!.baseFetchConfig).toBeDefined();
+      expect(clientOpts!.baseFetchConfig!.agent).toBe(fakeAgent);
+    });
+
+    it("constructs grammy Bot WITHOUT baseFetchConfig when deps.agent is undefined (zero-config D-12)", () => {
+      const adapter = createTelegramAdapter(makeDeps({ agent: undefined }));
+      expect(mockBotConstructorCalls).toHaveLength(1);
+      const [, opts] = mockBotConstructorCalls[0];
+      // Zero-config: no agent → byte-identical to the pre-proxy shape.
+      // Either opts is undefined (no client key at all) or client has no baseFetchConfig.
+      if (opts !== undefined) {
+        const clientOpts = (opts as { client?: { baseFetchConfig?: unknown } }).client;
+        if (clientOpts !== undefined) {
+          expect(clientOpts).not.toHaveProperty("baseFetchConfig");
+        }
+      }
     });
   });
 });

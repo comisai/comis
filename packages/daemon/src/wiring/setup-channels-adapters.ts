@@ -10,6 +10,7 @@
 
 import type { AppContainer, ChannelPort, ChannelPluginPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import { resolveHttpsProxyAgent, resolveUndiciProxyAgent, resolveProxyUrl } from "@comis/infra";
 import {
   createTelegramPlugin,
   createDiscordPlugin,
@@ -67,8 +68,13 @@ export interface AdapterBootstrapResult {
 export async function bootstrapAdapters(deps: {
   container: AppContainer;
   channelsLogger: ComisLogger;
+  /** Daemon's store-wins env snapshot — used to resolve per-channel proxy agents.
+   *  Pass `mergedEnv` from the daemon composition root (same snapshot used by
+   *  installGlobalProxyDispatcher). When undefined (legacy callers / tests that
+   *  pre-date Wave-3), all channels fall through to the zero-config path (D-12). */
+  mergedEnv?: Record<string, string | undefined>;
 }): Promise<AdapterBootstrapResult> {
-  const { container, channelsLogger } = deps;
+  const { container, channelsLogger, mergedEnv = {} } = deps;
   const channelConfig = container.config.channels;
 
   const adaptersByType = new Map<string, ChannelPort>();
@@ -98,12 +104,14 @@ export async function bootstrapAdapters(deps: {
         : undefined;
       const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
+        const telegramProxyAgent = resolveHttpsProxyAgent("api.telegram.org", mergedEnv);
         const plugin = createTelegramPlugin({
           botToken: token,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
           webhookUrl: channelConfig.telegram.webhookUrl,
           logger: channelsLogger,
           ...(telegramApiRoot ? { apiRoot: telegramApiRoot } : {}),
+          ...(telegramProxyAgent ? { agent: telegramProxyAgent } : {}),
         });
         tgPlugin = plugin as TelegramPluginHandle;
         adaptersByType.set("telegram", plugin.adapter);
@@ -130,10 +138,12 @@ export async function bootstrapAdapters(deps: {
         : undefined;
       const validation = await validateDiscordToken(token, discordApiRoot);
       if (validation.ok) {
+        const discordDispatcher = resolveUndiciProxyAgent("discord.com", mergedEnv);
         const plugin = createDiscordPlugin({
           botToken: token,
           logger: channelsLogger,
           ...(discordApiRoot ? { apiRoot: discordApiRoot } : {}),
+          ...(discordDispatcher ? { dispatcher: discordDispatcher } : {}),
         });
         adaptersByType.set("discord", plugin.adapter);
         channelPlugins.set("discord", plugin);
@@ -168,6 +178,7 @@ export async function bootstrapAdapters(deps: {
         ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
       });
       if (validation.ok) {
+        const slackProxyAgent = resolveHttpsProxyAgent("slack.com", mergedEnv);
         const plugin = createSlackPlugin({
           botToken: token,
           mode,
@@ -175,6 +186,7 @@ export async function bootstrapAdapters(deps: {
           signingSecret,
           logger: channelsLogger,
           ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
+          ...(slackProxyAgent ? { agent: slackProxyAgent } : {}),
         });
         adaptersByType.set("slack", plugin.adapter);
         channelPlugins.set("slack", plugin);
@@ -198,11 +210,13 @@ export async function bootstrapAdapters(deps: {
       ? channelConfig.whatsapp.apiRoot
       : undefined;
     if (validation.ok) {
+      const whatsappProxyAgent = resolveHttpsProxyAgent("web.whatsapp.com", mergedEnv);
       const plugin = createWhatsAppPlugin({
         authDir,
         printQR: channelConfig.whatsapp.printQR,
         logger: channelsLogger,
         ...(whatsappApiRoot ? { apiRoot: whatsappApiRoot } : {}),
+        ...(whatsappProxyAgent ? { agent: whatsappProxyAgent } : {}),
       });
       adaptersByType.set("whatsapp", plugin.adapter);
       channelPlugins.set("whatsapp", plugin);
@@ -340,6 +354,9 @@ export async function bootstrapAdapters(deps: {
 
       if (validation.ok) {
         const attachmentDir = safePath(safePath(os.homedir(), ".comis"), "email-attachments");
+        // Resolve proxy URL using IMAP host as the representative target
+        // (imapflow + nodemailer share the same proxy: option via EmailAdapterDeps.proxyUrl)
+        const emailProxyUrl = resolveProxyUrl(imapHost, mergedEnv);
         const plugin = createEmailPlugin({
           address,
           imapHost,
@@ -353,6 +370,7 @@ export async function bootstrapAdapters(deps: {
           pollingIntervalMs: emailCfg.pollingIntervalMs,
           attachmentDir,
           logger: channelsLogger,
+          ...(emailProxyUrl ? { proxyUrl: emailProxyUrl } : {}),
         });
         adaptersByType.set("email", plugin.adapter);
         channelPlugins.set("email", plugin);

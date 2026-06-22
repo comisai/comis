@@ -17,6 +17,7 @@
 import type { ChannelPort, ComisLogger, MessageHandler, ReactionHandler } from "@comis/core";
 import type { run } from "@grammyjs/runner";
 import type { Bot } from "grammy";
+import type { HttpsProxyAgent } from "https-proxy-agent";
 import type { TelegramBotIdentity } from "../message-mapper.js";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,20 @@ export interface TelegramAdapterDeps {
    * Production seam for the wire-level E2E mock chat-platform fixture.
    */
   apiRoot?: string;
+  /**
+   * Optional pre-resolved HTTPS proxy agent for egress routing.
+   *
+   * Injected by the daemon's setup-channels-adapters.ts via
+   * `resolveHttpsProxyAgent("api.telegram.org", mergedEnv)` from @comis/infra.
+   * When set, grammy's `baseFetchConfig.agent` is wired to this agent so
+   * all Telegram Bot API HTTP traffic routes through the proxy.
+   * When undefined (zero-config), the Bot is constructed identically
+   * to the pre-proxy shape — no baseFetchConfig key is added.
+   *
+   * @comis/channels cannot import @comis/infra (architecture invariant), so
+   * the agent is pre-resolved by the caller and passed in here.
+   */
+  agent?: HttpsProxyAgent<string>;
 }
 
 export interface TelegramAdapterHandle extends ChannelPort {
@@ -72,7 +87,7 @@ export interface TelegramAdapterState {
   bot: Bot;
   /** Message handlers registered via handle.onMessage(). */
   handlers: MessageHandler[];
-  /** Reaction handlers registered via handle.onReaction() (REACT-01, WS1). */
+  /** Reaction handlers registered via handle.onReaction(). */
   reactionHandlers: ReactionHandler[];
   /** "telegram-pending" before start(); "telegram-{botId}" after start() succeeds. */
   channelId: string;

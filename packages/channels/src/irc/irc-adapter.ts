@@ -252,6 +252,12 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
             );
           });
 
+          // ACCEPTED GAP: irc-framework opens a raw TCP/TLS socket —
+          // not an HTTP/HTTPS fetch path — so the global EnvHttpProxyAgent dispatcher
+          // installed at daemon boot has no effect. SOCKS5 proxying would require a
+          // custom TCP-level shim (irc-framework supports a `socket` factory option)
+          // but adds disproportionate complexity for an operator-controllable,
+          // low-volume channel. Documented in docs/security/network-proxy.md.
           bot.connect({
             host: deps.host,
             port: deps.port ?? (useTls ? 6697 : 6667),

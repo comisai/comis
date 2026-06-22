@@ -5,7 +5,7 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { buildConfigPostureRecord, countPricingGaps } from "./build-config-posture-record.js";
 
 // ---------------------------------------------------------------------------
-// buildConfigPostureRecord (I3 — boot-time config_posture snapshot row)
+// buildConfigPostureRecord — boot-time config_posture snapshot row
 //
 // A one-shot direct insertDiagnostic at boot capturing the three log-file-only
 // posture FINDINGS (TLS-off / stranded-secret COUNTS / canary-fallback) as a
@@ -53,17 +53,17 @@ describe("buildConfigPostureRecord", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     // EXACTLY the five closed keys — counts + booleans + closed labels only.
-    // WR-01: the canary field is an HONEST boolean (0|N presence proxy keyed on
+    // The canary field is an HONEST boolean (0|N presence proxy keyed on
     // CANARY_SECRET in env-or-store), NOT a misleading per-agent tally.
-    // KNOB-03: servedBelowConfiguredCount is a COUNT, never provider names.
+    // servedBelowConfiguredCount is a COUNT, never provider names.
     expect(details).toEqual({
       tlsOff: true,
       allowInsecureHttp: false,
       stranded: [{ stranded: "encrypted:secrets", entryCount: 2 }],
       canaryFallbackActive: true,
       servedBelowConfiguredCount: 0,
-      chimericModelCount: 0, // RESOLVE-01: always present (0 default), count-only
-      pricingGapCount: 0, // SPEND-05: always present (0 default), count-only
+      chimericModelCount: 0, // always present (0 default), count-only
+      pricingGapCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -166,7 +166,7 @@ describe("buildConfigPostureRecord", () => {
     const clock = createFakeClock(3000);
 
     // The ?.-chained call must silently no-op — a disabled-persistence boot
-    // cannot crash shutdown (Pitfall 5).
+    // cannot crash shutdown.
     expect(() =>
       buildConfigPostureRecord(
         undefined,
@@ -200,11 +200,11 @@ describe("buildConfigPostureRecord", () => {
   });
 
   // -------------------------------------------------------------------------
-  // KNOB-03 (Phase 176): servedBelowConfiguredCount — providers whose
-  // Ollama-served window < configured at the latest boot. A COUNT, never
-  // provider names (the record's counts/booleans-only contract). The count
-  // alone must flip severity to "warning" (Pitfall 10: forget the hasIssue OR
-  // and severity stays "info" while the fleet finding fires).
+  // servedBelowConfiguredCount — providers whose Ollama-served window <
+  // configured at the latest boot. A COUNT, never provider names (the record's
+  // counts/booleans-only contract). The count alone must flip severity to
+  // "warning" (forget the hasIssue OR and severity stays "info" while the fleet
+  // finding fires).
   // -------------------------------------------------------------------------
 
   it("KNOB-03-1: flips severity to warning when ONLY servedBelowConfiguredCount is non-zero, and carries the count in details", () => {
@@ -252,10 +252,10 @@ describe("buildConfigPostureRecord", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SPEND-05 (Phase 177): pricingGapCount — configured agents burning tokens on
-  // remote-unknown-priced models (resolvePricingState == "unknown"). A COUNT,
-  // never agent ids / model names (the no-free-text contract). The count alone
-  // must flip severity to "warning" (the served-below/chimeric hasIssue precedent).
+  // pricingGapCount — configured agents burning tokens on remote-unknown-priced
+  // models (resolvePricingState == "unknown"). A COUNT, never agent ids / model
+  // names (the no-free-text contract). The count alone must flip severity to
+  // "warning" (the served-below/chimeric hasIssue precedent).
   // -------------------------------------------------------------------------
 
   it("SPEND-05-1: flips severity to warning when ONLY pricingGapCount is non-zero, and carries the count in details", () => {
@@ -303,17 +303,102 @@ describe("buildConfigPostureRecord", () => {
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["pricingGapCount"]).toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // proxyInstallerStatus — additive field in config_posture details JSON
+  // surfacing the proxy boot outcome for fleet/explain diagnosability.
+  // -------------------------------------------------------------------------
+
+  it("DIAG-03-1: proxyInstallerStatus appears in details JSON when provided (installer failed with configKey)", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(5000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        proxyInstallerStatus: {
+          installerError: "proxy.proxyUrl",
+          effectiveLoopbackMode: "gateway-only",
+        },
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["proxyInstallerStatus"]).toEqual({
+      installerError: "proxy.proxyUrl",
+      effectiveLoopbackMode: "gateway-only",
+    });
+    // SECURITY: raw proxy URL must never appear in details
+    expect(JSON.stringify(details)).not.toMatch(/https?:\/\//);
+  });
+
+  it("DIAG-03-2: proxyInstallerStatus key is ABSENT from details JSON when input is undefined (zero-config path)", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(6000);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        // proxyInstallerStatus intentionally absent
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(details, "proxyInstallerStatus")).toBe(false);
+  });
+
+  it("DIAG-03-3: proxyInstallerStatus with installerError null (success case) appears in details without altering severity", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(7500);
+
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        proxyInstallerStatus: {
+          installerError: null,
+          effectiveLoopbackMode: "proxy",
+        },
+      },
+      clock,
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    // Severity: no other posture issue → info (proxy success doesn't flip to warning)
+    expect(row.severity).toBe("info");
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details["proxyInstallerStatus"]).toEqual({
+      installerError: null,
+      effectiveLoopbackMode: "proxy",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-05 (Phase 177): countPricingGaps — the boot producer counting configured
-// agents whose provider+model resolves to the "unknown" pricing state (a NATIVE
-// provider with no catalog entry — the ffe11736 fail-open). A "free" local/gateway
-// agent (honest $0) is NOT counted; a "priced" agent is NOT counted. Co-located
-// with countChimericModels (keeps daemon.ts under its 3000-line cap). Uses the
-// shipped 3-state `resolvePricingState`, never a catalog-presence boolean.
-//
-// RED: countPricingGaps does not exist yet.
+// countPricingGaps — the boot producer counting configured agents whose
+// provider+model resolves to the "unknown" pricing state (a NATIVE provider with
+// no catalog entry — the ffe11736 fail-open). A "free" local/gateway agent
+// (honest $0) is NOT counted; a "priced" agent is NOT counted. Co-located with
+// countChimericModels (keeps daemon.ts under its 3000-line cap). Uses the shipped
+// 3-state `resolvePricingState`, never a catalog-presence boolean.
 // ---------------------------------------------------------------------------
 
 describe("countPricingGaps — boot count of remote-unknown-priced agents (resolvePricingState == 'unknown')", () => {

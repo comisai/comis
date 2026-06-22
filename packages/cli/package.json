@@ -53,6 +53,7 @@
     "@clack/prompts": "1.5.1",
     "@comis/core": "workspace:*",
     "@comis/daemon": "workspace:*",
+    "@comis/infra": "workspace:*",
     "@comis/memory": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
@@ -63,6 +64,7 @@
     "commander": "14.0.3",
     "open": "10.2.0",
     "ora": "9.4.0",
+    "undici": "8.3.0",
     "ws": "8.21.0",
     "yaml": "2.9.0"
   },

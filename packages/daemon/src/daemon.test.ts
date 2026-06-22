@@ -1627,3 +1627,84 @@ describe("additive no-restart integration", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Proxy env survives daemon Stage-1 scrub (signal-cli inheritance)
+// ---------------------------------------------------------------------------
+// The Stage-1 scrub (scrubProcessEnv) removes SENSITIVE_PREFIXES and
+// SENSITIVE_EXACT_KEYS to prevent credential leakage through subprocess
+// inheritance. HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY must NOT be
+// removed — signal-cli (and any other child process) must inherit them so
+// outbound traffic is routed through the operator-configured proxy.
+//
+// Behavioral assertion: set proxy env vars, boot daemon, verify they survive.
+describe("daemon Stage-1 scrub preserves proxy env vars (XPORT-07)", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* best-effort */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  it("HTTP_PROXY survives the Stage-1 scrub", async () => {
+    const freshDataDir = mkdtempSync(nodePath.join(tmpdir(), "comis-proxy-xport07-"));
+    try {
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      // Inject proxy env vars before daemon boot
+      process.env["HTTP_PROXY"] = "http://proxy.test:3128";
+      process.env["HTTPS_PROXY"] = "http://proxy.test:3128";
+      process.env["ALL_PROXY"] = "socks5://proxy.test:1080";
+      process.env["NO_PROXY"] = "localhost,127.0.0.1";
+
+      const { overrides, mocks } = buildOverrides();
+      // Add proxy config to mock container so installProxyAtBoot doesn't throw
+      (mocks.container.config as Record<string, unknown>)["proxy"] = {
+        enabled: false,
+        proxyUrl: undefined,
+      };
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // After boot (scrubProcessEnv has run), proxy vars must still be present
+      expect(process.env["HTTP_PROXY"]).toBe("http://proxy.test:3128");
+      expect(process.env["HTTPS_PROXY"]).toBe("http://proxy.test:3128");
+      expect(process.env["ALL_PROXY"]).toBe("socks5://proxy.test:1080");
+      expect(process.env["NO_PROXY"]).toBe("localhost,127.0.0.1");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lowercase http_proxy / https_proxy also survive (Node convention)", async () => {
+    const freshDataDir = mkdtempSync(nodePath.join(tmpdir(), "comis-proxy-xport07b-"));
+    try {
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["http_proxy"] = "http://proxy.test:3128";
+      process.env["https_proxy"] = "http://proxy.test:3128";
+      process.env["no_proxy"] = "localhost";
+
+      const { overrides, mocks } = buildOverrides();
+      (mocks.container.config as Record<string, unknown>)["proxy"] = {
+        enabled: false,
+        proxyUrl: undefined,
+      };
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      expect(process.env["http_proxy"]).toBe("http://proxy.test:3128");
+      expect(process.env["https_proxy"]).toBe("http://proxy.test:3128");
+      expect(process.env["no_proxy"]).toBe("localhost");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -18,6 +18,7 @@ import type { WizardStepId, WizardState } from "../wizard/types.js";
 import type { StepRegistry } from "../wizard/state.js";
 import { runWizardFlow } from "../wizard/state.js";
 import { CancelError } from "../wizard/prompter.js";
+import { installWizardProxyFromEnv } from "../util/install-wizard-proxy.js";
 import {
   NonInteractiveError,
   validateNonInteractiveOptions,
@@ -210,6 +211,10 @@ export function registerInitCommand(program: Command): void {
       "config|config+creds|full (default: config)",
     )
     .action(async (options: Record<string, unknown>) => {
+      // Env-only best-effort proxy install before the wizard runs, so live
+      // credential/channel validation honours HTTP(S)_PROXY. No config.yaml
+      // exists yet, so this is best-effort and never throws.
+      installWizardProxyFromEnv(process.env);
       // ------------------------------------------------------------------
       // 1. Non-interactive mode
       // ------------------------------------------------------------------

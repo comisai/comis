@@ -22,6 +22,7 @@ import type {
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
+import type { HttpsProxyAgent } from "https-proxy-agent";
 import type { Result } from "@comis/shared";
 import { Boom } from "@hapi/boom";
 import { ok, err } from "@comis/shared";
@@ -59,6 +60,22 @@ export interface WhatsAppAdapterDeps {
    * WebSocket, or both). For WhatsApp/Baileys, that's the WebSocket URL.
    */
   apiRoot?: string;
+  /**
+   * Optional pre-resolved HTTPS proxy agent for egress routing.
+   *
+   * Injected by the daemon's setup-channels-adapters.ts via
+   * `resolveHttpsProxyAgent("web.whatsapp.com", mergedEnv)` from @comis/infra.
+   * When set, the agent is spread into makeWASocket as BOTH `agent` (covers
+   * the control WebSocket `wss://web.whatsapp.com/ws/chat`) and `fetchAgent`
+   * (covers media upload/download via node:https). One injection covers all
+   * Baileys egress.
+   * When undefined (zero-config), neither key is present in the
+   * makeWASocket call — byte-identical to the pre-proxy shape.
+   *
+   * @comis/channels cannot import @comis/infra (architecture invariant), so
+   * the agent is pre-resolved by the caller and passed in here.
+   */
+  agent?: HttpsProxyAgent<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,13 +114,21 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
   async function connect(): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(deps.authDir);
 
-    // E2E seam: when deps.apiRoot is set, point Baileys at the override
-    // WebSocket URL instead of wss://web.whatsapp.com/ws/chat. Production
-    // path omits the option entirely.
+    // E2E seam + proxy wiring:
+    //
+    // deps.agent is a pre-resolved HttpsProxyAgent from the daemon's wiring
+    // layer (setup-channels-adapters.ts calls resolveHttpsProxyAgent from
+    // @comis/infra, which @comis/channels cannot import per architecture rules).
+    //
+    // When set, both `agent` (WS control channel) and `fetchAgent` (media
+    // upload/download) are wired — one injection covers all Baileys egress.
+    // Conditional spread ensures zero-config builds are byte-identical to
+    // the pre-proxy shape (never pass agent: undefined).
     sock = makeWASocket({
       auth: state,
       printQRInTerminal: deps.printQR ?? true,
       ...(deps.apiRoot ? { waWebSocketUrl: deps.apiRoot } : {}),
+      ...(deps.agent ? { agent: deps.agent, fetchAgent: deps.agent } : {}),
     });
 
     // Handle connection state changes (auto-reconnection)

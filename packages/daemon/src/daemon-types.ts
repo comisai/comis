@@ -346,6 +346,15 @@ export interface BootContext {
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   secretsDb: import("better-sqlite3").Database | undefined;
   permissionCorrections: PermissionCorrection[];
+  /** Proxy boot posture captured before the Stage-2 env scrub and before the
+   *  logger is available. Threaded onto BootContext so bootStartup can pass it
+   *  to buildConfigPostureRecord. Follows the servedWindowComparisons threading
+   *  pattern. */
+  proxyBootPosture?: import("./daemon-proxy-boot-helpers.js").ProxyBootPosture;
+  /** Store-wins env snapshot (mergedEnv from buildMergedEnv). Threaded onto BootContext
+   *  for bootChannels so it can pass it to bootstrapAdapters for per-channel proxy-agent
+   *  resolution. Populated by bootFoundation before bootChannels runs. */
+  mergedEnv: Record<string, string | undefined>;
   // Config-git (2 fields)
   execGit: ReturnType<typeof createExecGit>;
   configGitManager: ReturnType<typeof createConfigGitManager> | undefined;
@@ -526,9 +535,9 @@ export interface BootContext {
    * agent's reference into ChannelsDeps.executionPlanPort. Same object the
    * createAcpWiring path already shares (the single-shared-holder invariant). */
   executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
-  /** Per-agent OAuthTokenManager map (184). The DEFAULT agent's manager is
+  /** Per-agent OAuthTokenManager map. The DEFAULT agent's manager is
    * threaded into buildImageGenBundle → the Codex image adapter so the image
-   * path resolves its OAuth bearer (CDX-01/CRED-01). Populated by bootAgents'
+   * path resolves its OAuth bearer. Populated by bootAgents'
    * setupAgents Object.assign; read by bootChannels' image bundle. */
   oauthManagers?: Awaited<ReturnType<typeof setupAgents>>["oauthManagers"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
@@ -546,7 +555,7 @@ export interface BootContext {
    *  registry (bootAgents) and read at the bootShutdown posture write
    *  (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info
+  /** Daemon-owned collector of per-agent boot window info
    *  (registry-mirrored configured + reconciled effective window + profile),
    *  populated in setup-agents (bootAgents) and consumed by the bootChannels
    *  viable-floor loop between setupTools and setupChannels. */
@@ -580,7 +589,7 @@ export interface BootContext {
   transcriber?: Awaited<ReturnType<typeof setupMedia>>["transcriber"];
   ssrfFetcher?: Awaited<ReturnType<typeof setupMedia>>["ssrfFetcher"];
   fileExtractor?: Awaited<ReturnType<typeof setupMedia>>["fileExtractor"];
-  /** OBS-03 (196): boot-resolved STT/TTS selections for the media RPC trajectory emit. */
+  /** Boot-resolved STT/TTS selections for the media RPC trajectory emit. */
   voiceSelection?: Awaited<ReturnType<typeof setupMedia>>["voiceSelection"];
   // RPC bridge (deferred-dispatch)
   rpcCall?: ReturnType<typeof setupRpcBridge>["rpcCall"];
@@ -629,27 +638,27 @@ export interface BootContext {
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];
-  /** DEL-01 (186): per-agent persist getter from buildImageGenBundle — persists
+  /** Per-agent persist getter from buildImageGenBundle — persists
    *  the generated image to the agent's confined workspace (`~/.comis/workspace/
    *  media/photos/`) via MediaPersistenceService. Folded onto imageHandlerDeps
-   *  (daemon.ts:932) as the `persist` dep; the handler hands the returned
+   *  as the `persist` dep; the handler hands the returned
    *  filePath to sendAttachment (no more tmpdir write+delete). */
   persistImage?: (
     agentId: string,
     buffer: Buffer,
     opts: { mediaKind: "image"; mimeType: string },
   ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-  /** SEC-02 (186): per-agent/hour USD cost ceiling from buildImageGenBundle.
+  /** Per-agent/hour USD cost ceiling from buildImageGenBundle.
    *  Undefined when `maxCostPerHourUsd` is unset (ceiling skipped, count-only).
-   *  Folded onto imageHandlerDeps (daemon.ts:932) as the `costLimiter` dep. */
+   *  Folded onto imageHandlerDeps as the `costLimiter` dep. */
   imageGenCostLimiter?: import("./api/image-cost-limiter.js").ImageCostLimiter;
-  // Video generation (Phase 188 / Plan 04) — the buildVideoGenBundle outputs,
+  // Video generation — the buildVideoGenBundle outputs,
   // mirroring the image-gen fields. Folded onto videoHandlerDeps in
   // buildVideoHandlerDeps; daemon.ts threads them through the boot context.
   videoGenProvider?: ReturnType<typeof createVideoGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   videoGenRateLimiter?: VideoGenRateLimiter;
   videoGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["videoGeneration"];
-  /** DEL-01 (188): per-agent persist getter from buildVideoGenBundle — persists
+  /** Per-agent persist getter from buildVideoGenBundle — persists
    *  the generated video to `~/.comis/workspace/media/videos/` (raised maxBytes).
    *  Folded onto videoHandlerDeps as the `persist` dep. */
   persistVideo?: (
@@ -657,17 +666,17 @@ export interface BootContext {
     buffer: Buffer,
     opts: { mediaKind: "video"; mimeType: string },
   ) => Promise<import("@comis/shared").Result<import("@comis/skills/tools").PersistedFile, Error>>;
-  /** SEC-02 (188 / DIVERGENCE 3): per-agent/hour video USD cost ceiling, gated
+  /** Per-agent/hour video USD cost ceiling, gated
    *  PRE-submit. Undefined when `maxCostPerHourUsd` is unset (count-only). Folded
    *  onto videoHandlerDeps as the `costLimiter` dep. */
   videoGenCostLimiter?: import("./api/video-cost-limiter.js").VideoCostLimiter;
-  /** JOB-01 (189): the durable async video-job store (shared memory.db), built in
+  /** The durable async video-job store (shared memory.db), built in
    *  buildVideoGenBundle; folded onto videoHandlerDeps (insert-on-submit). */
   videoJobStore?: import("@comis/memory").VideoJobStore;
-  /** JOB-02 (189): the two-phase background poller, built in buildVideoGenBundle;
+  /** The two-phase background poller, built in buildVideoGenBundle;
    *  started post-setupChannels + shut down via setupShutdown; on videoHandlerDeps. */
   videoPoller?: import("./wiring/setup-video-poller.js").VideoPoller;
-  /** VIS-01 (187): the provider-following vision bundle from buildMediaVisionBundle
+  /** The provider-following vision bundle from buildMediaVisionBundle
    *  — `capability` is the main-provider vision bridge (folded onto
    *  MediaApiDeps.mainProviderVision) and `resolveMainModelId` is the single-source
    *  main model-id resolver (folded onto MediaApiDeps.mainModelIdFor for the

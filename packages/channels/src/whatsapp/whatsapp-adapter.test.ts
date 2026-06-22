@@ -690,4 +690,69 @@ describe("createWhatsAppAdapter", () => {
       expect(result.ok).toBe(true);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Proxy-agent injection
+  //
+  // When deps.agent is set (HttpsProxyAgent), makeWASocket must be called
+  // with BOTH agent and fetchAgent set to that agent value.
+  // When deps.agent is undefined (zero-config), neither key may appear
+  // in the makeWASocket call options.
+  //
+  // Strategy: deps.agent is pre-resolved by the daemon (where @comis/infra
+  // is available). The adapter itself has no @comis/infra import.
+  // ---------------------------------------------------------------------------
+
+  describe("proxy-agent injection (XPORT-04)", () => {
+    const fakeAgent = { constructor: { name: "HttpsProxyAgent" }, proxy: "http://proxy.corp:3128" };
+
+    it("calls makeWASocket with both agent and fetchAgent when deps.agent is set", async () => {
+      vi.mocked(validateWhatsAppAuth).mockResolvedValue(
+        ok({ authDir: "/tmp/wa-test-auth", isFirstRun: false }),
+      );
+      mockMakeWASocket.mockClear();
+
+      const adapter = createWhatsAppAdapter(makeDeps({ agent: fakeAgent as any }));
+      await adapter.start();
+
+      expect(mockMakeWASocket).toHaveBeenCalledOnce();
+      const callArg = mockMakeWASocket.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg).toHaveProperty("agent", fakeAgent);
+      expect(callArg).toHaveProperty("fetchAgent", fakeAgent);
+    });
+
+    it("calls makeWASocket with agent + fetchAgent AND waWebSocketUrl when both deps.agent and apiRoot are set", async () => {
+      vi.mocked(validateWhatsAppAuth).mockResolvedValue(
+        ok({ authDir: "/tmp/wa-test-auth", isFirstRun: false }),
+      );
+      mockMakeWASocket.mockClear();
+
+      const adapter = createWhatsAppAdapter(
+        makeDeps({ agent: fakeAgent as any, apiRoot: "ws://127.0.0.1:54324/ws/chat" }),
+      );
+      await adapter.start();
+
+      expect(mockMakeWASocket).toHaveBeenCalledOnce();
+      const callArg = mockMakeWASocket.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg).toHaveProperty("agent", fakeAgent);
+      expect(callArg).toHaveProperty("fetchAgent", fakeAgent);
+      expect(callArg).toHaveProperty("waWebSocketUrl", "ws://127.0.0.1:54324/ws/chat");
+    });
+
+    it("calls makeWASocket WITHOUT agent or fetchAgent when deps.agent is undefined (zero-config D-12)", async () => {
+      vi.mocked(validateWhatsAppAuth).mockResolvedValue(
+        ok({ authDir: "/tmp/wa-test-auth", isFirstRun: false }),
+      );
+      mockMakeWASocket.mockClear();
+
+      const adapter = createWhatsAppAdapter(makeDeps({ agent: undefined }));
+      await adapter.start();
+
+      expect(mockMakeWASocket).toHaveBeenCalledOnce();
+      const callArg = mockMakeWASocket.mock.calls[0][0] as Record<string, unknown>;
+      // Zero-config: byte-identical to today — no agent-related keys present.
+      expect(callArg).not.toHaveProperty("agent");
+      expect(callArg).not.toHaveProperty("fetchAgent");
+    });
+  });
 });

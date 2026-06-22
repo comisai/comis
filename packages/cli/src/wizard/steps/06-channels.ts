@@ -31,8 +31,10 @@ import { systemClearTimeout, systemSetTimeout } from "@comis/core";
  * Validate a Telegram bot token via the getMe API.
  *
  * GET https://api.telegram.org/bot{token}/getMe
+ *
+ * @internal Exported for unit tests only.
  */
-async function validateTelegramLive(
+export async function validateTelegramLive(
   token: string,
 ): Promise<{ valid: boolean; username?: string; id?: number; error?: string }> {
   const controller = new AbortController();
@@ -56,8 +58,43 @@ async function validateTelegramLive(
     }
 
     return { valid: false, error: `Telegram API returned ${response.status}` };
-  } catch {
-    return { valid: false, error: "Could not reach Telegram API" };
+  } catch (err: unknown) {
+    // AbortController fired (5s timeout) — check BEFORE cause.code since an
+    // abort can also set cause in some Node versions.
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        valid: false,
+        error: "Telegram API timed out after 5s — if HTTPS_PROXY is set, ensure it can reach api.telegram.org.",
+      };
+    }
+
+    // Extract cause code from Node undici TypeError wrapper
+    const cause = err instanceof Error ? (err.cause as Record<string, unknown> | undefined) : undefined;
+    const code = typeof cause?.code === "string" ? cause.code : undefined;
+    const causeMsg = typeof cause?.message === "string" ? cause.message : "";
+
+    if (code === "ETIMEDOUT" || code === "ECONNREFUSED") {
+      return {
+        valid: false,
+        error: `Could not reach Telegram API — ${code}: check HTTPS_PROXY and NO_PROXY (api.telegram.org must be reachable; loopback/NO_PROXY may be misrouting).`,
+      };
+    }
+    if (code === "ENOTFOUND") {
+      return {
+        valid: false,
+        error: `DNS/proxy resolution failed for api.telegram.org — ${code}: if HTTPS_PROXY is set, confirm the proxy server is reachable and api.telegram.org is not in NO_PROXY.`,
+      };
+    }
+    // TLS errors: CERT_* codes OR "certificate" / "SSL" / "TLS" in cause message
+    if (code?.startsWith("CERT_") || causeMsg.includes("certificate") || causeMsg.includes("SSL") || causeMsg.includes("TLS")) {
+      return {
+        valid: false,
+        error: "TLS error reaching Telegram — a TLS-intercepting proxy needs its CA certificate set via proxy.tls.caFile in config.yaml.",
+      };
+    }
+    // Unknown — include code if available; never interpolate token or URL
+    const codeStr = code ? ` (${code})` : "";
+    return { valid: false, error: `Could not reach Telegram API${codeStr}.` };
   } finally {
     systemClearTimeout(timeout);
   }
@@ -67,8 +104,10 @@ async function validateTelegramLive(
  * Validate a Discord bot token via /users/@me.
  *
  * GET https://discord.com/api/v10/users/@me with Authorization: Bot {token}
+ *
+ * @internal Exported for unit tests only.
  */
-async function validateDiscordLive(
+export async function validateDiscordLive(
   token: string,
 ): Promise<{ valid: boolean; username?: string; discriminator?: string; error?: string }> {
   const controller = new AbortController();
@@ -97,8 +136,40 @@ async function validateDiscordLive(
     }
 
     return { valid: false, error: `Discord API returned ${response.status}` };
-  } catch {
-    return { valid: false, error: "Could not reach Discord API" };
+  } catch (err: unknown) {
+    // AbortController fired (5s timeout) — check BEFORE cause.code
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        valid: false,
+        error: "Discord API timed out after 5s — if HTTPS_PROXY is set, ensure it can reach discord.com.",
+      };
+    }
+
+    // Extract cause code from Node undici TypeError wrapper
+    const cause = err instanceof Error ? (err.cause as Record<string, unknown> | undefined) : undefined;
+    const code = typeof cause?.code === "string" ? cause.code : undefined;
+    const causeMsg = typeof cause?.message === "string" ? cause.message : "";
+
+    if (code === "ETIMEDOUT" || code === "ECONNREFUSED") {
+      return {
+        valid: false,
+        error: `Could not reach Discord API — ${code}: check HTTPS_PROXY and NO_PROXY (discord.com must be reachable; loopback/NO_PROXY may be misrouting).`,
+      };
+    }
+    if (code === "ENOTFOUND") {
+      return {
+        valid: false,
+        error: `DNS/proxy resolution failed for discord.com — ${code}: if HTTPS_PROXY is set, confirm the proxy server is reachable and discord.com is not in NO_PROXY.`,
+      };
+    }
+    if (code?.startsWith("CERT_") || causeMsg.includes("certificate") || causeMsg.includes("SSL") || causeMsg.includes("TLS")) {
+      return {
+        valid: false,
+        error: "TLS error reaching Discord — a TLS-intercepting proxy needs its CA certificate set via proxy.tls.caFile in config.yaml.",
+      };
+    }
+    const codeStr = code ? ` (${code})` : "";
+    return { valid: false, error: `Could not reach Discord API${codeStr}.` };
   } finally {
     systemClearTimeout(timeout);
   }
@@ -108,8 +179,10 @@ async function validateDiscordLive(
  * Validate a Slack bot token via auth.test.
  *
  * POST https://slack.com/api/auth.test with Authorization: Bearer {botToken}
+ *
+ * @internal Exported for unit tests only.
  */
-async function validateSlackLive(
+export async function validateSlackLive(
   botToken: string,
 ): Promise<{ valid: boolean; error?: string }> {
   const controller = new AbortController();
@@ -131,8 +204,40 @@ async function validateSlackLive(
     }
 
     return { valid: false, error: `Slack API returned ${response.status}` };
-  } catch {
-    return { valid: false, error: "Could not reach Slack API" };
+  } catch (err: unknown) {
+    // AbortController fired (5s timeout) — check BEFORE cause.code
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        valid: false,
+        error: "Slack API timed out after 5s — if HTTPS_PROXY is set, ensure it can reach slack.com.",
+      };
+    }
+
+    // Extract cause code from Node undici TypeError wrapper
+    const cause = err instanceof Error ? (err.cause as Record<string, unknown> | undefined) : undefined;
+    const code = typeof cause?.code === "string" ? cause.code : undefined;
+    const causeMsg = typeof cause?.message === "string" ? cause.message : "";
+
+    if (code === "ETIMEDOUT" || code === "ECONNREFUSED") {
+      return {
+        valid: false,
+        error: `Could not reach Slack API — ${code}: check HTTPS_PROXY and NO_PROXY (slack.com must be reachable; loopback/NO_PROXY may be misrouting).`,
+      };
+    }
+    if (code === "ENOTFOUND") {
+      return {
+        valid: false,
+        error: `DNS/proxy resolution failed for slack.com — ${code}: if HTTPS_PROXY is set, confirm the proxy server is reachable and slack.com is not in NO_PROXY.`,
+      };
+    }
+    if (code?.startsWith("CERT_") || causeMsg.includes("certificate") || causeMsg.includes("SSL") || causeMsg.includes("TLS")) {
+      return {
+        valid: false,
+        error: "TLS error reaching Slack — a TLS-intercepting proxy needs its CA certificate set via proxy.tls.caFile in config.yaml.",
+      };
+    }
+    const codeStr = code ? ` (${code})` : "";
+    return { valid: false, error: `Could not reach Slack API${codeStr}.` };
   } finally {
     systemClearTimeout(timeout);
   }
@@ -142,8 +247,10 @@ async function validateSlackLive(
  * Validate a LINE channel access token via getBotInfo.
  *
  * GET https://api.line.me/v2/bot/info with Authorization: Bearer {channelToken}
+ *
+ * @internal Exported for unit tests only.
  */
-async function validateLineLive(
+export async function validateLineLive(
   channelToken: string,
 ): Promise<{ valid: boolean; displayName?: string; error?: string }> {
   const controller = new AbortController();
@@ -166,8 +273,40 @@ async function validateLineLive(
     }
 
     return { valid: false, error: `LINE API returned ${response.status}` };
-  } catch {
-    return { valid: false, error: "Could not reach LINE API" };
+  } catch (err: unknown) {
+    // AbortController fired (5s timeout) — check BEFORE cause.code
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        valid: false,
+        error: "LINE API timed out after 5s — if HTTPS_PROXY is set, ensure it can reach api.line.me.",
+      };
+    }
+
+    // Extract cause code from Node undici TypeError wrapper
+    const cause = err instanceof Error ? (err.cause as Record<string, unknown> | undefined) : undefined;
+    const code = typeof cause?.code === "string" ? cause.code : undefined;
+    const causeMsg = typeof cause?.message === "string" ? cause.message : "";
+
+    if (code === "ETIMEDOUT" || code === "ECONNREFUSED") {
+      return {
+        valid: false,
+        error: `Could not reach LINE API — ${code}: check HTTPS_PROXY and NO_PROXY (api.line.me must be reachable; loopback/NO_PROXY may be misrouting).`,
+      };
+    }
+    if (code === "ENOTFOUND") {
+      return {
+        valid: false,
+        error: `DNS/proxy resolution failed for api.line.me — ${code}: if HTTPS_PROXY is set, confirm the proxy server is reachable and api.line.me is not in NO_PROXY.`,
+      };
+    }
+    if (code?.startsWith("CERT_") || causeMsg.includes("certificate") || causeMsg.includes("SSL") || causeMsg.includes("TLS")) {
+      return {
+        valid: false,
+        error: "TLS error reaching LINE — a TLS-intercepting proxy needs its CA certificate set via proxy.tls.caFile in config.yaml.",
+      };
+    }
+    const codeStr = code ? ` (${code})` : "";
+    return { valid: false, error: `Could not reach LINE API${codeStr}.` };
   } finally {
     systemClearTimeout(timeout);
   }

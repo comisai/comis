@@ -112,6 +112,17 @@ function normalizeBaseUrl(url: string): string {
 // JSON-RPC request
 // ---------------------------------------------------------------------------
 
+// Proxy coverage: signal-client uses the Node.js global fetch (undici) for all
+// HTTP and SSE requests to the signal-cli daemon. The global EnvHttpProxyAgent
+// dispatcher installed at daemon boot (packages/daemon/src/wiring/setup-proxy.ts)
+// intercepts every undici fetch call, so any non-loopback signal-cli endpoint is
+// automatically routed through the configured proxy.
+//
+// The external signal-cli JVM process is a separate concern: it inherits
+// HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY from process.env because the
+// daemon Stage-1 scrub (scrubProcessEnv) deliberately excludes those keys.
+// Verified by daemon.test.ts "daemon Stage-1 scrub preserves proxy env vars (XPORT-07)".
+
 /**
  * Execute a JSON-RPC 2.0 request against the signal-cli daemon.
  *

@@ -4,12 +4,11 @@
  * `model_health` / `config_posture`) into `{code, detail, count, hint}` findings.
  *
  * Extracted from `fleet-health.ts` to keep that module under the obs-handlers
- * per-subdirectory file-size cap (the OBS-01 Phase-180 script findings pushed it
- * over). No behavior change — `buildFindings` + the `Finding` shape + the
- * defensive details parsers relocate byte-identically; the assembler imports
- * them back.
+ * per-subdirectory file-size cap (the script findings pushed it over). No
+ * behavior change — `buildFindings` + the `Finding` shape + the defensive
+ * details parsers relocate byte-identically; the assembler imports them back.
  *
- * SECURITY INVARIANT (H1 + the 159 digest-only schema): findings carry counts +
+ * SECURITY INVARIANT (the digest-only schema): findings carry counts +
  * short codes + hints ONLY — NEVER concatenate the raw `row.message`/`row.details`
  * body. Every `details` JSON field read here is parsed defensively (malformed /
  * missing folds to a safe default, never throws, never echoes a body). The
@@ -34,6 +33,7 @@ import {
   scriptZeroHitFromRow,
   servedBelowConfiguredFromRow,
   voiceDegradedFromRow,
+  proxyInstallerStatusFromRow,
 } from "./fleet-findings-extractors.js";
 
 /** One report finding. Shape-identical to `FleetHealthReport.findings[number]`. */
@@ -45,25 +45,23 @@ export interface Finding {
 }
 
 /**
- * TELEM-01 (Plan 173-03): the pipeline-authoring aggregate the Phase-174 gate
- * (`pipelineAuthoringGate`) consumes — computed compute-on-read over the windowed
- * `health_signal` rows (no persisted rollup; Open Q2 / D-AGGREGATE).
+ * The pipeline-authoring aggregate the authoring gate (`pipelineAuthoringGate`)
+ * consumes — computed compute-on-read over the windowed `health_signal` rows (no
+ * persisted rollup).
  *
- * The `PipelineAuthoringAggregate` type is now SINGLE-SOURCED in
- * `@comis/observability` (Plan 173-04, MEDIUM-4) — the provisional local
- * interface declared here at Plan 03 was deleted and this file imports the
- * canonical type (see the top-of-file `import type`). The field NAMES + ORDER
- * (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) are
- * unchanged — the swap is structural.
+ * The `PipelineAuthoringAggregate` type is SINGLE-SOURCED in
+ * `@comis/observability` (see the top-of-file `import type`). The field NAMES +
+ * ORDER (`smallTierInvocations`, `smallTierValidRate`, `frontierValidRate`) are
+ * canonical.
  *
- * The small/local tier = capabilityClass "small" OR "nano" (D-TIER); frontier =
+ * The small/local tier = capabilityClass "small" OR "nano"; frontier =
  * "frontier". "mid" and "unknown" rows are in NEITHER cohort (they are not the
  * comparison tiers). Rates are 0 (never NaN) when the cohort is empty.
  *
  * Reduce the windowed `health_signal` rows to the `PipelineAuthoringAggregate`.
  * PURE — no I/O, no globals, no Date.now(); malformed / non-pipeline rows fold out
- * (counted in neither cohort, never throws). Exported so Plan 04 / fleet-health.ts
- * can feed the gate.
+ * (counted in neither cohort, never throws). Exported so fleet-health.ts can feed
+ * the gate.
  */
 export function pipelineAuthoringAggregateFromRows(
   rows: readonly DiagnosticRow[],
@@ -82,7 +80,7 @@ export function pipelineAuthoringAggregateFromRows(
       frontierTotal += 1;
       if (parsed.schemaValid) frontierValid += 1;
     }
-    // "mid" / "unknown": counted in neither cohort (D-TIER).
+    // "mid" / "unknown": counted in neither cohort.
   }
   return {
     smallTierInvocations: smallTotal,
@@ -93,13 +91,13 @@ export function pipelineAuthoringAggregateFromRows(
 
 /**
  * Derive `{code, detail, count, hint}` findings from the I-track rows. Counts +
- * short codes + hints ONLY — NEVER the raw `row.message`/`row.details` body (H1 +
- * the 159 schema is digest-only). `health_signal` rows are grouped by their
+ * short codes + hints ONLY — NEVER the raw `row.message`/`row.details` body (the
+ * schema is digest-only). `health_signal` rows are grouped by their
  * closed `signal` label (so distinct signal classes are distinct findings);
- * `model_health` / `config_posture` are category-level rollups. The OBS-01
- * script signals get DEDICATED findings (script=/lane= grouping + named knob
+ * `model_health` / `config_posture` are category-level rollups. The script
+ * signals get DEDICATED findings (script=/lane= grouping + named knob
  * hints) and are excluded from the generic rollup so they are not double-reported
- * (mirrors how KNOB-03's dedicated finding sits beside the config_posture rollup).
+ * (mirrors how the served-window dedicated finding sits beside the config_posture rollup).
  */
 export function buildFindings(
   healthSignals: readonly DiagnosticRow[],
@@ -109,7 +107,7 @@ export function buildFindings(
   const findings: Finding[] = [];
 
   // health_signal — one finding per closed `signal` label (counts only). The
-  // OBS-01 script labels are EXCLUDED here (they get dedicated findings below).
+  // script labels are EXCLUDED here (they get dedicated findings below).
   const bySignal = new Map<string, number>();
   for (const row of healthSignals) {
     const label = healthSignalLabel(row);
@@ -125,7 +123,7 @@ export function buildFindings(
     });
   }
 
-  // OBS-01 (Phase 180): dedicated script_zero_hit finding — one per
+  // Dedicated script_zero_hit finding — one per
   // (scriptClass, lane) group, reading "N non-Latin zero-hit searches
   // (script=X, lane=Y)". Counts + closed enums only; the hint names the repair
   // that backfills the normalized trigram twins (history backfill).
@@ -146,7 +144,7 @@ export function buildFindings(
     });
   }
 
-  // OBS-01 (Phase 180): dedicated summary_language_mismatch finding — a single
+  // Dedicated summary_language_mismatch finding — a single
   // rollup count whose hint names the exact knob (a non-Latin chunk summarized in
   // Latin; visibility only, never gated). Counts only, no source/summary body.
   const mismatchCount = healthSignals.filter(
@@ -161,10 +159,9 @@ export function buildFindings(
     });
   }
 
-  // GENQ-01: dedicated generation_quality finding — the memory-generation analog of
+  // Dedicated generation_quality finding — the memory-generation analog of
   // summary_language_mismatch over the consolidation/reasoning/user-representation
-  // passes (the F-ML1 regression class made a fleet count instead of an offline
-  // probe). Counts only, no source/generated body; visibility only, never gated.
+  // passes. Counts only, no source/generated body; visibility only, never gated.
   const genQualityCount = healthSignals.filter(
     (row) => healthSignalLabel(row) === "generation_quality",
   ).length;
@@ -177,17 +174,16 @@ export function buildFindings(
     });
   }
 
-  // TELEM-01 (Plan 173-03): dedicated pipeline_authoring finding — the HEADLINE
-  // metric is the small-model pipeline-authoring failure rate = (small-tier rows
-  // where schemaValid===false) / (small-tier rows total) over the window (D-TIER:
-  // small|nano = the small tier). Counts + a static hint ONLY (no source/generated
-  // graph body — the pipelineAuthoringFromRow parser reads only the closed tier +
-  // the schemaValid boolean). Fires only when smallTotal > 0 (no finding on zero
-  // small-tier traffic — mirrors the GENQ-01/voice if-guards). The reducer above is
-  // the same compute-on-read fold; here we re-walk for the invalid COUNT the finding
-  // names.
+  // Dedicated pipeline_authoring finding — the HEADLINE metric is the small-model
+  // pipeline-authoring failure rate = (small-tier rows where schemaValid===false) /
+  // (small-tier rows total) over the window (small|nano = the small tier). Counts +
+  // a static hint ONLY (no source/generated graph body — the pipelineAuthoringFromRow
+  // parser reads only the closed tier + the schemaValid boolean). Fires only when
+  // smallTotal > 0 (no finding on zero small-tier traffic — mirrors the
+  // generation_quality/voice if-guards). The reducer above is the same
+  // compute-on-read fold; here we re-walk for the invalid COUNT the finding names.
   //
-  // METRIC BOUNDARY (Phase 173 review WR-02): the denominator counts every
+  // METRIC BOUNDARY: the denominator counts every
   // CONTRACT-PARSE-REACHABLE authoring invocation. graph.define emits
   // schemaValid:false on BOTH a strict-contract (GraphDefineContract) parse
   // rejection AND a buildGraphInput parse/validate throw; graph.execute (a loose
@@ -217,7 +213,7 @@ export function buildFindings(
     });
   }
 
-  // ORCH-OBS (orchestration-observability): dedicated sandbox_downgrade_refused
+  // Dedicated sandbox_downgrade_refused
   // finding — the count of fail-closed sub-agent spawn refusals + the violated
   // sandbox dimensions (closed enum labels). A spawn refusal is fail-closed working,
   // but it means an agent was configured to spawn a LESS-confined child (a
@@ -249,7 +245,7 @@ export function buildFindings(
     });
   }
 
-  // ORCH-OBS: dedicated delivery_deadlettered finding — the count of sub-agent
+  // Dedicated delivery_deadlettered finding — the count of sub-agent
   // completions PERMANENTLY DROPPED (self-healing delivery exhausted retries, or an
   // immediate permanent failure). This is a SILENT degradation today (the graph
   // reports completed while a node's result never reached the parent). Counts + the
@@ -273,7 +269,7 @@ export function buildFindings(
     });
   }
 
-  // ORCH-OBS: dedicated node_budget_exceeded finding — the count of per-node token
+  // Dedicated node_budget_exceeded finding — the count of per-node token
   // budget breaches + the DOMINANT cap source (which knob bound the node). Counts +
   // the closed capSource label + a hint NAMING all three knobs ONLY (the per-node
   // token numbers are per-incident — on the node error string + the WARN + `comis
@@ -301,11 +297,11 @@ export function buildFindings(
     });
   }
 
-  // OBS-04 (Phase 196): dedicated voice_health finding — the degraded STT/TTS
+  // Dedicated voice_health finding — the degraded STT/TTS
   // turn count + the DOMINANT voice errorKind (the closed domain SttErrorKind),
   // rolled up from the `voice_degraded` health_signal rows the daemon voice obs
   // emits on a transcription/synthesis failure. Counts + a closed errorKind label
-  // + a STATIC hint ONLY — NEVER a raw provider message body or a secret (the H1
+  // + a STATIC hint ONLY — NEVER a raw provider message body or a secret (the
   // no-body rule; safe to paste). Mirrors the `model_health` if-guard + the
   // script-signal dedicated-grouping pattern. Beside model_health/config_posture.
   let voiceDegradedCount = 0;
@@ -340,8 +336,8 @@ export function buildFindings(
   // cause). The once-per-boot HEALTHY snapshot (severity "info", embedding
   // present) is NOT degradation; counting every row inflated the fleet view —
   // a keyless daemon that had rebooted N times showed "N provider-degradation
-  // signal(s)" from N healthy boots (BENIGN_*_REASONS: routine events must not
-  // inflate warning counts). The multilingual advisory below is STANDING STATE
+  // signal(s)" from N healthy boots (routine events must not inflate warning
+  // counts). The multilingual advisory below is STANDING STATE
   // read from the latest row and stays severity-independent.
   const degradedModelHealth = modelHealth.filter((r) => r.severity === "warning");
   if (degradedModelHealth.length > 0) {
@@ -354,11 +350,11 @@ export function buildFindings(
   }
 
   if (modelHealth.length > 0) {
-    // EMB-01: multilingual advisory read from the LATEST model_health row
-    // (STANDING STATE, not a reboot count — mirror the KNOB-03 latest-row pattern
-    // below, NOT the generic count above; Pitfall 4). Counts/codes/hints only; the
-    // hint names the DOC-01 recommendation + the I4 FTS floor. Advisory ONLY — no
-    // recall/search behavior gates on these flags anywhere (I4).
+    // Multilingual advisory read from the LATEST model_health row
+    // (STANDING STATE, not a reboot count — mirror the served-window latest-row
+    // pattern below, NOT the generic count above). Counts/codes/hints only; the
+    // hint names the recommendation + the FTS floor. Advisory ONLY — no
+    // recall/search behavior gates on these flags anywhere.
     let latestModelHealth = modelHealth[0]!;
     for (const row of modelHealth) {
       if (row.timestamp > latestModelHealth.timestamp) latestModelHealth = row;
@@ -390,7 +386,7 @@ export function buildFindings(
     for (const row of configPosture) {
       if (row.timestamp > latest.timestamp) latest = row;
     }
-    // T1.3 (F6): name the SPECIFIC flagged keys (closed labels only) so an operator does
+    // Name the SPECIFIC flagged keys (closed labels only) so an operator does
     // not have to grep daemon.log to learn WHICH knob is off (gateway.tls, CANARY_SECRET…).
     const flaggedKeys = flaggedPostureKeys(latest);
     findings.push({
@@ -402,7 +398,7 @@ export function buildFindings(
       count: configPosture.length,
       hint: "reconcile the named flagged keys against the secure baseline (served-below + chimeric model have their own findings)",
     });
-    // KNOB-03: dedicated served-below-configured finding from the latest posture row.
+    // Dedicated served-below-configured finding from the latest posture row.
     const latestCount = servedBelowConfiguredFromRow(latest);
     if (latestCount > 0) {
       findings.push({
@@ -412,7 +408,7 @@ export function buildFindings(
         hint: "set OLLAMA_CONTEXT_LENGTH / Modelfile 'PARAMETER num_ctx' to the configured window (config-yaml served-window section); run `comis explain` on a served-bound session for the numbers",
       });
     }
-    // RESOLVE-01: dedicated chimeric-provider/model finding from the SAME latest
+    // Dedicated chimeric-provider/model finding from the SAME latest
     // posture row. A NATIVE provider (anthropic/openai/google) paired with a foreign
     // model family resolves a phantom ModelProfile (incident ffe11736) — name it.
     const chimeraCount = chimericModelFromRow(latest);
@@ -424,7 +420,7 @@ export function buildFindings(
         hint: "align agents.<id>.provider with the model family (e.g. provider:anthropic ⇒ a claude model; for a qwen/llama model use an ollama/openrouter provider), or set the model id explicitly under the right provider",
       });
     }
-    // SPEND-05: dedicated pricing-gap finding from the SAME latest posture row.
+    // Dedicated pricing-gap finding from the SAME latest posture row.
     // Configured agents burning tokens on remote-unknown-priced models (a NATIVE
     // provider with no catalog rate — the ffe11736 fail-open where spend is silently
     // under-counted as $0). Surfaces the kill-switch's pricing coverage so an operator
@@ -436,6 +432,19 @@ export function buildFindings(
         detail: `${pricingGapCount} agent(s) burning tokens on remote-unknown-priced models — spend is under-counted for these (honest $0 only applies to local/free providers)`,
         count: pricingGapCount,
         hint: "set the model id under a priced provider, or use a local/free provider where $0 is correct; run `comis explain` on an unknown-priced session for the pricing_state",
+      });
+    }
+    // Dedicated proxy installer failure finding from the SAME latest posture
+    // row. When `installerError` is a non-null configKey string, the proxy dispatcher
+    // failed to install — surfaces which knob to fix so `comis fleet` answers the
+    // question without grepping daemon.log. Absent when no proxy configured.
+    const proxyStatus = proxyInstallerStatusFromRow(latest);
+    if (proxyStatus !== null) {
+      findings.push({
+        code: "config_posture:proxy_posture",
+        detail: `Proxy installer failed: ${proxyStatus.installerError}`,
+        count: 1,
+        hint: "check proxy.proxyUrl / proxy.tls.caFile in config.yaml",
       });
     }
   }

@@ -37,8 +37,8 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
 
-  it("has exactly 14 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(14);
+  it("has exactly 15 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(15);
   });
 });
 
@@ -566,5 +566,32 @@ describe("contextEngine.version is operator-only (immutable to config.patch)", (
     for (const p of paths) {
       expect(p).not.toMatch(/contextEngine/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-09 / SC#4: proxy section is operator-only — agents must not self-configure
+// egress routing. A single "proxy" prefix covers all subpaths via the existing
+// prefix-match logic in isImmutableConfigPath.
+// ---------------------------------------------------------------------------
+describe("isImmutableConfigPath — proxy section (D-09, SC#4)", () => {
+  it("rejects proxy section top-level write", () => {
+    expect(isImmutableConfigPath("proxy")).toBe(true);
+  });
+
+  it("rejects proxy.enabled (agent must not toggle proxy on/off)", () => {
+    expect(isImmutableConfigPath("proxy", "enabled")).toBe(true);
+  });
+
+  it("rejects proxy.proxyUrl (agent must not redirect egress)", () => {
+    expect(isImmutableConfigPath("proxy", "proxyUrl")).toBe(true);
+  });
+
+  it("rejects proxy.tls.caFile (agent must not substitute CA bundle)", () => {
+    expect(isImmutableConfigPath("proxy", "tls.caFile")).toBe(true);
+  });
+
+  it("rejects proxy.loopbackMode (agent must not alter loopback policy)", () => {
+    expect(isImmutableConfigPath("proxy", "loopbackMode")).toBe(true);
   });
 });

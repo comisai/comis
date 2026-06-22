@@ -4,6 +4,28 @@ import type { AppContainer, ChannelPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
+// Mock @comis/infra proxy-agent helpers (must be before bootstrapAdapters import)
+// ---------------------------------------------------------------------------
+const mockHttpsAgent = { type: "https-proxy-agent" } as unknown as import("https-proxy-agent").HttpsProxyAgent<string>;
+const mockUndiciDispatcher = { type: "undici-proxy-agent" } as object;
+
+vi.mock("@comis/infra", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/infra")>();
+  return {
+    ...actual,
+    resolveHttpsProxyAgent: vi.fn(() => undefined),
+    resolveUndiciProxyAgent: vi.fn(() => undefined),
+    resolveProxyUrl: vi.fn(() => undefined),
+  };
+});
+
+import {
+  resolveHttpsProxyAgent,
+  resolveUndiciProxyAgent,
+  resolveProxyUrl,
+} from "@comis/infra";
+
+// ---------------------------------------------------------------------------
 // Mock all 8 platform plugin factories and 8 validators from @comis/channels
 // ---------------------------------------------------------------------------
 
@@ -98,6 +120,11 @@ function makeContainer(channelOverrides: Record<string, any> = {}, secretMap: Re
   } as unknown as AppContainer;
 }
 
+/** Default mergedEnv (no proxy configured). */
+function makeEnv(overrides: Record<string, string> = {}): Record<string, string | undefined> {
+  return { HOME: "/home/test", ...overrides };
+}
+
 function makeLogger(): ComisLogger {
   return {
     info: vi.fn(),
@@ -124,7 +151,8 @@ describe("bootstrapAdapters", () => {
 
   it("returns empty adaptersByType when all platforms disabled", async () => {
     const container = makeContainer();
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
     expect(result.adaptersByType.size).toBe(0);
     expect(result.tgPlugin).toBeUndefined();
     expect(result.linePlugin).toBeUndefined();
@@ -132,7 +160,8 @@ describe("bootstrapAdapters", () => {
 
   it("creates Telegram adapter on happy path", async () => {
     const container = makeContainer({ telegram: { enabled: true, botToken: "tok123" } });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     // validateBotToken takes (token, apiRoot?); production path passes
     // undefined for the second arg.
@@ -156,7 +185,7 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       telegram: { enabled: true, botToken: "tok123", apiRoot: "http://127.0.0.1:54321" },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
     expect(createTelegramPlugin).toHaveBeenCalledWith(
@@ -170,7 +199,8 @@ describe("bootstrapAdapters", () => {
   it("skips Telegram adapter when validation fails", async () => {
     vi.mocked(validateBotToken).mockResolvedValueOnce({ ok: false, error: new Error("bad token") } as any);
     const container = makeContainer({ telegram: { enabled: true, botToken: "invalid" } });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(result.adaptersByType.has("telegram")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -181,7 +211,8 @@ describe("bootstrapAdapters", () => {
 
   it("warns when Telegram enabled but no bot token configured", async () => {
     const container = makeContainer({ telegram: { enabled: true } });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(result.adaptersByType.has("telegram")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -192,7 +223,8 @@ describe("bootstrapAdapters", () => {
 
   it("creates Discord adapter on happy path", async () => {
     const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     // validateDiscordToken takes (token, apiRoot?); production path passes
     // undefined for the second arg.
@@ -207,7 +239,7 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       discord: { enabled: true, botToken: "disc-tok", apiRoot: "http://127.0.0.1:54322" },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", "http://127.0.0.1:54322");
     expect(createDiscordPlugin).toHaveBeenCalledWith(
@@ -222,7 +254,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       slack: { enabled: true, botToken: "xoxb-slack", mode: "socket", appToken: "xapp-sock" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(validateSlackCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "xoxb-slack", mode: "socket", appToken: "xapp-sock" }),
@@ -243,7 +276,7 @@ describe("bootstrapAdapters", () => {
         apiRoot: "http://127.0.0.1:54323",
       },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(validateSlackCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "xoxb-slack", apiRoot: "http://127.0.0.1:54323" }),
@@ -257,7 +290,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       whatsapp: { enabled: true, authDir: "/custom/auth", printQR: true },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(validateWhatsAppAuth).toHaveBeenCalledWith(
       expect.objectContaining({ authDir: "/custom/auth", printQR: true }),
@@ -277,7 +311,7 @@ describe("bootstrapAdapters", () => {
         apiRoot: "ws://127.0.0.1:54324/ws/chat",
       },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(createWhatsAppPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ apiRoot: "ws://127.0.0.1:54324/ws/chat" }),
@@ -288,7 +322,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       line: { enabled: true, botToken: "line-access-tok", channelSecret: "line-secret" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(validateLineCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ channelAccessToken: "line-access-tok", channelSecret: "line-secret" }),
@@ -309,7 +344,7 @@ describe("bootstrapAdapters", () => {
         apiRoot: "http://127.0.0.1:54325",
       },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(validateLineCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ apiRoot: "http://127.0.0.1:54325" }),
@@ -324,7 +359,8 @@ describe("bootstrapAdapters", () => {
       line: { enabled: true, botToken: "line-tok" },
       // channelSecret missing
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(result.adaptersByType.has("line")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -337,7 +373,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       irc: { enabled: true, host: "irc.example.com", nick: "mybot", port: 6667, tls: false, channels: ["#test"] },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(validateIrcConnection).toHaveBeenCalledWith(
       expect.objectContaining({ host: "irc.example.com", nick: "mybot" }),
@@ -353,7 +390,8 @@ describe("bootstrapAdapters", () => {
       irc: { enabled: true, host: "irc.example.com" },
       // nick missing
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(result.adaptersByType.has("irc")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -368,7 +406,8 @@ describe("bootstrapAdapters", () => {
       discord: { enabled: true, botToken: "dc-tok" },
       slack: { enabled: true, botToken: "sl-tok" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(result.adaptersByType.size).toBe(3);
     expect(result.adaptersByType.has("telegram")).toBe(true);
@@ -381,7 +420,8 @@ describe("bootstrapAdapters", () => {
       { telegram: { enabled: true } },
       { TELEGRAM_BOT_TOKEN: "secret-tok" },
     );
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
@@ -393,7 +433,7 @@ describe("bootstrapAdapters", () => {
       telegram: { enabled: true, botToken: "tok" },
       discord: { enabled: true, botToken: "tok" },
     });
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(channelsLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ channels: expect.arrayContaining(["telegram", "discord"]), count: 2 }),
@@ -403,7 +443,7 @@ describe("bootstrapAdapters", () => {
 
   it("logs debug when no adapters enabled", async () => {
     const container = makeContainer();
-    await bootstrapAdapters({ container, channelsLogger });
+    await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(channelsLogger.debug).toHaveBeenCalledWith("No channel adapters enabled");
   });
@@ -413,7 +453,8 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "password123" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
 
     expect(validateEmailCredentials).toHaveBeenCalledWith(
       expect.objectContaining({ imapHost: "imap.example.com", imapPort: 993, secure: true }),
@@ -433,7 +474,7 @@ describe("bootstrapAdapters", () => {
       email: { enabled: true, address: "bot@example.com" },
       // imapHost and smtpHost missing
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(result.adaptersByType.has("email")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -447,7 +488,7 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "bad-pass" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     expect(result.adaptersByType.has("email")).toBe(false);
     expect(channelsLogger.warn).toHaveBeenCalledWith(
@@ -460,7 +501,7 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     const plugin = result.channelPlugins.get("email");
     expect(plugin?.capabilities.features.reactions).toBe(false);
@@ -471,7 +512,7 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     const plugin = result.channelPlugins.get("email");
     expect(plugin).toBeDefined();
@@ -482,10 +523,127 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({
       email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
     });
-    const result = await bootstrapAdapters({ container, channelsLogger });
+    const result = await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
     // adaptersByType entry is the same object as plugin.adapter — proves SMTP sends
     // flow through deliver-to-channel.ts delivery queue retry
     expect(result.adaptersByType.get("email")).toBe(mockEmailPlugin.adapter);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Proxy agent wiring tests — daemon wiring
+  // ---------------------------------------------------------------------------
+
+  describe("proxy agent wiring via mergedEnv", () => {
+    beforeEach(() => {
+      vi.mocked(resolveHttpsProxyAgent).mockReturnValue(undefined);
+      vi.mocked(resolveUndiciProxyAgent).mockReturnValue(undefined);
+      vi.mocked(resolveProxyUrl).mockReturnValue(undefined);
+    });
+
+    it("passes HttpsProxyAgent to Telegram plugin factory when proxy env is set (XPORT-01)", async () => {
+      vi.mocked(resolveHttpsProxyAgent).mockReturnValue(mockHttpsAgent);
+      const container = makeContainer({ telegram: { enabled: true, botToken: "tg-tok" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
+
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("api.telegram.org", expect.any(Object));
+      expect(createTelegramPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: mockHttpsAgent }),
+      );
+    });
+
+    it("passes undefined agent to Telegram plugin factory when no proxy env (XPORT-01 zero-config)", async () => {
+      const container = makeContainer({ telegram: { enabled: true, botToken: "tg-tok" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
+      expect(createTelegramPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ agent: expect.anything() }),
+      );
+    });
+
+    it("passes HttpsProxyAgent to Slack plugin factory when proxy env is set (XPORT-03)", async () => {
+      vi.mocked(resolveHttpsProxyAgent).mockReturnValue(mockHttpsAgent);
+      const container = makeContainer({ slack: { enabled: true, botToken: "xoxb-slack", mode: "socket", appToken: "xapp-sock" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
+
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("slack.com", expect.any(Object));
+      expect(createSlackPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: mockHttpsAgent }),
+      );
+    });
+
+    it("passes undefined agent to Slack plugin factory when no proxy env (XPORT-03 zero-config)", async () => {
+      const container = makeContainer({ slack: { enabled: true, botToken: "xoxb-slack", mode: "socket", appToken: "xapp-sock" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
+      expect(createSlackPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ agent: expect.anything() }),
+      );
+    });
+
+    it("passes HttpsProxyAgent to WhatsApp plugin factory when proxy env is set (XPORT-04)", async () => {
+      vi.mocked(resolveHttpsProxyAgent).mockReturnValue(mockHttpsAgent);
+      const container = makeContainer({ whatsapp: { enabled: true, authDir: "/auth", printQR: false } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
+
+      expect(resolveHttpsProxyAgent).toHaveBeenCalledWith("web.whatsapp.com", expect.any(Object));
+      expect(createWhatsAppPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: mockHttpsAgent }),
+      );
+    });
+
+    it("passes undefined agent to WhatsApp plugin factory when no proxy env (XPORT-04 zero-config)", async () => {
+      const container = makeContainer({ whatsapp: { enabled: true, authDir: "/auth", printQR: false } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
+      expect(createWhatsAppPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ agent: expect.anything() }),
+      );
+    });
+
+    it("passes undici dispatcher to Discord plugin factory when proxy env is set (XPORT-02)", async () => {
+      vi.mocked(resolveUndiciProxyAgent).mockReturnValue(mockUndiciDispatcher);
+      const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://proxy:3128" }) });
+
+      expect(resolveUndiciProxyAgent).toHaveBeenCalledWith("discord.com", expect.any(Object));
+      expect(createDiscordPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ dispatcher: mockUndiciDispatcher }),
+      );
+    });
+
+    it("passes undefined dispatcher to Discord plugin factory when no proxy env (XPORT-02 zero-config)", async () => {
+      const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
+      expect(createDiscordPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ dispatcher: expect.anything() }),
+      );
+    });
+
+    it("passes proxyUrl to Email plugin factory when proxy env is set (XPORT-05)", async () => {
+      vi.mocked(resolveProxyUrl).mockReturnValue("http://user:pass@proxy:3128");
+      const container = makeContainer({
+        email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
+      });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv({ HTTPS_PROXY: "http://user:pass@proxy:3128" }) });
+
+      // proxyUrl is resolved per-host (IMAP host used for email)
+      expect(resolveProxyUrl).toHaveBeenCalledWith(expect.any(String), expect.any(Object));
+      expect(createEmailPlugin).toHaveBeenCalledWith(
+        expect.objectContaining({ proxyUrl: "http://user:pass@proxy:3128" }),
+      );
+    });
+
+    it("passes undefined proxyUrl to Email plugin factory when no proxy env (XPORT-05 zero-config)", async () => {
+      const container = makeContainer({
+        email: { enabled: true, address: "bot@example.com", imapHost: "imap.example.com", smtpHost: "smtp.example.com", botToken: "pass" },
+      });
+      await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
+
+      expect(createEmailPlugin).toHaveBeenCalledWith(
+        expect.not.objectContaining({ proxyUrl: expect.anything() }),
+      );
+    });
   });
 });

@@ -1553,6 +1553,69 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ---
 
+### `comis proxy validate`
+
+Validate that the configured egress proxy is reachable, that the loopback gateway address (`localhost:4766`) is correctly bypassed, and list transports not covered by the global dispatcher. For the full proxy configuration guide and per-transport coverage map, see [Network Proxy](/security/network-proxy).
+
+**OFFLINE** — does not require a running daemon. Reads proxy settings from `config.yaml` and the environment (`HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`).
+
+Invoke via (CLI not on PATH — see [Quick Start](/get-started/quickstart)):
+
+```bash
+node packages/cli/dist/cli.js proxy validate
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--target <url>` | URL | `https://api.telegram.org` | Target URL to probe through the proxy |
+| `--timeout-ms <ms>` | number | `5000` | Probe timeout in milliseconds |
+| `--json` | flag | off | Output machine-readable JSON including `uncoveredTransports` |
+
+```bash
+# Basic validation — table output
+node packages/cli/dist/cli.js proxy validate
+
+# Custom target and shorter timeout
+node packages/cli/dist/cli.js proxy validate --target https://api.openai.com --timeout-ms 3000
+
+# JSON output (includes uncoveredTransports[])
+node packages/cli/dist/cli.js proxy validate --json
+```
+
+**What it checks:**
+
+1. **SSRF guard** — rejects any `--target` that resolves (via DNS) to a private, loopback, or metadata IP before making any network connection.
+2. **Proxy probe** — sends a `HEAD` request to `--target` through a one-off `EnvHttpProxyAgent` or `ProxyAgent` dispatcher (never the global dispatcher). A successful CONNECT tunnel returns `probeOk: true`.
+3. **Loopback canary** — asserts that `localhost:4766` (the gateway) is matched by the effective `NO_PROXY`, proving the gateway is NOT routed through the proxy.
+4. **Failure classification** — maps probe failures to `errorKind` with an actionable `hint`:
+   - `proxy_unreachable` — `HTTPS_PROXY` / `HTTP_PROXY` server cannot be reached; check the proxy URL and network path.
+   - `proxy_timeout` — connection timed out; check the network path or increase `--timeout-ms`.
+   - `proxy_tls_error` — TLS verification failed; set `proxy.tls.caFile` in `config.yaml` to the proxy CA certificate.
+5. **Uncovered transports** (`--json`) — lists transports not routed through the global `EnvHttpProxyAgent` dispatcher: IRC (raw TCP), Discord WS gateway, WhatsApp/Baileys WS. `signal-cli` is env-covered (inherits `process.env`) and marked as such.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Probe succeeded AND loopback canary bypassed |
+| `1` | Probe failed OR loopback canary failed (proxy may be misconfigured) |
+
+**JSON output shape** (`--json`):
+
+```json
+{
+  "probeOk": true,
+  "status": 200,
+  "target": "https://api.telegram.org",
+  "proxyUrlMasked": "http://proxy.corp:8080",
+  "loopbackCanaryBypassed": true,
+  "uncoveredTransports": ["IRC", "Discord WS", "WhatsApp (Baileys)"],
+  "message": "Probe succeeded — HTTP 200"
+}
+```
+
+---
+
 ### `comis status`
 
 Display a unified system status overview showing daemon, gateway, channel, and agent information. Connects to the daemon via RPC for live data and handles daemon offline gracefully.

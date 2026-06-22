@@ -142,8 +142,12 @@ export {
   checkApprovalsConfig,
   // Broker binding config schema
   BrokerBindingConfigSchema,
-  // Orchestration authoring gate (Phase 174 / v2.27 P2) — top-level, default-OFF.
-  // Public so downstream packages (Plans 02-05) read the gate from @comis/core.
+  // Proxy config schema (global egress proxy)
+  ProxyConfigSchema,
+  ProxyEndpointSchema,
+  ProxyLoopbackModeSchema,
+  // Orchestration authoring gate (v2.27) — top-level, default-OFF.
+  // Public so downstream packages read the gate from @comis/core.
   OrchestrationConfigSchema,
   OrchestrationAuthoringConfigSchema,
 } from "../config/index.js";
@@ -286,9 +290,12 @@ export type {
   BrokerBindingConfig,
   // Pre-read storage mode (pre-Zod boot gate)
   StorageModePreRead,
-  // Orchestration authoring gate (Phase 174 / v2.27 P2)
+  // Proxy config types (global egress proxy)
+  ProxyConfig,
+  ProxyEndpoint,
+  // Orchestration authoring gate (v2.27)
   OrchestrationConfig,
   OrchestrationAuthoringConfig,
-  // Spend kill-switch config (Phase 177)
+  // Spend kill-switch config
   SpendConfig,
 } from "../config/index.js";

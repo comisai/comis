@@ -66,6 +66,15 @@ export interface LineAdapterHandle extends ChannelPort {
 // Factory
 // ---------------------------------------------------------------------------
 
+// Proxy coverage: @line/bot-sdk v9+ (MessagingApiClient, MessagingApiBlobClient)
+// uses the Node.js global fetch internally — it does not inject a custom http.Agent
+// or httpClient. The global EnvHttpProxyAgent dispatcher installed at daemon boot
+// (packages/daemon/src/wiring/setup-proxy.ts) intercepts all undici fetch calls,
+// so LINE API traffic is automatically routed through the configured proxy.
+// The E2E baseURL override (deps.apiRoot seam) only overrides the API host, not the
+// transport — proxy coverage is unaffected. No wiring required for proxy support.
+// See also: Earendil-Pi (pi-ai native fetch) shares the same dispatcher path.
+
 /**
  * Create a LINE adapter implementing the ChannelPort interface.
  *

@@ -60,6 +60,19 @@ export interface EmailAdapterDeps {
   pollingIntervalMs?: number;
   attachmentDir: string;
   logger: ComisLogger;
+  /**
+   * Optional full proxy URL (credential-bearing) for IMAP + SMTP egress.
+   *
+   * When set, passed as imapflow's native `proxy:` option (IMAP) and nodemailer's
+   * `proxy:` option (SMTP), routing both connections through the configured proxy.
+   * The full URL (including any credentials) is passed directly — do NOT sanitize
+   * here; sanitizeProxyUrl is reserved for logs.
+   *
+   * The daemon's setup-channels-adapters.ts populates this field by calling
+   * resolveProxyUrl(deps.smtpHost, mergedEnv). Production callers without a proxy
+   * leave it undefined — the adapter behaves byte-identically to before.
+   */
+  proxyUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +125,8 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     auth: imapAuth,
     pollingIntervalMs: deps.pollingIntervalMs,
     logger: deps.logger,
+    // Forward proxy URL for IMAP egress (no sanitization).
+    ...(deps.proxyUrl ? { proxyUrl: deps.proxyUrl } : {}),
   });
 
   // Register IMAP message handler
@@ -205,11 +220,13 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
 
   async function start(): Promise<Result<void, Error>> {
     // Create SMTP transport
+    // Pass proxy URL when configured (no sanitization).
     transport = nodemailer.createTransport({
       host: deps.smtpHost,
       port: deps.smtpPort,
       secure: deps.secure,
       auth: buildSmtpAuth(),
+      ...(deps.proxyUrl ? { proxy: deps.proxyUrl } : {}),
     });
 
     // Start IMAP lifecycle

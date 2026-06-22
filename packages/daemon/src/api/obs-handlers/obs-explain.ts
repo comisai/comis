@@ -1,35 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `obs.explain` RPC handler — the IncidentReport assembler (Phase 153
- * centerpiece, D6).
+ * `obs.explain` RPC handler — the IncidentReport assembler.
  *
- * Wires the full pipeline the Wave-1..4 plans built, in five linear steps:
+ * Wires the full pipeline in five linear steps:
  *
  *   1. admin check (defense-in-depth; gateway-router is the primary gate)
  *   2. `stripInternalFields` THEN `ObsExplainContract.request.parse`
  *      (so `_trustLevel` can never be smuggled into the parsed params)
  *   3. resolve — a `traceId` is canonicalized to its `sessionKey` FIRST
  *      ({@link resolveTraceToSession}), so by-trace and by-session share ONE
- *      assembler path (X1 structural identity)
+ *      assembler path (structural identity)
  *   4. read → normalize → assemble → heuristics → bound:
  *        - {@link IncidentSourceReader} reads the four bounded sources
  *        - {@link toIncidentSignals} collapses log + event shapes
  *        - {@link assembleIncidentReport} merges signals + rollup → §6.3 report
- *        - {@link rootCause} stamps the deterministic `likelyRootCause` (X3)
- *        - {@link boundIncidentReport} enforces the depth budget (X2)
+ *        - {@link rootCause} stamps the deterministic `likelyRootCause`
+ *        - {@link boundIncidentReport} enforces the depth budget
  *   5. dev-mode `response.parse` (catches field regressions in dev only)
  *
  * The `incidentReader` dep is an OPTIONAL test seam: production builds
  * {@link makeRealReader} over the real (safePath-guarded) data dir; tests inject
  * a fixture reader. It does NOT enable arbitrary-file reads in production
- * (T-153-17) — the dataDir override convention only, like obs-trace.
+ * — the dataDir override convention only, like obs-trace.
  *
  * @module
  */
 
 import * as os from "node:os";
 import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport } from "@comis/core";
+import type { ObservabilityStore } from "@comis/memory";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { resolveTraceToSession } from "./obs-explain-resolve.js";
@@ -57,7 +57,7 @@ export interface AssembleIncidentReportParams {
   readonly traceId?: string;
   readonly depth?: "summary" | "full";
   /**
-   * D9 admin opt-in: when `true`, a `traceId` that resolves only through a
+   * Admin opt-in: when `true`, a `traceId` that resolves only through a
    * synthetic (test/harness) session-index row is still canonicalized. Default
    * (absent/`false`) excludes synthetic rows from the by-traceId resolution.
    */
@@ -74,13 +74,12 @@ export interface AssembleIncidentReportParams {
  * This function contains NEITHER an admin check NOR a `request.parse`: it takes
  * ALREADY-VALIDATED params and runs the deterministic pipeline:
  *
- *   3 (X1). canonicalize a `traceId` to its `sessionKey` FIRST, so by-trace and
- *           by-session collapse to one assembler path.
- *   4.      read the four bounded sources → `toIncidentSignals` → assemble the
- *           §6.3 report → stamp `likelyRootCause` (X3, with the WR-04
- *           `session_not_found` not-found marker) → bound to the depth budget
- *           (X2).
- *   5.      dev-mode `response.parse` (catches field regressions in dev only).
+ *   3. canonicalize a `traceId` to its `sessionKey` FIRST, so by-trace and
+ *      by-session collapse to one assembler path.
+ *   4. read the four bounded sources → `toIncidentSignals` → assemble the
+ *      §6.3 report → stamp `likelyRootCause` (with the `session_not_found`
+ *      not-found marker) → bound to the depth budget.
+ *   5. dev-mode `response.parse` (catches field regressions in dev only).
  *
  * The body is byte-identical to the former inline handler body; moving it here
  * changes NO behavior (the obs-explain.test.ts parity case pins this).
@@ -96,15 +95,16 @@ export async function assembleIncidentReportFromSources(
   reader: IncidentSourceReader,
   dataDir: string,
   params: AssembleIncidentReportParams,
+  obsStore?: ObservabilityStore,
 ): Promise<IncidentReport> {
-  // Step 3 (X1): canonicalize a traceId to its sessionKey FIRST, so by-trace
+  // Step 3: canonicalize a traceId to its sessionKey FIRST, so by-trace
   // and by-session collapse to one assembler path. `sessionKey` is present
   // when traceId is absent (the contract .refine guarantees one of the two).
   const sessionKey = params.traceId
     ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
     : params.sessionKey!;
 
-  // WR-04: a traceId that resolves to "" (no row in today/yesterday's session
+  // A traceId that resolves to "" (no row in today/yesterday's session
   // index) is UNRESOLVABLE — distinct from a session that genuinely had zero
   // tool activity. Without a marker both yield the same empty report keyed on
   // "", so an admin can't tell a typo'd/expired traceId from a clean session.
@@ -123,16 +123,56 @@ export async function assembleIncidentReportFromSources(
   const cache = await reader.readCacheTraceRecords(sessionKey);
   const metadata = await reader.readSessionMetadata(sessionKey);
   const rollup = await reader.readDiagnosticsRollup(sessionKey);
-  // AUDIT-05 (176-05): the 5th source — the session's audit events (Plan 03
-  // persists them via SQLite, NOT a trajectory record, so they are read HERE,
+  // The 5th source — the session's audit events (persisted via SQLite, NOT a
+  // trajectory record, so they are read HERE,
   // not folded from the record stream). Tenant-scoped + bounded by the reader;
   // filtered to the resolved traceId + aggregated counts-by-kind below. Optional
   // reader method — a fixture reader that omits it simply produces no audit?.
   const auditRows = reader.readAuditEvents ? await reader.readAuditEvents(sessionKey) : [];
 
   // Normalize both shapes → uniform signals; assemble the §6.3 report;
-  // stamp the deterministic root cause (X3); bound to the depth budget (X2).
+  // stamp the deterministic root cause; bound to the depth budget.
   const signals = toIncidentSignals([...records, ...cache]);
+
+  // Read the latest config_posture obs_diagnostics row and populate
+  // signals.proxyPosture — a boot-time fact not in the trajectory, so the handler
+  // (not toIncidentSignals) is the right injection point. Mirrors how
+  // signals.endReason and signals.degraded are threaded by the handler.
+  // Absent obsStore or no config_posture rows → signals.proxyPosture stays
+  // undefined → assembler omits the field (zero-config byte-identical invariant).
+  if (obsStore !== undefined) {
+    const postureRows = obsStore.queryDiagnostics({ category: "config_posture" });
+    if (postureRows.length > 0) {
+      // Latest row wins (standing state — same as fleet-findings.ts pattern).
+      let latestRow = postureRows[0]!;
+      for (const row of postureRows) {
+        if (row.timestamp > latestRow.timestamp) latestRow = row;
+      }
+      try {
+        const d = JSON.parse(latestRow.details ?? "{}") as Record<string, unknown>;
+        const ps = d["proxyInstallerStatus"] as Record<string, unknown> | undefined;
+        // Only surface when proxyInstallerStatus is present (proxy was configured).
+        if (ps !== null && typeof ps === "object") {
+          signals.proxyPosture = {
+            configured: true,
+            // maskedUrl: not in proxyInstallerStatus (only installerError + loopbackMode);
+            // maskedUrl lives on the ProxyBootPosture that is NOT persisted here.
+            // Only what the posture row carries — no field reconstruction.
+            installerOk: ps["installerError"] === null || ps["installerError"] === undefined,
+            ...(typeof ps["installerError"] === "string" && ps["installerError"].length > 0
+              ? { installerError: ps["installerError"] as string }
+              : {}),
+            ...(typeof ps["effectiveLoopbackMode"] === "string"
+              ? { loopbackMode: ps["effectiveLoopbackMode"] as string }
+              : {}),
+          };
+        }
+      } catch {
+        // Malformed details JSON — leave signals.proxyPosture undefined (defensive).
+      }
+    }
+  }
+
   // Pass the trajectory READ count (records.length) so coverage.trajectory
   // reflects what the reader actually READ — the meta-observability point: a
   // d510322f-class "read nothing" bug surfaces as coverage.trajectory.records:0
@@ -145,7 +185,7 @@ export async function assembleIncidentReportFromSources(
     report.offloads.length === 0 &&
     Object.keys(report.toolStats).length === 0;
   if (traceResolutionMissed && reportIsEmpty) {
-    // WR-04: an honest not-found verdict + ledger note so the empty report
+    // An honest not-found verdict + ledger note so the empty report
     // does not masquerade as a healthy zero-activity session. The bound pass
     // preserves both (it seeds truncations[] from the report and never
     // overwrites likelyRootCause).
@@ -162,13 +202,13 @@ export async function assembleIncidentReportFromSources(
       reason: "traceId not found in session index (today/yesterday) — empty report is unresolved, not a clean session",
     });
   } else {
-    // QT2/QT3: thread the mapped terminal endReason (the NAMED degradation cause)
+    // Thread the mapped terminal endReason (the NAMED degradation cause)
     // onto the signals so the two lowest-priority heuristics (context_exhausted /
     // output_starved) can fire. endReason is metadata-derived — toIncidentSignals
     // reads the trajectory record stream and never sees it — so the assembler's
     // resolved `report.outcome.endReason` is the single source threaded here. A
     // tool-failure cause still out-ranks it (the named-cause rules sit LAST).
-    // RECALL-01: also thread the authoritative `degraded` flag so `recall_miss`
+    // Also thread the authoritative `degraded` flag so `recall_miss`
     // gates on genuine degradation (a zero-hit recall on a healthy turn is benign).
     report.likelyRootCause = rootCause({
       ...signals,
@@ -178,7 +218,7 @@ export async function assembleIncidentReportFromSources(
   }
   const bounded = boundIncidentReport(report, params.depth ?? "summary");
 
-  // AUDIT-05 (176-05): attach the audit? section AFTER the bound pass (it is
+  // Attach the audit? section AFTER the bound pass (it is
   // already bounded — counts-by-kind, capped by the distinct AuditKind set). The
   // rows arrive tenant-scoped; narrow to THIS session's resolved traceId, then
   // aggregate counts-by-kind (content-free — no actor names beyond ids, no value,
@@ -192,8 +232,8 @@ export async function assembleIncidentReportFromSources(
 }
 
 /**
- * AUDIT-05 (176-05): aggregate the tenant-scoped `obs_audit_events` rows for ONE
- * session into the content-free `audit?` section — `{ total, byKind }`, counts by
+ * Aggregate the tenant-scoped `obs_audit_events` rows for ONE session into the
+ * content-free `audit?` section — `{ total, byKind }`, counts by
  * the closed AuditKind discriminator ONLY. The rows arrive scoped by tenant (the
  * reader; `AuditQueryParams` has no traceId predicate), so this narrows to the
  * session's resolved `traceId`. Rows whose `traceId` is null/blank (system-scoped
@@ -201,7 +241,7 @@ export async function assembleIncidentReportFromSources(
  * `traceId` with no matching rows ⇒ undefined (the section is omitted, never `{}`).
  *
  * Bounded by construction: `byKind` is keyed by the closed AuditKind set, so it is
- * capped regardless of row volume (no per-row growth) — the GBIII I2 bound holds
+ * capped regardless of row volume (no per-row growth) — the bound holds
  * without an explicit truncation pass.
  */
 function aggregateAuditByKind(
@@ -240,7 +280,7 @@ export function bindObsExplainHandlers(
       // FROZEN — this gate stays on the RPC path for non-MCP callers. The
       // operator-allowlisted obs_explain MCP tool does NOT come through here;
       // it calls assembleIncidentReportFromSources directly (its boundary is
-      // the per-client allowlist, not admin trust). See 154-03 / DESIGN §4.7.
+      // the per-client allowlist, not admin trust).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as
         | string
         | undefined;
@@ -251,10 +291,12 @@ export function bindObsExplainHandlers(
       const params = ObsExplainContract.request.parse(stripInternalFields(rawParams));
 
       // Steps 3-5: delegate to the shared assembler (resolve → read → signals →
-      // assemble → rootCause/WR-04 → bound → dev-mode parse). The body is
-      // identical to the former inline pipeline; the obs_explain MCP path runs
-      // the SAME function under daemon authority.
-      return assembleIncidentReportFromSources(reader, dataDir, params);
+      // assemble → rootCause / not-found marker → bound → dev-mode parse). The
+      // body is identical to the former inline pipeline; the obs_explain MCP path
+      // runs the SAME function under daemon authority.
+      // Pass obsStore so the assembler can read the latest config_posture
+      // row and populate signals.proxyPosture.
+      return assembleIncidentReportFromSources(reader, dataDir, params, deps.obsStore);
     },
   };
 }

@@ -265,6 +265,78 @@ export OAUTH_OPENAI_CODEX='{"access":"EXAMPLE-access","refresh":"EXAMPLE-refresh
 
 For the full bootstrap-precedence walkthrough including drift-handling examples, see [OAuth concepts → Env-var bootstrap precedence](/security/oauth#env-var-bootstrap-precedence).
 
+## Proxy Variables
+
+Standard egress proxy environment variables. Comis reads these at daemon boot and uses them to route all outbound channel and LLM traffic through the configured proxy. They apply to all fetch-based transports automatically (via the global dispatcher) and are forwarded explicitly to non-fetch adapters (grammy, Slack, Baileys, email). For the full per-transport coverage map, see [Network Proxy](/security/network-proxy).
+
+### `HTTPS_PROXY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (all outbound HTTPS connections) |
+| **Format** | Proxy URL, e.g. `http://proxy.corp:3128` or `http://user:pass@proxy.corp:3128` |
+| **Default** | (unset — direct connections) |
+
+Proxy URL for HTTPS connections. Comis reads both `HTTPS_PROXY` (uppercase) and `https_proxy` (lowercase); uppercase wins when both are set. Takes lower priority than `proxy.httpsProxy` in `config.yaml` when both are configured.
+
+Credentials in the proxy URL (`http://user:pass@...`) are used for `Proxy-Authorization` and are redacted from all log output.
+
+```bash
+export HTTPS_PROXY=http://proxy.corp:3128
+```
+
+### `HTTP_PROXY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (outbound HTTP connections) |
+| **Format** | Proxy URL, e.g. `http://proxy.corp:3128` |
+| **Default** | (unset — direct connections) |
+
+Proxy URL for HTTP connections. Comis reads both `HTTP_PROXY` and `http_proxy`; uppercase wins when both are set. In practice most channel and LLM traffic is HTTPS — set `HTTPS_PROXY` first. `HTTP_PROXY` is used for any plain-HTTP egress (e.g. internal monitoring endpoints, custom `httpProxy` routes).
+
+```bash
+export HTTP_PROXY=http://proxy.corp:3128
+```
+
+### `ALL_PROXY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (any scheme when scheme-specific proxy is unset) |
+| **Format** | Proxy URL, e.g. `http://proxy.corp:3128` |
+| **Default** | (unset) |
+
+Fallback proxy URL used when neither `HTTPS_PROXY` nor `HTTP_PROXY` is set for a given scheme. Comis expands `ALL_PROXY` manually in its proxy resolver — it is not natively read by all underlying HTTP libraries. When `HTTPS_PROXY` is already set, `ALL_PROXY` has no effect on HTTPS traffic.
+
+```bash
+export ALL_PROXY=http://proxy.corp:3128
+```
+
+### `NO_PROXY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (proxy bypass list) |
+| **Format** | Comma-separated hostnames, IPs, and CIDR ranges |
+| **Default** | (unset — no bypass except loopback when `loopbackMode: gateway-only`) |
+
+Comma-separated list of hosts that bypass the proxy. Comis uses a full 8-class matcher (`matchesNoProxy`) supporting:
+
+- **Exact hostname** — `api.internal` matches `api.internal` only (no wildcard subdomain)
+- **Leading dot** — `.corp.internal` matches `corp.internal` and all subdomains
+- **IP address** — `10.0.0.5` matches that address exactly
+- **CIDR range** — `10.0.0.0/8` matches any IP in the block
+- **Wildcard `*`** — disables the proxy for all hosts
+
+With the default `proxy.loopbackMode: gateway-only`, `localhost`, `127.0.0.1`, and `::1` are always bypassed regardless of `NO_PROXY`.
+
+```bash
+export NO_PROXY=localhost,127.0.0.1,::1,*.corp.internal,10.0.0.0/8
+```
+
+See [Network Proxy](/security/network-proxy) for the full proxy configuration reference including `config.yaml` keys, TLS CA certificate setup, and the per-transport coverage table.
+
 ## Standard Variables
 
 ### `NODE_ENV`
@@ -655,9 +727,7 @@ BENCH_MODELS=qwen3.6:35b-mlx,qwen3.6:35b \
 ```
 
 The report shows average latency per model section. MLX should be faster on Apple
-Silicon; GGUF should be faster or equivalent on Linux. Performance numbers for the
-full qwen3.6 matrix are recorded in `.planning/phases/157-re-prove-ga/` after the
-Phase 157 live re-prove.
+Silicon; GGUF should be faster or equivalent on Linux.
 </Tip>
 
 ## Related

@@ -122,6 +122,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "client_secret",
   "connection_string",
   "access_key",
+  "proxy_url",              // SEC-04: snake_case lane for Pino redact.paths (case-sensitive)
   // -------------------------------------------------------------------
   // camelCase forms (REQUIRED — Pino redact.paths is case-sensitive,
   // so the lowercased forms above do NOT redact a field named
@@ -140,6 +141,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "clientSecret",
   "connectionString",
   "accessKey",
+  "proxyUrl",               // SEC-04: proxy URL may carry user:password@ credentials
   // -------------------------------------------------------------------
   // Lowercased compatibility aliases (preserve prior `isCredentialFieldName`
   // semantics — these forms were in the original Set; keeping them is
@@ -153,6 +155,7 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "clientsecret",
   "webhooksecret",
   "bottoken",
+  "proxyurl",               // SEC-04: lowercase alias so isCredentialFieldName("proxyUrl") returns true
 ]);
 
 /**

@@ -14,6 +14,7 @@ import { DocumentationConfigSchema } from "./schema-documentation.js";
 import { EmbeddingConfigSchema } from "./schema-embedding.js";
 import { EnvelopeConfigSchema } from "./schema-envelope.js";
 import { GatewayConfigSchema } from "./schema-gateway.js";
+import { ProxyConfigSchema } from "./schema-proxy.js";
 import { IntegrationsConfigSchema } from "./schema-integrations.js";
 import { LifecycleReactionsConfigSchema } from "./schema-lifecycle-reactions.js";
 import { MemoryConfigSchema } from "./schema-memory.js";
@@ -68,6 +69,8 @@ export const AppConfigSchema = z.strictObject({
     scheduler: SchedulerConfigSchema.default(() => SchedulerConfigSchema.parse({})),
     /** Gateway HTTPS server configuration */
     gateway: GatewayConfigSchema.default(() => GatewayConfigSchema.parse({})),
+    /** Outbound HTTP proxy configuration (env-first, zero-config default path) */
+    proxy: ProxyConfigSchema.default(() => ProxyConfigSchema.parse({})),
     /** External integrations configuration */
     integrations: IntegrationsConfigSchema.default(() => IntegrationsConfigSchema.parse({})),
     /** System monitoring configuration */

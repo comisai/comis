@@ -14177,6 +14177,57 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "enabled": false,
+      "loopbackMode": "gateway-only"
+    },
+    "immutable": true,
+    "path": "proxy",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "proxy.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": "gateway-only",
+    "immutable": true,
+    "path": "proxy.loopbackMode",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.proxyUrl",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.proxyUrl.id",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.proxyUrl.provider",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.proxyUrl.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.tls",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "proxy.tls.caFile",
+    "type": "string"
+  },
+  {
+    "default": {
       "cleanupIdleMs": 600000,
       "debounce": {
         "firstMessageImmediate": true,
@@ -39079,6 +39130,78 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
+    "proxy": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": false,
+        "loopbackMode": "gateway-only"
+      },
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "loopbackMode": {
+          "default": "gateway-only",
+          "enum": [
+            "gateway-only",
+            "proxy",
+            "block"
+          ],
+          "type": "string"
+        },
+        "proxyUrl": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "env",
+                    "file",
+                    "exec"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "provider",
+                "id"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "tls": {
+          "additionalProperties": false,
+          "properties": {
+            "caFile": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "enabled",
+        "loopbackMode"
+      ],
+      "type": "object"
+    },
     "queue": {
       "additionalProperties": false,
       "default": {
@@ -41191,6 +41314,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "daemon",
     "scheduler",
     "gateway",
+    "proxy",
     "integrations",
     "monitoring",
     "observability",

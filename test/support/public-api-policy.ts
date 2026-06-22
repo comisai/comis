@@ -770,6 +770,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── Global egress proxy config (Phase 1, CONFIG-01/02/03) ──
+      // The proxy.* config schema + reusable endpoint seam + loopback enum are
+      // surfaced on the @comis/core barrel AHEAD of their consumers (D-11): the
+      // schema/types are declared in Phase 1 so the Phase 2 infra net module can
+      // build against a stable contract without an infra→core dependency cycle.
+      // Consumers land in Phase 2+ — the dispatcher installer value-consumes
+      // ProxyConfigSchema/ProxyLoopbackModeSchema, and the per-channel override
+      // seam (D-10) consumes ProxyEndpointSchema. Shrink each entry as its real
+      // in-repo consumer lands.
+      "ProxyConfigSchema",
+      "ProxyEndpointSchema",
+      "ProxyLoopbackModeSchema",
+      "ProxyConfig",
+      "ProxyEndpoint",
       // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
       // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
@@ -2357,6 +2371,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The daemon composition root wires caManager into the broker in a future phase.
       "createNodeCaManager",
       "NodeCaManagerDeps",
+      // Egress-proxy: the pure primitives moved to @comis/core/net and are
+      // imported from there; @comis/infra keeps only the undici-bound runtime
+      // pieces. resetProxyDispatcherForTests is a test-isolation hook (consumed
+      // only by tests); ProxyAgentOptions is the options shape for the
+      // resolveHttps/UndiciProxyAgent helpers — referenced via inline object
+      // literals, so it has no named-import consumer.
+      "resetProxyDispatcherForTests",
+      "ProxyAgentOptions",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).

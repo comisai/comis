@@ -29,6 +29,22 @@ export type {
   NodeCaManagerDeps,
 } from "./credential-broker/index.js";
 
+// Net (global egress proxy dispatcher + primitives)
+// Installs the process-wide undici global dispatcher; all fetch()/undici egress
+// routes through the configured proxy. This exports only the undici-bound
+// runtime pieces (the installer, the agent helpers). The pure primitives
+// (sanitizeProxyUrl, matchesNoProxy, resolveEnvHttpProxyAgentOptions,
+// resolveEffectiveNoProxy, isSsrfBlocked, ProxyConfigError, ProxyBootConfig)
+// live in @comis/core/net — import them from there.
+export {
+  installGlobalProxyDispatcher,
+  resetProxyDispatcherForTests,
+  resolveHttpsProxyAgent,
+  resolveUndiciProxyAgent,
+  resolveProxyUrl,
+} from "./net/index.js";
+export type { ProxyAgentOptions } from "./net/index.js";
+
 // The fs-safe primitives (appendRegularFile + writeRegularFile +
 // SymlinkParentRejected / PathEscapesConfinementError /
 // FileSizeLimitExceeded sentinels + option/result types) live in

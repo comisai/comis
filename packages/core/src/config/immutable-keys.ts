@@ -112,6 +112,13 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // host. "executor" as the prefix catches all three write paths:
   // config.patch{key:"broker.bindings"}, config.patch{whole-section}, config.apply.
   "executor",
+
+  // D-09 / SC#4 (Phase 1 — global egress proxy): proxy routing is
+  // security-critical operator configuration — agents must not self-configure
+  // egress via config.write or config.patch. A single "proxy" prefix covers
+  // all subpaths: proxy.enabled, proxy.proxyUrl, proxy.tls.caFile,
+  // proxy.loopbackMode (and any future subfields).
+  "proxy",
 ] as const;
 
 /**

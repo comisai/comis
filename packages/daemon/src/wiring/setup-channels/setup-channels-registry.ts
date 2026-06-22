@@ -86,6 +86,9 @@ export interface ChannelsDeps {
   logger: ComisLogger;
   /** Module-bound logger for channels subsystem. */
   channelsLogger: ComisLogger;
+  /** Daemon's store-wins env snapshot for per-channel proxy-agent resolution.
+   *  Optional for back-compat; when absent all channels use the zero-config path. */
+  mergedEnv?: Record<string, string | undefined>;
   /** System clock (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer gates its delete on outcome.delivery.deliveredAtMs. */
   clock: ClockPort;
@@ -356,7 +359,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Bootstrap enabled channel adapters from config
-  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
+  const { adaptersByType, tgPlugin, linePlugin, channelPlugins } = await bootstrapAdapters({ container, channelsLogger, mergedEnv: deps.mergedEnv });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {

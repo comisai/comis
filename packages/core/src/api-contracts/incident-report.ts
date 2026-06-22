@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The `obs.explain` contract: the §6.3 `IncidentReport` wire schema + shape
- * types + the `ObsExplainContract` itself (Phase 153 centerpiece). Extracted
+ * types + the `ObsExplainContract` itself. Extracted
  * from `observability.ts` to keep that module under the file-size cap.
  *
  * Barrel-only: external consumers import these from `"@comis/core"`. The
@@ -22,18 +22,18 @@ import { defineContract } from "./types.js";
  * A self-contained, redaction-safe post-mortem for a single agent session:
  * outcome, cost, timing, per-tool stats, normalized failures (newest-first),
  * the circuit-breaker timeline, large-result offloads, a one-paragraph
- * summary, a deterministic `likelyRootCause` (heuristic registry, Plan 05),
- * report-level next steps, and an honest `truncations[]` ledger (Plan 04
+ * summary, a deterministic `likelyRootCause` (heuristic registry),
+ * report-level next steps, and an honest `truncations[]` ledger (the
  * bounding pass records what it dropped).
  *
  * Field bounding (≤200-char `errorPreview`, digest-only `resultDigest`, the
- * 6 KB summary budget) is ENFORCED by the Plan-04 bounding pass — this schema
+ * 6 KB summary budget) is ENFORCED by the bounding pass — this schema
  * only declares the shape. `suggestedNextSteps` appears BOTH inside
  * `likelyRootCause` (matching the heuristic `RootCause` 1:1) and at the report
  * root (report-level guidance); both are required-or-default.
  */
 /**
- * W3 (obs-llm-troubleshooting): the per-LLM-call context budget equation,
+ * The per-LLM-call context budget equation,
  * extracted from the trajectory's `context.budget` records (last record wins —
  * the terminal fit check explains the end state). Carried on the report so a
  * `context_exhausted` abort is explainable with numbers (assembled vs window,
@@ -46,9 +46,9 @@ export const IncidentContextBudgetSchema = z.object({
   /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
   rawContextWindowTokens: z.number(),
   /** What clamped the window. The cap members are contextEngine.budget.* knob
-   *  names; "served" (KNOB-02) means the Ollama-served num_ctx bound the window
+   *  names; "served" means the Ollama-served num_ctx bound the window
    *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx);
-   *  "capabilityClass" (WR-01) means the executor-side class cap from the
+   *  "capabilityClass" means the executor-side class cap from the
    *  operator's providers.entries.<id>.capabilities.capabilityClass pin bound
    *  — the pin is the lever (the budget knobs are inert on that branch). */
   windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "capabilityClass", "none"]),
@@ -72,13 +72,13 @@ export const IncidentContextBudgetSchema = z.object({
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
 
 /**
- * LAT-04 (177): the terminal prompt-timeout attribution record — the LAST
+ * The terminal prompt-timeout attribution record — the LAST
  * `execution.prompt_timeout` trajectory row. Content-free: numbers + closed
  * enums + the pre-rendered config-KEY string (`bindingKnob` — knob NAME + ids
  * only, never values/bodies). Wholesale-validated by the signals normalizer
  * (the contextBudget discipline); a malformed/partial record is ignored
  * (forward-compatible). Signals-only — NOT on `IncidentReportSchema`
- * (mirroring the GBNF-02 `toolSchemaUnsupported` precedent: the heuristic
+ * (mirroring the `toolSchemaUnsupported` precedent: the heuristic
  * verdict carries what the operator needs).
  */
 export const IncidentPromptTimeoutSchema = z.object({
@@ -86,9 +86,9 @@ export const IncidentPromptTimeoutSchema = z.object({
   timeoutMs: z.number(),
   /** Elapsed wall-clock ms at kill. */
   durationMs: z.number().optional(),
-  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
+  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path / older rows). */
   limit: z.enum(["stall", "makespan"]).optional(),
-  /** Binding resolution level (LAT-01 — the agent-side TimeoutSource union). */
+  /** Binding resolution level (the agent-side TimeoutSource union). */
   source: z.string().optional(),
   /** Pre-rendered config-key string from the agent-side source→knob table. */
   bindingKnob: z.string().optional(),
@@ -162,13 +162,13 @@ export const IncidentReportSchema = z.object({
       pointer: z.string(),
     }),
   ),
-  /** ORCH-OBS (orchestration-observability): per-node token-budget breaches
-   *  (BUDGET-03) reconstructed from the session's `subagent.budget_exceeded`
-   *  trajectory records. `capSource` names WHICH knob bound each node (node /
-   *  operator-default / inherit-share) so a breach is diagnosable from the report
-   *  alone — not just "a node failed". Counts/ids/closed-enum ONLY (§2.7); never a
-   *  task or output. Optional + additive (present only when the trajectory carries
-   *  breach records; schemaVersion stays 1). */
+  /** Per-node token-budget breaches reconstructed from the session's
+   *  `subagent.budget_exceeded` trajectory records. `capSource` names WHICH knob
+   *  bound each node (node / operator-default / inherit-share) so a breach is
+   *  diagnosable from the report alone — not just "a node failed".
+   *  Counts/ids/closed-enum ONLY (§2.7); never a task or output. Optional +
+   *  additive (present only when the trajectory carries breach records;
+   *  schemaVersion stays 1). */
   nodeBudgetBreaches: z
     .array(
       z.object({
@@ -180,14 +180,14 @@ export const IncidentReportSchema = z.object({
       }),
     )
     .optional(),
-  /** W3: the terminal per-call budget equation (optional — present only when the
+  /** The terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
-  /** RECALL-01 (observability-excellence): memory-recall outcome aggregated over the
-   *  session's `memory.recalled` trajectory records (the #1 blind spot — recall was
-   *  invisible to obs.explain). Counts/booleans ONLY — never query text or memory bodies
-   *  (§2.7). Optional + additive (present only when the trajectory carries recall records). */
+  /** Memory-recall outcome aggregated over the session's `memory.recalled`
+   *  trajectory records (the #1 blind spot — recall was invisible to obs.explain).
+   *  Counts/booleans ONLY — never query text or memory bodies (§2.7). Optional +
+   *  additive (present only when the trajectory carries recall records). */
   recall: z
     .object({
       /** Number of recall queries the session issued. */
@@ -200,12 +200,12 @@ export const IncidentReportSchema = z.object({
       rerankerAvailable: z.boolean(),
     })
     .optional(),
-  /** OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
-   *  session's `image.*` trajectory records (the terminal image record wins).
-   *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the
-   *  trajectory (Route a) — NOT `cost.costUsd`, which reads the executor-emitted
+  /** The image-generation turn reconstructed from the session's `image.*`
+   *  trajectory records (the terminal image record wins). The image cost
+   *  (`costUsd`) rides HERE — `comis explain` shows it from the trajectory
+   *  (Route a) — NOT `cost.costUsd`, which reads the executor-emitted
    *  `sessionEnd` rollup (a different code path; the image RPC runs in the daemon
-   *  context — Pitfall 2). Content-free: ids/labels/costUsd/outcome ONLY (never
+   *  context). Content-free: ids/labels/costUsd/outcome ONLY (never
    *  the prompt, image bytes, or a raw provider message). Optional + additive
    *  (present only when the trajectory carries image records; schemaVersion stays
    *  1) — pre-existing constructors omit it (the `recall` precedent). */
@@ -215,7 +215,7 @@ export const IncidentReportSchema = z.object({
       provider: z.string(),
       /** The image model the provider used (e.g. "gpt-image-1"). Absent on a failed/early turn. */
       model: z.string().optional(),
-      /** The generation cost in USD — the OBS-03 reconstruction (Route a). Absent on a failed turn. */
+      /** The generation cost in USD — the reconstruction (Route a). Absent on a failed turn. */
       costUsd: z.number().optional(),
       /** The terminal outcome of the image turn. */
       outcome: z.enum(["ok", "failed"]),
@@ -223,33 +223,33 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
       /** Whether the image was delivered to a channel (image.delivered fired). */
       delivered: z.boolean(),
-      /** WR-02 (186): false when the generation SUCCEEDED + was delivered (base64)
+      /** false when the generation SUCCEEDED + was delivered (base64)
        *  but the durable persist FAILED — a degraded delivery, still outcome:"ok"
-       *  and still charged. Absent ⇒ persisted (or pre-WR-02 record). */
+       *  and still charged. Absent ⇒ persisted (or an older record). */
       persisted: z.boolean().optional(),
     })
     .optional(),
-  /** VIS-04 (Phase 187): the VISION turn reconstructed from the session's
-   *  `media.vision.*` trajectory records (the terminal record wins). The vision
-   *  cost (`costUsd`) rides HERE — `comis explain` shows it from the trajectory
-   *  (Route a) — NOT `cost.costUsd`, which reads the executor-emitted `sessionEnd`
-   *  rollup (a different code path; the vision RPC runs in the daemon context —
-   *  Pitfall 2). The `path` is VIS-03's "which tier served" signal. Content-free:
-   *  ids/labels/path/costUsd/outcome ONLY (never the image bytes, the analysis
-   *  prompt, or the model's answer). Optional + additive (present only when the
-   *  trajectory carries media.vision.* records; schemaVersion stays 1) —
-   *  pre-existing constructors omit it (the `image`/`recall` precedent). */
+  /** The VISION turn reconstructed from the session's `media.vision.*`
+   *  trajectory records (the terminal record wins). The vision cost (`costUsd`)
+   *  rides HERE — `comis explain` shows it from the trajectory (Route a) — NOT
+   *  `cost.costUsd`, which reads the executor-emitted `sessionEnd` rollup (a
+   *  different code path; the vision RPC runs in the daemon context). The `path`
+   *  is the "which tier served" signal. Content-free: ids/labels/path/costUsd/
+   *  outcome ONLY (never the image bytes, the analysis prompt, or the model's
+   *  answer). Optional + additive (present only when the trajectory carries
+   *  media.vision.* records; schemaVersion stays 1) — pre-existing constructors
+   *  omit it (the `image`/`recall` precedent). */
   vision: z
     .object({
       /** The executing vision provider id (e.g. "anthropic" on main-vision, "gemini" on the registry tier). */
       provider: z.string(),
-      /** The caller agent's resolved main provider id (the lockstep label). Absent on a pre-VIS-04 / partial record. */
+      /** The caller agent's resolved main provider id (the lockstep label). Absent on an older / partial record. */
       mainProvider: z.string().optional(),
       /** The vision model used (e.g. "claude-sonnet-4-5"). Absent on a failed/early turn or an adapter that omits it. */
       model: z.string().optional(),
-      /** The analysis cost in USD — the VIS-04 reconstruction (Route a). Absent on a failed turn OR the registry/gemini-video tiers (Pitfall 4). */
+      /** The analysis cost in USD — the reconstruction (Route a). Absent on a failed turn OR the registry/gemini-video tiers. */
       costUsd: z.number().optional(),
-      /** Which ladder tier served (VIS-03's "which path" signal). Absent on a partial record. */
+      /** Which ladder tier served (the "which path" signal). Absent on a partial record. */
       path: z.enum(["main-vision", "registry", "gemini-video", "unavailable"]).optional(),
       /** The terminal outcome of the vision turn. */
       outcome: z.enum(["ok", "failed"]),
@@ -257,27 +257,27 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
     })
     .optional(),
-  /** OBS-03/OBS-04 (Phase 192): the VIDEO-generation turn reconstructed from the
-   *  session's `video.*` trajectory records (the terminal `video.generated` /
-   *  `video.failed` record wins; `delivered` set when `video.delivered` fired).
-   *  Unlike image/vision (wholly in-turn), a video job completes in the off-turn
-   *  background poller — the `video.requested`/`video.submitted` records reach the
-   *  persisted trajectory in-turn (recorder alive) and the offline assembler
-   *  stitches the later completion via `traceId`/`jobId` on one `sessionKey`. The
-   *  reconciled cost (`costUsd ?? estimatedCostUsd`) rides HERE (Route a — NOT
-   *  `cost.costUsd`, the executor `sessionEnd`; Pitfall 2). Per-backend cost
-   *  provenance: FAL/Veo=estimate, Grok=actual. Content-free: ids/labels/cost/
-   *  outcome ONLY (never the prompt, the video bytes, the Veo keyed-download-URL,
-   *  or a raw provider message). Optional + additive (present only when the
-   *  trajectory carries `video.*` records; schemaVersion stays 1) — pre-existing
-   *  constructors omit it (the `image`/`vision`/`recall` precedent).
+  /** The VIDEO-generation turn reconstructed from the session's `video.*`
+   *  trajectory records (the terminal `video.generated` / `video.failed` record
+   *  wins; `delivered` set when `video.delivered` fired). Unlike image/vision
+   *  (wholly in-turn), a video job completes in the off-turn background poller —
+   *  the `video.requested`/`video.submitted` records reach the persisted
+   *  trajectory in-turn (recorder alive) and the offline assembler stitches the
+   *  later completion via `traceId`/`jobId` on one `sessionKey`. The reconciled
+   *  cost (`costUsd ?? estimatedCostUsd`) rides HERE (Route a — NOT `cost.costUsd`,
+   *  the executor `sessionEnd`). Per-backend cost provenance: FAL/Veo=estimate,
+   *  Grok=actual. Content-free: ids/labels/cost/outcome ONLY (never the prompt,
+   *  the video bytes, the Veo keyed-download-URL, or a raw provider message).
+   *  Optional + additive (present only when the trajectory carries `video.*`
+   *  records; schemaVersion stays 1) — pre-existing constructors omit it (the
+   *  `image`/`vision`/`recall` precedent).
    *
-   *  WR-04 (Phase 192) — SINGLE-TURN by design: this is ONE signal per session
-   *  (the LAST/terminal video turn — the highest-seq `video.generated`/`video.failed`
-   *  wins, not keyed by `jobId`), exactly matching the `image`/`vision` single-signal
-   *  convention. A session that renders MULTIPLE videos reconstructs only the terminal
-   *  one here, and `costUsd`/`estimatedCostUsd` reflect that single turn — NOT the
-   *  session total. The per-hour cost ceiling (`costLimiter`) and the synthetic
+   *  SINGLE-TURN by design: this is ONE signal per session (the LAST/terminal
+   *  video turn — the highest-seq `video.generated`/`video.failed` wins, not keyed
+   *  by `jobId`), exactly matching the `image`/`vision` single-signal convention. A
+   *  session that renders MULTIPLE videos reconstructs only the terminal one here,
+   *  and `costUsd`/`estimatedCostUsd` reflect that single turn — NOT the session
+   *  total. The per-hour cost ceiling (`costLimiter`) and the synthetic
    *  `observability:token_usage` rollup ARE per-render-correct; only this trajectory
    *  reconstruction collapses to the last turn. (Consumers needing every video turn
    *  read the raw `video.*` trajectory records, not this rollup.) Diverging to a
@@ -288,13 +288,13 @@ export const IncidentReportSchema = z.object({
       provider: z.string(),
       /** The video model the provider used. Absent on a failed/early turn or a backend that omits it. */
       model: z.string().optional(),
-      /** The async job handle — ties the off-turn completion back to its originating turn (OBS-04). */
+      /** The async job handle — ties the off-turn completion back to its originating turn. */
       jobId: z.string().optional(),
       /** The reconciled actual cost in USD (Grok actual; absent for FAL/Veo, which estimate). */
       costUsd: z.number().optional(),
-      /** The pre-submit worst-case estimate (the SEC-02 ceiling input; the FAL/Veo cost provenance). */
+      /** The pre-submit worst-case estimate (the cost-ceiling input; the FAL/Veo cost provenance). */
       estimatedCostUsd: z.number().optional(),
-      /** The rendered clip duration in seconds (DEL/OBS field). */
+      /** The rendered clip duration in seconds. */
       durationSecs: z.number().optional(),
       /** The terminal outcome of the video turn. */
       outcome: z.enum(["ok", "failed"]),
@@ -304,23 +304,23 @@ export const IncidentReportSchema = z.object({
       delivered: z.boolean(),
     })
     .optional(),
-  /** OBS-02/OBS-05 (Phase 196): the VOICE turn reconstructed from the session's
-   *  `media.stt.*` / `media.tts.*` trajectory records (the terminal
-   *  `media.*.completed` / `media.*.failed` record wins). Voice is wholly IN-TURN
-   *  (unlike video's off-turn poller) — the daemon `media.transcribe` /
-   *  `tts.synthesize` RPC handlers direct-emit the lifecycle records in one turn.
-   *  The cost rides HERE (Route a — NOT `cost.costUsd`, the executor `sessionEnd`,
-   *  a different path: the voice RPC runs in the daemon context, Pitfall 2). OBS-05
-   *  honest limit (FLAG 4): a keyless turn records `costUsd:0` EXPLICITLY (so "free"
-   *  is VISIBLE, not absent); a keyed turn OMITS cost (no port carries a per-call
-   *  source today — NOT a fabricated number). The `source` is the OBS-03 resolved
-   *  selection rung (WHY `auto` picked it). Content-free: provider/keyless/model/
-   *  durationMs/costUsd/source/outcome/errorKind ONLY — never a transcript, audio
-   *  bytes, or a credential (the `videoGenerated` content-free discipline). Optional
-   *  + additive (present only when the trajectory carries `media.stt.*`/`media.tts.*`
-   *  records; schemaVersion stays 1) — pre-existing constructors omit it (the
-   *  `image`/`vision`/`videoGenerated` precedent). SINGLE-TURN by design: the
-   *  terminal record wins (the image/vision single-signal convention). */
+  /** The VOICE turn reconstructed from the session's `media.stt.*` /
+   *  `media.tts.*` trajectory records (the terminal `media.*.completed` /
+   *  `media.*.failed` record wins). Voice is wholly IN-TURN (unlike video's
+   *  off-turn poller) — the daemon `media.transcribe` / `tts.synthesize` RPC
+   *  handlers direct-emit the lifecycle records in one turn. The cost rides HERE
+   *  (Route a — NOT `cost.costUsd`, the executor `sessionEnd`, a different path:
+   *  the voice RPC runs in the daemon context). Honest limit: a keyless turn
+   *  records `costUsd:0` EXPLICITLY (so "free" is VISIBLE, not absent); a keyed
+   *  turn OMITS cost (no port carries a per-call source today — NOT a fabricated
+   *  number). The `source` is the resolved selection rung (WHY `auto` picked it).
+   *  Content-free: provider/keyless/model/durationMs/costUsd/source/outcome/
+   *  errorKind ONLY — never a transcript, audio bytes, or a credential (the
+   *  `videoGenerated` content-free discipline). Optional + additive (present only
+   *  when the trajectory carries `media.stt.*`/`media.tts.*` records; schemaVersion
+   *  stays 1) — pre-existing constructors omit it (the `image`/`vision`/
+   *  `videoGenerated` precedent). SINGLE-TURN by design: the terminal record wins
+   *  (the image/vision single-signal convention). */
   voice: z
     .object({
       /** The executing voice provider id (e.g. "local", "edge", "openai", "groq", "deepgram", "elevenlabs"). */
@@ -331,9 +331,9 @@ export const IncidentReportSchema = z.object({
       model: z.string().optional(),
       /** The wall-clock transcription/synthesis duration in ms. Absent on a failed/early turn. */
       durationMs: z.number().optional(),
-      /** The turn cost in USD (Route a). `0` (explicit) on a keyless turn; ABSENT on a keyed turn (no per-call source today — FLAG 4). */
+      /** The turn cost in USD (Route a). `0` (explicit) on a keyless turn; ABSENT on a keyed turn (no per-call source today). */
       costUsd: z.number().optional(),
-      /** The OBS-03 resolved selection rung — WHY `auto` chose this provider. Absent on a partial record. */
+      /** The resolved selection rung — WHY `auto` chose this provider. Absent on a partial record. */
       source: z.enum(["explicit", "keyless-local", "follow-main-key", "fallback"]).optional(),
       /** The terminal outcome of the voice turn. */
       outcome: z.enum(["ok", "failed"]),
@@ -341,13 +341,13 @@ export const IncidentReportSchema = z.object({
       errorKind: z.string().optional(),
     })
     .optional(),
-  /** OBS-02 (Phase 198): the Verified-Learning outcome signal reconstructed from
-   *  the session's `learning.outcome_observed` trajectory records (the fused
-   *  terminal verdict wins). Counts/ids/closed-enums ONLY — no body/alpha/recalled
-   *  ids (SEC-01). `outcomeResolved` is false ⇒ a finished trajectory with no
-   *  resolvable outcome (the `outcome_unresolved` verdict's trigger; distinct from
-   *  an explicit `unknown` resolution). `skillsUsed`/`skillFailures` empty +
-   *  `synthesisAbstained` false in P0 (attribution/synthesis → Phase 201).
+  /** The Verified-Learning outcome signal reconstructed from the session's
+   *  `learning.outcome_observed` trajectory records (the fused terminal verdict
+   *  wins). Counts/ids/closed-enums ONLY — no body/alpha/recalled ids.
+   *  `outcomeResolved` is false ⇒ a finished trajectory with no resolvable outcome
+   *  (the `outcome_unresolved` verdict's trigger; distinct from an explicit
+   *  `unknown` resolution). `skillsUsed`/`skillFailures` empty +
+   *  `synthesisAbstained` false initially (attribution/synthesis land later).
    *  Optional + additive (present only when the trajectory carries learning
    *  records; schemaVersion stays 1) — the `recall`/`voice` precedent. */
   learning: z
@@ -360,15 +360,14 @@ export const IncidentReportSchema = z.object({
       skillsUsed: z.array(z.string()),
       skillFailures: z.array(z.string()),
       synthesisAbstained: z.boolean(),
-      // REVISE-01 / GENERAL-01 (Phase 203): optional/additive revision + generalization
-      // counts (counts only, never bodies). Absent in P0..P3 — existing fixtures unaffected.
+      // Optional/additive revision + generalization counts (counts only, never
+      // bodies). Absent initially — existing fixtures unaffected.
       userModelRevised: z.number().optional(),
       memoriesGeneralized: z.number().optional(),
     })
     .optional(),
-  /** PERSIST-01 (observability-excellence, Phase 176): the prompt-cache breaks the
-   *  session incurred, aggregated per-reason from its `cache.break` trajectory
-   *  records (Plan 04). `estCostUsd` is the directly-lost cache-read saving summed
+  /** The prompt-cache breaks the session incurred, aggregated per-reason from its
+   *  `cache.break` trajectory records. `estCostUsd` is the directly-lost cache-read saving summed
    *  per reason (`tokenDrop × resolveModelPricing.cacheRead`; 0 for an unknown
    *  model — honest). Counts + a closed reason label + a number ONLY — never the
    *  changed tool NAMES (the trajectory carries only the changed-dims digest). The
@@ -388,9 +387,9 @@ export const IncidentReportSchema = z.object({
       }),
     )
     .optional(),
-  /** AUDIT-05 (observability-excellence, Phase 176): the security-decision audit
-   *  events the session produced, aggregated counts-by-kind from the durable
-   *  `obs_audit_events` (Plan 03) scoped to the session's (tenant, agent, traceId).
+  /** The security-decision audit events the session produced, aggregated
+   *  counts-by-kind from the durable `obs_audit_events` scoped to the session's
+   *  (tenant, agent, traceId).
    *  Content-free: a total + a `{kind → count}` record ONLY — NO actor names beyond
    *  ids, NO secret value, NO `refs` blob (the rows are already scrubbed at write).
    *  The `audit?` section answers "what security-relevant actions ran in this
@@ -405,12 +404,11 @@ export const IncidentReportSchema = z.object({
       byKind: z.record(z.string(), z.number()),
     })
     .optional(),
-  /** SPEND (observability-excellence, WEBUI-04 / 179-04 — locked A2): the spend
-   *  kill-switch breach reconstructed from the session's terminal `spend.exceeded`
-   *  trajectory record (177-obs-loop WR-4). Content-free: the breached `scope` enum
+  /** The spend kill-switch breach reconstructed from the session's terminal
+   *  `spend.exceeded` trajectory record. Content-free: the breached `scope` enum
    *  + the two dollar NUMBERS (`totalUsd` = the breaching scope's spent total;
-   *  `capUsd` = its ceiling) — NO message/query/body. The verdict stays amount-free
-   *  (177 decision); this section carries the numbers the Incident view renders.
+   *  `capUsd` = its ceiling) — NO message/query/body. The verdict stays
+   *  amount-free; this section carries the numbers the Incident view renders.
    *  Optional + additive (present only when the session was spend-killed — undefined,
    *  never {}, when none; schemaVersion stays 1). The `cacheBreaks?`/`audit?` mold. */
   spend: z
@@ -454,7 +452,7 @@ export const IncidentReportSchema = z.object({
       rollup: z.object({ present: z.boolean() }),
       offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
       /**
-       * QT1 — toolStats reconciliation between THIS report (the whole-session
+       * toolStats reconciliation between THIS report (the whole-session
        * trajectory union, the headline `toolStats`) and the persisted per-session
        * rollup that `obs.fleet.health` reads (latest-execution-wins). The two
        * lenses read structurally-different sources, so they CAN legitimately
@@ -487,6 +485,30 @@ export const IncidentReportSchema = z.object({
         .optional(),
     })
     .optional(),
+  /** The daemon-boot proxy posture reconstructed from the `config_posture`
+   *  obs_diagnostics row (the boot-time snapshot written at startup). Optional +
+   *  additive — present ONLY when a proxy was configured at the last daemon boot;
+   *  absent (key not present) when no proxy is configured (the zero-config gate).
+   *  schemaVersion stays 1 (no schema bump). Carries only maskedUrl
+   *  (sanitizeProxyUrl() output — never a raw URL), booleans, and closed enum
+   *  strings — the content-free invariant. The `voice?` / `learning?`
+   *  presence-conditional spread mold. */
+  proxyPosture: z
+    .object({
+      /** true when a proxy was configured (env var or config.proxy.proxyUrl). */
+      configured: z.boolean(),
+      /** sanitizeProxyUrl() output — never the raw proxy URL. Absent when not configured. */
+      maskedUrl: z.string().optional(),
+      /** The effective loopback mode (from ProxyBootConfig.loopbackMode). */
+      loopbackMode: z.string().optional(),
+      /** Where the proxy URL was sourced (env var or config.yaml). */
+      source: z.enum(["env", "config", "none"]).optional(),
+      /** true when installGlobalProxyDispatcher() completed without error. */
+      installerOk: z.boolean(),
+      /** The configKey string from ProxyConfigError when installerOk is false. */
+      installerError: z.string().optional(),
+    })
+    .optional(),
 });
 
 /** The §6.3 IncidentReport (the `obs.explain` response). Inferred from the Zod schema. */
@@ -511,33 +533,30 @@ export interface IncidentFailure {
 }
 
 /**
- * The normalizer output (`toIncidentSignals`) that Plans 02/03/05 consume.
+ * The normalizer output (`toIncidentSignals`) that the assembler + heuristics consume.
  *
  * One shared contract for the heuristic registry's predicates: raw per-tool
  * stats + normalized failures/breaker/offload arrays, plus the derived
  * booleans/strings the deterministic `RootCause` rules key on (breaker-opened
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
- * misclassification signal + offending tool/token). Derived from the heuristic
- * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
+ * misclassification signal + offending tool/token).
  */
 // @optional-field-count: 17 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198)
-// reads. Each optional field is a presence-conditional signal aggregated from a
-// distinct trajectory record class (contextBudget / promptTimeout /
-// toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
-// videoGenerated / voice / learning / channel / agentId / …) — absent when that
-// record class did not occur. Clustering them would couple unrelated heuristics;
-// the read sites already key on each independently. Grows by one per Glass-Box
-// signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
-// videoGenerated added in 192 — OBS-03/OBS-04 video; learning added in 198 —
-// OBS-02, the Verified-Learning outcome-signal shadow; spend added in 179 —
-// WEBUI-04, the spend-kill breach numbers for the Incident view).
+// single shared contract every Glass-Box heuristic reads. Each optional field is
+// a presence-conditional signal aggregated from a distinct trajectory record
+// class (contextBudget / promptTimeout / toolSchemaUnsupported / recall /
+// cacheBreaks / spend / image / vision / videoGenerated / voice / learning /
+// channel / agentId / …) — absent when that record class did not occur.
+// Clustering them would couple unrelated heuristics; the read sites already key
+// on each independently. Grows by one per Glass-Box signal class (image, vision,
+// videoGenerated, learning — the Verified-Learning outcome-signal shadow, spend —
+// the spend-kill breach numbers for the Incident view).
 export interface IncidentSignals {
   sessionKey: string;
-  /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
+  /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;
-  /** W8: channel identity from the session.started trajectory record. Fallback for
+  /** Channel identity from the session.started trajectory record. Fallback for
    *  reports whose metadata rollup carries no channel. */
   channel?: { type: string; id: string };
   toolStats: Record<
@@ -557,9 +576,9 @@ export interface IncidentSignals {
     originalChars: number;
     pointer: string;
   }>;
-  /** ORCH-OBS: per-node token-budget breaches (BUDGET-03) folded from
-   *  `subagent.budget_exceeded` trajectory records — the per-incident view (capSource
-   *  + the two token numbers) the IncidentReport surfaces. */
+  /** Per-node token-budget breaches folded from `subagent.budget_exceeded`
+   *  trajectory records — the per-incident view (capSource + the two token
+   *  numbers) the IncidentReport surfaces. */
   nodeBudgetBreaches: Array<{
     seq: number;
     nodeId: string;
@@ -575,12 +594,12 @@ export interface IncidentSignals {
   hasMisclassificationSignal: boolean; // ≥N success:true co-existing with ≥N "Tool execution failed" + "status"/"403"/"200" substring in an errorText
   misclassifiedTool?: string;
   misclassifiedToken?: string; // e.g. "403"|"status"|"200"
-  /** GBNF-02: derived from `execution.tool_schema_unsupported` trajectory records
+  /** Derived from `execution.tool_schema_unsupported` trajectory records
    *  (last record wins — one strip-retry per session means at most a handful).
    *  Content-free by construction: tool + keyword NAMES only. `reason`
-   *  (175-REVIEW WR-05) discriminates the handler branch so gate-closed and
-   *  nothing-to-strip terminals stay distinguishable in the verdict; optional
-   *  because pre-WR-05 trajectory records on disk lack it. */
+   *  discriminates the handler branch so gate-closed and nothing-to-strip
+   *  terminals stay distinguishable in the verdict; optional because older
+   *  trajectory records on disk lack it. */
   toolSchemaUnsupported?: {
     toolNames: string[];
     strippedKeywords: string[];
@@ -589,7 +608,7 @@ export interface IncidentSignals {
     reason?: "stripped" | "nothing_to_strip" | "gate_closed";
   };
   /**
-   * The mapped terminal `endReason` (the NAMED degradation cause — QT2/QT3 Glass
+   * The mapped terminal `endReason` (the NAMED degradation cause — the Glass
    * Box degradation detectors). Metadata-derived (NOT from the trajectory record
    * stream — `toIncidentSignals` omits it), so the handler threads
    * `report.outcome.endReason` onto the signals before running the registry. The
@@ -599,7 +618,7 @@ export interface IncidentSignals {
    */
   endReason?: string;
   /**
-   * RECALL-01: the report's authoritative `outcome.degraded` flag (derived by the
+   * The report's authoritative `outcome.degraded` flag (derived by the
    * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by
    * the handler alongside `endReason`. Lets the `recall_miss` heuristic gate on
    * genuine degradation instead of re-deriving it from endReason strings (a
@@ -608,25 +627,25 @@ export interface IncidentSignals {
    */
   degraded?: boolean;
   /**
-   * W3: the terminal per-call budget equation from the trajectory's
+   * The terminal per-call budget equation from the trajectory's
    * `context.budget` records (last wins). Lets the `context_exhausted`
    * heuristic produce a numbers-backed verdict naming the cap knob and the
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
   /**
-   * LAT-04 (177): the LAST `execution.prompt_timeout` trajectory record (the
-   * terminal kill explains the end state). Lets the `prompt_timeout` heuristic
-   * produce a numbers-backed verdict naming the binding knob (stall) or
+   * The LAST `execution.prompt_timeout` trajectory record (the terminal kill
+   * explains the end state). Lets the `prompt_timeout` heuristic produce a
+   * numbers-backed verdict naming the binding knob (stall) or
    * `stallCeilingMultiplier` (makespan) instead of falling through to NO
-   * verdict. Absent ⇒ pre-extension session (the rule degrades to a generic
+   * verdict. Absent ⇒ older session (the rule degrades to a generic
    * knob suggestion when `endReason` is "timeout").
    */
   promptTimeout?: IncidentPromptTimeout;
   /**
-   * RECALL-01: memory-recall outcome aggregated over the session's
-   * `memory.recalled` trajectory records. Lets the `recall_miss` heuristic name a
-   * zero-hit recall on a degraded session (the #1 blind spot). Counts/booleans
+   * Memory-recall outcome aggregated over the session's `memory.recalled`
+   * trajectory records. Lets the `recall_miss` heuristic name a zero-hit recall
+   * on a degraded session (the #1 blind spot). Counts/booleans
    * only. Absent ⇒ no recall records in the trajectory (omitted from the report).
    */
   recall?: {
@@ -637,28 +656,28 @@ export interface IncidentSignals {
     rerankerAvailable: boolean;
   };
   /**
-   * PERSIST-01 (176-05): cache breaks folded per-reason from the session's
-   * `cache.break` trajectory records (Plan 04). Bounded + deterministically
-   * ordered (count desc, reason asc). Counts + a closed reason label + a summed
+   * Cache breaks folded per-reason from the session's `cache.break` trajectory
+   * records. Bounded + deterministically ordered (count desc, reason asc).
+   * Counts + a closed reason label + a summed
    * est-$ ONLY (never the changed tool names). Absent ⇒ no cache breaks in the
    * trajectory (omitted from the report — the `recall?` presence-conditional mold).
    */
   cacheBreaks?: Array<{ reason: string; count: number; estCostUsd: number }>;
   /**
-   * SPEND (WEBUI-04 / 179-04): the spend kill-switch breach folded from the
-   * session's terminal `spend.exceeded` trajectory record (last wins). `totalUsd`
+   * The spend kill-switch breach folded from the session's terminal
+   * `spend.exceeded` trajectory record (last wins). `totalUsd`
    * is the breaching scope's spent total (the record's `spentUsd`); `capUsd` is its
    * ceiling. Content-free (a scope enum + two numbers). Absent ⇒ the session was
    * not spend-killed (omitted from the report — the `cacheBreaks?` presence mold).
    */
   spend?: { scope: string; totalUsd: number; capUsd: number };
   /**
-   * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
-   * session's `image.*` trajectory records (the terminal image.generated /
-   * image.failed record wins; `delivered` set when image.delivered fired). The
-   * cost (`costUsd`) rides HERE so `comis explain` shows it from the trajectory
-   * (Route a) — NOT `cost.costUsd` (the executor `sessionEnd`, a different path —
-   * Pitfall 2). Content-free. Absent ⇒ no image records in the trajectory.
+   * The image-generation turn reconstructed from the session's `image.*`
+   * trajectory records (the terminal image.generated / image.failed record wins;
+   * `delivered` set when image.delivered fired). The cost (`costUsd`) rides HERE
+   * so `comis explain` shows it from the trajectory (Route a) — NOT `cost.costUsd`
+   * (the executor `sessionEnd`, a different path). Content-free. Absent ⇒ no
+   * image records in the trajectory.
    */
   image?: {
     provider: string;
@@ -667,17 +686,17 @@ export interface IncidentSignals {
     outcome: "ok" | "failed";
     errorKind?: string;
     delivered: boolean;
-    /** WR-02 (186): false on a persist-failed-but-delivered generation (degraded
-     *  delivery, still outcome:"ok", still charged). Absent ⇒ persisted. */
+    /** false on a persist-failed-but-delivered generation (degraded delivery,
+     *  still outcome:"ok", still charged). Absent ⇒ persisted. */
     persisted?: boolean;
   };
   /**
-   * VIS-04 (Phase 187): the VISION turn reconstructed from the session's
-   * `media.vision.*` trajectory records (the terminal media.vision.completed /
-   * media.vision.failed record wins). The cost (`costUsd`) rides HERE so `comis
-   * explain` shows it from the trajectory (Route a) — NOT `cost.costUsd`
-   * (Pitfall 2). The `path` is VIS-03's "which tier served". Content-free.
-   * Absent ⇒ no media.vision.* records in the trajectory.
+   * The VISION turn reconstructed from the session's `media.vision.*` trajectory
+   * records (the terminal media.vision.completed / media.vision.failed record
+   * wins). The cost (`costUsd`) rides HERE so `comis explain` shows it from the
+   * trajectory (Route a) — NOT `cost.costUsd`. The `path` is the "which tier
+   * served" signal. Content-free. Absent ⇒ no media.vision.* records in the
+   * trajectory.
    */
   vision?: {
     provider: string;
@@ -689,12 +708,12 @@ export interface IncidentSignals {
     errorKind?: string;
   };
   /**
-   * OBS-03/OBS-04 (Phase 192): the VIDEO-generation turn reconstructed from the
-   * session's `video.*` trajectory records (the terminal `video.generated` /
-   * `video.failed` record wins; `delivered` set when `video.delivered` fired,
-   * `jobId` carried from `video.submitted`). The cost rides HERE so `comis
-   * explain` shows it from the trajectory (Route a — NOT `cost.costUsd`,
-   * Pitfall 2). A background-completed job's later completion stitches to its
+   * The VIDEO-generation turn reconstructed from the session's `video.*`
+   * trajectory records (the terminal `video.generated` / `video.failed` record
+   * wins; `delivered` set when `video.delivered` fired, `jobId` carried from
+   * `video.submitted`). The cost rides HERE so `comis explain` shows it from the
+   * trajectory (Route a — NOT `cost.costUsd`). A background-completed job's later
+   * completion stitches to its
    * originating turn via `traceId`/`jobId` on one `sessionKey` (the offline
    * assembler is the binding oracle). Content-free. Absent ⇒ no `video.*`
    * records in the trajectory.
@@ -711,13 +730,13 @@ export interface IncidentSignals {
     delivered: boolean;
   };
   /**
-   * OBS-02/OBS-05 (Phase 196): the VOICE turn reconstructed from the session's
-   * `media.stt.*` / `media.tts.*` trajectory records (the terminal completed/
-   * failed record wins). Wholly in-turn (the daemon voice RPC handlers
-   * direct-emit). The cost rides HERE (Route a — NOT `cost.costUsd`, Pitfall 2):
-   * `0` explicit on keyless (OBS-05 "free" visible), absent on keyed (no per-call
-   * source — FLAG 4). `source` is the OBS-03 selection rung. Content-free. Absent
-   * ⇒ no `media.stt.*`/`media.tts.*` records in the trajectory.
+   * The VOICE turn reconstructed from the session's `media.stt.*` /
+   * `media.tts.*` trajectory records (the terminal completed/failed record wins).
+   * Wholly in-turn (the daemon voice RPC handlers direct-emit). The cost rides
+   * HERE (Route a — NOT `cost.costUsd`): `0` explicit on keyless ("free"
+   * visible), absent on keyed (no per-call source). `source` is the selection
+   * rung. Content-free. Absent ⇒ no `media.stt.*`/`media.tts.*` records in the
+   * trajectory.
    */
   voice?: {
     provider: string;
@@ -730,19 +749,19 @@ export interface IncidentSignals {
     errorKind?: string;
   };
   /**
-   * OBS-02 (Phase 198): the outcome-signal telemetry reconstructed from the
-   * session's `learning.outcome_observed` trajectory records (counts/ids/closed
-   * enums ONLY — the bridged record carries no body/alpha/recalled-ids; SEC-01).
-   * `outcomeResolved` is false ⇒ the learning shadow observed this finished
-   * trajectory but no signal tier produced a resolvable outcome (the
-   * `outcome_unresolved` verdict keys on exactly this — distinct from an explicit
-   * `unknown` outcome, which IS a resolution). `skillsUsed`/`skillFailures` are
-   * EMPTY in P0 (skill-use attribution lands Phase 201); `synthesisAbstained` is
-   * false in P0 (synthesis is Phase 201). Absent ⇒ no learning records in the
-   * trajectory (omitted from the report — the signal is per-agent default-OFF).
-   * `userModelRevised`/`memoriesGeneralized` (Phase 203) are optional counts of
-   * the session's profile-revision / higher-order-generalization activity (counts
-   * only, never bodies); absent in P0..P3.
+   * The outcome-signal telemetry reconstructed from the session's
+   * `learning.outcome_observed` trajectory records (counts/ids/closed enums ONLY
+   * — the bridged record carries no body/alpha/recalled-ids). `outcomeResolved`
+   * is false ⇒ the learning shadow observed this finished trajectory but no signal
+   * tier produced a resolvable outcome (the `outcome_unresolved` verdict keys on
+   * exactly this — distinct from an explicit `unknown` outcome, which IS a
+   * resolution). `skillsUsed`/`skillFailures` are EMPTY initially (skill-use
+   * attribution lands later); `synthesisAbstained` is false initially (synthesis
+   * lands later). Absent ⇒ no learning records in the trajectory (omitted from the
+   * report — the signal is per-agent default-OFF). `userModelRevised`/
+   * `memoriesGeneralized` are optional counts of the session's profile-revision /
+   * higher-order-generalization activity (counts only, never bodies); absent
+   * initially.
    */
   learning?: {
     outcomeResolved: boolean;
@@ -751,10 +770,24 @@ export interface IncidentSignals {
     skillsUsed: string[];
     skillFailures: string[];
     synthesisAbstained: boolean;
-    /** REVISE-01 (Phase 203): incumbent profile entries soft-closed by revision this session (count only). Optional/additive. */
+    /** Incumbent profile entries soft-closed by revision this session (count only). Optional/additive. */
     userModelRevised?: number;
-    /** GENERAL-01 (Phase 203): higher-order semantic memories synthesized this session (count only). Optional/additive. */
+    /** Higher-order semantic memories synthesized this session (count only). Optional/additive. */
     memoriesGeneralized?: number;
+  };
+  /**
+   * The daemon-boot proxy posture read from the latest `config_posture`
+   * obs_diagnostics row. Populated by the obs-explain handler before calling
+   * assembleIncidentReport. Absent ⇒ no proxy configured (zero-config).
+   * maskedUrl + booleans/closed-enum strings ONLY — never a raw proxy URL.
+   */
+  proxyPosture?: {
+    configured: boolean;
+    maskedUrl?: string;
+    loopbackMode?: string;
+    source?: "env" | "config" | "none";
+    installerOk: boolean;
+    installerError?: string;
   };
 }
 
@@ -764,8 +797,8 @@ export interface IncidentSignals {
  * Accepts EITHER `sessionKey` OR `traceId` (the `.refine` rejects neither;
  * a traceId is canonicalized to its sessionKey so there is one assembler
  * path). `depth` selects the summary (≤6 KB) vs. full projection. Admin-only;
- * the handler is non-mutating (read-only post-mortem). The full assembler
- * pipeline lands in Plan 05 — this contract is the Wave-1 shared shape.
+ * the handler is non-mutating (read-only post-mortem). This contract is the
+ * shared response shape; the full assembler pipeline lives in the handler.
  */
 export const ObsExplainContract = defineContract({
   method: "obs.explain",
@@ -774,7 +807,7 @@ export const ObsExplainContract = defineContract({
       sessionKey: z.string().min(1).optional(),
       traceId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
-      // D9: admin opt-in to include synthetic/test sessions (excluded by default).
+      // Admin opt-in to include synthetic/test sessions (excluded by default).
       includeSynthetic: z.boolean().optional(),
     })
     .refine((r) => r.sessionKey != null || r.traceId != null, {

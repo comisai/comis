@@ -38,7 +38,7 @@ let program: Command;
 beforeAll(async () => {
   const cli = await import("./cli.js");
   program = cli.program;
-});
+}, 30_000); // cli.js pulls in the full command graph; slow under cold transform
 
 afterAll(() => {
   vi.restoreAllMocks();
@@ -93,10 +93,12 @@ describe("CLI entry point", () => {
       "mcp",
       // Cost-attribution exports/reports (179-03 `comis cost export`).
       "cost",
+      // Offline proxy reachability/SSRF/loopback check (`comis proxy validate`).
+      "proxy",
     ] as const;
 
-    it("registers exactly 26 commands", () => {
-      expect(program.commands).toHaveLength(26);
+    it("registers exactly 27 commands", () => {
+      expect(program.commands).toHaveLength(27);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

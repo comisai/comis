@@ -26,6 +26,7 @@ import type {
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
+import type { HttpsProxyAgent } from "https-proxy-agent";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -62,6 +63,23 @@ export interface SlackAdapterDeps {
    * by setting mode='http'.
    */
   apiRoot?: string;
+  /**
+   * Optional pre-resolved HTTPS proxy agent for egress routing.
+   *
+   * Injected by the daemon's setup-channels-adapters.ts via
+   * `resolveHttpsProxyAgent("slack.com", mergedEnv)` from @comis/infra.
+   * When set, the `agent` is placed inside `clientOptions` so it flows to
+   * both the WebClient (axios httpsAgent) and SocketModeClient (ws httpAgent).
+   * When undefined (zero-config), clientOptions is omitted or unchanged —
+   * byte-identical to the pre-proxy shape.
+   *
+   * IMPORTANT: agent must live INSIDE clientOptions, never as a sibling
+   * top-level App option. A sibling agent silently fails.
+   *
+   * @comis/channels cannot import @comis/infra (architecture invariant), so
+   * the agent is pre-resolved by the caller and passed in here.
+   */
+  agent?: HttpsProxyAgent<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,12 +157,29 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         // Dynamic import to keep @slack/bolt optional at module level
         const { App } = await import("@slack/bolt");
 
-        // E2E seam: when deps.apiRoot is set, bolt's underlying WebClient
-        // receives slackApiUrl=apiRoot via clientOptions. Production path
-        // omits clientOptions entirely (byte-identical to the prior shape).
-        const clientOptionsOverride = deps.apiRoot
-          ? { clientOptions: { slackApiUrl: deps.apiRoot } }
-          : {};
+        // E2E seam + proxy wiring:
+        //
+        // Build a single clientOptions payload that may contain:
+        //   - slackApiUrl (when deps.apiRoot is set — E2E redirect seam)
+        //   - agent (when deps.agent is set — proxy egress)
+        //
+        // IMPORTANT: the agent MUST live inside clientOptions, never as a
+        // sibling top-level App option. A sibling agent is silently ignored
+        // by @slack/bolt.
+        //
+        // deps.agent is a pre-resolved HttpsProxyAgent from the daemon's wiring
+        // layer (setup-channels-adapters.ts). @comis/channels cannot import
+        // @comis/infra per architecture invariant, so the agent arrives here
+        // already resolved. When undefined (zero-config) the payload is empty
+        // and clientOptions is omitted — byte-identical to before.
+        const clientOptionsPayload = {
+          ...(deps.apiRoot ? { slackApiUrl: deps.apiRoot } : {}),
+          ...(deps.agent ? { agent: deps.agent } : {}),
+        };
+        const clientOptionsOverride =
+          Object.keys(clientOptionsPayload).length > 0
+            ? { clientOptions: clientOptionsPayload }
+            : {};
 
         // Create Bolt App with mode-dependent config
         if (deps.mode === "socket") {

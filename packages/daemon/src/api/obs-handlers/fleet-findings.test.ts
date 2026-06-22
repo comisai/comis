@@ -5,18 +5,15 @@ import { buildFindings, pipelineAuthoringAggregateFromRows } from "./fleet-findi
 import { pricingGapFromRow } from "./fleet-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
-// EMB-01 — the dedicated multilingual fleet advisory (standing state).
+// The dedicated multilingual fleet advisory (standing state).
 //
-// buildFindings is a PURE rows -> findings transform. The EMB-01 advisory reads
+// buildFindings is a PURE rows -> findings transform. The advisory reads
 // the LATEST (max-timestamp) `model_health` row's details JSON and emits ONE
 // finding per non-multilingual lane (embedder / reranker). It is STANDING STATE,
-// not a count over rows (Pitfall 4 — a daemon that rebooted N times must NOT show
-// "N non-multilingual signals", mirrors the KNOB-03 latest-row pattern). The
+// not a count over rows (a daemon that rebooted N times must NOT show
+// "N non-multilingual signals", mirrors the served-window latest-row pattern). The
 // parse is defensive (malformed/missing folds to no-advisory, never throws, never
-// echoes a body). ADVISORY ONLY (I4) — buildFindings touches no recall/search path.
-//
-// RED: the advisory branch does not exist yet, so none of these findings are
-// emitted (only the generic count-based `model_health` rollup exists).
+// echoes a body). ADVISORY ONLY — buildFindings touches no recall/search path.
 // ---------------------------------------------------------------------------
 
 const EMBED_CODE = "model_health:embedder_not_multilingual";
@@ -172,7 +169,7 @@ describe("buildFindings — EMB-01 multilingual advisory (standing state)", () =
 });
 
 // ---------------------------------------------------------------------------
-// T1.3 (F6) — the generic config_posture rollup NAMES the specific flagged keys
+// The generic config_posture rollup NAMES the specific flagged keys
 // (closed labels only) instead of "the flagged config keys", so an operator does
 // not have to grep daemon.log to learn it was gateway.tls + CANARY_SECRET.
 // ---------------------------------------------------------------------------
@@ -235,20 +232,15 @@ describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", ()
 });
 
 // ---------------------------------------------------------------------------
-// OBS-04 (Phase 196) — the voice_health fleet finding.
+// The voice_health fleet finding.
 //
 // A degraded STT/TTS turn emits a `health_signal` diagnostic row labelled
-// `voice_degraded` (the route-(b) emit, scoped to the obs layer — see the plan's
-// FLAG-7 spike decision). buildFindings rolls those rows up into ONE
-// counts+hints-only `voice_health` finding beside `model_health`/`config_posture`:
-// the degraded count + the dominant voice errorKind (the domain SttErrorKind, a
-// CLOSED label — never a raw provider body or a secret). The finding rides the
-// existing `count desc, code asc` sort and is guarded on zero voice traffic
-// (mirrors `if (modelHealth.length > 0)`).
-//
-// RED: the `voice_degraded` arm + the `voice_health` finding do not exist yet, so
-// NO `voice_health` finding is produced — every assertion below fails on the
-// pre-patch code.
+// `voice_degraded` (the route-(b) emit, scoped to the obs layer). buildFindings
+// rolls those rows up into ONE counts+hints-only `voice_health` finding beside
+// `model_health`/`config_posture`: the degraded count + the dominant voice
+// errorKind (the domain SttErrorKind, a CLOSED label — never a raw provider body
+// or a secret). The finding rides the existing `count desc, code asc` sort and is
+// guarded on zero voice traffic (mirrors `if (modelHealth.length > 0)`).
 // ---------------------------------------------------------------------------
 
 const VOICE_CODE = "voice_health";
@@ -385,18 +377,15 @@ describe("buildFindings — OBS-04 voice_health finding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TELEM-01 (Plan 173-03) — the dedicated pipeline_authoring finding + the pure
+// The dedicated pipeline_authoring finding + the pure
 // pipelineAuthoringAggregateFromRows reducer.
 //
-// The GENQ-01 clone: pipeline:authored persists a `health_signal` row with
-// signal:"pipeline_authoring" + {tier, schemaValid}. buildFindings rolls the
-// SMALL-TIER (small|nano — D-TIER) invalid rate into ONE dedicated finding (the
-// Phase-174 gate metric). The pure reducer computes the aggregate Plan 04's gate
-// consumes: {smallTierInvocations, smallTierValidRate, frontierValidRate}.
-//
-// RED: neither the reducer nor the finding exists yet on the pre-patch code —
-// `pipelineAuthoringAggregateFromRows` is undefined and NO pipeline_authoring
-// finding is produced, so every assertion below fails.
+// The generation_quality clone: pipeline:authored persists a `health_signal` row
+// with signal:"pipeline_authoring" + {tier, schemaValid}. buildFindings rolls the
+// SMALL-TIER (small|nano) invalid rate into ONE dedicated finding (the
+// small-model-authorable-DAGs gate metric). The pure reducer computes the
+// aggregate the gate consumes: {smallTierInvocations, smallTierValidRate,
+// frontierValidRate}.
 // ---------------------------------------------------------------------------
 
 const PIPELINE_CODE = "pipeline_authoring";
@@ -563,11 +552,10 @@ describe("buildFindings — TELEM-01 pipeline_authoring finding", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ORCH-OBS (orchestration-observability) — three dedicated fleet findings for the
-// previously-dark daemon-side orchestration health_signals. Each mirrors the
-// voice_health pattern: a closed `signal` label, a zero-traffic if-guard, counts +
-// closed labels ONLY (safe to paste), defensive parse. RED: none of the three arms
-// exist yet, so NO finding is produced — every assertion fails on the pre-patch code.
+// Three dedicated fleet findings for the previously-dark daemon-side
+// orchestration health_signals. Each mirrors the voice_health pattern: a closed
+// `signal` label, a zero-traffic if-guard, counts + closed labels ONLY (safe to
+// paste), defensive parse.
 // ---------------------------------------------------------------------------
 
 /** A `health_signal` row labelled `sandbox_downgrade_refused`, carrying the closed
@@ -723,8 +711,8 @@ describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
 // and "warning" only when it is absent (the primary degraded-recall cause). A
 // keyless macOS daemon with a working local embedder that had rebooted 8× thus
 // showed "8 model-health signal(s) (provider degradation)" — 8 benign healthy
-// boots mislabeled as degradation (the BENIGN_*_REASONS anti-pattern: routine
-// events inflating warning counts). Only severity "warning" rows are real
+// boots mislabeled as degradation (routine events inflating warning counts).
+// Only severity "warning" rows are real
 // degradation; the multilingual advisory (read from the latest row) is
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
@@ -762,7 +750,7 @@ describe("buildFindings — model_health 'provider degradation' counts only degr
 });
 
 // ---------------------------------------------------------------------------
-// SPEND-05 (Phase 177) — the config_posture:pricing_gap fleet finding.
+// The config_posture:pricing_gap fleet finding.
 //
 // The kill-switch is only honest if an operator can SEE its pricing-coverage gap:
 // how many configured agents burn tokens on remote-unknown-priced models (a NATIVE
@@ -772,9 +760,6 @@ describe("buildFindings — model_health 'provider degradation' counts only degr
 // it defensively (the chimericModelFromRow mold) and emits ONE counts+hint-only
 // finding beside `config_posture:chimeric_model`. STANDING STATE (latest row only),
 // content-free (counts + remediation, never a model id / config value as a body).
-//
-// RED: neither `pricingGapFromRow` nor the `config_posture:pricing_gap` finding
-// exists yet — every assertion below fails on the pre-patch code.
 // ---------------------------------------------------------------------------
 
 const PRICING_GAP_CODE = "config_posture:pricing_gap";
@@ -858,5 +843,118 @@ describe("buildFindings — SPEND-05 config_posture:pricing_gap finding (standin
     expect(idxChimera).toBeGreaterThanOrEqual(0);
     // count 9 (pricing_gap) sorts before count 1 (chimeric_model) under count-desc.
     expect(idxGap).toBeLessThan(idxChimera);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// config_posture:proxy_posture fleet finding.
+//
+// buildFindings emits a dedicated `config_posture:proxy_posture` finding from
+// the LATEST config_posture row when proxyInstallerStatus.installerError is a
+// non-null string. No finding when installerError is null (success) or the
+// field is absent (zero-config path). Standing state — latest row wins.
+// proxyInstallerStatusFromRow is the defensive extractor (the pricingGapFromRow
+// clone for an object instead of a number).
+// ---------------------------------------------------------------------------
+
+const PROXY_POSTURE_CODE = "config_posture:proxy_posture";
+
+import { proxyInstallerStatusFromRow } from "./fleet-findings-extractors.js";
+
+describe("proxyInstallerStatusFromRow — DIAG-03 extractor (config_posture details)", () => {
+  it("returns { installerError, effectiveLoopbackMode } when the details JSON carries proxyInstallerStatus with a non-null installerError", () => {
+    const row = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: "proxy.proxyUrl", effectiveLoopbackMode: "gateway-only" },
+    });
+    const result = proxyInstallerStatusFromRow(row);
+    expect(result).toEqual({ installerError: "proxy.proxyUrl", effectiveLoopbackMode: "gateway-only" });
+  });
+
+  it("returns null when proxyInstallerStatus is absent from details (zero-config path)", () => {
+    const row = configPostureRow(1_000, { tlsOff: false });
+    expect(proxyInstallerStatusFromRow(row)).toBeNull();
+  });
+
+  it("returns null when installerError is null (installer succeeded)", () => {
+    const row = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: null, effectiveLoopbackMode: "proxy" },
+    });
+    expect(proxyInstallerStatusFromRow(row)).toBeNull();
+  });
+
+  it("returns null on malformed details JSON — defensive parse (the pricingGapFromRow clone)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1_000,
+      category: "config_posture",
+      severity: "info",
+      message: "config_posture",
+      details: "{bad json}}}",
+    };
+    expect(proxyInstallerStatusFromRow(row)).toBeNull();
+  });
+
+  it("returns null when details is undefined", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1_000,
+      category: "config_posture",
+      severity: "info",
+      message: "config_posture",
+    };
+    expect(proxyInstallerStatusFromRow(row)).toBeNull();
+  });
+});
+
+describe("buildFindings — DIAG-03 proxy_posture dedicated finding (standing state, latest row wins)", () => {
+  it("emits a config_posture:proxy_posture finding when the latest config_posture row has a non-null installerError", () => {
+    const row = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: "proxy.proxyUrl", effectiveLoopbackMode: "gateway-only" },
+    });
+    const findings = buildFindings([], [], [row]);
+    const finding = findings.find((f) => f.code === PROXY_POSTURE_CODE);
+    expect(finding).toBeDefined();
+    expect(finding?.count).toBe(1);
+    // hint must name both knobs
+    expect(finding?.hint).toMatch(/proxy\.proxyUrl/);
+    expect(finding?.hint).toMatch(/proxy\.tls\.caFile/);
+    // detail must mention the configKey (closed label only — no raw URL)
+    expect(finding?.detail).toMatch(/proxy\.proxyUrl/);
+    expect(finding?.detail).not.toMatch(/https?:\/\//);
+  });
+
+  it("emits NO proxy_posture finding when installerError is null (proxy installed successfully)", () => {
+    const row = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: null, effectiveLoopbackMode: "proxy" },
+    });
+    const findings = buildFindings([], [], [row]);
+    expect(findings.some((f) => f.code === PROXY_POSTURE_CODE)).toBe(false);
+  });
+
+  it("emits NO proxy_posture finding when proxyInstallerStatus is absent (zero-config path)", () => {
+    const row = configPostureRow(1_000, { tlsOff: false });
+    const findings = buildFindings([], [], [row]);
+    expect(findings.some((f) => f.code === PROXY_POSTURE_CODE)).toBe(false);
+  });
+
+  it("standing state — latest row wins: newer success (null installerError) supersedes older failure", () => {
+    const older = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: "proxy.proxyUrl", effectiveLoopbackMode: "gateway-only" },
+    });
+    const newer = configPostureRow(5_000, {
+      proxyInstallerStatus: { installerError: null, effectiveLoopbackMode: "proxy" },
+    });
+    // Insert older first so insertion order doesn't accidentally pick the right row.
+    const findings = buildFindings([], [], [older, newer]);
+    expect(findings.some((f) => f.code === PROXY_POSTURE_CODE)).toBe(false);
+  });
+
+  it("is content-free — detail/hint never echo a raw proxy URL (only closed configKey label)", () => {
+    const row = configPostureRow(1_000, {
+      proxyInstallerStatus: { installerError: "proxy.proxyUrl", effectiveLoopbackMode: "gateway-only", _rawUrl: "http://user:pass@proxy.example.com" },
+    });
+    const findings = buildFindings([], [], [row]);
+    const finding = findings.find((f) => f.code === PROXY_POSTURE_CODE);
+    expect(finding).toBeDefined();
+    expect(`${finding?.detail} ${finding?.hint}`).not.toMatch(/https?:\/\//);
+    expect(`${finding?.detail} ${finding?.hint}`).not.toMatch(/pass|user@/);
   });
 });

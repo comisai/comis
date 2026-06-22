@@ -85,6 +85,11 @@ import {
 // setTimeout / setInterval. Sanctioned construction site.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
 import {
+  installProxyAtBoot,
+  logProxyPosture,
+  type ProxyBootPosture,
+} from "./daemon-proxy-boot-helpers.js";
+import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
   createObservabilityStore,
@@ -463,7 +468,7 @@ function buildChannelManagerDeps(deps: {
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
-    executionPlanPorts, oauthManagers,
+    executionPlanPorts, oauthManagers, mergedEnv,
   } = agents;
   // LEARN-01: per-agent OAuth access-token resolver (auto-refreshing) so the
   // background memory/learning cron jobs run on an OAuth main provider
@@ -503,6 +508,7 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    mergedEnv,  // proxy-agent resolution
     resolveAccessToken: resolveCronAccessToken, // LEARN-01: OAuth-provider background jobs
 
     // the orchestrator-facing redacted ActivityStream (setupObservability)
@@ -510,7 +516,7 @@ function buildChannelManagerDeps(deps: {
     // the process-singleton circuit breaker shared across every coordinator.
     activityStream, activityBreaker,
     // the DEFAULT agent's shared ExecutionPlanHolder reference
-    // (Pitfall 1 lock — same reference as PiExecutorDeps.executionPlanHolder +
+    // (lock — same reference as PiExecutorDeps.executionPlanHolder +
     // AcpServerDeps.executionPlanPort, NOT a parallel createExecutionPlanHolder).
     // Multi-agent note: only the default agent's plan-state reaches chat in this
     // wave; non-default-agent plan updates are filtered out per-turn in the
@@ -1270,7 +1276,7 @@ async function bootFoundation(
   try {
 
   // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
-  // can still read SECRETS_MASTER_KEY from process.env (Pitfall 5 in RESEARCH).
+  // can still read SECRETS_MASTER_KEY from process.env.
   //
   // sensitiveNames: built here at the composition root (a sanctioned process.env
   // access point per AGENTS.md §2.8). In file/encrypted modes the names are
@@ -1335,6 +1341,12 @@ async function bootFoundation(
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
 
+  // Install global proxy dispatcher BEFORE the Stage-2 env scrub so mergedEnv
+  // (store-wins snapshot) is still intact. ProxyConfigError → FATAL bootstrap
+  // abort naming the configKey (fail-closed). Posture captured here (pre-logger);
+  // deferred INFO line emitted after setupLogging().
+  const proxyBootPosture: ProxyBootPosture = await installProxyAtBoot(container, mergedEnv);
+
   // Stage-2 scrub: remove config-referenced SecretRef names from process.env; runs after config parse.
   for (const name of container.platformSecretNames) {
     // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub
@@ -1384,6 +1396,11 @@ async function bootFoundation(
       );
     }
   }
+
+  // Emit exactly one module:"proxy" INFO when proxy is active.
+  // Deferred from the install site because daemonLogger was not yet available there.
+  // Gate on configured — zero-config path emits nothing.
+  logProxyPosture(daemonLogger, proxyBootPosture);
 
   // Deferred store-wins WARNs: shadow notifications (collected pre-logger).
   // Log name only — never value (residency invariant).
@@ -1634,7 +1651,7 @@ async function bootFoundation(
     : undefined;
 
   // 6.5.9. Seed ALL bundled skills into the user data dir (version-aware, AUTO-SCANNED).
-  // SKILLS-SEED-01: generalized from the former single skill-creator IIFE — every
+  // Generalized from the former single skill-creator IIFE — every
   // `bundled-skills/<name>/` (skill-creator, claude-code, codex, …) is seeded into
   // `<dataDir>/skills/<name>`, so shipping a bundled skill is ZERO engine code. Idempotent:
   // re-seeds only when missing or the bundled `version:` differs (see seed-bundled-skills.ts).
@@ -1653,7 +1670,8 @@ async function bootFoundation(
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
     clock, env, timers, activityBreaker, activityRendererFactoryOverride: activityRendererFactory,
-    secretStore, mutableHandle, secretsCrypto, secretsDb, permissionCorrections,
+    secretStore, mutableHandle, secretsCrypto, secretsDb, permissionCorrections, proxyBootPosture,
+    mergedEnv,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
@@ -1847,7 +1865,7 @@ async function bootAgents(
     warnOnProviderTimeoutRedirect({ providerEntries: container.config.providers?.entries ?? {}, logger: agentLogger });
   } catch { /* fail-open — a WARN helper must never block boot (I1) */ }
 
-  // KNOB-01/03 + FLOOR-01 (v2.21): daemon-owned boot-honesty collectors, populated
+  // Daemon-owned boot-honesty collectors, populated
   // per-agent in setup-agents beside the registry; read by the bootChannels floor
   // loop + the bootShutdown posture count (ONE comparison feeds WARN + count).
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
@@ -1870,8 +1888,8 @@ async function bootAgents(
     toolCapabilityPorts, trajectoryRegistry,
     // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
-    // from the SAME object SEP publishes into (Pitfall 1).
-    executionPlanPorts, oauthManagers, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01)
+    // from the SAME object SEP publishes into.
+    executionPlanPorts, oauthManagers, // oauthManagers: DEFAULT agent's → buildImageGenBundle
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -1904,7 +1922,7 @@ async function bootAgents(
     mcpClientManager,
     clock, env, timers,
     servedWindowByProvider,  // CWF-03: Ollama served context-window probe result
-    servedWindowComparisons, agentBootWindowInfo,  // KNOB-01/03 + FLOOR-01 collectors
+    servedWindowComparisons, agentBootWindowInfo,  // served-window + boot-window collectors
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -2153,20 +2171,19 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). 184: oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path (CDX-01).
+  // Image-generation bundle (see buildImageGenBundle in wiring/main-helpers.ts). oauthManager threads the DEFAULT agent's OAuth manager for the Codex image path.
   const { imageGenConfig, imageGenProvider, imageGenRateLimiter, persistImage, imageGenCostLimiter } =
     await buildImageGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir });
-  // Video-generation bundle (Phase 188 baseline + 189 async + 190 live adapters —
-  // see buildVideoGenBundle in wiring/main-helpers.ts). 189: pass the shared
-  // memory.db handle (the VideoJobStore binds it), the EARLY channelAdaptersRef
-  // (WARNING-1 — the poller resolves a LIVE adapter from it after
+  // Video-generation bundle (see buildVideoGenBundle in wiring/main-helpers.ts).
+  // Pass the shared memory.db handle (the VideoJobStore binds it), the EARLY
+  // channelAdaptersRef (the poller resolves a LIVE adapter from it after
   // wirePostChannelsLifecycle populates it), and the daemon TimerPort (the poller's
-  // sweeper). 190 (CRED-01): oauthManager threads the DEFAULT agent's OAuth manager
-  // for the Grok-video key-or-OAuth path (mirrors the image call below + :2169).
+  // sweeper). oauthManager threads the DEFAULT agent's OAuth manager
+  // for the Grok-video key-or-OAuth path (mirrors the image call above).
   // Destructure videoJobStore + videoPoller for the boot context + the handler deps.
   const { videoGenConfig, videoGenProvider, videoGenRateLimiter, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller } =
     buildVideoGenBundle({ container, defaultAgentId, skillsLogger, oauthManager: handle.oauthManagers.get(defaultAgentId), workspaceDirs, defaultWorkspaceDir, db, channelAdaptersRef: handle.channelAdaptersRef, timers: handle.timers, trajectoryRegistry: handle.trajectoryRegistry, eventBus: container.eventBus });
-  // VIS-01 (187): the provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
+  // The provider-following vision bundle — same construction site, reusing the DEFAULT agent's OAuth manager (codex bearer) + the boot clock (the bridge's per-message timestamp). See buildMediaVisionBundle in wiring/main-helpers.ts.
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
@@ -2189,7 +2206,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // hoisted function threaded through ShutdownDeps.
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
-    // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
+    // Resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
     // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
     getProviderCapabilityClass: (provider) =>
@@ -2233,8 +2250,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
       : undefined,
   });
 
-  // FLOOR-01 (v2.21): boot-time viable-floor WARN per agent — WARN-only (I1/D-02),
-  // awaited for determinism, fail-open per agent (a throw never aborts boot, T-176-15).
+  // Boot-time viable-floor WARN per agent — WARN-only, awaited for determinism,
+  // fail-open per agent (a throw never aborts boot).
   for (const [floorAgentId, bootInfo] of handle.agentBootWindowInfo ?? new Map<string, AgentBootWindowInfo>()) {
     try {
       evaluateViableFloorForAgent({ info: bootInfo, tools: await assembleToolsForAgent(floorAgentId), logger: daemonLogger });
@@ -2852,7 +2869,16 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents) }, boot.clock);
+  // Thread the proxy boot posture (from bootFoundation) into the config_posture
+  // obs record. Only when configured (the zero-config gate).
+  const proxyInstallerStatus =
+    boot.proxyBootPosture?.configured === true
+      ? {
+          installerError: boot.proxyBootPosture.installerError ?? null,
+          effectiveLoopbackMode: boot.proxyBootPosture.loopbackMode ?? "gateway-only",
+        }
+      : undefined;
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), proxyInstallerStatus }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

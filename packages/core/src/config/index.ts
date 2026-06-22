@@ -174,6 +174,12 @@ export {
   GatewayRateLimitSchema,
 } from "./schema-gateway.js";
 export {
+  ProxyConfigSchema,
+  ProxyEndpointSchema,
+  ProxyLoopbackModeSchema,
+} from "./schema-proxy.js";
+export type { ProxyConfig, ProxyEndpoint } from "./schema-proxy.js";
+export {
   IntegrationsConfigSchema,
   BraveSearchConfigSchema,
   McpServerEntrySchema,

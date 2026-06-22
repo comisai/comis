@@ -15,11 +15,18 @@ const mockGuildsFetch = vi.fn();
 
 const mockSetPresence = vi.fn();
 
+/** Track Client constructor args for proxy-injection assertions. */
+let lastClientConstructorArgs: unknown[] = [];
+
 vi.mock("discord.js", () => {
   class MockClient {
     channels = { fetch: mockChannelsFetch };
     guilds = { fetch: mockGuildsFetch };
     user = { setPresence: mockSetPresence };
+
+    constructor(...args: unknown[]) {
+      lastClientConstructorArgs = args;
+    }
 
     on(event: string, handler: (...args: any[]) => void) {
       eventHandlers.set(event, handler);
@@ -130,6 +137,7 @@ describe("createDiscordAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventHandlers.clear();
+    lastClientConstructorArgs = [];
   });
 
   describe("start()", () => {
@@ -916,6 +924,59 @@ describe("createDiscordAdapter", () => {
         expect.objectContaining({ channelType: "discord" }),
         "Adapter stopped",
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Proxy-dispatcher injection
+  //
+  // discord.js REST traffic is routed via an undici Dispatcher (ProxyAgent),
+  // NOT an HttpsProxyAgent. The adapter receives a pre-resolved
+  // dispatcher via deps.dispatcher? (optional). When present, it is passed as
+  // rest.agent to the Client constructor. When absent, the rest options object
+  // does NOT include an agent key (zero-config byte-identical).
+  //
+  // The WS gateway has NO proxy hook in @discordjs/ws — documented as an
+  // ACCEPTED GAP via a comment in the production source.
+  // ---------------------------------------------------------------------------
+
+  describe("proxy-dispatcher injection (XPORT-02)", () => {
+    // Minimal stub shaped like an undici ProxyAgent/Dispatcher.
+    const fakeDispatcher = {
+      constructor: { name: "ProxyAgent" },
+      dispatch: vi.fn(),
+      proxyUri: "http://proxy.corp:3128",
+    };
+
+    it("passes rest.agent = dispatcher when deps.dispatcher is set", () => {
+      createDiscordAdapter(makeDeps({ dispatcher: fakeDispatcher as any }));
+
+      const clientOpts = lastClientConstructorArgs[0] as Record<string, unknown>;
+      const rest = clientOpts?.rest as Record<string, unknown> | undefined;
+      expect(rest).toBeDefined();
+      expect(rest?.agent).toBe(fakeDispatcher);
+    });
+
+    it("does NOT include rest.agent when deps.dispatcher is undefined (zero-config D-12)", () => {
+      createDiscordAdapter(makeDeps({ dispatcher: undefined }));
+
+      const clientOpts = lastClientConstructorArgs[0] as Record<string, unknown>;
+      const rest = clientOpts?.rest as Record<string, unknown> | undefined;
+      // rest may be undefined (no apiRoot) or defined (apiRoot set) — but must NOT have .agent
+      if (rest !== undefined) {
+        expect(rest).not.toHaveProperty("agent");
+      } else {
+        expect(rest).toBeUndefined();
+      }
+    });
+
+    it("production source contains ACCEPTED GAP comment for WS gateway", async () => {
+      const fs = await import("node:fs/promises");
+      const src = await fs.readFile(
+        new URL("./discord-adapter.ts", import.meta.url),
+        "utf-8",
+      );
+      expect(src).toContain("ACCEPTED GAP");
     });
   });
 

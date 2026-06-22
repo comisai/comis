@@ -67,6 +67,26 @@ export interface DiscordAdapterDeps {
    * wire-level E2E mock chat-platform fixture (test/e2e/mocks/discord/).
    */
   apiRoot?: string;
+  /**
+   * Optional undici Dispatcher (ProxyAgent) for discord.js REST traffic.
+   *
+   * When set, passed as `rest.agent` to the discord.js Client constructor,
+   * routing all REST calls through the configured proxy.
+   *
+   * ACCEPTED GAP: The @discordjs/ws WebSocket gateway connection has no
+   * proxy hook — it dials discord.com directly regardless of this setting.
+   * See docs/security/network-proxy.md for rationale and operator controls.
+   *
+   * The daemon's setup-channels-adapters.ts populates this field by calling
+   * resolveUndiciProxyAgent("discord.com", mergedEnv). Production callers
+   * without a proxy leave it undefined — the adapter behaves byte-identically
+   * to before (zero-config).
+   *
+   * Typed as `object` to avoid a phantom undici dependency in @comis/channels
+   * (undici is a dep of @comis/infra, not @comis/channels). The daemon wiring
+   * layer, which CAN import @comis/infra, holds the concrete ProxyAgent type.
+   */
+  dispatcher?: object;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +105,15 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   // (and, transitively via /gateway/bot, the WebSocket gateway) to that URL.
   // Production callers leave it unset and discord.js uses its default
   // (https://discord.com/api).
+  //
+  // When deps.dispatcher is set (a pre-resolved undici ProxyAgent),
+  // pass it as rest.agent to route all discord.js REST calls through the proxy.
+  // ACCEPTED GAP: The @discordjs/ws WebSocket gateway has no proxy hook and
+  // dials discord.com directly. This is an accepted, documented limitation —
+  // see docs/security/network-proxy.md.
+  const restOpts: Record<string, unknown> = {};
+  if (deps.apiRoot) restOpts.api = deps.apiRoot;
+  if (deps.dispatcher) restOpts.agent = deps.dispatcher;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -94,7 +123,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.DirectMessageReactions,
     ],
-    ...(deps.apiRoot ? { rest: { api: deps.apiRoot } } : {}),
+    ...(Object.keys(restOpts).length > 0 ? { rest: restOpts } : {}),
   });
 
   const handlers: MessageHandler[] = [];

@@ -62,10 +62,27 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
   // E2E seam: if deps.apiRoot is set, point grammy at that URL instead of
   // api.telegram.org. Production callers leave it unset and grammy uses its
   // default (https://api.telegram.org). The `client` option is included ONLY
-  // when redirected: keeps the production code path byte-identical to before.
+  // when redirected or when a proxy agent is set: keeps the production code
+  // path byte-identical to before when neither is configured.
+  //
+  // Proxy wiring:
+  // deps.agent is a pre-resolved HttpsProxyAgent from the daemon's wiring
+  // layer (setup-channels-adapters.ts calls resolveHttpsProxyAgent from
+  // @comis/infra, which @comis/channels cannot import per architecture rules).
+  // baseFetchConfig.agent is set only when deps.agent is defined — conditional
+  // spread ensures zero-config builds are byte-identical.
+  const proxyAgent = deps.agent;
+  const baseFetchConfig = proxyAgent ? { compress: true, agent: proxyAgent } : undefined;
   const bot = deps.apiRoot
-    ? new Bot(deps.botToken, { client: { apiRoot: deps.apiRoot } })
-    : new Bot(deps.botToken);
+    ? new Bot(deps.botToken, {
+        client: {
+          apiRoot: deps.apiRoot,
+          ...(baseFetchConfig ? { baseFetchConfig } : {}),
+        },
+      })
+    : proxyAgent
+      ? new Bot(deps.botToken, { client: { baseFetchConfig: baseFetchConfig! } })
+      : new Bot(deps.botToken);
 
   // Install auto-retry transformer for 429 handling
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));

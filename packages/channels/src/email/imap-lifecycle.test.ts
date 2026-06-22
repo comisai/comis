@@ -198,4 +198,47 @@ describe("createImapLifecycle", () => {
       }),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Proxy URL injection
+  //
+  // When opts.proxyUrl is set, ImapFlow must receive proxy: <full url string>.
+  // When absent, no proxy key is present (zero-config byte-identical).
+  // The full credential-bearing URL is passed (not sanitized).
+  // -------------------------------------------------------------------------
+
+  describe("proxy URL injection (XPORT-05)", () => {
+    it("passes proxy: proxyUrl to ImapFlow when opts.proxyUrl is set", async () => {
+      const { createImapLifecycle } = await getModule();
+      const handle = createImapLifecycle(
+        makeOpts({ proxyUrl: "http://user:pass@proxy.corp:3128" }),
+      );
+      await handle.start();
+
+      expect(lastConstructorArgs[0]).toEqual(
+        expect.objectContaining({
+          proxy: "http://user:pass@proxy.corp:3128",
+        }),
+      );
+    });
+
+    it("does NOT pass proxy key to ImapFlow when opts.proxyUrl is undefined (zero-config D-12)", async () => {
+      const { createImapLifecycle } = await getModule();
+      const handle = createImapLifecycle(makeOpts({ proxyUrl: undefined }));
+      await handle.start();
+
+      const opts = lastConstructorArgs[0] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty("proxy");
+    });
+
+    it("passes full credential-bearing URL (not sanitized — Pitfall 6)", async () => {
+      const { createImapLifecycle } = await getModule();
+      const credUrl = "http://secret-user:secret-pass@proxy.corp:3128";
+      const handle = createImapLifecycle(makeOpts({ proxyUrl: credUrl }));
+      await handle.start();
+
+      const opts = lastConstructorArgs[0] as Record<string, unknown>;
+      expect(opts.proxy).toBe(credUrl);
+    });
+  });
 });

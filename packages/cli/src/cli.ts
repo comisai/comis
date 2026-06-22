@@ -38,6 +38,7 @@ import { registerTraceCommand } from "./commands/trace.js";
 import { registerExplainCommand } from "./commands/explain.js";
 import { registerCostExportCommand } from "./commands/cost-export.js";
 import { registerFleetCommand } from "./commands/fleet.js";
+import { registerProxyCommand } from "./commands/proxy.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
 export const program = new Command();
@@ -73,6 +74,7 @@ registerTraceCommand(program);
 registerExplainCommand(program);
 registerCostExportCommand(program);
 registerFleetCommand(program);
+registerProxyCommand(program);
 registerUninstallCommand(program);
 
 // Parse and execute

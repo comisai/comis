@@ -88,7 +88,7 @@ vi.mock("./message-mapper.js", () => ({
   mapSlackToNormalized: vi.fn(),
 }));
 
-// format-slack.js no longer exports markdownToSlackMrkdwn (deleted in 498-01).
+// format-slack.js no longer exports markdownToSlackMrkdwn.
 // Adapter is now a passthrough -- text arrives pre-formatted from the pipeline.
 
 // ---------------------------------------------------------------------------
@@ -645,6 +645,78 @@ describe("createSlackAdapter", () => {
       if (!result.ok) {
         expect(result.error.message).toContain("Failed to stop Slack adapter");
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Proxy-agent injection
+  //
+  // When deps.agent is set, the @slack/bolt App must receive
+  // clientOptions.agent = <the agent> (agent INSIDE clientOptions,
+  // never as a sibling top-level App option).
+  // When deps.agent is undefined (zero-config), clientOptions is either
+  // undefined or omits the agent key entirely.
+  //
+  // Strategy: same as Telegram — deps.agent is pre-resolved by the daemon.
+  // ---------------------------------------------------------------------------
+
+  describe("proxy-agent injection (XPORT-03)", () => {
+    const fakeAgent = { constructor: { name: "HttpsProxyAgent" }, proxy: "http://proxy.corp:3128" };
+
+    it("passes agent INSIDE clientOptions when deps.agent is set (socket mode, no apiRoot)", async () => {
+      vi.mocked(validateSlackCredentials).mockResolvedValue(
+        ok({ userId: "U1", teamId: "T1", botId: "B1" }),
+      );
+
+      const adapter = createSlackAdapter(makeDeps({ agent: fakeAgent as any }));
+      await adapter.start();
+
+      // App should have been called with clientOptions containing the agent.
+      expect(App).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientOptions: expect.objectContaining({ agent: fakeAgent }),
+        }),
+      );
+    });
+
+    it("passes both slackApiUrl and agent inside clientOptions when deps.agent and apiRoot are set", async () => {
+      vi.mocked(validateSlackCredentials).mockResolvedValue(
+        ok({ userId: "U1", teamId: "T1", botId: "B1" }),
+      );
+
+      const adapter = createSlackAdapter(
+        makeDeps({ agent: fakeAgent as any, apiRoot: "http://localhost:8080" }),
+      );
+      await adapter.start();
+
+      expect(App).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientOptions: expect.objectContaining({
+            slackApiUrl: "http://localhost:8080",
+            agent: fakeAgent,
+          }),
+        }),
+      );
+    });
+
+    it("does NOT pass clientOptions.agent when deps.agent is undefined (zero-config D-12)", async () => {
+      vi.mocked(validateSlackCredentials).mockResolvedValue(
+        ok({ userId: "U1", teamId: "T1", botId: "B1" }),
+      );
+
+      const adapter = createSlackAdapter(makeDeps({ agent: undefined }));
+      await adapter.start();
+
+      // The App constructor must NOT receive an agent key anywhere.
+      const callArg = vi.mocked(App).mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+      expect(callArg).toBeDefined();
+      // clientOptions either absent or lacks agent
+      const co = callArg?.clientOptions as Record<string, unknown> | undefined;
+      if (co !== undefined) {
+        expect(co).not.toHaveProperty("agent");
+      }
+      // agent must NOT appear as a sibling top-level key
+      expect(callArg).not.toHaveProperty("agent");
     });
   });
 });

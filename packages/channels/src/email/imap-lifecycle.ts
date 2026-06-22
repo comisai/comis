@@ -47,6 +47,19 @@ export interface ImapLifecycleOpts {
   maxIdleTimeMs?: number;
   pollingIntervalMs?: number;
   logger: ComisLogger;
+  /**
+   * Optional full proxy URL (credential-bearing) for IMAP egress.
+   *
+   * When set, passed as imapflow's native `proxy:` option, routing the IMAP
+   * connection through the configured proxy. The full URL (including any
+   * credentials) is passed directly — do NOT sanitize here; sanitizeProxyUrl
+   * is reserved for logs.
+   *
+   * The daemon's setup-channels-adapters.ts populates this field by calling
+   * resolveProxyUrl(opts.host, mergedEnv). Production callers without a proxy
+   * leave it undefined — the adapter behaves byte-identically to before.
+   */
+  proxyUrl?: string;
 }
 
 export interface ImapLifecycleHandle {
@@ -102,6 +115,9 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       // Disable ImapFlow's built-in logger — we use Pino via opts.logger
       logger: false as never,
       maxIdleTime,
+      // Pass full credential-bearing proxy URL when configured.
+      // Do NOT sanitize here — sanitizeProxyUrl is reserved for logs.
+      ...(opts.proxyUrl ? { proxy: opts.proxyUrl } : {}),
     });
   }
 

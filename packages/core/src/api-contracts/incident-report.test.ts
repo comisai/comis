@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Schema assertions for the IncidentReport optional `audit?` + `cacheBreaks?`
- * sections (AUDIT-05 + PERSIST-01, Phase 176 Plan 05).
+ * sections.
  *
  * This file is NEW — there is no `incident-report.test.ts` on pre-patch HEAD (no
  * core test imports `IncidentReportSchema`). It pins the two additive, content-free,
@@ -134,5 +134,62 @@ describe("IncidentReportSchema spend? section (WEBUI-04, 179-04 — locked A2)",
   it("rejects a spend section missing capUsd (the shape is enforced)", () => {
     const report = { ...baseReport(), spend: { scope: "global", totalUsd: 5 } };
     expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // Optional proxyPosture field — additive, schemaVersion 1.
+  // -------------------------------------------------------------------------
+
+  it("DIAG-03: accepts a report WITH proxyPosture (proxy configured + success)", () => {
+    const report = {
+      ...baseReport(),
+      proxyPosture: {
+        configured: true,
+        maskedUrl: "http://proxy.example.com",
+        loopbackMode: "gateway-only",
+        source: "config" as const,
+        installerOk: true,
+      },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.proxyPosture).toEqual({
+      configured: true,
+      maskedUrl: "http://proxy.example.com",
+      loopbackMode: "gateway-only",
+      source: "config",
+      installerOk: true,
+    });
+  });
+
+  it("DIAG-03: accepts a report WITH proxyPosture (proxy failed — installerError present)", () => {
+    const report = {
+      ...baseReport(),
+      proxyPosture: {
+        configured: true,
+        installerOk: false,
+        installerError: "proxy.proxyUrl",
+        source: "config" as const,
+      },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.proxyPosture?.installerOk).toBe(false);
+    expect(parsed.proxyPosture?.installerError).toBe("proxy.proxyUrl");
+  });
+
+  it("DIAG-03: report WITHOUT proxyPosture still validates — existing reports are unchanged", () => {
+    const report = baseReport(); // no proxyPosture key at all
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.proxyPosture).toBeUndefined();
+  });
+
+  it("DIAG-03: schemaVersion stays 1 when proxyPosture is present", () => {
+    const report = {
+      ...baseReport(),
+      proxyPosture: { configured: false, installerOk: true },
+    };
+    const parsed = IncidentReportSchema.parse(report);
+    expect(parsed.schemaVersion).toBe(1);
   });
 });
