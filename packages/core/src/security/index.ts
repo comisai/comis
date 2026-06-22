@@ -35,6 +35,10 @@ export type { ActionClassification } from "./action-classifier.js";
 export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "./audit.js";
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
 
+// Agent orchestration capabilities (Phase 210)
+export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError } from "./capability.js";
+export type { AgentCapability } from "./capability.js";
+
 // Log sanitizer
 export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
 
