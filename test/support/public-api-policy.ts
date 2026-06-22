@@ -2173,6 +2173,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AgentCapability",
       "ResolvedAutonomy",
       "ResolvedCapability",
+      // The security-layer capability primitives (Phase 210 / security/capability.ts).
+      // AGENT_CAPABILITIES + AgentCapability above are imported from this same
+      // canonical module (single source of truth — the config leaf no longer keeps
+      // its own copy). The cross-package consumer lands with Plan 04 (daemon handler
+      // gating: requireCapability on each gated handler reads injected _capabilities).
+      "checkCapability",
+      "requireCapability",
+      "CapabilityDeniedError",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

@@ -152,7 +152,6 @@ export {
   AutonomyConfigSchema,
   AutonomyMessageConfigSchema,
   AUTONOMY_PROFILES,
-  AGENT_CAPABILITIES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
 } from "../config/index.js";
@@ -305,7 +304,6 @@ export type {
   AutonomyMessageConfig,
   AutonomyProfileName,
   AutonomyMode,
-  AgentCapability,
   ResolvedAutonomy,
   ResolvedCapability,
 } from "../config/index.js";

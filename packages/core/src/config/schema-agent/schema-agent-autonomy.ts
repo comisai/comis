@@ -27,33 +27,17 @@ import { z } from "zod";
 
 // ── Orchestration-capability vocabulary ─────────────────────────────────────
 //
-// The closed `orch:*` set the autonomy profiles draw from. This is the
-// config-leaf-local copy of the v8 §3.2/§3.6 vocabulary so this leaf stays
-// self-contained (it imports nothing from sibling leaves and introduces no
-// config→security package edge). The canonical security predicate
-// (`requireCapability`) and its union live in the security layer; the strings
-// are identical by construction (the §3.8 profile table is the source of both).
-//
+// SINGLE SOURCE OF TRUTH: the closed `orch:*` set and the `AgentCapability`
+// union are owned by the security layer (`security/capability.ts`, Phase 210)
+// and imported here — the autonomy profiles below draw their caps from that one
+// canonical list. An earlier draft kept a config-leaf-local copy to avoid a
+// config→security edge, but two arrays that must stay "identical by
+// construction" is exactly the drift the closed union exists to prevent, and the
+// import is benign (one-way, into a dependency-free leaf — no package cycle).
 // NAMING: the type is `AgentCapability` (NOT bare `Capability`) — bare
 // `Capability` collides with `CapabilityId`/`ChannelCapability`/
 // `CapabilityDescriptor` already in the tree (v8 / RESEARCH A1).
-export const AGENT_CAPABILITIES = [
-  // orchestration core
-  "orch:spawn",
-  "orch:graph",
-  "orch:cron",
-  "orch:skill",
-  "orch:message",
-  // tool-surface caps (§3.6)
-  "orch:read",
-  "orch:web",
-  "orch:analyze",
-  "orch:write",
-  "orch:browse",
-] as const;
-
-/** Closed orchestration-capability union (inferred from {@link AGENT_CAPABILITIES}). */
-export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
+import { AGENT_CAPABILITIES, type AgentCapability } from "../../security/capability.js";
 
 /**
  * The eight FLOOR-CONTAINED orchestration caps the `standard` profile turns on
