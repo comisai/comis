@@ -226,6 +226,22 @@ describe("credential-validator", () => {
       });
     });
 
+    it("passes the proxy agent to WebClient when provided (egress-proxy)", async () => {
+      mockAuthTest.mockResolvedValueOnce({ ok: true, user_id: "U", team_id: "T", bot_id: "B" });
+      const mockWebClient = vi.mocked(WebClient);
+      mockWebClient.mockClear();
+      const fakeAgent = { kind: "https-proxy-agent" } as never;
+
+      await validateSlackCredentials({
+        botToken: "xoxb-test",
+        mode: "http",
+        signingSecret: "sig",
+        agent: fakeAgent,
+      });
+
+      expect(mockWebClient).toHaveBeenCalledWith("xoxb-test", { agent: fakeAgent });
+    });
+
     it("constructs WebClient with token only when apiRoot is omitted (production byte-identical)", async () => {
       mockAuthTest.mockResolvedValueOnce({ ok: true, user_id: "U", team_id: "T", bot_id: "B" });
       const mockWebClient = vi.mocked(WebClient);

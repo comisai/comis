@@ -65,6 +65,20 @@ describe("credential-validator", () => {
       }
     });
 
+    it("classifies a network/proxy reachability failure as 'network' (not a bad token)", async () => {
+      const { CredentialValidationError } = await import("../shared/credential-validation-error.js");
+      mockGetMe.mockRejectedValueOnce(new Error("Network request for 'getMe' failed!"));
+
+      const result = await validateBotToken("123:valid-but-unreachable");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(CredentialValidationError);
+        expect((result.error as InstanceType<typeof CredentialValidationError>).kind).toBe("network");
+        expect(result.error.message).toContain("unreachable");
+      }
+    });
+
     it("returns err for empty string token without making API call", async () => {
       const result = await validateBotToken("");
 
@@ -121,6 +135,38 @@ describe("credential-validator", () => {
 
       // Production-path call shape: positional token only, no options object.
       expect(mockBot).toHaveBeenCalledWith("123:token");
+    });
+
+    it("wires the proxy agent into baseFetchConfig.agent when an agent is provided", async () => {
+      // Regression: grammy's getMe() pre-flight must route through the egress
+      // proxy. Without the agent it goes direct and fails in egress-locked nets,
+      // making a valid bot token look invalid.
+      mockGetMe.mockResolvedValueOnce({ id: 1, is_bot: true, username: "bot" });
+      const mockBot = vi.mocked(Bot);
+      mockBot.mockClear();
+      const fakeAgent = { kind: "https-proxy-agent" } as unknown as Parameters<typeof validateBotToken>[2];
+
+      await validateBotToken("123:token", undefined, fakeAgent);
+
+      expect(mockBot).toHaveBeenCalledWith("123:token", {
+        client: { baseFetchConfig: { compress: true, agent: fakeAgent } },
+      });
+    });
+
+    it("combines apiRoot and the proxy agent in client options", async () => {
+      mockGetMe.mockResolvedValueOnce({ id: 1, is_bot: true, username: "bot" });
+      const mockBot = vi.mocked(Bot);
+      mockBot.mockClear();
+      const fakeAgent = { kind: "https-proxy-agent" } as unknown as Parameters<typeof validateBotToken>[2];
+
+      await validateBotToken("123:token", "http://127.0.0.1:54321", fakeAgent);
+
+      expect(mockBot).toHaveBeenCalledWith("123:token", {
+        client: {
+          apiRoot: "http://127.0.0.1:54321",
+          baseFetchConfig: { compress: true, agent: fakeAgent },
+        },
+      });
     });
   });
 

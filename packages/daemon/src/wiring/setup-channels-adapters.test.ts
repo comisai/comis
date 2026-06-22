@@ -66,6 +66,16 @@ vi.mock("@comis/channels", () => ({
   validateIMessageConnection: vi.fn(async () => ({ ok: true, value: {} })),
   validateIrcConnection: vi.fn(async () => ({ ok: true, value: { nick: "ircbot" } })),
   validateEmailCredentials: vi.fn(async () => ({ ok: true, value: { user: "bot@example.com" } })),
+  // Real class so `error instanceof CredentialValidationError` in the wiring's
+  // failure-class branch works under the mock.
+  CredentialValidationError: class CredentialValidationError extends Error {
+    kind: string;
+    constructor(message: string, kind: string, options?: ErrorOptions) {
+      super(message, options);
+      this.name = "CredentialValidationError";
+      this.kind = kind;
+    }
+  },
 }));
 
 import { bootstrapAdapters } from "./setup-channels-adapters.js";
@@ -165,7 +175,7 @@ describe("bootstrapAdapters", () => {
 
     // validateBotToken takes (token, apiRoot?); production path passes
     // undefined for the second arg.
-    expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined, undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
     );
@@ -187,7 +197,7 @@ describe("bootstrapAdapters", () => {
     });
     await bootstrapAdapters({ container, channelsLogger, mergedEnv: makeEnv() });
 
-    expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         botToken: "tok123",
@@ -424,7 +434,7 @@ describe("bootstrapAdapters", () => {
 
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
+    expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined, undefined);
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
   });
 

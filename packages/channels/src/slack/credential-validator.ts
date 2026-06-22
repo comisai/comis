@@ -14,6 +14,8 @@
 
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import type { HttpsProxyAgent } from "https-proxy-agent";
+import { classifiedValidationErr } from "../shared/credential-validation-error.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -44,6 +46,14 @@ interface SlackValidateOpts {
    * leaves undefined.
    */
   apiRoot?: string;
+  /**
+   * Optional HttpsProxyAgent for egress-proxy environments. @slack/web-api uses
+   * axios (node:https), which does NOT honor undici's global dispatcher, so the
+   * proxy must be wired explicitly — the same agent the adapter uses at runtime.
+   * Without it this auth.test() goes direct and fails in egress-locked networks
+   * even when the token is valid.
+   */
+  agent?: HttpsProxyAgent<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,11 +96,17 @@ export async function validateSlackCredentials(
   }
   try {
     const { WebClient } = await import("@slack/web-api");
-    // E2E seam: pass slackApiUrl only when redirected — production path
-    // constructs the WebClient with the same single-arg shape as before.
-    const client = opts.apiRoot
-      ? new WebClient(opts.botToken, { slackApiUrl: opts.apiRoot })
-      : new WebClient(opts.botToken);
+    // E2E seam: pass slackApiUrl only when redirected. Proxy: pass the agent so
+    // auth.test() routes through the egress proxy (axios bypasses undici's
+    // global dispatcher), mirroring the adapter's WebClient agent wiring.
+    const clientOptions = {
+      ...(opts.apiRoot ? { slackApiUrl: opts.apiRoot } : {}),
+      ...(opts.agent ? { agent: opts.agent } : {}),
+    };
+    const client =
+      Object.keys(clientOptions).length > 0
+        ? new WebClient(opts.botToken, clientOptions)
+        : new WebClient(opts.botToken);
     const result = await client.auth.test();
 
     return ok({
@@ -99,7 +115,10 @@ export async function validateSlackCredentials(
       botId: String(result.bot_id ?? ""),
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return err(new Error(`Slack auth.test() failed: ${message}`));
+    return classifiedValidationErr(
+      error,
+      "Slack auth.test() failed",
+      "Slack auth.test() unreachable (network/proxy)",
+    );
   }
 }

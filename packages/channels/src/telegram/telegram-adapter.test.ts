@@ -190,9 +190,9 @@ describe("createTelegramAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
-      // validateBotToken takes (token, apiRoot?); production path
-      // (no deps.apiRoot) passes undefined for the 2nd arg.
-      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF", undefined);
+      // validateBotToken takes (token, apiRoot?, agent?); production path here
+      // has no apiRoot and no proxy agent, so both trailing args are undefined.
+      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF", undefined, undefined);
     });
 
     it("returns err on invalid token", async () => {

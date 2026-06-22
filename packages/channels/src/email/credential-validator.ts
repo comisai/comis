@@ -9,7 +9,8 @@
  */
 
 import { ImapFlow } from "imapflow";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, type Result } from "@comis/shared";
+import { classifiedValidationErr } from "../shared/credential-validation-error.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -20,6 +21,14 @@ export interface EmailCredentialOpts {
   imapPort: number;
   secure: boolean;
   auth: { user: string; pass?: string; accessToken?: string };
+  /**
+   * Optional proxy URL (credential-bearing) for the IMAP connection. ImapFlow
+   * connects over raw TCP (with HTTP CONNECT for proxies) and does NOT honor
+   * undici's global dispatcher, so the proxy must be passed explicitly —
+   * mirrors the adapter's `proxy:` wiring. Without it this connect test goes
+   * direct and fails in egress-locked networks even with valid credentials.
+   */
+  proxyUrl?: string;
 }
 
 export interface EmailCredentialInfo {
@@ -54,6 +63,8 @@ export async function validateEmailCredentials(
     auth,
     // Disable ImapFlow's built-in logger — we use external logging
     logger: false as never,
+    // Route through the egress proxy when configured (parity with the adapter).
+    ...(opts.proxyUrl ? { proxy: opts.proxyUrl } : {}),
   });
 
   try {
@@ -61,11 +72,10 @@ export async function validateEmailCredentials(
     await client.logout();
     return ok({ user: opts.auth.user });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return err(
-      new Error(
-        `Email credential validation failed for ${opts.auth.user}: ${message}`,
-      ),
+    return classifiedValidationErr(
+      e,
+      `Email credential validation failed for ${opts.auth.user}`,
+      `Email IMAP unreachable (network/proxy) for ${opts.auth.user}`,
     );
   }
 }

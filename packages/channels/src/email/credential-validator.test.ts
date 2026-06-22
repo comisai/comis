@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 const mockFns = {
   connect: vi.fn(),
   logout: vi.fn(),
+  ctorOptions: [] as Array<Record<string, unknown>>,
 };
 
 vi.mock("imapflow", () => {
@@ -24,7 +25,8 @@ vi.mock("imapflow", () => {
       connect: Mock;
       logout: Mock;
 
-      constructor() {
+      constructor(opts: Record<string, unknown>) {
+        mockFns.ctorOptions.push(opts);
         this.connect = mockFns.connect;
         this.logout = mockFns.logout;
       }
@@ -34,6 +36,7 @@ vi.mock("imapflow", () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFns.ctorOptions = [];
   mockFns.connect.mockResolvedValue(undefined);
   mockFns.logout.mockResolvedValue(undefined);
 });
@@ -74,6 +77,46 @@ describe("validateEmailCredentials", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.message).toContain("Connection refused");
+    }
+  });
+
+  it("passes proxy to ImapFlow when proxyUrl is set, and omits it otherwise", async () => {
+    const { validateEmailCredentials } = await getValidator();
+    await validateEmailCredentials({
+      imapHost: "imap.example.com",
+      imapPort: 993,
+      secure: true,
+      auth: { user: "user@example.com", pass: "p" },
+      proxyUrl: "http://proxy.corp:3128",
+    });
+    expect(mockFns.ctorOptions[0]).toMatchObject({ proxy: "http://proxy.corp:3128" });
+
+    mockFns.ctorOptions = [];
+    await validateEmailCredentials({
+      imapHost: "imap.example.com",
+      imapPort: 993,
+      secure: true,
+      auth: { user: "user@example.com", pass: "p" },
+    });
+    expect(mockFns.ctorOptions[0]).not.toHaveProperty("proxy");
+  });
+
+  it("classifies an unreachable IMAP host as a network failure (CredentialValidationError.kind)", async () => {
+    const { CredentialValidationError } = await import("../shared/credential-validation-error.js");
+    mockFns.connect.mockRejectedValue(new Error("connect ETIMEDOUT 1.2.3.4:993"));
+
+    const { validateEmailCredentials } = await getValidator();
+    const result = await validateEmailCredentials({
+      imapHost: "imap.example.com",
+      imapPort: 993,
+      secure: true,
+      auth: { user: "user@example.com", pass: "p" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(CredentialValidationError);
+      expect((result.error as InstanceType<typeof CredentialValidationError>).kind).toBe("network");
     }
   });
 });

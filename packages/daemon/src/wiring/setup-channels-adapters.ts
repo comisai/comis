@@ -30,6 +30,7 @@ import {
   validateIMessageConnection,
   validateIrcConnection,
   validateEmailCredentials,
+  CredentialValidationError,
   type TelegramPluginHandle,
   type LinePluginHandle,
   type EmailAdapterDeps,
@@ -87,6 +88,26 @@ export async function bootstrapAdapters(deps: {
   const proxyCaPem = resolveProxyCaPem(proxyCfg.tls?.caFile);
   const proxyOpts = proxyCaPem ? { ca: proxyCaPem } : {};
 
+  // Branch a credential-validation failure by class so the operator hint points
+  // at the real cause: a network/proxy reachability failure is NOT a bad
+  // credential. Network failures get a connectivity/proxy hint and errorKind
+  // "network"; everything else keeps the credential hint and errorKind "auth".
+  const validationFailureLog = (
+    error: Error,
+    authHint: string,
+    networkHint: string,
+  ): { err: string; hint: string; errorKind: "network" | "auth" } => {
+    const isNetwork =
+      error instanceof CredentialValidationError && error.kind === "network";
+    return {
+      err: error.message,
+      hint: isNetwork ? networkHint : authHint,
+      errorKind: isNetwork ? "network" : "auth",
+    };
+  };
+  const PROXY_HINT =
+    "Cannot reach the channel API — check egress connectivity / proxy (HTTPS_PROXY or config.yaml proxy.proxyUrl), not the credential";
+
   const adaptersByType = new Map<string, ChannelPort>();
   const channelPlugins = new Map<string, ChannelPluginPort>();
   let tgPlugin: TelegramPluginHandle | undefined;
@@ -112,9 +133,13 @@ export async function bootstrapAdapters(deps: {
       const telegramApiRoot = channelConfig.telegram.apiRoot && channelConfig.telegram.apiRoot.length > 0
         ? channelConfig.telegram.apiRoot
         : undefined;
-      const validation = await validateBotToken(token, telegramApiRoot);
+      // Resolve the proxy agent BEFORE validation: grammy's getMe() pre-flight
+      // must route through the same egress proxy as the runtime adapter, else it
+      // goes direct and fails in egress-locked networks (the bot looks "invalid"
+      // when it is really just unreachable).
+      const telegramProxyAgent = resolveHttpsProxyAgent("api.telegram.org", proxyEnv, proxyOpts);
+      const validation = await validateBotToken(token, telegramApiRoot, telegramProxyAgent);
       if (validation.ok) {
-        const telegramProxyAgent = resolveHttpsProxyAgent("api.telegram.org", proxyEnv, proxyOpts);
         const plugin = createTelegramPlugin({
           botToken: token,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
@@ -128,7 +153,7 @@ export async function bootstrapAdapters(deps: {
         channelPlugins.set("telegram", plugin);
         channelsLogger.info({ channelType: "telegram", botUsername: validation.value.username }, "Channel adapter initialized");
       } else {
-        channelsLogger.warn({ err: validation.error.message, hint: "Verify TELEGRAM_BOT_TOKEN is valid via @BotFather", errorKind: "auth" as const }, "Telegram credential validation failed");
+        channelsLogger.warn(validationFailureLog(validation.error, "Verify TELEGRAM_BOT_TOKEN is valid via @BotFather", PROXY_HINT), "Telegram credential validation failed");
       }
     } else {
       channelsLogger.warn({ hint: "Set botToken in channels.telegram config or TELEGRAM_BOT_TOKEN env var", errorKind: "config" as const }, "Telegram enabled but no bot token configured");
@@ -180,15 +205,20 @@ export async function bootstrapAdapters(deps: {
       const slackApiRoot = channelConfig.slack.apiRoot && channelConfig.slack.apiRoot.length > 0
         ? channelConfig.slack.apiRoot
         : undefined;
+      // Resolve the proxy agent BEFORE validation: @slack/web-api uses axios,
+      // which bypasses undici's global dispatcher, so auth.test() must use the
+      // same agent as the runtime adapter or it goes direct and fails in
+      // egress-locked networks.
+      const slackProxyAgent = resolveHttpsProxyAgent("slack.com", proxyEnv, proxyOpts);
       const validation = await validateSlackCredentials({
         botToken: token,
         mode,
         appToken,
         signingSecret,
         ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
+        ...(slackProxyAgent ? { agent: slackProxyAgent } : {}),
       });
       if (validation.ok) {
-        const slackProxyAgent = resolveHttpsProxyAgent("slack.com", proxyEnv, proxyOpts);
         const plugin = createSlackPlugin({
           botToken: token,
           mode,
@@ -202,7 +232,7 @@ export async function bootstrapAdapters(deps: {
         channelPlugins.set("slack", plugin);
         channelsLogger.info({ channelType: "slack", mode, botUserId: validation.value.userId }, "Channel adapter initialized");
       } else {
-        channelsLogger.warn({ err: validation.error.message, hint: "Verify Slack credentials and mode-specific tokens", errorKind: "auth" as const }, "Slack credential validation failed");
+        channelsLogger.warn(validationFailureLog(validation.error, "Verify Slack credentials and mode-specific tokens", PROXY_HINT), "Slack credential validation failed");
       }
     } else {
       channelsLogger.warn({ hint: "Set botToken in channels.slack config or SLACK_BOT_TOKEN env var", errorKind: "config" as const }, "Slack enabled but no bot token configured");
@@ -355,20 +385,24 @@ export async function bootstrapAdapters(deps: {
         auth.pass = password;
       }
 
+      // Resolve the proxy per host BEFORE validation: imapHost drives the IMAP
+      // connection, smtpHost the SMTP connection. They can differ in NO_PROXY /
+      // SSRF status, so a single shared decision would route one of them wrong.
+      // ImapFlow bypasses undici's global dispatcher, so the IMAP connect test
+      // must get the proxy explicitly or it goes direct and fails in
+      // egress-locked networks.
+      const emailImapProxyUrl = resolveProxyUrl(imapHost, proxyEnv);
+      const emailSmtpProxyUrl = resolveProxyUrl(smtpHost, proxyEnv);
       const validation = await validateEmailCredentials({
         imapHost,
         imapPort: emailCfg.imapPort,
         secure: emailCfg.secure,
         auth: auth as { user: string; pass?: string; accessToken?: string },
+        ...(emailImapProxyUrl ? { proxyUrl: emailImapProxyUrl } : {}),
       });
 
       if (validation.ok) {
         const attachmentDir = safePath(safePath(os.homedir(), ".comis"), "email-attachments");
-        // Resolve the proxy per host: imapHost drives the IMAP connection,
-        // smtpHost the SMTP connection. They can differ in NO_PROXY / SSRF
-        // status, so a single shared decision would route one of them wrong.
-        const emailImapProxyUrl = resolveProxyUrl(imapHost, proxyEnv);
-        const emailSmtpProxyUrl = resolveProxyUrl(smtpHost, proxyEnv);
         const plugin = createEmailPlugin({
           address,
           imapHost,
@@ -389,7 +423,7 @@ export async function bootstrapAdapters(deps: {
         channelPlugins.set("email", plugin);
         channelsLogger.info({ channelType: "email", address }, "Channel adapter initialized");
       } else {
-        channelsLogger.warn({ err: validation.error.message, hint: "Verify IMAP host/port and credentials for email channel", errorKind: "auth" as const }, "Email credential validation failed");
+        channelsLogger.warn(validationFailureLog(validation.error, "Verify IMAP host/port and credentials for email channel", PROXY_HINT), "Email credential validation failed");
       }
     } else {
       channelsLogger.warn({ hint: "Set address, imapHost, and smtpHost in channels.email config", errorKind: "config" as const }, "Email enabled but missing required fields (address, imapHost, smtpHost)");

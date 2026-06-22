@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, err, type Result } from "@comis/shared";
 import { Bot } from "grammy";
+import type { HttpsProxyAgent } from "https-proxy-agent";
+import { classifiedValidationErr } from "../shared/credential-validation-error.js";
 
 /**
  * Bot identity information returned after successful token validation.
@@ -26,11 +28,18 @@ export interface BotInfo {
  * @param token - The Telegram bot token (e.g. "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
  * @param apiRoot - Optional Bot API root URL override. Production: undefined
  *   (grammy defaults to https://api.telegram.org). E2E tests: 127.0.0.1 mock.
+ * @param agent - Optional HttpsProxyAgent for egress-proxy environments. grammy
+ *   uses a node-fetch-style transport that does NOT honor undici's global
+ *   dispatcher, so the proxy must be wired explicitly via `baseFetchConfig.agent`
+ *   — the same agent the adapter uses at runtime. MUST be passed when a proxy is
+ *   configured, otherwise this pre-flight getMe() goes direct and fails in
+ *   egress-locked networks even though the bot token is valid.
  * @returns BotInfo on success, Error on failure
  */
 export async function validateBotToken(
   token: string,
   apiRoot?: string,
+  agent?: HttpsProxyAgent<string>,
 ): Promise<Result<BotInfo, Error>> {
   if (token.trim() === "") {
     return err(new Error("Invalid Telegram credentials: token must not be empty"));
@@ -39,7 +48,17 @@ export async function validateBotToken(
     // E2E seam: passing the grammy `client.apiRoot` option only when the
     // caller redirected — production callers leave `apiRoot` undefined and
     // grammy uses its default (https://api.telegram.org).
-    const bot = apiRoot ? new Bot(token, { client: { apiRoot } }) : new Bot(token);
+    // Proxy: mirror the adapter's baseFetchConfig.agent wiring so the pre-flight
+    // getMe() routes through the configured egress proxy.
+    const baseFetchConfig = agent ? { compress: true, agent } : undefined;
+    const clientOptions = {
+      ...(apiRoot ? { apiRoot } : {}),
+      ...(baseFetchConfig ? { baseFetchConfig } : {}),
+    };
+    const bot =
+      Object.keys(clientOptions).length > 0
+        ? new Bot(token, { client: clientOptions })
+        : new Bot(token);
     const me = await bot.api.getMe();
     return ok({
       id: me.id,
@@ -47,8 +66,14 @@ export async function validateBotToken(
       isBot: me.is_bot,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return err(new Error(`Invalid Telegram bot token: ${message}`));
+    // Branch by failure class: a network/proxy reachability failure is NOT a bad
+    // token — surfacing "invalid token" sent operators the wrong way during the
+    // egress-proxy incident.
+    return classifiedValidationErr(
+      error,
+      "Invalid Telegram bot token",
+      "Telegram getMe() unreachable (network/proxy)",
+    );
   }
 }
 

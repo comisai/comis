@@ -48,8 +48,9 @@ export async function startLifecycle(
 ): Promise<Result<void, Error>> {
   // Fail fast on invalid token. Pass apiRoot if set so the in-adapter
   // validation also targets the redirection mock; otherwise the validator
-  // hits api.telegram.org and 401s in E2E tests.
-  const tokenResult = await validateBotToken(deps.botToken, deps.apiRoot);
+  // hits api.telegram.org and 401s in E2E tests. Pass deps.agent so the
+  // validation routes through the egress proxy when one is configured.
+  const tokenResult = await validateBotToken(deps.botToken, deps.apiRoot, deps.agent);
   if (!tokenResult.ok) {
     deps.logger.error(
       {
