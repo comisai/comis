@@ -212,6 +212,15 @@ export class BwrapProvider implements SandboxProvider {
       // The skill-validation jail uses this so a synthesized script cannot reach
       // the network during dynamic validation (T-201-35).
       args.push("--unshare-net");
+    } else if (networkMode === "cap-socket") {
+      // cap-socket (Phase 211, ENDPOINT-03): kernel-enforced network namespace;
+      // the capability-lease loopback endpoint's 0600 unix socket is reachable
+      // via bind-mount only. Mirrors broker-only arg-order EXACTLY — --unshare-net
+      // FIRST, then the socket --bind — because a netns affects IP sockets only,
+      // so the bound unix path stays reachable while all general IP egress is cut.
+      args.push("--unshare-net");
+      const { capSocketPath } = opts.network as { mode: "cap-socket"; capSocketPath: string };
+      args.push("--bind", capSocketPath, capSocketPath);
     } else {
       // exhaustiveness guard — TypeScript will flag this if the
       // SandboxOptions.network union gains a new member without updating here.
