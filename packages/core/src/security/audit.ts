@@ -44,6 +44,9 @@ export const AUDIT_KINDS = [
   "auth_mutation",
   /** A sandbox downgrade was refused (fail-closed) — sandbox governance. */
   "sandbox_downgrade_refused",
+  /** A capability or deny-by-origin gate rejected a call — capability.ts /
+   *  assert-not-agent-origin (Phase 210). */
+  "capability_denied",
 ] as const;
 
 /** The closed audit event-family union (inferred from {@link AUDIT_KINDS}). */
@@ -65,6 +68,7 @@ export function kindIsSecuritySignal(kind: AuditKind): boolean {
     case "command_blocked":
     case "hook_blocked":
     case "sandbox_downgrade_refused":
+    case "capability_denied":
       return true;
     case "audit":
     case "auth_mutation":

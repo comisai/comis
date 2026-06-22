@@ -52,9 +52,18 @@ describe("stripInternalFields()", () => {
     expect(Object.keys(result)).toHaveLength(0);
   });
 
-  it("exposes 15 dispatcher-injected internal field names in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(15);
+  it("exposes 16 dispatcher-injected internal field names in sorted order", () => {
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(16);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
+  });
+
+  it("includes `_capabilities` (the 16th field) and projects it away from external callers (T-210-02)", () => {
+    // An external WS/REST caller must NOT be able to forge orchestration caps:
+    // `_capabilities` is dispatcher-injected, so the strip drops it.
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_capabilities");
+    const result = stripInternalFields({ _capabilities: ["orch:spawn"], foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._capabilities).toBeUndefined();
   });
 });
