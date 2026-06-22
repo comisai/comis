@@ -19,7 +19,12 @@ import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
 import { PreconditionError, ValidationError } from "./errors.js";
-import { RequiredToolsUnreachableError } from "@comis/core";
+import { RequiredToolsUnreachableError, API_CONTRACTS_ORDERED } from "@comis/core";
+// ORIGIN-01 deny-by-origin chokepoint: the in-process agent loop dispatches
+// straight through this closure (bypassing the gateway scope-router's
+// checkScope), so the positive control-plane boundary MUST live here in the
+// dispatch closure — the convergence point of the in-process and gateway legs.
+import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
@@ -137,6 +142,23 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
   if (err instanceof RequiredToolsUnreachableError) return { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" };
   return { errorKind: "internal", hint: "Check the RPC method handler and its dependencies", level: "error" };
 }
+
+// ---------------------------------------------------------------------------
+// ORIGIN-01 deny-by-origin: the authoritative admin-method set.
+// ---------------------------------------------------------------------------
+//
+// Derived ONCE from the contract registry (`scopes.includes("admin")`) — the
+// single source of truth for the ~146 admin-scoped control-plane methods. This
+// is drift-proof: a NEW admin contract is automatically covered by the
+// chokepoint below; there is NO hand-maintained method list to fall out of
+// sync. The chokepoint (in the dispatch closure) calls `assertNotAgentOrigin`
+// for exactly the methods in this set, so an agent-origin (`_agentId`-bearing)
+// call can never reach an admin handler, INDEPENDENT of its ALS `_trustLevel`
+// (v8 §3.1 / §22.3 floor item 1). Non-admin methods are NOT in this set, so an
+// agent's own `_agentId` rides them untouched for self-scoping (Pitfall 2).
+const ADMIN_METHODS: ReadonlySet<string> = new Set(
+  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+);
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -475,6 +497,19 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       throw new Error(`Unknown RPC method: ${method}`);
     }
     try {
+      // ORIGIN-01 deny-by-origin chokepoint. BOTH the in-process agent path
+      // (createAgentRpcCall -> the same injected rpcCall) AND the gateway path
+      // funnel through this one closure to reach every handler — so this is the
+      // single seam at which an agent-origin call to an admin-scoped method is
+      // rejected. `params._agentId` is the trusted agent-origin signal (Plan 03
+      // strips external forgeries, so presence == agent-origin). The guard fires
+      // only for ADMIN_METHODS; a non-admin method's `_agentId` passes untouched.
+      // assertNotAgentOrigin emits the content-free audited denial and throws;
+      // the catch below logs + re-throws it as the JSON-RPC error (so the denial
+      // is both audited AND structured-logged for full observability).
+      if (ADMIN_METHODS.has(method)) {
+        assertNotAgentOrigin(params, deps, method);
+      }
       return await handler(params);
     } catch (err) {
       // Classify by raw object (instanceof) and severity-dispatch

@@ -32,15 +32,19 @@
  * @module
  */
 import { systemNowMs } from "@comis/core";
+import type { EventMap } from "@comis/core";
 
 /**
  * The minimal structural deps shape this guard reads. `ApiDispatchDeps`
- * (rpc-dispatch's `deps`) is assignable to this by structural subtyping, so
- * the chokepoint can call the guard with its own deps unchanged.
+ * (rpc-dispatch's `deps`, whose `container.eventBus` is the `TypedEventBus`) is
+ * assignable to this by structural subtyping, so the chokepoint can call the
+ * guard with its own deps unchanged. `emit` is typed to the `"audit:event"`
+ * channel specifically (the TypedEventBus generic `emit` is assignable to it),
+ * which also strongly types the denial payload at the emit site below.
  */
 export interface AssertNotAgentOriginDeps {
   container: {
-    eventBus: { emit: (event: string, payload: unknown) => unknown };
+    eventBus: { emit: (event: "audit:event", payload: EventMap["audit:event"]) => unknown };
     config: { tenantId?: string };
   };
 }
