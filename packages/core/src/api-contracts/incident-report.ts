@@ -15,6 +15,7 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+import { IncidentProxyPostureSchema, type IncidentProxyPosture } from "./incident-report-proxy-posture.js";
 
 /**
  * The §6.3 `IncidentReport` wire shape (the `obs.explain` response).
@@ -493,22 +494,7 @@ export const IncidentReportSchema = z.object({
    *  (sanitizeProxyUrl() output — never a raw URL), booleans, and closed enum
    *  strings — the content-free invariant. The `voice?` / `learning?`
    *  presence-conditional spread mold. */
-  proxyPosture: z
-    .object({
-      /** true when a proxy was configured (env var or config.proxy.proxyUrl). */
-      configured: z.boolean(),
-      /** sanitizeProxyUrl() output — never the raw proxy URL. Absent when not configured. */
-      maskedUrl: z.string().optional(),
-      /** The effective loopback mode (from ProxyBootConfig.loopbackMode). */
-      loopbackMode: z.string().optional(),
-      /** Where the proxy URL was sourced (env var or config.yaml). */
-      source: z.enum(["env", "config", "none"]).optional(),
-      /** true when installGlobalProxyDispatcher() completed without error. */
-      installerOk: z.boolean(),
-      /** The configKey string from ProxyConfigError when installerOk is false. */
-      installerError: z.string().optional(),
-    })
-    .optional(),
+  proxyPosture: IncidentProxyPostureSchema.optional(),
 });
 
 /** The §6.3 IncidentReport (the `obs.explain` response). Inferred from the Zod schema. */
@@ -781,14 +767,7 @@ export interface IncidentSignals {
    * assembleIncidentReport. Absent ⇒ no proxy configured (zero-config).
    * maskedUrl + booleans/closed-enum strings ONLY — never a raw proxy URL.
    */
-  proxyPosture?: {
-    configured: boolean;
-    maskedUrl?: string;
-    loopbackMode?: string;
-    source?: "env" | "config" | "none";
-    installerOk: boolean;
-    installerError?: string;
-  };
+  proxyPosture?: IncidentProxyPosture;
 }
 
 /**

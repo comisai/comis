@@ -34,7 +34,7 @@ import {
  *   when no proxy env is set or the install failed (best-effort, never throws).
  */
 export function installWizardProxyFromEnv(
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined>,
 ): boolean {
   try {
     // No proxy env → leave global fetch untouched (byte-identical default path).

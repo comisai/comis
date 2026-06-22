@@ -1,6 +1,6 @@
 {
-  "totalMinified": 128448,
-  "totalGzipped": 12785,
+  "totalMinified": 128747,
+  "totalGzipped": 12851,
   "budget": {
     "minified": 129000,
     "gzipped": 38912
@@ -152,7 +152,7 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 9072,
+    "obs.explain": 9410,
     "obs.fleet.health": 3502,
     "obs.getCacheStats": 358,
     "obs.reset": 571,

@@ -24,7 +24,7 @@ import {
   validateDiscordLive,
   validateSlackLive,
   validateLineLive,
-} from "./06-channels.js";
+} from "./06-channels-live-validation.js";
 
 // ---------- Helpers ----------
 

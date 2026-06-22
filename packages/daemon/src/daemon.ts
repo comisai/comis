@@ -172,7 +172,7 @@ import { createTokenRegistry } from "./api/token-handlers.js";
 // assembler directly under daemon authority — no admin RPC, no admin trust).
 import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "./api/obs-handlers/index.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, SessionStoreBridge } from "./daemon-types.js";
-import { createEmptyBootContext } from "./daemon-types.js";
+import { createEmptyBootContext } from "./daemon-boot-context.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";

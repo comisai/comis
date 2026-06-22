@@ -8453,6 +8453,39 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "offloads"
           ],
           "additionalProperties": false
+        },
+        "proxyPosture": {
+          "type": "object",
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "maskedUrl": {
+              "type": "string"
+            },
+            "loopbackMode": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "env",
+                "config",
+                "none"
+              ]
+            },
+            "installerOk": {
+              "type": "boolean"
+            },
+            "installerError": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "configured",
+            "installerOk"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
