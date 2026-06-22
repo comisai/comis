@@ -2189,6 +2189,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "checkCapability",
       "requireCapability",
       "CapabilityDeniedError",
+      // HANDLER_CAPABILITY_MAP — the single auditable method→capability
+      // source-of-truth (CAP-04, security/capability.ts). It is consumed TODAY
+      // inside @comis/core (the capability layer's own invariant tests assert
+      // map↔gate parity) and by the daemon's per-handler gate, but the daemon's
+      // _capabilities injection (Plan 04) reads it via the resolveAutonomy →
+      // _capabilities flow rather than name-importing the map, so the
+      // cross-package name-consumer scan sees no importer yet. The full
+      // cross-package consumers (an operator-facing capability-audit surface that
+      // enumerates the map, and the gateway-side gate enumeration) land in Phase
+      // 211/212. HandlerCapabilityClassification + GatedMethodName are the map's
+      // value/key shape types (erased at runtime, never named cross-package).
+      // Shrink each entry as a real cross-package name-importer lands.
+      "HANDLER_CAPABILITY_MAP",
+      "HandlerCapabilityClassification",
+      "GatedMethodName",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

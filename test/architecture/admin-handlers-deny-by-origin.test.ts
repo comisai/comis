@@ -222,7 +222,7 @@ describe("ORIGIN-01 — single deny-by-origin chokepoint in createRpcDispatch", 
 });
 
 describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin handler", () => {
-  it("ORIGIN-03-A1: the ONLY daemon production site injecting `_agentId:` into an rpcCall(...) params object is wiring/setup-tools.ts (createAgentRpcCall)", () => {
+  it("ORIGIN-03-A1: the ONLY daemon production site injecting `_agentId:` into an rpcCall(...) params object is wiring/setup-tools-capabilities.ts (createAgentRpcCall)", () => {
     // Walk daemon/wiring/*.ts (the in-process dispatch wiring) and find every
     // `_agentId:` PropertyAssignment whose enclosing CallExpression is
     // `rpcCall(...)` — i.e. a fresh agent-origin injection into a dispatched
@@ -270,7 +270,11 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
     // pinned createAgentRpcCall file.
     expect(injectorFiles.size, `injector sites found:\n${sites.map((s) => `  ${s.file}:${s.line}`).join("\n")}`).toBeGreaterThan(0);
 
-    const expectedInjector = resolve(WIRING_DIR, "setup-tools.ts");
+    // createAgentRpcCall (the sole audited injector) was extracted from
+    // setup-tools.ts to setup-tools-capabilities.ts for the file-size cap
+    // (Phase 210-04 follow-up). The injection logic is byte-identical; only its
+    // file moved, so the pinned expectation moves with it.
+    const expectedInjector = resolve(WIRING_DIR, "setup-tools-capabilities.ts");
     const unexpected = [...injectorFiles].filter((f) => f !== expectedInjector);
     const violations: ViolationCitation[] = unexpected.map((f) => ({
       file: f.replace(REPO_ROOT + "/", ""),
@@ -280,17 +284,17 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
       violations,
       formatViolations({
         description:
-          "ORIGIN-03: the sole legitimate _agentId injector into an rpcCall(...) is createAgentRpcCall in wiring/setup-tools.ts. A new injector site would create an un-audited agent-origin path; route the call through createAgentRpcCall instead.",
+          "ORIGIN-03: the sole legitimate _agentId injector into an rpcCall(...) is createAgentRpcCall in wiring/setup-tools-capabilities.ts. A new injector site would create an un-audited agent-origin path; route the call through createAgentRpcCall instead.",
         violations,
         suggestedFix:
-          "Inject _agentId only via createAgentRpcCall (setup-tools.ts). Any other in-process rpcCall must not set _agentId.",
+          "Inject _agentId only via createAgentRpcCall (setup-tools-capabilities.ts). Any other in-process rpcCall must not set _agentId.",
         designRef: "v8 ORIGIN-03 / §3.1",
       }),
     ).toEqual([]);
 
     // Pin the expectation explicitly: exactly the one file.
     expect([...injectorFiles].map((f) => f.replace(REPO_ROOT + "/", ""))).toEqual([
-      "packages/daemon/src/wiring/setup-tools.ts",
+      "packages/daemon/src/wiring/setup-tools-capabilities.ts",
     ]);
   });
 });
