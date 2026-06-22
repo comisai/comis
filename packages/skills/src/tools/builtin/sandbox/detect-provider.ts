@@ -51,7 +51,22 @@ function isContainer(): boolean {
  * error message (e.g. "Creating new namespace failed: Operation not
  * permitted") without having to enable DEBUG logging.
  */
-function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals | null } {
+/**
+ * Spawn `bwrap … /bin/true` against the production SYSTEM_RO_PATHS bind list with
+ * the given isolation flags + `extraArgs`, returning whether the namespace
+ * construction succeeded plus the raw bwrap stderr/signal. The single, DRY probe
+ * body shared by {@link bwrapSmokeTest} (the boot-time provider detection) and
+ * {@link namespacePreflight} (the JAIL-03 autonomy preflight) — they differ only
+ * in the isolation flags passed, so the bind list + spawn options never drift.
+ *
+ * The base flags `--unshare-user --unshare-pid --proc /proc` are the kernel-
+ * feature combo every jail needs; callers ADD to them (the preflight adds
+ * `--unshare-net`). LINUX-ONLY: callers must gate on `process.platform` (bwrap
+ * does not exist on macOS); this helper assumes a Linux host.
+ */
+function bwrapNamespaceProbe(
+  extraArgs: readonly string[],
+): { ok: boolean; stderr: string; signal: NodeJS.Signals | null } {
   const sysBinds = SYSTEM_RO_PATHS
     .filter((p) => existsSync(p))
     .flatMap((p) => ["--ro-bind", p, p]);
@@ -60,6 +75,7 @@ function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals
     [
       "--unshare-user",
       "--unshare-pid",
+      ...extraArgs,
       "--proc", "/proc",
       ...sysBinds,
       "--tmpfs", "/tmp",
@@ -71,6 +87,66 @@ function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals
     ok: r.status === 0,
     stderr: (r.stderr ?? "").trim(),
     signal: r.signal ?? null,
+  };
+}
+
+function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals | null } {
+  // No extra isolation flags — the original smoke-test combo, byte-identical.
+  return bwrapNamespaceProbe([]);
+}
+
+/**
+ * Result of the JAIL-03 namespace preflight. The `namespacePreflightOk` field is
+ * structurally assignable to `@comis/core`'s `AutonomyPreflightResult` — feed
+ * this straight into the SHIPPED `degradeAutonomy` (PROFILE-03, Phase 210) with
+ * no adapter. The extra `stderr`/`signal` carry the bwrap error onto the boot
+ * signal so an operator sees WHY the jail could not be built without enabling
+ * DEBUG (matching the {@link detectSandboxProvider} warn-with-stderr pattern).
+ */
+export interface NamespacePreflightResult {
+  /** Whether the unprivileged user namespace + `--unshare-net` jail could be built. */
+  readonly namespacePreflightOk: boolean;
+  /** The raw bwrap stderr (or the non-Linux explanation) — non-empty on failure. */
+  readonly stderr: string;
+  /** The signal bwrap died on, if any. */
+  readonly signal: NodeJS.Signals | null;
+}
+
+/**
+ * JAIL-03 namespace preflight — PRODUCE the `namespacePreflightOk` boolean the
+ * SHIPPED `degradeAutonomy` (PROFILE-03) consumes. Extends the boot smoke test
+ * with `--unshare-net` (the net-new isolation the `orchestrate` jail requires)
+ * + the unprivileged-user-namespace availability check.
+ *
+ * On a non-Linux host the jail cannot be built at all, so this is HONEST: it
+ * returns `namespacePreflightOk: false` with an explanatory `stderr` (never a
+ * silent `true`). The daemon boot path then calls `degradeAutonomy`, which
+ * downshifts any autonomy-bearing posture to `assistant` and SURFACES a WARN +
+ * `doctor` finding — never a silent unjailed fallback.
+ *
+ * 211 ONLY PRODUCES the boolean — it NEVER re-implements the downshift (that is
+ * PROFILE-03 in `@comis/core`). The daemon-side wiring that calls this at boot
+ * then feeds `degradeAutonomy` per agent (the `emit-autonomy-boot-log` hook
+ * already accepts a `namespacePreflightOk` input) lands in 211-06.
+ *
+ * @returns the preflight result (`namespacePreflightOk` + the bwrap stderr/signal).
+ */
+export function namespacePreflight(): NamespacePreflightResult {
+  if (process.platform !== "linux") {
+    return {
+      namespacePreflightOk: false,
+      stderr: "namespace preflight requires Linux (unprivileged user namespaces)",
+      signal: null,
+    };
+  }
+  // Linux: the net-new `--unshare-net` on top of the smoke-test combo — the
+  // orchestrate jail isolates the network namespace, so the preflight must
+  // prove the host can create one.
+  const r = bwrapNamespaceProbe(["--unshare-net"]);
+  return {
+    namespacePreflightOk: r.ok,
+    stderr: r.stderr,
+    signal: r.signal,
   };
 }
 
