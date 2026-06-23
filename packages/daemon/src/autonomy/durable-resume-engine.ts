@@ -65,9 +65,6 @@ import {
 // invoking it.
 void attenuateCaps;
 
-/** The closed errorKind union for every failure branch (§2.7). */
-type ErrorKind = "precondition" | "dependency" | "platform" | "internal";
-
 /**
  * The content-free operator notification (HB-03). Reuses the background-task
  * NotifyFn shape: ids + a reason + a hint, NEVER a message body. Fired
@@ -188,7 +185,7 @@ export async function reconcileLedgerRow(
       hint: "verify the platform manually; the run is parked",
     });
     logger.warn(
-      { rootRunId, stepIndex, reconcileOutcome: "unresolved", errorKind: "platform" satisfies ErrorKind, err: outcomeResult.error, hint: "reconcile query errored — parked + escalated, never replayed" },
+      { rootRunId, stepIndex, reconcileOutcome: "unresolved", errorKind: "platform" as const, err: outcomeResult.error, hint: "reconcile query errored — parked + escalated, never replayed" },
       "Durable reconcile: query failed, parked unresolved",
     );
     return ok(undefined);
@@ -221,14 +218,14 @@ export async function reconcileLedgerRow(
         const failed = await ledger.markFailed(rootRunId, stepIndex, "permanent");
         if (!failed.ok) return failLedger(logger, failed.error, "markFailed", rootRunId, stepIndex);
         logger.warn(
-          { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "precondition" satisfies ErrorKind, hint: "permanent send error — marked failed, retry budget skipped" },
+          { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "precondition" as const, hint: "permanent send error — marked failed, retry budget skipped" },
           "Durable reconcile: not_sent replay hit a permanent error → failed",
         );
         return ok(undefined);
       }
       // Transient — leave the row in place; the next tick/boot retries it.
       logger.warn(
-        { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "platform" satisfies ErrorKind, err: replayed.error, hint: "transient send error — left for the next recovery tick" },
+        { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "platform" as const, err: replayed.error, hint: "transient send error — left for the next recovery tick" },
         "Durable reconcile: not_sent replay transiently failed → deferred",
       );
       return ok(undefined);
@@ -264,7 +261,7 @@ function failLedger(
   stepIndex: number,
 ): Result<void, Error> {
   logger.error(
-    { rootRunId, stepIndex, method, errorKind: "dependency" satisfies ErrorKind, err: cause, hint: "ledger write failed during reconcile — row left in place for the next tick" },
+    { rootRunId, stepIndex, method, errorKind: "dependency" as const, err: cause, hint: "ledger write failed during reconcile — row left in place for the next tick" },
     "Durable reconcile: ledger write failed",
   );
   return err(cause);
@@ -332,7 +329,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     const marked = await durableRuns.markOrphaned(rootRunId, reason);
     if (!marked.ok) {
       logger.error(
-        { rootRunId, reason, errorKind: "dependency" satisfies ErrorKind, err: marked.error, hint: "markOrphaned write failed — operator still notified out-of-band" },
+        { rootRunId, reason, errorKind: "dependency" as const, err: marked.error, hint: "markOrphaned write failed — operator still notified out-of-band" },
         "Durable resume: markOrphaned failed",
       );
     }
@@ -349,7 +346,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
       const backlogResult = await durableRuns.listResumable();
       if (!backlogResult.ok) {
         logger.error(
-          { errorKind: "dependency" satisfies ErrorKind, err: backlogResult.error, hint: "listResumable failed — no recovery this pass; the next boot/tick retries" },
+          { errorKind: "dependency" as const, err: backlogResult.error, hint: "listResumable failed — no recovery this pass; the next boot/tick retries" },
           "Durable resume: listResumable failed",
         );
         return err(backlogResult.error);
@@ -419,7 +416,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         const unreconciledResult = await ledger.listUnreconciled();
         if (!unreconciledResult.ok) {
           logger.warn(
-            { rootRunId, errorKind: "dependency" satisfies ErrorKind, err: unreconciledResult.error, hint: "listUnreconciled failed — resume continues; rows retried next tick" },
+            { rootRunId, errorKind: "dependency" as const, err: unreconciledResult.error, hint: "listUnreconciled failed — resume continues; rows retried next tick" },
             "Durable resume: listUnreconciled failed",
           );
         } else {
@@ -467,7 +464,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           );
           orphaned++;
           logger.warn(
-            { rootRunId, stepIndex: record.stepIndex, errorKind: "internal" satisfies ErrorKind, err: resumeResult.error, hint: "resumeRun returned err — orphaned + operator notified" },
+            { rootRunId, stepIndex: record.stepIndex, errorKind: "internal" as const, err: resumeResult.error, hint: "resumeRun returned err — orphaned + operator notified" },
             "Durable resume: resumeRun failed → orphaned",
           );
         }
