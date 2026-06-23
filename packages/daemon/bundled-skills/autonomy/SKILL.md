@@ -36,7 +36,7 @@ script — it is **not** a tool you call. You never write `tool.invoke(...)` you
 
 ## Read-fan-out — research and synthesize in one turn
 
-With the `orch:read` and `orch:web` capabilities (both on by default), a single `orchestrate` script
+With the `orch:read` and `orch:web` capabilities (both on in the default `standard` profile), a single `orchestrate` script
 can search, fetch several pages, slice them in-jail, and print only the synthesis:
 
 ```typescript
