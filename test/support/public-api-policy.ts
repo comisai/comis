@@ -811,6 +811,33 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── tool.invoke surface + ResultRef (Phase 212, interface-first) ──
+      // TOOL_CAPABILITY_MAP/TOOL_ROUTE_MAP are the single source of truth for
+      // the tool.invoke surface; ResultRef + its pure threshold/GC math are the
+      // minimal result-handle. They land FIRST (Plan 01) so the four downstream
+      // consumers draw from one table without drift — the daemon gate + the
+      // lease audience (Plan 02) and the comis_tools SDK codegen (Plan 03). Until
+      // those plans land, the only callers are the two cap-map arch-tests + the
+      // pure unit tests (intra-core / test-scope, excluded from the consumer
+      // scan). Shrink each entry as the real cross-package production caller
+      // (Plan 02 dispatch / lease-manager, Plan 03 codegen + result-ref-store)
+      // lands. Mirrors the validateBindMount (211-03 interface-first) precedent
+      // below.
+      "TOOL_CAPABILITY_MAP",
+      "TOOL_ROUTE_MAP",
+      "ToolName",
+      "ToolRoute",
+      "RESULT_REF_THRESHOLDS",
+      "DEFAULT_INLINE_THRESHOLD_BYTES",
+      "PER_FILE_CAP_BYTES",
+      "PER_RUN_AGGREGATE_CAP_BYTES",
+      "getResultRefThreshold",
+      "shouldMaterialize",
+      "isExpired",
+      "selectEvictions",
+      "checkPerFileCap",
+      "computeExpiresAt",
+      "ResultRef",
       // ── JAIL-03 bind-mount validator (Phase 211) ──
       // validateBindMount is the pure denylist backstop the bwrap-provider calls
       // before emitting any bind. It lands in @comis/core (211-03) so the jail

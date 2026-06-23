@@ -20,6 +20,25 @@ export type { AgentCapability } from "../security/index.js";
 // HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
 export { HANDLER_CAPABILITY_MAP } from "../security/index.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "../security/index.js";
+// TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP + ResultRef — the Phase 212 tool.invoke
+// surface single-source + the minimal result-handle, surfaced on the @comis/core
+// barrel for the daemon gate (Plan 02), the lease audience (Plan 02) and the
+// comis_tools SDK codegen (Plan 03).
+export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "../security/index.js";
+export type { ToolName, ToolRoute } from "../security/index.js";
+export {
+  RESULT_REF_THRESHOLDS,
+  DEFAULT_INLINE_THRESHOLD_BYTES,
+  PER_FILE_CAP_BYTES,
+  PER_RUN_AGGREGATE_CAP_BYTES,
+  getResultRefThreshold,
+  shouldMaterialize,
+  isExpired,
+  selectEvictions,
+  checkPerFileCap,
+  computeExpiresAt,
+} from "../security/index.js";
+export type { ResultRef } from "../security/index.js";
 export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.

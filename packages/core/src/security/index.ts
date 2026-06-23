@@ -47,6 +47,26 @@ export type { AgentCapability } from "./capability.js";
 export { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "./handler-capability-map.js";
 
+// TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP — the single source for the tool.invoke
+// surface (gate + lease audience + SDK codegen) (Phase 212, DISPATCH/READ)
+export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "./tool-capability-map.js";
+export type { ToolName, ToolRoute } from "./tool-capability-map.js";
+
+// ResultRef — minimal structured result-handle + its pure threshold/GC math (Phase 212, REF)
+export {
+  RESULT_REF_THRESHOLDS,
+  DEFAULT_INLINE_THRESHOLD_BYTES,
+  PER_FILE_CAP_BYTES,
+  PER_RUN_AGGREGATE_CAP_BYTES,
+  getResultRefThreshold,
+  shouldMaterialize,
+  isExpired,
+  selectEvictions,
+  checkPerFileCap,
+  computeExpiresAt,
+} from "./result-ref.js";
+export type { ResultRef } from "./result-ref.js";
+
 // Log sanitizer
 export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
 
