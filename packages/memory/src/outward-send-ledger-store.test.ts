@@ -166,7 +166,7 @@ describe("createSqliteOutwardSendLedger — failure + reconcile (ONCE-03/ONCE-04
     expect(found.value?.lastError).toBe("rate_limited");
   });
 
-  it("resolveReconcile 'sent' commits the row (ONCE-03)", async () => {
+  it("commits the ledger row when reconcile resolves to sent (ONCE-03)", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
