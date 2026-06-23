@@ -828,6 +828,196 @@ describe("createRpcDispatch", () => {
       expect(denials, `${method} must audit the deny-by-origin denial`).toHaveLength(1);
     }
   });
+
+  // -----------------------------------------------------------------------
+  // AUDIT-01 (Phase 215 Plan 01 Task 2): the per-cap audit at the IN-PROCESS
+  // chokepoint — emitted for an ALLOWED *and* a DENIED capability-gated call.
+  // The in-process path has NO lease (chokepoint asymmetry G1): rootRunId comes
+  // from the synthetic-root resolver (resolveRootRunId), leaseId is honestly
+  // ABSENT (never fabricated). Content-free: ids/caps/method/decision ONLY.
+  // -----------------------------------------------------------------------
+
+  /** Pull only the captured `capability:audited` payloads off the mock eventBus. */
+  function capturedCapAudited(): Array<Record<string, unknown>> {
+    const emit = mockDeps.container.eventBus.emit as ReturnType<typeof vi.fn>;
+    return emit.mock.calls
+      .filter((c: unknown[]) => c[0] === "capability:audited")
+      .map((c: unknown[]) => c[1] as Record<string, unknown>);
+  }
+
+  /**
+   * Deps with a synthetic-root resolver wired (the in-process audit's rootRunId
+   * source, G1) + the tenant config the audit reads. Mirrors `mockDeps` plus
+   * `resolveRootRunId` (the production resolver returns `root-session-<key>`).
+   */
+  function makeAuditDeps(): {
+    deps: never;
+    auditEvents: () => Array<Record<string, unknown>>;
+    capAudited: () => Array<Record<string, unknown>>;
+  } {
+    const emit = vi.fn();
+    const deps = {
+      logger: mockLogger,
+      container: {
+        eventBus: { emit, on: vi.fn() },
+        config: { providers: { entries: {} }, tenantId: "tenant-a" },
+      },
+      // The synthetic per-session root resolver (setup-capability-endpoint-boot.ts).
+      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
+        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+    } as never;
+    const pull = (name: string) =>
+      emit.mock.calls.filter((c) => c[0] === name).map((c) => c[1] as Record<string, unknown>);
+    return {
+      deps,
+      auditEvents: () => pull("audit:event"),
+      capAudited: () => pull("capability:audited"),
+    };
+  }
+
+  it("AUDIT-01: an ALLOWED in-process gated call emits audit:event (kind=audit, outcome=success, decision=allow, the mapped cap, synthetic rootRunId, NO leaseId)", async () => {
+    const { deps, auditEvents } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // message.send → orch:message (HANDLER_CAPABILITY_MAP); rpc-scoped (NOT
+    // deny-by-origin) so the call reaches the mocked handler → allow.
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:message"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+      }),
+    ).resolves.toBeDefined();
+
+    const audits = auditEvents();
+    expect(audits).toHaveLength(1);
+    const evt = audits[0]!;
+    expect(evt.kind).toBe("audit");
+    expect(evt.outcome).toBe("success");
+    const md = evt.metadata as Record<string, unknown>;
+    expect(md.decision).toBe("allow");
+    expect(md.capability).toBe("orch:message");
+    expect(md.method).toBe("message.send");
+    expect(md.rootRunId).toBe("root-session-tenant-a:user-7:chan-9");
+    // G1: the in-process path has NO lease — leaseId is honestly ABSENT.
+    expect("leaseId" in md).toBe(false);
+  });
+
+  it("AUDIT-01: the same allowed call ALSO emits capability:audited (decision=allow, the cap, synthetic rootRunId, no leaseId) — the spawn-tree producer", async () => {
+    const { deps, capAudited } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    await dispatch("message.send", {
+      _agentId: "agentA",
+      _capabilities: ["orch:message"],
+      _callerSessionKey: "tenant-a:user-7:chan-9",
+    });
+
+    const tree = capAudited();
+    expect(tree).toHaveLength(1);
+    const evt = tree[0]!;
+    expect(evt.decision).toBe("allow");
+    expect(evt.capability).toBe("orch:message");
+    expect(evt.agentId).toBe("agentA");
+    expect(evt.rootRunId).toBe("root-session-tenant-a:user-7:chan-9");
+    // In-process: no real lease → leaseId/parentLeaseId honestly absent.
+    expect(evt.leaseId).toBeUndefined();
+    expect(evt.parentLeaseId).toBeUndefined();
+  });
+
+  it("AUDIT-01: a DENIED in-process gated call (handler throws CapabilityDeniedError) emits decision=deny, kind=capability_denied, outcome=denied", async () => {
+    // Wire the REAL requireCapability into message.send so a missing cap throws.
+    const { requireCapability } = await import("@comis/core");
+    const { createMessageHandlers } = await import("./message-handlers.js");
+    (createMessageHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "message.send": vi.fn(async (p: Record<string, unknown>) => {
+        requireCapability(p._capabilities as string[] | undefined, "orch:message");
+        return { sent: true };
+      }),
+    });
+    const { deps, auditEvents, capAudited } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // Agent origin but WITHOUT orch:message → the handler's requireCapability throws.
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+      }),
+    ).rejects.toBeInstanceOf((await import("@comis/core")).CapabilityDeniedError);
+
+    const denyAudit = auditEvents().filter(
+      (a) => (a.metadata as Record<string, unknown>)?.decision === "deny",
+    );
+    expect(denyAudit).toHaveLength(1);
+    expect(denyAudit[0]!.kind).toBe("capability_denied");
+    expect(denyAudit[0]!.outcome).toBe("denied");
+    expect((denyAudit[0]!.metadata as Record<string, unknown>).capability).toBe("orch:message");
+    // The deny is ALSO on the spawn-tree producer.
+    const treeDeny = capAudited().filter((a) => a.decision === "deny");
+    expect(treeDeny).toHaveLength(1);
+  });
+
+  it("AUDIT-01 (content-hygiene): the in-process audit metadata carries NO args/params/body/path/secret — only {capability, method, runId, rootRunId, decision}", async () => {
+    const { deps, auditEvents, capAudited } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    await dispatch("message.send", {
+      _agentId: "agentA",
+      _capabilities: ["orch:message"],
+      _callerSessionKey: "tenant-a:user-7:chan-9",
+      // hostile content the audit MUST NOT echo:
+      text: "the actual chat message body",
+      apiKey: "sk-PLANTED-SECRET",
+      path: "/home/user/.comis/secret.txt",
+    });
+
+    const md = auditEvents()[0]!.metadata as Record<string, unknown>;
+    expect(new Set(Object.keys(md))).toEqual(
+      new Set(["capability", "method", "runId", "rootRunId", "decision"]),
+    );
+    const auditJson = JSON.stringify(auditEvents()[0]);
+    const treeJson = JSON.stringify(capAudited()[0]);
+    for (const blob of [auditJson, treeJson]) {
+      expect(blob).not.toContain("sk-PLANTED-SECRET");
+      expect(blob).not.toContain("the actual chat message body");
+      expect(blob).not.toContain("secret.txt");
+    }
+  });
+
+  it("AUDIT-01: an UNGATED method (no AgentCapability mapping) emits NO per-cap audit — it is the per-CAPABILITY trail", async () => {
+    const { deps, auditEvents, capAudited } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // session.list is "ungated" in HANDLER_CAPABILITY_MAP — not a per-cap call.
+    await dispatch("session.list", {
+      _agentId: "agentA",
+      _callerSessionKey: "tenant-a:user-7:chan-9",
+    });
+    expect(auditEvents()).toHaveLength(0);
+    expect(capAudited()).toHaveLength(0);
+  });
+
+  it("AUDIT-01: the admin deny-by-origin path is NOT double-audited (only assertNotAgentOrigin fires, no per-cap deny)", async () => {
+    const { deps, auditEvents } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // secrets.set is deny-by-origin (ADMIN_METHODS) — assertNotAgentOrigin audits
+    // it once; the per-cap emitter (AgentCapability-only) must NOT add a second.
+    await expect(
+      dispatch("secrets.set", { _agentId: "agentA", _trustLevel: "admin", name: "X", value: "Y" }),
+    ).rejects.toThrow(/not reachable from an agent origin/i);
+    const denials = auditEvents().filter((a) => a.kind === "capability_denied");
+    expect(denials).toHaveLength(1);
+    expect((denials[0]!.metadata as Record<string, unknown>).reason).toBe("agent_origin_admin");
+  });
 });
 
 // ---------------------------------------------------------------------------
