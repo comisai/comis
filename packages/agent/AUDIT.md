@@ -30,6 +30,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | config | required | — | packages/agent/src/spawn/sub-agent-runner.ts:169 |
 | tenantId | required | — | packages/agent/src/spawn/sub-agent-runner.ts:170 |
 | resolvePosture | optional | the sandbox no-downgrade gate (SANDBOX-02) is inert — no posture is resolved or compared, so no spawn is refused on posture grounds (spawn() guard `... && deps.resolvePosture && params.callerAgentId`; the daemon always wires it in production) | packages/agent/src/spawn/sub-agent-runner.ts:190 |
+| checkSpawnCeiling | optional | the tree-wide spawn ceiling (CEIL-01) is inert — no concurrency/depth/fanout bound is consulted, so a `for(;;) spawn()` is bounded only by the per-caller depth/children gates (spawn() guard `if (deps.checkSpawnCeiling)`; the daemon wires it to `boundedAutonomy.tryAcquireSpawn`) | packages/agent/src/spawn/sub-agent-runner.ts:224 |
 | logger | optional | lifecycle diagnostic log lines suppressed (deps.logger?. optional-chain across every call site) | packages/agent/src/spawn/sub-agent-runner.ts:172 |
 | memoryAdapter | optional | sub-agent completion summaries skipped (line 1147 `if (deps.memoryAdapter)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:174 |
 | batcher | optional | announcements bypass coalescing and emit individually (deps.batcher absent → direct send path) | packages/agent/src/spawn/sub-agent-runner.ts:189 |
