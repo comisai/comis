@@ -86,9 +86,13 @@ describe("createBoundedQueue (spec §5.1)", () => {
       q.push(makeItem(seq));
     }
     const elapsedMs = performance.now() - before;
-    // 1000 synchronous enqueues into a 64-slot ring complete well under 5ms;
-    // the producer never awaits a timer or blocks on the paused consumer.
-    expect(elapsedMs).toBeLessThan(5);
+    // 1000 synchronous enqueues into a 64-slot ring complete in a few ms. Bound
+    // is 10ms: a real performance regression (blocking/awaiting, O(n²) growth)
+    // overshoots it by orders of magnitude, while ~2x headroom over the typical
+    // few-ms cost absorbs CI GC/scheduling jitter (a 5ms bound flaked at 5.12ms).
+    // The synchronous guarantee is also asserted structurally below (no timer
+    // scheduled + ring capped at 64).
+    expect(elapsedMs).toBeLessThan(10);
     // push() must not schedule any timer — the producer does not defer work.
     expect(timers.unrefRecord()).toHaveLength(0);
     expect(q.size()).toBe(64);
