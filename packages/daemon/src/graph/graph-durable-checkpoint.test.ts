@@ -11,6 +11,7 @@ import type { GraphExecutionSnapshot } from "./graph-state-machine.js";
 import {
   snapshotToSpawnTree,
   incompleteNodes,
+  isDagSpawnTree,
   TERMINAL_NODE_STATES,
 } from "./graph-durable-checkpoint.js";
 
@@ -195,5 +196,34 @@ describe("TERMINAL_NODE_STATES", () => {
     expect(TERMINAL_NODE_STATES.has("pending")).toBe(false);
     expect(TERMINAL_NODE_STATES.has("ready")).toBe(false);
     expect(TERMINAL_NODE_STATES.has("running")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isDagSpawnTree (the LOW-2 DAG-vs-flat discriminator) — Plan 12 dispatch routing.
+// A DAG run's spawn_tree entries are OBJECTS carrying a `status` field
+// ({nodeId,status,runId?} — the snapshotToSpawnTree shape); a FLAT run's are a
+// plain string[] of node/lease ids (Plan 01 `spawnTree: z.array(z.string())`).
+// The resume engine routes to coordinator.resumeGraph IFF this returns true, so a
+// flat run can NEVER mis-route to the graph resume.
+// ---------------------------------------------------------------------------
+
+describe("isDagSpawnTree (LOW-2 DAG-vs-flat discriminator)", () => {
+  it("is TRUE for object entries carrying a `status` field (a DAG record)", () => {
+    expect(isDagSpawnTree([{ nodeId: "A", status: "completed" }, { nodeId: "B", status: "running", runId: "r1" }])).toBe(true);
+  });
+
+  it("is FALSE for a plain string[] spawn_tree (a flat sub-agent run)", () => {
+    expect(isDagSpawnTree(["lease-1", "lease-2"])).toBe(false);
+    expect(isDagSpawnTree(["root-run-id"])).toBe(false);
+  });
+
+  it("is FALSE for an empty spawn_tree (no entries ⇒ not a DAG to route)", () => {
+    expect(isDagSpawnTree([])).toBe(false);
+  });
+
+  it("is the EXPLICIT entry-has-`status` check, not a length/type heuristic (a single DAG node routes; a single flat id does not)", () => {
+    expect(isDagSpawnTree([{ nodeId: "only", status: "pending" }])).toBe(true);
+    expect(isDagSpawnTree(["only-flat-id"])).toBe(false);
   });
 });
