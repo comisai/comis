@@ -43,9 +43,9 @@ import type { SpendGateOutcome } from "@comis/agent";
 import type { Result } from "@comis/shared";
 
 import { createRootRunSemaphore, type SpawnDenyReason } from "./root-run-semaphore.js";
-import { createPerRootBudget } from "./per-root-budget.js";
+import { createPerRootBudget, type PerRootBudget } from "./per-root-budget.js";
 import { createCallRateLimiter } from "./call-rate-limiter.js";
-import { createOutwardQuota, type QuotaError } from "./outward-quota.js";
+import { createOutwardQuota, type OutwardQuota, type QuotaError } from "./outward-quota.js";
 
 // Structural window sizes (documented — NOT policy caps): the call-rate sliding
 // window is per-second (1000ms) and the connection-churn window is per-minute
@@ -108,6 +108,24 @@ export interface BoundedAutonomy {
   registerRoot(rootRunId: string, leaseId: string, parentLeaseId?: string): void;
   /** The set of leaseIds correlated to `rootRunId` (empty for an unknown root). */
   leaseIdsForRoot(rootRunId: string): ReadonlySet<string>;
+  /**
+   * The composite remaining-state snapshot for one run — the read surface the
+   * `capabilities.introspect`/`whoami` RPC reports (INTRO-01). Composes the two
+   * per-module {@link PerRootBudget.remaining} + {@link OutwardQuota.remaining}
+   * accessors (delegating to the sub-modules the composite already holds) plus
+   * the rootRunId↔leaseId correlation. A PURE read — no gate mutation, no window
+   * advance, no budget reserve (T-215-05): it surfaces the SAME numbers the gates
+   * enforce against (so the read matches the gate, T-215-06).
+   */
+  snapshot(
+    rootRunId: string,
+    agentId: string,
+    channelId: string,
+  ): {
+    budget: ReturnType<PerRootBudget["remaining"]>;
+    outwardQuota: ReturnType<OutwardQuota["remaining"]>;
+    leaseIds: ReadonlyArray<string>;
+  };
   /**
    * The agent's live cron-job count (RATE-02) — the NAMED count source the cap
    * endpoint consults THROUGH this service. Delegates to the injected
@@ -267,6 +285,25 @@ export function createBoundedAutonomy(deps: {
 
     leaseIdsForRoot(rootRunId): ReadonlySet<string> {
       return leaseIdsByRoot.get(rootRunId) ?? new Set<string>();
+    },
+
+    snapshot(
+      rootRunId,
+      agentId,
+      channelId,
+    ): {
+      budget: ReturnType<PerRootBudget["remaining"]>;
+      outwardQuota: ReturnType<OutwardQuota["remaining"]>;
+      leaseIds: ReadonlyArray<string>;
+    } {
+      // PURE read (INTRO-01 / T-215-05): delegate to the per-module remaining()
+      // accessors (themselves pure) + materialize the lease-correlation set as an
+      // array. No gate state is mutated here.
+      return {
+        budget: budget.remaining(rootRunId),
+        outwardQuota: quota.remaining(agentId, channelId),
+        leaseIds: [...(leaseIdsByRoot.get(rootRunId) ?? new Set<string>())],
+      };
     },
 
     cronCount(agentId): number {

@@ -84,6 +84,30 @@ export interface PerRootBudget {
     estUsd: number,
     estTokens: number,
   ): SpendGateOutcome;
+  /**
+   * The per-root remaining headroom on all three limbs — a PURE read (INTRO-01,
+   * the source the `capabilities.introspect`/`whoami` RPC reports). NO mutation:
+   * it does NOT anchor a wall-clock window, advance the token total, or reserve $
+   * (unlike {@link PerRootBudget.reserveBudget}); it reads `clock.now()` ONLY to
+   * compute the live elapsed window (T-215-05).
+   *
+   *   - `tokensRemaining`   = `config.tokens - <accumulated tokens>` (≥ 0).
+   *   - `wallClockMsRemaining` = `config.wallClockMs - (clock.now() - rootStartMs)`
+   *     (≥ 0). An UNREGISTERED root has no anchor → the FULL allowance is reported
+   *     and NO anchor is written (the read never starts the clock).
+   *   - `usdRemaining` = `config.aggregateUsd - <priced spend>` from the SAME
+   *     `perRootUsdAccumulator` the $-gate enforces against (A3 RESOLVED — a REAL
+   *     number, so the read matches the gate, T-215-06). It is `number | null` on
+   *     the type for the honest-degrade contract; the impl returns a real number.
+   *     CAVEAT: the accumulator total reflects only PRICED spend — if a node hit
+   *     an unpriceable model the $ figure is "priced-spend only", but the
+   *     token/wall-clock limbs remain authoritative regardless (BUDGET-02).
+   */
+  remaining(rootRunId: string): {
+    tokensRemaining: number;
+    wallClockMsRemaining: number;
+    usdRemaining: number | null;
+  };
 }
 
 /**
@@ -202,6 +226,31 @@ export function createPerRootBudget(deps: {
       // checkSpendCeiling returns ok(...) on every branch (the breach is an
       // `exceeded` outcome, not an err); the Result err arm is defensive.
       return r.ok ? r.value : { kind: "exceeded", error: r.error };
+    },
+
+    remaining(rootRunId): {
+      tokensRemaining: number;
+      wallClockMsRemaining: number;
+      usdRemaining: number | null;
+    } {
+      // PURE read (INTRO-01 / T-215-05): NO rootStartMs.set, NO tokenTotals.set,
+      // NO reserve. `clock.now()` is read ONLY to compute the live elapsed window.
+      const usedTokens = tokenTotals.get(rootRunId) ?? 0;
+      const startMs = rootStartMs.get(rootRunId);
+      // An unregistered root has no anchor → 0 elapsed (full wall-clock allowance);
+      // the read does NOT anchor a window (unlike reserveBudget's first-call write).
+      const elapsedMs = startMs === undefined ? 0 : clock.now() - startMs;
+      // A3 RESOLVED: the $ remaining is computed from the SAME per-root accumulator
+      // the $-gate enforces against — `aggregateUsd` minus the per-root scope's
+      // recorded (priced) spend. The scope key is `_root ${rootRunId}` (the
+      // `${tenantId} ${agentId}` format `agentKeyOf` uses, tenantId "_root"). A
+      // REAL number, so the read matches the gate (T-215-06).
+      const usedUsd = perRootUsdAccumulator.getSnapshot().perAgent.get(`_root ${rootRunId}`) ?? 0;
+      return {
+        tokensRemaining: Math.max(0, config.tokens - usedTokens),
+        wallClockMsRemaining: Math.max(0, config.wallClockMs - elapsedMs),
+        usdRemaining: Math.max(0, config.aggregateUsd - usedUsd),
+      };
     },
   };
 }

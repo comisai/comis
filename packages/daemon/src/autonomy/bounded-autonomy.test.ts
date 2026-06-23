@@ -324,4 +324,88 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
     expect(noProvider.service.cronCount("a1")).toBe(0);
     noProvider.service.destroy();
   });
+
+  // -------------------------------------------------------------------------
+  // Test 6 (INTRO-01, Phase 215-02): snapshot(rootRunId, agentId, channelId)
+  // composes the two Task-1 per-module remaining() accessors + leaseIdsForRoot
+  // into the read surface `capabilities.introspect`/`whoami` reports. It is a
+  // PURE read (no gate mutation, T-215-05) and delegates — the composite already
+  // holds the budget + quota sub-modules.
+  // -------------------------------------------------------------------------
+  it("snapshot() composes the per-root budget remaining + outward-quota remaining + leaseIds for the root (INTRO-01)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },
+      outward: { originOnly: true, perTargetGrants: ["chan-1"], volumeCap: 4000 },
+      message: { channels: ["origin"], maxPerHour: 5 },
+    };
+    const { service, clock } = makeService({ config });
+
+    // Register the root with a lease + consume some budget and one outward send.
+    service.registerRoot("root-S", "lease-S1", "lease-parent");
+    service.registerRoot("root-S", "lease-S2");
+    expect(service.reserveBudget("root-S", FREE_PROVIDER, FREE_MODEL, 0, 100).kind).not.toBe("exceeded");
+    expect(service.tryOutward("agent-S", "chan-1", false, 1).ok).toBe(true);
+    clock.advance(10_000);
+
+    const snap = service.snapshot("root-S", "agent-S", "chan-1");
+
+    // budget limb — the PerRootBudget.remaining shape (token + wall-clock deltas;
+    // $ untouched here since the free model records no priced spend → full cap).
+    expect(snap.budget.tokensRemaining).toBe(900);
+    expect(snap.budget.wallClockMsRemaining).toBe(50_000);
+    expect(snap.budget.usdRemaining).not.toBeNull();
+    expect(snap.budget.usdRemaining).toBeCloseTo(10, 10);
+
+    // outwardQuota limb — the OutwardQuota.remaining shape (maxPerHour 5 - 1 used).
+    expect(snap.outwardQuota.perHourRemaining).toBe(4);
+
+    // leaseIds — the rootRunId↔leaseId correlation, as an array.
+    expect([...snap.leaseIds].sort()).toEqual(["lease-S1", "lease-S2"]);
+
+    service.destroy();
+  });
+
+  it("snapshot() is a PURE read — it does not mutate any gate (a subsequent reserve/send behaves as if snapshot was never called) (T-215-05)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },
+      outward: { originOnly: true, perTargetGrants: [], volumeCap: 4000 },
+      message: { channels: ["origin"], maxPerHour: 2 },
+    };
+    const { service } = makeService({ config });
+
+    service.registerRoot("root-PS", "lease-PS");
+    // Consume 900 tokens + 1 of 2 outward slots.
+    expect(service.reserveBudget("root-PS", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+    expect(service.tryOutward("agent-PS", "chan-origin", true, 1).ok).toBe(true);
+
+    // Call snapshot() MANY times — a read must not consume budget or send slots.
+    for (let i = 0; i < 5; i++) service.snapshot("root-PS", "agent-PS", "chan-origin");
+
+    // The token total is untouched: 900 + 900 > 1000 → exceeded.
+    expect(service.reserveBudget("root-PS", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).toBe("exceeded");
+    // The outward window is untouched: slot 2 passes, the 3rd is denied.
+    expect(service.tryOutward("agent-PS", "chan-origin", true, 1).ok).toBe(true);
+    expect(service.tryOutward("agent-PS", "chan-origin", true, 1).ok).toBe(false);
+
+    service.destroy();
+  });
+
+  it("snapshot() for an unknown root returns full budget/quota allowance and an empty leaseIds (never throws)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },
+      message: { channels: ["origin"], maxPerHour: 5 },
+    };
+    const { service } = makeService({ config });
+
+    const snap = service.snapshot("root-NONE", "agent-NONE", "chan-NONE");
+    expect(snap.budget.tokensRemaining).toBe(1000);
+    expect(snap.budget.wallClockMsRemaining).toBe(60_000);
+    expect(snap.outwardQuota.perHourRemaining).toBe(5);
+    expect([...snap.leaseIds]).toEqual([]);
+
+    service.destroy();
+  });
 });

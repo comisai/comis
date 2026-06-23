@@ -42,6 +42,17 @@ export interface OutwardQuota {
     isOrigin: boolean,
     volume: number,
   ): Result<void, QuotaError>;
+  /**
+   * The remaining per-hour send allowance for `${agentId}:${channelId}` in the
+   * LIVE rolling-hour window — a PURE read (INTRO-01, the headroom the
+   * `capabilities.introspect`/`whoami` RPC reports). LOAD-BEARING: it must NOT
+   * `counters.set(...)` — the {@link OutwardQuota.tryOutward} path resets/advances
+   * the window, this accessor must NOT (T-215-05). It reads `clock.now()` ONLY to
+   * decide whether the stored window has expired. An unseen key OR an expired
+   * window reports the FULL `maxPerHour` (the same fresh-window semantics
+   * `tryOutward` would apply), without writing a window.
+   */
+  remaining(agentId: string, channelId: string): { perHourRemaining: number };
 }
 
 export interface OutwardQuotaConfig {
@@ -137,6 +148,21 @@ export function createOutwardQuota(deps: OutwardQuotaDeps): OutwardQuota {
       }
       entry.count++;
       return ok(undefined);
+    },
+
+    remaining(agentId, channelId): { perHourRemaining: number } {
+      // PURE read (INTRO-01 / T-215-05): NO counters.set. `deps.clock.now()` is
+      // read ONLY to decide if the stored window has expired (the same window-roll
+      // boundary `tryOutward` uses), never to WRITE a window.
+      const now = deps.clock.now();
+      const key = `${agentId}:${channelId}`;
+      const entry = counters.get(key);
+      // Unseen key OR expired window → the FULL allowance (a fresh window would
+      // start at the next tryOutward; the read reports the full headroom).
+      if (!entry || now - entry.windowStartMs >= HOUR_MS) {
+        return { perHourRemaining: config.maxPerHour };
+      }
+      return { perHourRemaining: Math.max(0, config.maxPerHour - entry.count) };
     },
   };
 }

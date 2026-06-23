@@ -124,6 +124,13 @@ export const HANDLER_CAPABILITY_MAP = {
   "skills.import": "orch:skill",
   "skills.upload": "orch:skill",
   "skills.list": "ungated",
+
+  // ── capabilities ── INTRO-02 (Phase 215): capabilities.introspect (the
+  // `whoami` read) is read-only + agent-reachable with NO cap — an agent queries
+  // its OWN resolved caps + remaining budget/quota. It joins the read-only
+  // "ungated" class (beside session.status); the handler enforces _agentId
+  // self-scope, NOT a requireCapability gate. scopes:["rpc"], not admin.
+  "capabilities.introspect": "ungated",
 } as const satisfies Record<string, HandlerCapabilityClassification>;
 
 /** The method-name keys of {@link HANDLER_CAPABILITY_MAP}. */

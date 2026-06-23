@@ -92,4 +92,62 @@ describe("createOutwardQuota", () => {
     // The same agent to a DIFFERENT (granted) channel has its own slot.
     expect(quota.tryOutward("agentA", "chan-B", false, 10).ok).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // INTRO-01 (Phase 215-02): a PURE `remaining(agentId, channelId)` read — the
+  // per-hour headroom the `capabilities.introspect` / `whoami` RPC reports. The
+  // 213 gate tracks the rolling-hour `counters` internally but exposed NO read
+  // surface (RESEARCH Pitfall 3). `remaining` reports `maxPerHour - count` for
+  // the LIVE window as a READ-ONLY view — it must NOT reset/advance the window
+  // (Pitfall 3 / T-215-05): the load-bearing invariant is no `counters.set`.
+  // -------------------------------------------------------------------------
+  it("remaining(agentId, channelId) reports maxPerHour minus the count consumed in the live window (INTRO-01)", () => {
+    const { quota } = makeQuota({ maxPerHour: 3 });
+
+    // Fresh key → full allowance.
+    expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(3);
+
+    // Consume 2 sends → 1 remaining.
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(1);
+
+    // Consume the last slot → 0 remaining (clamped, never negative).
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(0);
+  });
+
+  it("remaining() returns the full allowance for an unseen key OR an expired window (INTRO-01)", () => {
+    const { clock, quota } = makeQuota({ maxPerHour: 3 });
+
+    // Unseen key → full allowance.
+    expect(quota.remaining("agentX", "chan-unseen").perHourRemaining).toBe(3);
+
+    // Consume the window, then let it expire → the read reports the full allowance
+    // again (the expired window is treated as fresh — same as tryOutward's reset).
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(1);
+    clock.advance(HOUR_MS + 1);
+    expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(3);
+  });
+
+  it("remaining() is a PURE read — it does NOT reset/advance the window (T-215-05: no counters.set side effect)", () => {
+    const { quota } = makeQuota({ maxPerHour: 2 });
+
+    // Consume 1 of 2 slots.
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+
+    // Call remaining() MANY times — a read must not reset the window. If it did
+    // (counters.set), the count would drop to 0 and the next two sends would pass.
+    for (let i = 0; i < 5; i++) {
+      expect(quota.remaining("agentA", "chan-origin").perHourRemaining).toBe(1);
+    }
+
+    // The window is UNCHANGED by the reads: the second send still passes (slot 2),
+    // and the THIRD is denied — exactly as if remaining() was never called.
+    expect(quota.tryOutward("agentA", "chan-origin", true, 10).ok).toBe(true);
+    const denied = quota.tryOutward("agentA", "chan-origin", true, 10);
+    expect(denied.ok).toBe(false);
+  });
 });
