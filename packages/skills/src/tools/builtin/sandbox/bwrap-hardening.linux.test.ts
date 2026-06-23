@@ -59,7 +59,7 @@ function baseJailArgs(opts?: { workspacePath?: string }): string[] {
 describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class proofs (Linux only)", () => {
   // -- 1. TIOCSTI keystroke injection (CVE-2017-5226, JAIL-01 / T-211-17) -----
   it(
-    "TIOCSTI ioctl inside the jail errors (--new-session + seccomp backstop)",
+    "rejects the TIOCSTI ioctl inside the jail (--new-session + seccomp backstop)",
     { timeout: 15_000 },
     () => {
       const args = baseJailArgs();
