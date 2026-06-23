@@ -3,13 +3,13 @@
  * `@comis/core/api-contracts` aggregator (barrel-only public surface).
  * External consumers always import from `"@comis/core"`.
  *
- * One contract file per logical domain; this file aggregates the 15
+ * One contract file per logical domain; this file aggregates the 16
  * domain registries into a single deterministic registry. Imports are
  * alphabetically sorted so future contract authors get deterministic
  * git diffs (alphabetical position of the domain).
  *
- * Domain order: agents → auth → channels → config → daemon → mcp →
- * mcp-oauth → media → memory → observability → orchestrator → secrets →
+ * Domain order: agents → auth → capabilities → channels → config → daemon →
+ * mcp → mcp-oauth → media → memory → observability → orchestrator → secrets →
  * sessions → tokens → workspace. Note: `mcp` < `mcp-oauth` < `media`
  * alphabetically.
  *
@@ -23,9 +23,10 @@
 import type { ZodTypeAny } from "zod";
 import type { ApiContract } from "./types.js";
 
-// 15 domain imports — alphabetical order for deterministic git diffs.
+// 16 domain imports — alphabetical order for deterministic git diffs.
 import { AGENTS_CONTRACTS } from "./agents.js";
 import { AUTH_CONTRACTS } from "./auth.js";
+import { CAPABILITIES_CONTRACTS } from "./capabilities.js";
 import { CHANNELS_CONTRACTS } from "./channels.js";
 import { CONFIG_CONTRACTS } from "./config.js";
 import { CONTEXT_CONTRACTS } from "./context.js";
@@ -49,6 +50,7 @@ import { WORKSPACE_CONTRACTS } from "./workspace/index.js";
 export const API_CONTRACTS_ORDERED: readonly ApiContract<ZodTypeAny, ZodTypeAny>[] = [
   ...AGENTS_CONTRACTS,
   ...AUTH_CONTRACTS,
+  ...CAPABILITIES_CONTRACTS,
   ...CHANNELS_CONTRACTS,
   ...CONFIG_CONTRACTS,
   ...CONTEXT_CONTRACTS,
@@ -77,6 +79,7 @@ export { INTERNAL_FIELD_NAMES, stripInternalFields } from "./internals.js";
 // Per-domain barrel re-exports (alphabetical, matching imports above).
 export * from "./agents.js";
 export * from "./auth.js";
+export * from "./capabilities.js";
 export * from "./channels.js";
 export * from "./config.js";
 export * from "./context.js";
