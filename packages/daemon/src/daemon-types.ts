@@ -26,7 +26,7 @@ import type { ChannelActivityRenderer } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelManager } from "@comis/orchestrator";
 import type { ChannelHealthMonitor } from "@comis/channels";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
 import type { GatewayServerHandle, WsConnectionManager } from "@comis/gateway";
 import type {
@@ -563,6 +563,10 @@ export interface BootContext {
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
   rootRunIdIndex?: Map<string, string>;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
+  /** Phase 213-08 (RATE-02): the daemon-wide LeaseManager built in bootAgents
+   *  (before setupSchedulers' cron-fire mint), shared with the cap layer built in
+   *  bootChannels so both use the SAME instance. */
+  sharedLeaseManager?: LeaseManager;
   // Schedulers
   systemEventQueue?: ReturnType<typeof createSystemEventQueue>;
   cronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];

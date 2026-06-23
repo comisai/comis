@@ -157,6 +157,13 @@ export interface CapabilityLayerDeps {
    * EARLY over the SAME holder). Optional — absent ⇒ a local index is used here.
    */
   rootRunIdIndex?: Map<string, string>;
+  /**
+   * Phase 213-08 (RATE-02): a daemon-supplied LeaseManager, built EARLY in daemon.ts
+   * (before setupSchedulers) so the cron-fire mint and this layer share the SAME
+   * instance. Optional — absent ⇒ this layer constructs its own (the 211 boot-gate
+   * path / older callers).
+   */
+  leaseManager?: LeaseManager;
 }
 
 /** The constructed capability layer handle (undefined when no autonomy agent). */
@@ -331,8 +338,12 @@ export async function constructCapabilityLayer(
     return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
   }
 
+  // Phase 213-08 (RATE-02): use the daemon-supplied LeaseManager when provided
+  // (built EARLY in daemon.ts so setupSchedulers' cron-fire mint shares the SAME
+  // instance — schedulers run before this layer), else construct one here (the 211
+  // boot-gate path / older callers). ONE daemon-wide LeaseManager either way.
   const leaseManagerDeps: LeaseManagerDeps = { clock };
-  const leaseManager = createLeaseManager(leaseManagerDeps);
+  const leaseManager = deps.leaseManager ?? createLeaseManager(leaseManagerDeps);
   // Phase 213: construct the daemon-wide BoundedAutonomy service alongside the
   // LeaseManager (the construct-and-inject precedent). The cronJobCount provider
   // (daemon.ts binds it to the per-agent CronScheduler.getJobs().length) is the
