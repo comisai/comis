@@ -250,3 +250,46 @@ describe("session.history deliveryStatus join", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// CR-02: agent-origin self-scoping. The tool.invoke rpc route injects
+// `_agentId = lease.agentId` (setup-capability-endpoint.ts:321), so its
+// PRESENCE is the unforgeable agent-origin signal (inbound _agentId is
+// stripped from external callers). Without a self-scope, a jailed orch:read
+// script reads ANY session's full transcript by session_key — cross-agent /
+// cross-user exfiltration. The handler must mirror session.search's existing
+// `_agentId` filter (session-list.ts:163-168): when `_agentId` is present,
+// only the caller's own sessions are readable; when ABSENT (admin / operator
+// / CLI, whose _agentId was stripped at the gateway), full access is
+// preserved.
+// ---------------------------------------------------------------------------
+describe("session.history agent-origin self-scoping (CR-02)", () => {
+  it("session.history denies an agent-origin caller reading a session that is not the caller's own", async () => {
+    // _agentId is injected (agent-origin). The seeded session key
+    // "test:user-1:chan-A" does not belong to the caller agent, so the read
+    // must be refused content-free (a "not found"), NOT return the transcript.
+    const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
+    const handlers = bindSessionReadHandlers(deps);
+
+    await expect(
+      handlers["session.history"]!({
+        session_key: SESSION_KEY,
+        _agentId: "attacker-agent",
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it("session.history still returns the full transcript for an admin/operator call with NO _agentId injected", async () => {
+    // No _agentId (the gateway stripped it for an external operator/CLI call):
+    // full-access enumeration must be preserved — the fix must NOT break the
+    // operator path.
+    const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
+    const handlers = bindSessionReadHandlers(deps);
+
+    const r = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+
+    expect(r.messages.length).toBeGreaterThan(0);
+  });
+});
