@@ -63,6 +63,18 @@ export const MAX_INLINE_STRING = 256;
  */
 export const SUMMARY_MAX_CACHE_BREAKS = 10;
 export const FULL_MAX_CACHE_BREAKS = 20;
+/**
+ * spawnTree cap (TREE-01/02 / CR-01): an autonomous run mints one lease per
+ * spawned child, so `spawnTree` (one node per leaseId) is reachable at scale —
+ * a deep fan-out exceeds the structural backstop's 64-item cap and would
+ * otherwise be replaced WHOLESALE with a `{__bounded__}` sentinel (schema-invalid
+ * → `comis explain` parse throws on exactly the unattended run the tree exists to
+ * diagnose). First-N (NOT newest-first): the fold materializes first-seen order,
+ * so slicing the HEAD preserves the topology head (root + earliest children).
+ * Relaxed at full depth (the whole tree fits, no byte gate).
+ */
+export const SUMMARY_MAX_SPAWN_NODES = 40;
+export const FULL_MAX_SPAWN_NODES = 200;
 /** Bound on the progressive-shed loop — never spin forever. */
 export const MAX_SHED_ITERATIONS = 8;
 /** Short form the shed loop collapses the summary prose to (chars, + ellipsis). */

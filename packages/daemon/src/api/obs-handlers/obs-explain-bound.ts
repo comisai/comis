@@ -65,6 +65,8 @@ import {
   MAX_INLINE_STRING,
   SUMMARY_MAX_CACHE_BREAKS,
   FULL_MAX_CACHE_BREAKS,
+  SUMMARY_MAX_SPAWN_NODES,
+  FULL_MAX_SPAWN_NODES,
   MAX_SHED_ITERATIONS,
   SHED_SUMMARY_CHARS,
 } from "./obs-explain-bound-caps.js";
@@ -85,6 +87,11 @@ const REPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
   "failures",
   "breakerTimeline",
   "offloads",
+  // CR-01: spawnTree is report-level-capped below (SUMMARY/FULL_MAX_SPAWN_NODES,
+  // both can exceed the backstop's 64-item cap), so exempt it from the structural
+  // backstop — otherwise a >64-lease fan-out becomes a {__bounded__} sentinel and
+  // the typed `SpawnTreeNode[]` slot fails IncidentReportSchema.parse.
+  "spawnTree",
 ]);
 
 /**
@@ -312,6 +319,22 @@ export function boundIncidentReport(
     cacheBreaks = cacheBreaks.slice(0, maxCacheBreaks);
   }
 
+  // CR-01 (TREE-01/02): cap spawnTree first-seen (the fold's materialization
+  // order — slicing the HEAD keeps the topology head: root + earliest children),
+  // recording a truncations[] entry for the dropped tail. Combined with the
+  // REPORT_ARRAY_FIELDS exemption above, this keeps the typed `SpawnTreeNode[]`
+  // shape so IncidentReportSchema.parse holds even on a deep fan-out.
+  let spawnTree = report.spawnTree;
+  const maxSpawn = depth === "summary" ? SUMMARY_MAX_SPAWN_NODES : FULL_MAX_SPAWN_NODES;
+  if (spawnTree !== undefined && spawnTree.length > maxSpawn) {
+    truncations.push({
+      field: "spawnTree",
+      reason: `capped at ${maxSpawn} nodes (had ${spawnTree.length})`,
+      pointer: "obs.explain depth=full",
+    });
+    spawnTree = spawnTree.slice(0, maxSpawn);
+  }
+
   let bounded: IncidentReport = {
     ...report,
     channel,
@@ -324,6 +347,7 @@ export function boundIncidentReport(
     breakerTimeline,
     offloads,
     ...(cacheBreaks !== undefined ? { cacheBreaks } : {}),
+    ...(spawnTree !== undefined ? { spawnTree } : {}),
     truncations,
   };
 
@@ -445,6 +469,26 @@ export function boundIncidentReport(
             {
               field: "nodeBudgetBreaches",
               reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; nodeBudgetBreaches trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      // CR-01: halve the spawnTree (first-seen retained) — the pre-loop cap
+      // already brings it to ≤40 at summary, so this is the convergence backstop
+      // for a tree whose nodes are individually large (many caps/tools per node).
+      if (bounded.spawnTree !== undefined && bounded.spawnTree.length > 1) {
+        const half = Math.max(1, Math.floor(bounded.spawnTree.length / 2));
+        bounded = {
+          ...bounded,
+          spawnTree: bounded.spawnTree.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "spawnTree",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; spawnTree trimmed to ${half}`,
               pointer: "obs.explain depth=full",
             },
           ],
