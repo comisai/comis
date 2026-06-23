@@ -636,17 +636,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
-        void store
-          .touchHeartbeat(rootRunId, clock.now())
-          .then((r) => {
-            if (!r.ok) {
-              deps.logger?.debug(
-                { rootRunId, err: r.error, hint: "durable heartbeat touch failed; the watchdog may orphan-sweep this run if it persists", errorKind: "internal" as const },
-                "Durable heartbeat: touch failed",
-              );
-            }
-          })
-          .catch(() => { /* best-effort heartbeat; never propagate */ });
+        suppressError(
+          store
+            .touchHeartbeat(rootRunId, clock.now())
+            .then((r) => {
+              if (!r.ok) {
+                deps.logger?.debug(
+                  { rootRunId, err: r.error, hint: "durable heartbeat touch failed; the watchdog may orphan-sweep this run if it persists", errorKind: "internal" as const },
+                  "Durable heartbeat: touch failed",
+                );
+              }
+            }),
+          "durable heartbeat touch (best-effort)",
+        );
       }, DURABLE_KEEPALIVE_MS);
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
@@ -668,17 +670,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
     const store = deps.durableRuns;
     if (!store) return;
-    void store
-      .markCompleted(run.rootRunId)
-      .then((r) => {
-        if (!r.ok) {
-          deps.logger?.warn(
-            { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
-            "Durable checkpoint: markCompleted failed",
-          );
-        }
-      })
-      .catch(() => { /* best-effort terminal mark; never propagate */ });
+    suppressError(
+      store
+        .markCompleted(run.rootRunId)
+        .then((r) => {
+          if (!r.ok) {
+            deps.logger?.warn(
+              { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
+              "Durable checkpoint: markCompleted failed",
+            );
+          }
+        }),
+      "durable terminal markCompleted (best-effort)",
+    );
   }
 
   // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
