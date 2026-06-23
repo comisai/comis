@@ -269,7 +269,7 @@ export async function constructCapabilityLayer(
       {
         submodule: "capability-endpoint",
         err,
-        errorKind: "config",
+        errorKind: "config" as const,
         hint: "autonomy cap-socket activation failed (the data dir must be an absolute, writable path); orchestrate is unavailable this boot — the daemon continues without the autonomy surface",
       },
       "Capability lease layer DEGRADED — cap-socket activation failed; autonomy surface unavailable (daemon continues serving channels)",
