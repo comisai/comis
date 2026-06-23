@@ -236,26 +236,44 @@ export async function constructCapabilityLayer(
   // The cap socket path lives under the data dir, mirroring broker.sock's
   // ephemeral lifecycle. The orchestrate runner binds it per jail; the daemon-
   // wide endpoint listens on it once (activated below).
-  const capSocketPath = safePath(dataDir, "cap.sock");
-  // Phase 212 Gap 3 (step 1): construct the daemon-side tool.invoke executor and
-  // inject it into the endpoint — mirroring how the LeaseManager is constructed-
-  // and-injected here (NOT a mutable setter on a security boundary).
-  const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore);
-  // Thread the daemon logger so the socket boundary is observable (WR-02): a
-  // post-listen server error and per-connection errors are logged with the
-  // canonical err/errorKind/hint rather than silently swallowed.
-  const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, logger: daemonLogger, toolInvokeExecutor });
-  // Phase 212 Gap 3 (step 2): ACTIVATE — start the daemon-wide 0600 socket ONCE.
-  // 211 left this DORMANT (no startSocket; active:false). Now the cap surface is
-  // LIVE: a jailed orchestrate child reaches the endpoint over the bound socket.
-  await endpoint.startSocket(capSocketPath);
-  daemonLogger.info(
-    { submodule: "capability-endpoint", capSocketPath, active: true },
-    "Capability lease layer ACTIVE (0600 socket listening; executor wired; lease minted per spawn)",
-  );
-  return {
-    capEndpointHandle: { leaseManager, endpoint, capSocketPath, outputGuard },
-    capEndpointStop: () => endpoint.stopSocket(),
-    namespacePreflightOk,
-  };
+  // Phase 212 Gap 3: ACTIVATE the cap layer. A cap-socket setup failure (an
+  // unusable dataDir, or the unix socket cannot bind) must NOT crash the daemon
+  // boot — autonomy is an add-on, so it degrades HONESTLY (no cap layer + a loud
+  // WARN; the absent handle downshifts the surface) while the daemon keeps serving
+  // channels. The safe direction is LESS capability, never a half-built endpoint.
+  try {
+    const capSocketPath = safePath(dataDir, "cap.sock");
+    // Step 1: construct the daemon-side tool.invoke executor and inject it into the
+    // endpoint — mirroring how the LeaseManager is constructed-and-injected here
+    // (NOT a mutable setter on a security boundary).
+    const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore);
+    // Thread the daemon logger so the socket boundary is observable (WR-02): a
+    // post-listen server error and per-connection errors are logged with the
+    // canonical err/errorKind/hint rather than silently swallowed.
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, logger: daemonLogger, toolInvokeExecutor });
+    // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. 211 left this
+    // DORMANT (no startSocket; active:false). Now the cap surface is LIVE: a jailed
+    // orchestrate child reaches the endpoint over the bound socket.
+    await endpoint.startSocket(capSocketPath);
+    daemonLogger.info(
+      { submodule: "capability-endpoint", capSocketPath, active: true },
+      "Capability lease layer ACTIVE (0600 socket listening; executor wired; lease minted per spawn)",
+    );
+    return {
+      capEndpointHandle: { leaseManager, endpoint, capSocketPath, outputGuard },
+      capEndpointStop: () => endpoint.stopSocket(),
+      namespacePreflightOk,
+    };
+  } catch (err) {
+    daemonLogger.warn(
+      {
+        submodule: "capability-endpoint",
+        err,
+        errorKind: "config",
+        hint: "autonomy cap-socket activation failed (the data dir must be an absolute, writable path); orchestrate is unavailable this boot — the daemon continues without the autonomy surface",
+      },
+      "Capability lease layer DEGRADED — cap-socket activation failed; autonomy surface unavailable (daemon continues serving channels)",
+    );
+    return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
+  }
 }

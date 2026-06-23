@@ -34,6 +34,7 @@ function createDeps(
   const childLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const daemonLogger = {
     info: vi.fn(),
+    warn: vi.fn(),
     child: vi.fn(() => childLogger),
   } as unknown as Parameters<typeof constructCapabilityLayer>[0]["daemonLogger"];
   return {
@@ -136,5 +137,30 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(existsSync(join(dataDir, "cap.sock"))).toBe(true);
     await result.capEndpointStop!();
     expect(existsSync(join(dataDir, "cap.sock"))).toBe(false);
+  });
+
+  // HONEST DEGRADE: a cap-socket activation failure (here an unusable empty dataDir
+  // that safePath rejects) must NOT crash the daemon boot — the layer returns no
+  // handle + logs a WARN (errorKind:"config"), the daemon continues. Production
+  // dataDir is always absolute (~/.comis); this guards the boot against a malformed
+  // data dir taking the whole daemon down. (Regression: the dormancy activation
+  // previously let the PathTraversalError propagate out of main().)
+  it("DEGRADES with a WARN (no cap handle) when cap-socket activation fails, never crashing boot", async () => {
+    // A data dir whose parent does not exist → startSocket's bind fails (ENOENT).
+    // The layer must catch it and degrade, not let it propagate out of boot.
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig },
+      { dataDir: "/nonexistent-comis-cap-degrade-zzz/sub" },
+    );
+    const result = await constructCapabilityLayer(deps);
+    expect(result.capEndpointHandle).toBeUndefined();
+    expect(result.capEndpointStop).toBeUndefined();
+    // The host preflight still ran (it is a host check, independent of the socket).
+    expect(typeof result.namespacePreflightOk).toBe("boolean");
+    const warnMock = deps.daemonLogger.warn as unknown as ReturnType<typeof vi.fn>;
+    expect(warnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config", submodule: "capability-endpoint" }),
+      expect.stringContaining("DEGRADED"),
+    );
   });
 });
