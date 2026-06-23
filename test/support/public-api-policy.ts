@@ -1708,6 +1708,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LeaseRevokeContract",
       "RunKillContract",
       "AUTONOMY_HANDLERS_CONTRACTS",
+      // Capabilities-domain aggregator (215, INTRO-01/02). Same pattern as
+      // DAEMON_CONTRACTS / AUTH_CONTRACTS: the per-method
+      // `CapabilitiesIntrospectContract` HAS in-repo consumers (its
+      // `[CapabilitiesIntrospectContract.method]` daemon handler in
+      // capabilities-handlers.ts + the `comis whoami` CLI in commands/whoami.ts),
+      // so it is NOT policy-listed. `CAPABILITIES_CONTRACTS` IS policy-listed: it
+      // is composed into `API_CONTRACTS_ORDERED` inside @comis/core's own
+      // index.ts (intra-package — the walker skips self-imports), and no external
+      // consumer imports the per-domain array directly.
+      "CAPABILITIES_CONTRACTS",
       // Daemon-domain contracts. The per-method contracts
       // (`DaemonSetLogLevelContract`, `SystemPingContract`) have in-repo
       // consumers (daemon-handlers.ts + CLI's daemon-guard.ts +

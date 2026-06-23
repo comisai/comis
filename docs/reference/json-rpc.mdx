@@ -3948,6 +3948,49 @@ Rate-limited to one steer per `target` every 2 seconds (shared across both modes
 
 </Accordion>
 
+<Accordion title="capabilities (1 method)">
+
+The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` are the write side).
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `capabilities.introspect` | `rpc` | The caller's resolved capabilities + remaining per-root budget/quota (self-scoped, no capability required) |
+
+### `capabilities.introspect`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` (read-only — **no capability required**; the [`comis whoami`](/reference/cli#comis-whoami) surface) |
+| **Parameters** | `{}` — **self-scoped**: the caller is resolved from the connection (the dispatcher-injected `_agentId` for an in-process agent, the default agent for an operator token). There is NO `agentId` param — a caller cannot introspect another agent. |
+| **Returns** | `{ agentId, caps: string[], budget?, outwardQuota? }` — `caps` is the resolved `orch:*` capability list; `budget` (`{ tokensRemaining, wallClockMsRemaining, usdRemaining }`, `usdRemaining` nullable for an unpriceable model) and `outwardQuota` (`{ perHourRemaining }`) are present ONLY when the run has a live root (an in-flight turn / spawn tree), and OMITTED otherwise (in-process pre-spawn) — never fabricated as zero. |
+
+Read-only and **not capability-gated** (an agent reading its OWN posture needs no capability) and **not** admin-scoped, so the in-process agent loop can reach it directly. It is **self-scoped** — the read returns capabilities/budget for the caller's own `_agentId` only, never an arbitrary agent (an information-disclosure boundary). The remaining budget/quota is **live daemon state** (never persisted), so this is a LIVE-only read with no offline equivalent — the post-mortem authorization topology of a finished run is on [`obs.explain`](#obs-explain)'s `spawnTree` instead.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "capabilities.introspect",
+  "params": {},
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "agentId": "default",
+    "caps": ["orch:read", "orch:web"],
+    "budget": { "tokensRemaining": 384000, "wallClockMsRemaining": 1740000, "usdRemaining": 4.82 },
+    "outwardQuota": { "perHourRemaining": 18 }
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
 <Accordion title="autonomy / live control (2 methods)">
 
 Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop a runaway or misbehaving spawn tree. Both methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke or un-kill itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these two methods are the manual override.

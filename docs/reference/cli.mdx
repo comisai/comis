@@ -1555,6 +1555,34 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ---
 
+### `comis whoami`
+
+Show the run's **resolved orchestration capabilities** plus the **remaining per-root budget and outward quota** — "what can I do, and how much budget is left". Backed by `CapabilitiesIntrospectContract` (`capabilities.introspect`, `rpc` scope — read-only, no capability required). The read is **self-scoped**: the daemon resolves the caller from the connection, so an operator token sees the default agent's posture and an in-process agent sees its OWN (never another agent's — the request carries no `agentId`).
+
+The `Caps:` line is the resolved [autonomy-profile](/agents/autonomy) capabilities (`orch:*` strings). When the run has an in-flight root (an active agent turn / spawn tree) the `Budget:` line shows the remaining `tokensRemaining` · `wallClockMsRemaining` (· `$usdRemaining` when the model is priced, `$ uncountable` for a zero-price subscription/Codex model — the token and wall-clock limbs are authoritative regardless), and the `Outward:` line the remaining per-hour outward-send allowance. With no live root (an idle agent, pre-spawn) the budget/quota lines are **omitted** rather than shown as zero.
+
+**`comis whoami` is LIVE-only.** Unlike [`comis explain`](#comis-explain) / [`comis fleet`](#comis-fleet) there is **no `--offline` mode**: the remaining budget/quota lives only in the running daemon's in-memory autonomy state, never on disk, so there is nothing to reconstruct offline. When the daemon is unreachable (or rejects the token) the command **fails clearly** with a non-zero exit — it never fabricates an empty/zero snapshot (a false posture). Use [`comis explain`](#comis-explain)'s `spawnTree` for the post-mortem authorization topology of a *finished* run; `whoami` is for an *in-flight* run's remaining budget.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--caps` | `boolean` | `false` | Show capabilities only (omit the budget/quota lines) |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# Show caps + remaining budget/quota (live)
+comis whoami
+
+# Capabilities only
+comis whoami --caps
+
+# Machine-readable output
+comis whoami --format json
+```
+
+Requires a gateway token (the `rpc` scope — any valid token works; no admin scope needed, unlike `comis explain` / `comis fleet`). There is no offline fallback — the daemon must be running.
+
+---
+
 ### `comis status`
 
 Display a unified system status overview showing daemon, gateway, channel, and agent information. Connects to the daemon via RPC for live data and handles daemon offline gracefully.
