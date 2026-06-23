@@ -290,6 +290,119 @@ describe("comis explain table view tolerates a null likelyRootCause and empty ne
   });
 });
 
+// ---------------------------------------------------------------------------
+// TREE (215-03): the spawn-tree render block — the table view lists each node's
+// leaseId/caps/tools (and DENIED for nodes with denials); --format json emits
+// report.spawnTree for free (it rides json(report)).
+// ---------------------------------------------------------------------------
+
+// A report carrying a 2-level spawn tree (root + a child with a denial). Must
+// satisfy IncidentReportSchema (the real callTyped parses the response).
+const SPAWN_REPORT = {
+  ...FAKE_REPORT,
+  summary: "unattended run; spawned one child",
+  likelyRootCause: null,
+  suggestedNextSteps: [],
+  spawnTree: [
+    {
+      leaseId: "L-root",
+      rootRunId: "R",
+      agentId: "default",
+      caps: ["orch:read"],
+      toolsInvoked: ["memory_search"],
+      denials: [],
+    },
+    {
+      leaseId: "L-child",
+      parentLeaseId: "L-root",
+      rootRunId: "R",
+      agentId: "default",
+      caps: ["orch:web"],
+      toolsInvoked: ["web_fetch"],
+      denials: ["orch:web"],
+    },
+  ],
+};
+
+describe("comis explain renders the spawn-tree (TREE)", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("table view prints a Spawn tree block with each node's leaseId/caps/tools and DENIED for denials", async () => {
+    const client: RpcClient = {
+      call: () => Promise.resolve(SPAWN_REPORT),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Spawn tree:");
+    expect(output).toContain("L-root");
+    expect(output).toContain("memory_search");
+    expect(output).toContain("L-child");
+    // The child names its parent edge and its denied cap.
+    expect(output).toContain("L-root"); // child parent edge references the root lease
+    expect(output).toContain("DENIED");
+    expect(output).toContain("orch:web");
+    // The table branch must NOT have emitted the whole report as JSON.
+    expect(() => JSON.parse(output)).toThrow();
+  });
+
+  it("--format json emits report.spawnTree", async () => {
+    const client: RpcClient = {
+      call: () => Promise.resolve(SPAWN_REPORT),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "default:user123:telegram:1717000000",
+      "--format",
+      "json",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    const parsed = JSON.parse(output) as { spawnTree?: Array<{ leaseId: string }> };
+    expect(parsed.spawnTree).toHaveLength(2);
+    expect(parsed.spawnTree![1]!.leaseId).toBe("L-child");
+  });
+
+  it("table view omits the Spawn tree block when the report carries no spawnTree", async () => {
+    // FAKE_REPORT has no spawnTree — the block is presence-conditional.
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).not.toContain("Spawn tree:");
+  });
+});
+
 describe("comis explain --depth full threads depth:'full' through to the contract", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
