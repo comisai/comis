@@ -854,7 +854,9 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
   });
 
   // RATE-02: agentId:"*" is neutralized to the lease's single agentId (the "*"
-  // never reaches the handler from the endpoint path).
+  // never reaches the handler from the endpoint path). Uses cron.run (a mutation
+  // in the orch:cron audience) — cron.list is `ungated`/out-of-audience, so a
+  // cap-lease cannot reach it at all (validate denies it).
   it("neutralizes agentId:'*' to the lease's single agentId on a cron mutation (RATE-02)", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
@@ -865,7 +867,7 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
       leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
     });
 
-    await endpoint.handleCapCall(bearer, "cron.list", { agentId: "*" });
+    await endpoint.handleCapCall(bearer, "cron.run", { agentId: "*", jobId: "j1" });
     expect(rpcCall).toHaveBeenCalledTimes(1);
     const [, params] = rpcCall.mock.calls[0];
     expect(params.agentId).toBe("self-agent");

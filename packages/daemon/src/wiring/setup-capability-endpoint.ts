@@ -89,6 +89,24 @@ import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 const MAX_LINE_BYTES = 64 * 1024;
 
 /**
+ * The cron-MUTATION RPC methods the cap endpoint re-identifies to the lease's
+ * agent (RATE-02 cron self-ownership) — the `orch:cron` audience set. The shared
+ * `cron-handlers.ts` reads `agentId`/`_agentId` from params for BOTH the agent AND
+ * the operator-gateway path, so forcing `agentId := lease.agentId` MUST happen
+ * HERE (the only path where the lease is the authoritative identity) — never in
+ * the handler (Pitfall 3: that would break operator `cron.list --agentId "*"`).
+ * `cron.list` is NOT here: it is `ungated` (a read view) and out of the lease's
+ * `orch:cron` audience, so a cap-lease cannot reach it at all (the validate denies
+ * it) — there is nothing for the endpoint to re-identify.
+ */
+const CRON_MUTATION_METHODS: ReadonlySet<string> = new Set([
+  "cron.add",
+  "cron.update",
+  "cron.run",
+  "cron.remove",
+]);
+
+/**
  * The EXACT RPC methods dispatched by the 10 `SUB_AGENT_TOOL_DENYLIST`
  * management tools, mapped to the denylist tool name that owns each. The
  * denylist keys are TOOL names (e.g. `skills_manage`), not RPC methods (e.g.
@@ -280,11 +298,30 @@ export interface CapabilityEndpoint {
  * the RPC dispatch sink. See the module doc for the deny-matrix soundness.
  */
 export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): CapabilityEndpoint {
-  const { leaseManager, rpcCall } = deps;
+  const { leaseManager, rpcCall, boundedAutonomy } = deps;
   // Scope a submodule logger for the socket boundary (WR-02). `child` is
   // undefined-safe via the optional chain — the deny-matrix unit tests omit the
   // logger, so the socket handlers degrade to no-ops there.
   const log = deps.logger?.child({ submodule: "capability-endpoint" });
+
+  /**
+   * RATE-01: consult the per-root + per-socket rate limiter for a validated
+   * lease. Throws (fail-closed, content-free) when the limiter trips. Inert when
+   * `boundedAutonomy` is absent (the deny-matrix unit tests). The cap socket is
+   * the agent's only orchestrate egress, so this bounds a `for(;;) spawn()` /
+   * cron-storm call rate at the boundary.
+   */
+  function consultRateLimit(lease: LeaseInfo, socketId: string): void {
+    if (!boundedAutonomy) return;
+    const gate = boundedAutonomy.tryCall(lease.rootRunId, socketId);
+    if (!gate.ok) {
+      log?.warn(
+        { submodule: "capability-endpoint", errorKind: "resource" as const, hint: "cap-socket call rate exceeded (autonomy.rate.*); the agent is calling the orchestrate surface too fast — back off or raise the rate cap" },
+        "Capability call rate-limited",
+      );
+      throw new Error("capability call rate-limited");
+    }
+  }
 
   /**
    * The `tool.invoke` one-route dispatch (DISPATCH-01/02; v8 §6.2) — the
@@ -358,6 +395,10 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     bearer: string,
     method: string,
     params: Record<string, unknown>,
+    // RATE-01: a per-connection id from the socket handler (monotonic counter).
+    // Defaults to a single shared key so the deny-matrix unit tests (which call
+    // handleCapCall directly) still exercise the per-root limb.
+    socketId = "default",
   ): Promise<unknown> {
     // Denylist pre-check (ENDPOINT-02): a *_manage / gateway tool is never
     // delegatable, independent of the lease's caps. Denied BEFORE validate so a
@@ -402,6 +443,9 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       if (!toolLease) {
         throw new Error("lease invalid/expired/revoked or audience mismatch");
       }
+      // RATE-01: rate-limit AFTER the lease validate (so an unauthenticated call
+      // is denied first) — bounds the per-root + per-socket call rate.
+      consultRateLimit(toolLease, socketId);
       return handleToolInvoke(toolLease, tool, cap, innerArgs);
     }
 
@@ -412,6 +456,55 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     const lease: LeaseInfo | null = leaseManager.validate(bearer, method);
     if (!lease) {
       throw new Error("lease invalid/expired/revoked or audience mismatch");
+    }
+
+    // RATE-01: rate-limit AFTER the lease validate (an unauthenticated call is
+    // denied first), per-root + per-socket — bounds a for(;;) spawn() / cron-storm.
+    consultRateLimit(lease, socketId);
+    // RATE-01: connection-churn cap (one request per connection, so this counts a
+    // reconnect-storm per root). Denies a flood of fresh cap-socket connections.
+    if (boundedAutonomy) {
+      const churn = boundedAutonomy.tryChurn(lease.rootRunId);
+      if (!churn.ok) {
+        log?.warn(
+          { submodule: "capability-endpoint", errorKind: "resource" as const, hint: "cap-socket connection churn exceeded (autonomy.rate.connectionChurnPerMin); the agent is opening orchestrate connections too fast" },
+          "Capability connection churn-limited",
+        );
+        throw new Error("capability connection churn-limited");
+      }
+    }
+
+    // RATE-02 cron self-ownership: a cron mutation is re-identified to the lease's
+    // agent HERE (the only path where the lease is authoritative — Pitfall 3, the
+    // shared cron-handlers.ts is NOT touched). Reject system_event (only agent_turn
+    // is self-ownable), cap at cronSelfMax via the NAMED boundedAutonomy.cronCount
+    // accessor (the provider daemon.ts binds to CronScheduler.getJobs().length —
+    // the endpoint holds no cron store of its own), then forward with agentId AND
+    // _agentId FORCED to the lease's identity (cron-handlers reads BOTH), which
+    // also neutralizes a forged agentId:"*" / cross-agent id.
+    if (CRON_MUTATION_METHODS.has(method)) {
+      if (params.payload_kind === "system_event") {
+        throw new CapabilityDeniedError("orch:cron");
+      }
+      const cronSelfMax = deps.autonomyConfig?.cronSelfMax;
+      if (
+        cronSelfMax !== undefined &&
+        boundedAutonomy !== undefined &&
+        boundedAutonomy.cronCount(lease.agentId) >= cronSelfMax
+      ) {
+        log?.warn(
+          { submodule: "capability-endpoint", errorKind: "resource" as const, hint: "agent-authored cron cap reached (autonomy.cronSelfMax); remove an existing agent cron or raise cronSelfMax" },
+          "Capability cron self-ownership cap reached",
+        );
+        throw new CapabilityDeniedError("orch:cron");
+      }
+      return rpcCall(method, {
+        ...stripInternalFields(params),
+        // FORCE the lease's identity on BOTH fields (cron-handlers.ts reads both).
+        agentId: lease.agentId,
+        _agentId: lease.agentId,
+        _capabilities: lease.caps,
+      });
     }
 
     // ORIGIN-02 at the socket boundary (CR-01): the wire `params` are FULLY
@@ -448,11 +541,15 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   // drain — a single stuck client (connected, never sends a `\n`) would wedge
   // shutdown forever. Mirrors mitm-broker's `openSockets` set.
   const openSockets = new Set<net.Socket>();
+  // RATE-01: a monotonic per-connection id is the per-socket rate-limit key. One
+  // request per connection, so this distinguishes a burst of fresh connections.
+  let connectionSeq = 0;
 
   function startSocket(socketPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const srv = net.createServer((socket) => {
         openSockets.add(socket);
+        const socketId = `conn-${(connectionSeq += 1).toString(36)}`;
         socket.on("close", () => {
           openSockets.delete(socket);
         });
@@ -486,7 +583,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
             socket.end(JSON.stringify({ error: "malformed request" }) + "\n");
             return;
           }
-          void handleCapCall(req.bearer, req.method, req.params ?? {})
+          void handleCapCall(req.bearer, req.method, req.params ?? {}, socketId)
             .then((result) => {
               socket.end(JSON.stringify({ result }) + "\n");
             })
