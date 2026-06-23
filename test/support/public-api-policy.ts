@@ -1696,6 +1696,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "defineContract",
       "INTERNAL_FIELD_NAMES",
       "stripInternalFields",
+      // Autonomy-domain admin contracts (213-03, REVOKE-01/03). LeaseRevokeContract
+      // + RunKillContract are scopes:["admin"] RPC contracts declared in Wave 1
+      // (this plan); their `[LeaseRevokeContract.method]` / `[RunKillContract.method]`
+      // daemon handlers land in Plan 06 (Wave 3) — a documented cross-wave seam
+      // (the same VideoGenerateContract pattern in @comis/core/media). Until the
+      // handler lands they have no in-repo consumer; the bidirectional 1:1 +
+      // codegen-drift arch tests exercise them at test-time. AUTONOMY_HANDLERS_CONTRACTS
+      // is the per-domain aggregator array, composed into ORCHESTRATOR_CONTRACTS →
+      // API_CONTRACTS_ORDERED intra-package (the walker skips self-imports).
+      "LeaseRevokeContract",
+      "RunKillContract",
+      "AUTONOMY_HANDLERS_CONTRACTS",
       // Daemon-domain contracts. The per-method contracts
       // (`DaemonSetLogLevelContract`, `SystemPingContract`) have in-repo
       // consumers (daemon-handlers.ts + CLI's daemon-guard.ts +

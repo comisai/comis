@@ -1,8 +1,8 @@
 {
-  "totalMinified": 128426,
-  "totalGzipped": 12788,
+  "totalMinified": 129215,
+  "totalGzipped": 12864,
   "budget": {
-    "minified": 129000,
+    "minified": 130000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -88,6 +88,7 @@
     "heartbeat.update": 1066,
     "image.analyze": 501,
     "image.generate": 366,
+    "lease.revoke": 385,
     "link.process": 455,
     "mcp.connect": 1706,
     "mcp.disconnect": 519,
@@ -170,6 +171,7 @@
     "providers.get": 602,
     "providers.list": 703,
     "providers.update": 585,
+    "run.kill": 380,
     "scheduler.wake": 345,
     "secrets.delete": 424,
     "secrets.get": 403,

@@ -4,9 +4,9 @@ import {
   AutonomyConfigSchema,
   AUTONOMY_PROFILES,
   resolveAutonomy,
-  degradeAutonomy,
-  type AutonomyDownshift,
 } from "./schema-agent-autonomy.js";
+// PROFILE-03 honest-degrade moved to its own leaf (213-03 file-size split).
+import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy-degrade.js";
 
 // ---------------------------------------------------------------------------
 // PROFILE-01 (Phase 210): the v8 §3.8 named-profile resolver. An

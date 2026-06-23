@@ -4135,6 +4135,39 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "lease.revoke": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "leaseId": {
+          "type": "string"
+        },
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "link.process": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -9527,6 +9560,39 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "providerId",
         "config",
         "updated"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "run.kill": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "killed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "killed"
       ],
       "additionalProperties": false
     },
