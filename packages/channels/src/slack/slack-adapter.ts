@@ -23,12 +23,14 @@ import type {
   MessageHandler,
   NormalizedMessage,
   ReactionHandler,
+  ReconcileSendQuery,
+  ReconcileSendOutcome,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { SlackMessageEvent } from "./message-mapper.js";
 import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
@@ -603,6 +605,70 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
 
     onReaction(handler: ReactionHandler): void {
       reactionHandlers.push(handler);
+    },
+
+    async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
+      // The bolt client throws OR returns {ok:false} on failure. Either way a
+      // failed/partial fetch can NEVER prove the message is absent (Pitfall 2 /
+      // T-216-22) — return unresolved, never not_sent.
+      let result: {
+        ok?: boolean;
+        has_more?: boolean;
+        messages?: Array<{ ts?: string; user?: string; bot_id?: string; text?: string }>;
+      };
+      try {
+        // Slack ts is `seconds.micro`; the query window is epoch ms. Convert
+        // the bounds to whole-second strings for oldest/latest.
+        result = await app.client.conversations.history({
+          channel: query.channelId,
+          oldest: String(Math.floor(query.sentAfterMs / 1000)),
+          latest: String(Math.floor(query.sentBeforeMs / 1000)),
+          limit: 100,
+          inclusive: true,
+        });
+      } catch (error) {
+        deps.logger.warn(
+          {
+            channelType: "slack",
+            chatId: query.channelId,
+            err: error instanceof Error ? error : new Error(String(error)),
+            hint: "conversations.history failed; reconcile cannot prove absence",
+            errorKind: "platform" as const,
+          },
+          "reconcileSend unresolved",
+        );
+        return ok({ kind: "unresolved" });
+      }
+
+      if (result.ok === false) {
+        // An API-level failure cannot prove absence -> unresolved.
+        return ok({ kind: "unresolved" });
+      }
+
+      if (result.has_more === true) {
+        // The window was truncated: we did not see the full window, so we
+        // cannot prove the message is absent -> unresolved (NOT not_sent).
+        deps.logger.debug(
+          { channelType: "slack", chatId: query.channelId, hint: "history truncated (has_more); window not fully covered" },
+          "reconcileSend unresolved",
+        );
+        return ok({ kind: "unresolved" });
+      }
+
+      for (const m of result.messages ?? []) {
+        // author=bot required (T-216-25): a bot_id is set on bot messages, or
+        // the message was posted under our own user id.
+        const isBotAuthored = (m.bot_id !== undefined && m.bot_id !== "") || m.user === _ownUserId;
+        if (!isBotAuthored) continue;
+        const digest = createHash("sha256").update(m.text ?? "").digest("hex").slice(0, 16);
+        if (digest === query.contentDigest) {
+          return ok({ kind: "sent", platformMessageId: m.ts ?? "" });
+        }
+      }
+
+      // Full non-truncated scan, no bot-authored digest match: definitively
+      // absent from the queried window.
+      return ok({ kind: "not_sent" });
     },
 
     getStatus(): ChannelStatus {

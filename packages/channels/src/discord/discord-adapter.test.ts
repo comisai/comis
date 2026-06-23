@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -978,6 +979,160 @@ describe("createDiscordAdapter", () => {
         expect.objectContaining({ attempt: 1 }),
         "Reconnection attempt",
       );
+    });
+  });
+
+  describe("reconcileSend", () => {
+    const BOT_ID = "BOT123";
+
+    function digestOf(text: string): string {
+      return createHash("sha256").update(text).digest("hex").slice(0, 16);
+    }
+
+    async function startedAdapter() {
+      vi.mocked(validateDiscordToken).mockResolvedValue(
+        ok({ id: BOT_ID, username: "bot", discriminator: "0" }),
+      );
+      mockLogin.mockResolvedValue("token");
+      const adapter = createDiscordAdapter(makeDeps());
+      await adapter.start();
+      return adapter;
+    }
+
+    it("returns sent with the message id for a bot-authored, digest+window match", async () => {
+      const text = "the crash-interrupted body";
+      const ts = 1_700_000_000_000;
+      const collection = new Map([
+        ["m1", { id: "m1", author: { id: BOT_ID }, content: text, createdTimestamp: ts }],
+      ]);
+      const mockMessagesFetch = vi.fn().mockResolvedValue(collection);
+      mockChannelsFetch.mockResolvedValue({
+        isTextBased: () => true,
+        messages: { fetch: mockMessagesFetch },
+      });
+
+      const adapter = await startedAdapter();
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf(text),
+        sentAfterMs: ts - 1000,
+        sentBeforeMs: ts + 1000,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toEqual({ kind: "sent", platformMessageId: "m1" });
+      }
+      // The collection overload (limit) is used, not the single-id fetch.
+      expect(mockMessagesFetch).toHaveBeenCalledWith(expect.objectContaining({ limit: expect.any(Number) }));
+    });
+
+    it("returns not_sent when a full collection has no digest match in the window", async () => {
+      const ts = 1_700_000_000_000;
+      const collection = new Map([
+        ["m1", { id: "m1", author: { id: BOT_ID }, content: "some other body", createdTimestamp: ts }],
+      ]);
+      const mockMessagesFetch = vi.fn().mockResolvedValue(collection);
+      mockChannelsFetch.mockResolvedValue({
+        isTextBased: () => true,
+        messages: { fetch: mockMessagesFetch },
+      });
+
+      const adapter = await startedAdapter();
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf("the body we are looking for"),
+        sentAfterMs: ts - 1000,
+        sentBeforeMs: ts + 1000,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toEqual({ kind: "not_sent" });
+      }
+    });
+
+    it("returns unresolved (NOT not_sent) when messages.fetch throws — a failed query cannot prove absence (Pitfall 2)", async () => {
+      const mockMessagesFetch = vi.fn().mockRejectedValue(new Error("DiscordAPIError: 500"));
+      mockChannelsFetch.mockResolvedValue({
+        isTextBased: () => true,
+        messages: { fetch: mockMessagesFetch },
+      });
+
+      const adapter = await startedAdapter();
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf("anything"),
+        sentAfterMs: 1,
+        sentBeforeMs: 2,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toEqual({ kind: "unresolved" });
+        expect(result.value.kind).not.toBe("not_sent");
+      }
+    });
+
+    it("returns unresolved when the channel is not text-like (asTextLike null)", async () => {
+      mockChannelsFetch.mockResolvedValue({ isTextBased: () => false });
+
+      const adapter = await startedAdapter();
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf("anything"),
+        sentAfterMs: 1,
+        sentBeforeMs: 2,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toEqual({ kind: "unresolved" });
+      }
+    });
+
+    it("ignores a non-bot author whose message shares the digest — only the bot's own sends count (Spoofing T-216-25)", async () => {
+      const text = "identical body from a user";
+      const ts = 1_700_000_000_000;
+      const collection = new Map([
+        // Same content + window, but a DIFFERENT (non-bot) author.
+        ["u1", { id: "u1", author: { id: "SOME_USER" }, content: text, createdTimestamp: ts }],
+      ]);
+      const mockMessagesFetch = vi.fn().mockResolvedValue(collection);
+      mockChannelsFetch.mockResolvedValue({
+        isTextBased: () => true,
+        messages: { fetch: mockMessagesFetch },
+      });
+
+      const adapter = await startedAdapter();
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf(text),
+        sentAfterMs: ts - 1000,
+        sentBeforeMs: ts + 1000,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // The user message must NOT be mistaken for the bot's send -> not_sent.
+        expect(result.value).toEqual({ kind: "not_sent" });
+      }
+    });
+
+    it("returns unresolved when the bot id is unknown (adapter not started)", async () => {
+      // No start() => bot user id never captured.
+      const adapter = createDiscordAdapter(makeDeps());
+      const result = await adapter.reconcileSend!({
+        channelId: "C1",
+        contentDigest: digestOf("anything"),
+        sentAfterMs: 1,
+        sentBeforeMs: 2,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toEqual({ kind: "unresolved" });
+      }
     });
   });
 });

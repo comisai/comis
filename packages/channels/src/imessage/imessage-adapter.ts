@@ -49,6 +49,7 @@ export interface IMessageAdapterDeps {
 // Factory
 // ---------------------------------------------------------------------------
 
+// Phase 216 ONCE-03: reconcileSend is intentionally NOT implemented — this transport cannot reliably query 'did the bot send X?' (AppleScript/fire-and-forget/SMTP). Recovery treats the absence as 'unresolved' → park+escalate (the honest fallback, never a blind replay).
 /**
  * Create an iMessage adapter implementing the ChannelPort interface.
  *
