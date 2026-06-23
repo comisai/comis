@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Postbuild asset copy for the sandbox (JAIL-01).
+ * Postbuild asset copy (JAIL-01 + ORCH-03).
  *
- * `tsc` emits only `.js`/`.d.ts` — it does NOT copy data assets. The seccomp
- * BPF blob (`seccomp-orchestrate.bpf`, a precompiled raw-BPF artifact generated
- * offline on Linux via libseccomp `scmp_export_bpf`) must sit BESIDE the compiled
- * `seccomp-profile.js` in `dist/` so `loadSeccompProfileFd()` (which resolves the
- * blob via `import.meta.url`) can `open()` it.
+ * `tsc` emits only the `.js`/`.d.ts` it COMPILES from `.ts` sources — it does
+ * NOT copy data assets, and with `allowJs: false` it ignores hand-committed
+ * `.js`. Two such committed artifacts must ride into `dist/` beside their
+ * compiled siblings so the runtime can resolve them via `import.meta.url`:
  *
- * This copies any `*.bpf` from `src/tools/builtin/sandbox/` to the matching
- * `dist/tools/builtin/sandbox/`. It is a NO-OP when the blob is absent (the
- * macOS dev checkout has none — the loader then degrades to null and buildArgs
- * omits `--seccomp`), so the build never fails for lack of the blob.
+ *   1. The seccomp BPF blob (`seccomp-orchestrate.bpf`, a precompiled raw-BPF
+ *      artifact generated offline on Linux via libseccomp `scmp_export_bpf`)
+ *      must sit beside the compiled `seccomp-profile.js` so
+ *      `loadSeccompProfileFd()` can `open()` it. NO-OP when absent (macOS dev
+ *      has no blob → the loader degrades to null and buildArgs omits
+ *      `--seccomp`), so the build never fails for lack of the blob.
+ *
+ *   2. The generated `comis_tools.{d.ts,js}` SDK (emitted from
+ *      `TOOL_CAPABILITY_MAP` by `scripts/orchestrate-sdk/generate-comis-tools-sdk.ts`,
+ *      ORCH-03). It is committed SOURCE (the byte-identical drift gate pins it),
+ *      but tsc skips a hand-written `.js`, so it is copied here so the Plan-04
+ *      runner can read it from `dist/` and write it into the jailed workspace,
+ *      and so it ships in the published tarball.
  *
  * Runs inside `pnpm -r run build` (and therefore inside the Docker image build),
- * so a committed blob rides the normal build output into both the published
+ * so committed assets ride the normal build output into both the published
  * tarball (`files: ["dist"]`) and the container image — no separate Docker COPY.
  */
 import { cpSync, existsSync, mkdirSync, readdirSync } from "node:fs";
@@ -23,22 +31,32 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..");
-const srcDir = join(pkgRoot, "src", "tools", "builtin", "sandbox");
-const distDir = join(pkgRoot, "dist", "tools", "builtin", "sandbox");
 
-if (!existsSync(srcDir)) {
-  // No sandbox source — nothing to do.
-  process.exit(0);
+// 1. Sandbox seccomp blob(s): copy any *.bpf → dist (graceful no-op when absent).
+const sandboxSrc = join(pkgRoot, "src", "tools", "builtin", "sandbox");
+const sandboxDist = join(pkgRoot, "dist", "tools", "builtin", "sandbox");
+if (existsSync(sandboxSrc)) {
+  const blobs = readdirSync(sandboxSrc).filter((f) => f.endsWith(".bpf"));
+  if (blobs.length > 0) {
+    mkdirSync(sandboxDist, { recursive: true });
+    for (const blob of blobs) {
+      cpSync(join(sandboxSrc, blob), join(sandboxDist, blob));
+      console.log(`[copy-sandbox-assets] ${blob} → dist/tools/builtin/sandbox/`);
+    }
+  }
 }
 
-const blobs = readdirSync(srcDir).filter((f) => f.endsWith(".bpf"));
-if (blobs.length === 0) {
-  // No blob committed yet (generated offline on Linux) — graceful no-op.
-  process.exit(0);
-}
-
-mkdirSync(distDir, { recursive: true });
-for (const blob of blobs) {
-  cpSync(join(srcDir, blob), join(distDir, blob));
-  console.log(`[copy-sandbox-assets] ${blob} → dist/tools/builtin/sandbox/`);
+// 2. Orchestrate SDK artifacts (ORCH-03): copy the generated comis_tools.{d.ts,js}
+//    → dist so the runner reads them from dist and they ship in the tarball.
+//    tsc ignores the hand-written .js (allowJs: false), so this copy is required.
+const orchSrc = join(pkgRoot, "src", "tools", "builtin", "orchestrate");
+const orchDist = join(pkgRoot, "dist", "tools", "builtin", "orchestrate");
+const sdkArtifacts = ["comis_tools.js", "comis_tools.d.ts"];
+const presentArtifacts = sdkArtifacts.filter((f) => existsSync(join(orchSrc, f)));
+if (presentArtifacts.length > 0) {
+  mkdirSync(orchDist, { recursive: true });
+  for (const artifact of presentArtifacts) {
+    cpSync(join(orchSrc, artifact), join(orchDist, artifact));
+    console.log(`[copy-sandbox-assets] ${artifact} → dist/tools/builtin/orchestrate/`);
+  }
 }
