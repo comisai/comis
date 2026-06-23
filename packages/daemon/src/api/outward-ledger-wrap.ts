@@ -33,6 +33,42 @@ import { ok, type Result } from "@comis/shared";
 import { isPermanentError, systemNowMs, type OutwardSendLedgerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
+/**
+ * TEST-ONLY crash-injection seam (Phase 216 Plan 08, MED-6). The exactly-once
+ * chaos test (`test/integration/durable-resume-e2e.test.ts`) drives a REAL
+ * autonomy-originated outward send through this wrap and crashes the daemon in
+ * the exact window invariant #12 protects — BETWEEN `markUnknown`
+ * (state=unknown_after_send) and `commit` — so the post-restart recovery faces a
+ * genuine `unknown_after_send` row written by the REAL code path (not a
+ * direct-DB-seed). That makes the RED state a real double-send, not a "no such
+ * table" miss.
+ *
+ *   - `"before_send"`: throw AFTER markUnknown but BEFORE `doSend` runs. The
+ *     platform (Echo) NEVER records the message ⇒ platform truth = not_sent ⇒ on
+ *     restart `reconcileSend` returns not_sent.
+ *   - `"after_send"`: run `doSend` (the platform DOES record it ⇒ platform truth =
+ *     sent) THEN throw before `commit`. On restart `reconcileSend` returns sent ⇒
+ *     ack once, NO replay (a blind replay would be the double-send the test forbids).
+ *
+ * This is the `_resetSigusr1Timer` test-seam precedent: a module-scoped hook with
+ * an exported setter, INERT in production (never set) and re-exported from the
+ * `@comis/daemon` barrel so the in-process integration test can arm/disarm it.
+ */
+export type OutwardSendCrashHookMode = "before_send" | "after_send";
+
+let __crashHook: OutwardSendCrashHookMode | undefined;
+
+/**
+ * Arm (or, with `undefined`, disarm) the test-only crash hook. INERT in
+ * production — only the chaos test calls it. Returns nothing; idempotent.
+ */
+export function __setOutwardSendCrashHookForTest(mode: OutwardSendCrashHookMode | undefined): void {
+  __crashHook = mode;
+}
+
+/** The sentinel error message the crash hook throws — recognized in tests/logs. */
+export const OUTWARD_SEND_CRASH_SENTINEL = "outward-send crash hook (test-only): simulated mid-send crash";
+
 /** The arguments to {@link wrapOutwardSend}. */
 export interface WrapOutwardSendArgs {
   /** The three-state ledger, or `undefined` on an older/non-autonomy daemon (⇒ pass-through). */
@@ -112,6 +148,19 @@ export async function wrapOutwardSend(
   // unknown_after_send — written BEFORE the platform-call window closes, so a
   // crash mid-send leaves a durable row the recovery scan reconciles.
   await ledger.markUnknown(rootRunId, stepIndex);
+
+  // TEST-ONLY (MED-6): crash in the exact invariant-#12 window. "before_send"
+  // crashes with the platform NOT having recorded the message (truth=not_sent);
+  // "after_send" runs the real platform call (truth=sent) THEN crashes before
+  // commit. Either way the row is left unknown_after_send for the post-restart
+  // recovery to reconcile. INERT in production (__crashHook is never armed).
+  if (__crashHook === "before_send") {
+    throw new Error(OUTWARD_SEND_CRASH_SENTINEL);
+  }
+  if (__crashHook === "after_send") {
+    await doSend();
+    throw new Error(OUTWARD_SEND_CRASH_SENTINEL);
+  }
 
   const sent = await doSend();
 

@@ -88,6 +88,18 @@ export {
 // Consumer: test/integration/mcp-config-refresh.test.ts.
 export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
+// Phase 216 Plan 08 (MED-6) test seam: the exactly-once chaos test
+// (test/integration/durable-resume-e2e.test.ts) arms a crash-injection hook in
+// the REAL wrapOutwardSend so a live autonomy-originated send crashes in the
+// invariant-#12 window (between markUnknown and commit), leaving a genuine
+// unknown_after_send row for the post-restart recovery to reconcile. INERT in
+// production (never armed); mirrors the _resetSigusr1Timer test-seam pattern.
+export {
+  __setOutwardSendCrashHookForTest,
+  OUTWARD_SEND_CRASH_SENTINEL,
+  type OutwardSendCrashHookMode,
+} from "./api/outward-ledger-wrap.js";
+
 // Bundle-install helper + boot orchestrator surfaced through the daemon barrel
 // so the skill-bundle-install integration test
 // (test/integration/skill-bundle-install.test.ts) can drive the

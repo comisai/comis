@@ -91,6 +91,44 @@ export interface TestDaemonHandle {
    * long-running interval was either cancelled or unref'd.
    */
   getTimerRecord(): ReadonlyArray<FakeTimerEntry> | undefined;
+  /**
+   * Phase 216 chaos-test probe: read a `durable_runs` row straight from the
+   * daemon's `memory.db` (resolved from `config.dataDir` + `memory.dbPath`). The
+   * durable-resume engine is not exposed on `DaemonInstance`, so the chaos test
+   * inspects the persisted state directly to assert a run resumed / was orphaned /
+   * survived a restart. Returns `undefined` when the row (or the db) is absent.
+   */
+  getDurableRun(rootRunId: string): DurableRunProbeRow | undefined;
+  /**
+   * Phase 216 chaos-test probe: read an `outward_send_ledger` row by its
+   * `(root_run_id, step_index)` idempotency key from the daemon's `memory.db`.
+   * Lets the chaos test assert the row transitioned unknown_after_send → committed
+   * (ack-once) / unresolved (parked) after a crash-mid-send + restart. Returns
+   * `undefined` when the row is absent.
+   */
+  getOutwardLedgerRow(rootRunId: string, stepIndex: number): OutwardLedgerProbeRow | undefined;
+}
+
+/** A raw `durable_runs` row as the chaos-test probe reads it (subset of columns). */
+export interface DurableRunProbeRow {
+  rootRunId: string;
+  status: string;
+  spawnTree: string;
+  outwardStep: number;
+  orphanReason: string | undefined;
+  lastHeartbeatAt: number;
+}
+
+/** A raw `outward_send_ledger` row as the chaos-test probe reads it (subset of columns). */
+export interface OutwardLedgerProbeRow {
+  rootRunId: string;
+  stepIndex: number;
+  state: string;
+  channelType: string;
+  channelId: string;
+  platformMessageId: string | undefined;
+  reconcileOutcome: string | undefined;
+  contentDigest: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +475,20 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     }
   };
 
+  // Resolve the daemon's memory.db path ONCE (same resolution the WAL-cleanup
+  // branch uses): config.dataDir + config.memory.dbPath. The Phase 216 probes
+  // open it read-only per call so the chaos test can inspect the durable_runs /
+  // outward_send_ledger rows the daemon persisted (those tables are not exposed
+  // on DaemonInstance). Captured here because `daemon` is in scope.
+  const resolveMemoryDbPath = (): string | undefined => {
+    const dbPath = daemon.container.config.memory.dbPath;
+    if (!dbPath) return undefined;
+    const dataDir = daemon.container.config.dataDir;
+    return dataDir
+      ? resolve(dataDir, dbPath)
+      : resolve(process.env["HOME"] ?? "", ".comis", dbPath);
+  };
+
   const handle: TestDaemonHandle = {
     daemon,
     gatewayUrl,
@@ -447,6 +499,9 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     // (no record to expose); returning `undefined` is the correct signal that
     // the integration assertion is not applicable.
     getTimerRecord: () => fakeTimers?.unrefRecord(),
+    getDurableRun: (rootRunId: string) => readDurableRun(resolveMemoryDbPath(), rootRunId),
+    getOutwardLedgerRow: (rootRunId: string, stepIndex: number) =>
+      readOutwardLedgerRow(resolveMemoryDbPath(), rootRunId, stepIndex),
   };
 
   // Set double-start guard
@@ -660,4 +715,137 @@ function seedDummyProviderApiKeys(): () => void {
   return () => {
     for (const restore of restorers) restore();
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 216 Echo delivery-count probe
+// ---------------------------------------------------------------------------
+
+/**
+ * Count + list the messages an EchoChannelAdapter recorded — the deterministic
+ * delivery-count probe the Phase 216 chaos test asserts on (exactly-one delivery
+ * after a crash-mid-send + restart; exactly-two for the two-distinct-sends case).
+ *
+ * Echo's in-memory `sentMessages` store IS the platform truth in the test: the
+ * chaos test registers an EchoChannelAdapter on `daemon.adapterRegistry`, so this
+ * reads that adapter's `getSentMessages()`. Kept here (not just inline in the
+ * test) so the delivery-count probe is a named, reusable harness seam and the
+ * `sentMessages` source is documented in one place.
+ *
+ * Accepts the adapter structurally (anything exposing `getSentMessages()`) so the
+ * harness need not statically import @comis/channels.
+ */
+export function getEchoDeliveries(
+  echo: { getSentMessages(): Array<{ id: string; channelId: string; text: string; timestamp: number }> },
+): Array<{ id: string; channelId: string; text: string; timestamp: number }> {
+  return echo.getSentMessages();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 216 durable-state probes (read memory.db directly)
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the daemon's memory.db READ-ONLY and return a better-sqlite3 handle, or
+ * `undefined` when the path is absent or the open fails (e.g. the db has not been
+ * created yet). Dynamic require keeps better-sqlite3 out of the harness's static
+ * import graph (it is the same native dep the daemon already loads) and mirrors
+ * the harness's existing dynamic-require seams (the pino factory).
+ */
+function openMemoryDbReadonly(dbPath: string | undefined): { db: unknown; close: () => void } | undefined {
+  if (!dbPath) return undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require in test harness; better-sqlite3 is the daemon's native dep.
+    const Database = require("better-sqlite3") as new (
+      path: string,
+      opts?: { readonly?: boolean; fileMustExist?: boolean },
+    ) => { prepare: (sql: string) => { get: (...args: unknown[]) => unknown }; close: () => void };
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    return { db, close: () => db.close() };
+  } catch {
+    // db not yet created / locked / unreadable — the probe returns undefined.
+    return undefined;
+  }
+}
+
+/** Read one `durable_runs` row by rootRunId; `undefined` when absent. */
+function readDurableRun(dbPath: string | undefined, rootRunId: string): DurableRunProbeRow | undefined {
+  const handle = openMemoryDbReadonly(dbPath);
+  if (!handle) return undefined;
+  try {
+    const row = (
+      handle.db as { prepare: (sql: string) => { get: (...a: unknown[]) => unknown } }
+    )
+      .prepare(
+        `SELECT root_run_id, status, spawn_tree, outward_step, orphan_reason, last_heartbeat_at FROM durable_runs WHERE root_run_id = ?`,
+      )
+      .get(rootRunId) as
+      | {
+          root_run_id: string;
+          status: string;
+          spawn_tree: string;
+          outward_step: number;
+          orphan_reason: string | null;
+          last_heartbeat_at: number;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      rootRunId: row.root_run_id,
+      status: row.status,
+      spawnTree: row.spawn_tree,
+      outwardStep: row.outward_step,
+      orphanReason: row.orphan_reason ?? undefined,
+      lastHeartbeatAt: row.last_heartbeat_at,
+    };
+  } catch {
+    return undefined;
+  } finally {
+    handle.close();
+  }
+}
+
+/** Read one `outward_send_ledger` row by (rootRunId, stepIndex); `undefined` when absent. */
+function readOutwardLedgerRow(
+  dbPath: string | undefined,
+  rootRunId: string,
+  stepIndex: number,
+): OutwardLedgerProbeRow | undefined {
+  const handle = openMemoryDbReadonly(dbPath);
+  if (!handle) return undefined;
+  try {
+    const row = (
+      handle.db as { prepare: (sql: string) => { get: (...a: unknown[]) => unknown } }
+    )
+      .prepare(
+        `SELECT root_run_id, step_index, state, channel_type, channel_id, platform_message_id, reconcile_outcome, content_digest FROM outward_send_ledger WHERE root_run_id = ? AND step_index = ?`,
+      )
+      .get(rootRunId, stepIndex) as
+      | {
+          root_run_id: string;
+          step_index: number;
+          state: string;
+          channel_type: string;
+          channel_id: string;
+          platform_message_id: string | null;
+          reconcile_outcome: string | null;
+          content_digest: string;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      rootRunId: row.root_run_id,
+      stepIndex: row.step_index,
+      state: row.state,
+      channelType: row.channel_type,
+      channelId: row.channel_id,
+      platformMessageId: row.platform_message_id ?? undefined,
+      reconcileOutcome: row.reconcile_outcome ?? undefined,
+      contentDigest: row.content_digest,
+    };
+  } catch {
+    return undefined;
+  } finally {
+    handle.close();
+  }
 }
