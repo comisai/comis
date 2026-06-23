@@ -273,6 +273,14 @@ export type {
 } from "./video-job-store.js";
 export { ensureVideoJobTable } from "./schema-video-jobs.js";
 
+// Durable run checkpoint store (Phase 216, DUR-01). The SQLite-backed
+// DurableRunPort the resume engine scans on boot (listResumable) and the daemon
+// wiring (Plan 07) constructs on the shared memory.db handle; ensureDurableRunTable
+// is the idempotent DDL initSchema calls — exported for the chaos/offline path.
+export { createSqliteDurableRunStore } from "./durable-run-store.js";
+export type { DurableRunStoreOptions } from "./durable-run-store.js";
+export { ensureDurableRunTable } from "./schema-durable-runs.js";
+
 // Delivery mirror adapter
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 
