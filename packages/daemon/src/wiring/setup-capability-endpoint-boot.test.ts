@@ -148,6 +148,48 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(result.capEndpointHandle!.boundedAutonomy.cronCount("other")).toBe(0);
   });
 
+  // PHASE 213-08 (BUDGET-01/02): the late-bound budget holder is POPULATED by the
+  // cap layer after construction (the seam the bridge reads — schedulers/agents are
+  // built BEFORE the cap layer, so they hold the holder and read `current` at fire
+  // time). After construction, holder.current is defined and its reserveBudget
+  // reaches the constructed per-root meter.
+  it("populates the late-bound boundedAutonomyBudget holder with the per-root reserve after construction", async () => {
+    const dataDir = tempDataDir();
+    const holder: { current?: { reserveBudget: (...a: unknown[]) => { kind: string }; registerRoot: (...a: unknown[]) => void } } = {};
+    const deps = {
+      ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
+      boundedAutonomyHolder: holder,
+    };
+    const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
+    cleanups.push(() => result.capEndpointStop?.());
+    // Before this plan the holder is never touched; after, current is the budget port.
+    expect(holder.current).toBeDefined();
+    const outcome = holder.current!.reserveBudget("root-x", "_web", "_web", 0, 0);
+    expect(outcome.kind).toBeDefined();
+  });
+
+  // The resolver returns a STABLE rootRunId per session: an unregistered (top-level,
+  // non-spawned) session gets a SYNTHETIC `root-session-<key>` id, registered on
+  // first use so a self-spawning loop on ANY run is bounded (criterion #2 — not only
+  // orchestrate children). The same session resolves to the SAME id on a second call.
+  it("resolveRootRunId returns a stable synthetic root for an unregistered session and registers it on first use", async () => {
+    const dataDir = tempDataDir();
+    const holder: { current?: { reserveBudget: (...a: unknown[]) => unknown; registerRoot: (...a: unknown[]) => void } } = {};
+    const deps = {
+      ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
+      boundedAutonomyHolder: holder,
+    };
+    const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
+    cleanups.push(() => result.capEndpointStop?.());
+    const resolveRootRunId = result.resolveRootRunId;
+    expect(resolveRootRunId).toBeDefined();
+    const sk = { tenantId: "t1", channelId: "c1", userId: "u1" };
+    const id1 = resolveRootRunId!(sk);
+    const id2 = resolveRootRunId!(sk);
+    expect(id1).toContain("root-session-");
+    expect(id2).toBe(id1); // stable across calls
+  });
+
   // The cap socket path lives under the supplied data dir.
   it("places the cap socket under the data dir", async () => {
     const dataDir = tempDataDir();
