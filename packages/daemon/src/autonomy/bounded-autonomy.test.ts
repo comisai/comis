@@ -254,6 +254,40 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
+  // Test 3d (WR-05): releaseSpawn to zero evicts ALL per-root state at the
+  // composite — the semaphore slot, the budget token/wall-clock anchor, AND the
+  // leaseId correlation index — so a storm of completed roots does not grow any
+  // sibling map without bound.
+  // -------------------------------------------------------------------------
+  it("releaseSpawn to zero evicts the per-root budget + lease-index state at the composite (WR-05)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+      budget: { aggregateUsd: 100, tokens: 1000, wallClockMs: 3_600_000 },
+    };
+    const { service } = makeService({ config });
+
+    // Acquire one slot + register the root with a lease + burn most token budget.
+    expect(service.tryAcquireSpawn("root-EV", 1, 0)).toEqual({ ok: true });
+    service.registerRoot("root-EV", "lease-EV");
+    expect(service.leaseIdsForRoot("root-EV").has("lease-EV")).toBe(true);
+    expect(service.reserveBudget("root-EV", "ollama", "llama3", 0, 900).kind).not.toBe("exceeded");
+
+    // Release the only slot → active hits 0 → all per-root state is evicted.
+    service.releaseSpawn("root-EV");
+
+    // The lease index for the root is now empty.
+    expect(service.leaseIdsForRoot("root-EV").size).toBe(0);
+
+    // The budget token total reset: a fresh registration + a 900 reserve
+    // succeeds (it would have been exceeded if the prior 900 survived).
+    service.registerRoot("root-EV", "lease-EV2");
+    expect(service.reserveBudget("root-EV", "ollama", "llama3", 0, 900).kind).not.toBe("exceeded");
+
+    service.destroy();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 4: idempotent construction + destroy() tears down the rate timers
   // -------------------------------------------------------------------------
   it("constructs sub-modules once and destroy() cancels the rate limiter's scheduled timers", () => {

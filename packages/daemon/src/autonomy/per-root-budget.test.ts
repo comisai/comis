@@ -163,4 +163,39 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     const bOk: SpendGateOutcome = budget.reserveBudget("root-B", PRICED_PROVIDER, PRICED_MODEL, 4, 500);
     expect(bOk.kind).toBe("ok");
   });
+
+  // -------------------------------------------------------------------------
+  // WR-05 (213-REVIEW): the per-root wall-clock anchor + token-total maps must
+  // be evictable so a for(;;)spawn / cron storm of distinct roots does not grow
+  // them without bound. evictRoot clears a completed root's accounting; a later
+  // re-registration starts fresh.
+  // -------------------------------------------------------------------------
+  it("evictRoot clears a root's token total and wall-clock anchor so the maps do not grow unbounded (WR-05)", () => {
+    const wallClockMs = 60_000;
+    const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs });
+    budget.registerRoot("root-E");
+
+    // Burn most of the token budget on this root.
+    expect(budget.reserveBudget("root-E", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+    // A second 900 would exceed (900 + 900 > 1000) — proves the running total is held.
+    expect(budget.reserveBudget("root-E", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).toBe("exceeded");
+
+    // Evict the root (its tree completed) → token total + anchor dropped.
+    budget.evictRoot("root-E");
+
+    // A fresh registration of the SAME id starts with a clean token total: a 900
+    // reserve now succeeds (it would have exceeded had the prior 900 survived).
+    budget.registerRoot("root-E");
+    expect(budget.reserveBudget("root-E", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+
+    // The wall-clock anchor is also fresh: advancing just under the deadline from
+    // the NEW registration does not trip (it would if the old anchor survived).
+    clock.advance(wallClockMs - 1_000);
+    expect(budget.reserveBudget("root-E", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+  });
+
+  it("evictRoot is a no-op for an unknown root (never throws)", () => {
+    const { budget } = makeBudget();
+    expect(() => budget.evictRoot("never-seen")).not.toThrow();
+  });
 });

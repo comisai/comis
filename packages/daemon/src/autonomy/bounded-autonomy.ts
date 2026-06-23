@@ -217,6 +217,16 @@ export function createBoundedAutonomy(deps: {
 
     releaseSpawn(rootRunId): void {
       semaphore.releaseSpawn(rootRunId);
+      // WR-05: when the tree has no live spawns left, evict ALL per-root state in
+      // one place — the semaphore already dropped its own entry inside
+      // releaseSpawn (active→0), so mirror that here for the budget meter's
+      // wall-clock/token maps AND the leaseId correlation index, so a storm of
+      // per-spawn / per-cron-fire roots that complete does not grow any of the
+      // sibling maps without bound. activeCount reads 0 for the now-evicted root.
+      if (semaphore.activeCount(rootRunId) === 0) {
+        budget.evictRoot(rootRunId);
+        leaseIdsByRoot.delete(rootRunId);
+      }
     },
 
     tryCall(rootRunId, socketId): { ok: true } | { ok: false; reason: "rate" } {

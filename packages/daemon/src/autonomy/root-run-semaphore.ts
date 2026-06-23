@@ -59,11 +59,15 @@ export interface RootRunSemaphore {
   /**
    * Release one concurrency slot for `rootRunId`, paired one-to-one with a prior
    * successful `tryAcquireSpawn`. Floors at 0 — a double-release never drives the
-   * active count negative (which would corrupt the cap into "free forever").
+   * active count negative (which would corrupt the cap into "free forever"). When
+   * the count reaches 0 the root's map entry is EVICTED (WR-05) so a storm of
+   * per-spawn roots that all complete does not grow the map without bound.
    */
   releaseSpawn(rootRunId: string): void;
-  /** The live sub-agent count for `rootRunId` (0 for an untouched root) — for the composite/audit + tests. */
+  /** The live sub-agent count for `rootRunId` (0 for an untouched OR evicted root) — for the composite/audit + tests. */
   activeCount(rootRunId: string): number;
+  /** Number of distinct roots currently held (WR-05 leak-guard seam / tests). */
+  size(): number;
 }
 
 /**
@@ -101,11 +105,21 @@ export function createRootRunSemaphore(cfg: {
 
     releaseSpawn(rootRunId): void {
       const s = roots.get(rootRunId);
-      if (s) s.active = Math.max(0, s.active - 1);
+      if (!s) return;
+      s.active = Math.max(0, s.active - 1);
+      // WR-05: evict the entry once the tree has no live spawns, so a storm of
+      // per-spawn / per-cron-fire roots that all complete does not accumulate
+      // 0-active husks forever (the unbounded-key DoS vector). A later spawn for
+      // the same id simply re-creates the entry at active=1 (the cap is unchanged).
+      if (s.active === 0) roots.delete(rootRunId);
     },
 
     activeCount(rootRunId): number {
       return roots.get(rootRunId)?.active ?? 0;
+    },
+
+    size(): number {
+      return roots.size;
     },
   };
 }

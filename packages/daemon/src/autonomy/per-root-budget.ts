@@ -50,6 +50,19 @@ export interface PerRootBudget {
    */
   registerRoot(rootRunId: string): void;
   /**
+   * Evict a completed root's accounting (WR-05): drop its wall-clock anchor and
+   * running token total so a `for(;;) spawn()` / cron storm of distinct roots
+   * does not grow these maps without bound. Idempotent — a no-op for an unknown
+   * root, never throws. A later `registerRoot` of the same id starts fresh.
+   *
+   * NOTE: the per-root $-accumulator is a shipped daemon-lifetime
+   * {@link SpendAccumulator} with no per-scope eviction API; its per-root scope
+   * map is NOT pruned here (evicting it would touch shipped v2.28 spend
+   * semantics). The token + wall-clock maps owned by THIS module — the two
+   * unbounded vectors 213-REVIEW WR-05 names — are the ones evicted.
+   */
+  evictRoot(rootRunId: string): void;
+  /**
    * Reserve budget for one LLM/web call against the tree root. Runs the wall-clock
    * and token limbs FIRST (they enforce regardless of pricing — the limbs that bite
    * a zero-price loop), then the $-limb via the SHIPPED 3-state gate. Returns a
@@ -126,6 +139,13 @@ export function createPerRootBudget(deps: {
       if (!rootStartMs.has(rootRunId)) {
         rootStartMs.set(rootRunId, clock.now());
       }
+    },
+
+    evictRoot(rootRunId): void {
+      // WR-05: drop the two unbounded maps this module owns. Bounded by the
+      // semaphore's release-to-zero hook (the composite calls this then).
+      rootStartMs.delete(rootRunId);
+      tokenTotals.delete(rootRunId);
     },
 
     reserveBudget(rootRunId, provider, model, estUsd, estTokens): SpendGateOutcome {

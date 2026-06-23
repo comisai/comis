@@ -113,4 +113,42 @@ describe("root-run-semaphore — per-rootRunId atomic spawn bound (CEIL-01)", ()
     expect(sem.tryAcquireSpawn("root-A", 1, 0)).toEqual({ ok: true });
     expect(sem.tryAcquireSpawn("root-A", 1, 0)).toEqual({ ok: false, reason: "concurrency" });
   });
+
+  // -------------------------------------------------------------------------
+  // WR-05 (213-REVIEW): the per-root map must not grow unbounded under a
+  // for(;;)spawn / cron storm. When a root's last slot is released (active
+  // floors to 0), its map entry is EVICTED so a fresh root per spawn does not
+  // accumulate forever (the DoS vector the brief calls out).
+  // -------------------------------------------------------------------------
+  it("evicts a root's map entry once its active count returns to zero (WR-05)", () => {
+    const sem = makeSemaphore({ maxConcurrentSelfAgents: 4 });
+
+    // Two trees acquire; the map holds exactly two entries.
+    expect(sem.tryAcquireSpawn("root-A", 1, 0)).toEqual({ ok: true });
+    expect(sem.tryAcquireSpawn("root-B", 1, 0)).toEqual({ ok: true });
+    expect(sem.size()).toBe(2);
+
+    // Drain root-A to zero → its entry is evicted (not left as a 0-active husk).
+    sem.releaseSpawn("root-A");
+    expect(sem.size()).toBe(1);
+    expect(sem.activeCount("root-A")).toBe(0); // honest zero for an absent root
+
+    // root-B is untouched and still bounded normally afterwards.
+    expect(sem.activeCount("root-B")).toBe(1);
+    sem.releaseSpawn("root-B");
+    expect(sem.size()).toBe(0);
+  });
+
+  it("simulated for(;;) spawn of FRESH roots does not grow the map without bound when each releases (WR-05)", () => {
+    const sem = makeSemaphore({ maxConcurrentSelfAgents: 4 });
+
+    // 1000 distinct roots each acquire one slot then release — mirroring a storm
+    // of per-spawn roots that all complete. The map must not retain 1000 husks.
+    for (let i = 0; i < 1000; i++) {
+      const root = `root-${i}`;
+      expect(sem.tryAcquireSpawn(root, 1, 0)).toEqual({ ok: true });
+      sem.releaseSpawn(root);
+    }
+    expect(sem.size()).toBe(0);
+  });
 });
