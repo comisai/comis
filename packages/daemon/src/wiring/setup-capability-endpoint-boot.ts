@@ -36,13 +36,16 @@ import {
   resolveAutonomy,
   safePath,
   createOutputGuard,
+  formatSessionKey,
   type PerAgentConfig,
   type ClockPort,
   type TimerPort,
   type ResultRef,
   type OutputGuardPort,
   type ComisLogger,
+  type SessionKey,
 } from "@comis/core";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
 import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 import { namespacePreflight, type NamespacePreflightResult } from "@comis/skills";
@@ -59,6 +62,41 @@ import type { LoggingResult } from "./setup-logging.js";
 /** The web-search API keys the daemon-side autonomous search reads (from the secret store). */
 export interface CapabilityWebSearchKeys {
   get: (name: string) => string | undefined;
+}
+
+/**
+ * Build the `resolveRootRunId(sessionKey) → rootRunId` resolver (Phase 213-08,
+ * BUDGET-01/02) over a late-bound budget holder + a session→rootRunId index. The
+ * resolver is a STABLE closure created EARLY (before setupAgents/setupSchedulers,
+ * which hold it) and reads `holder.current` at call time — by the time a turn runs,
+ * the cap layer has populated it.
+ *
+ * Resolution: return the session's already-registered root if present; otherwise
+ * mint a SYNTHETIC per-session root `root-session-<formattedKey>` and `registerRoot`
+ * it on first use (via the holder). The synthetic fallback is what bounds a
+ * TOP-LEVEL (non-spawned) self-spawning loop — the budget's token/wall-clock limbs
+ * then key on a stable id for ANY run, not only orchestrate children (criterion #2).
+ * A synthetic root has no real lease, so a synthetic leaseId is recorded (the
+ * correlation index is content-free; the meter only needs the wall-clock anchor).
+ * Idempotent: the same session resolves to the SAME id on every call.
+ */
+export function createRootRunIdResolver(deps: {
+  holder: BoundedAutonomyBudgetHolder;
+  index: Map<string, string>;
+}): (sessionKey: SessionKey) => string {
+  return (sessionKey: SessionKey): string => {
+    const formatted = formatSessionKey(sessionKey);
+    const existing = deps.index.get(formatted);
+    if (existing !== undefined) return existing;
+    const synthetic = `root-session-${formatted}`;
+    deps.index.set(formatted, synthetic);
+    // Anchor the synthetic root in the budget meter on first use (wall-clock
+    // deadline + the rootRunId↔leaseId correlation). No real lease for a top-level
+    // run → a synthetic leaseId; absent holder ⇒ skip (the resolver still returns
+    // a stable id so the bridge can call reserveBudget once `current` is populated).
+    deps.holder.current?.registerRoot(synthetic, `lease-${synthetic}`);
+    return synthetic;
+  };
 }
 
 /** Deps for {@link constructCapabilityLayer} — the subset boot closes over. */
@@ -105,6 +143,20 @@ export interface CapabilityLayerDeps {
    * config. Optional — absent → the keyless/default provider chain.
    */
   webSearchKeys?: CapabilityWebSearchKeys;
+  /**
+   * Phase 213-08 (BUDGET-01/02): the daemon-wide LATE-BOUND per-root budget holder,
+   * created EARLY in daemon.ts (before setupAgents/setupSchedulers, which hold it)
+   * and POPULATED here after `createBoundedAutonomy` with the narrow budget port.
+   * Optional — the 211 boot-gate unit tests omit it; the per-root reserve is then
+   * never wired (byte-identical).
+   */
+  boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
+  /**
+   * The session→rootRunId index the {@link createRootRunIdResolver} closure reads.
+   * Shared by reference with the resolver daemon.ts threads into setupAgents (built
+   * EARLY over the SAME holder). Optional — absent ⇒ a local index is used here.
+   */
+  rootRunIdIndex?: Map<string, string>;
 }
 
 /** The constructed capability layer handle (undefined when no autonomy agent). */
@@ -148,6 +200,15 @@ export interface CapabilityLayerResult {
    * stays in the shipped core fn.
    */
   namespacePreflightOk: boolean;
+  /**
+   * Phase 213-08 (BUDGET-01/02): the `resolveRootRunId(sessionKey)` resolver built
+   * over the populated holder + the session→rootRunId index. `undefined` when no
+   * autonomy agent (no cap layer). daemon.ts ALSO builds an equivalent resolver
+   * early (over the SAME holder + index) for setupAgents, which runs before this
+   * call — this returned one is the canonical resolver for any later consumer + the
+   * boot-test seam.
+   */
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
 }
 
 /** The shipped web-search provider keys, read from the secret store (or none). */
@@ -250,6 +311,15 @@ export async function constructCapabilityLayer(
   const preflight: NamespacePreflightResult = namespacePreflight();
   const { namespacePreflightOk } = preflight;
 
+  // Phase 213-08 (BUDGET-01/02): the rootRunId resolver over the late-bound holder
+  // + the session→rootRunId index. Built whenever a holder is supplied (daemon.ts
+  // shares the SAME holder + index it threads into setupAgents early) — the resolver
+  // is a stable closure that reads `holder.current` at call time.
+  const rootRunIdIndex = deps.rootRunIdIndex ?? new Map<string, string>();
+  const resolveRootRunId = deps.boundedAutonomyHolder
+    ? createRootRunIdResolver({ holder: deps.boundedAutonomyHolder, index: rootRunIdIndex })
+    : undefined;
+
   // The first autonomy-bearing agent's resolved posture is the daemon-wide
   // bounded-autonomy config source (the bound mechanisms are a single daemon-wide
   // service keyed on rootRunId, mirroring the single daemon-wide LeaseManager —
@@ -275,6 +345,19 @@ export async function constructCapabilityLayer(
     ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
     logger: daemonLogger,
   });
+  // Phase 213-08 (BUDGET-01/02): POPULATE the late-bound budget holder with the
+  // narrow budget port now that the service exists — the seam the bridge reads
+  // (the bridge + schedulers were built BEFORE this layer; they hold the holder
+  // and read `current` at fire time). reserveBudget/registerRoot are bound to the
+  // composite (`this`-free arrow wrappers preserve the closure).
+  if (deps.boundedAutonomyHolder) {
+    deps.boundedAutonomyHolder.current = {
+      reserveBudget: (rootRunId, provider, model, estUsd, estTokens) =>
+        boundedAutonomy.reserveBudget(rootRunId, provider, model, estUsd, estTokens),
+      registerRoot: (rootRunId, leaseId, parentLeaseId) =>
+        boundedAutonomy.registerRoot(rootRunId, leaseId, parentLeaseId),
+    };
+  }
   // The daemon-wide OutputGuard the mint registers each bearer in (Pitfall 1 —
   // ENDPOINT-03). setup-tools reads it off the handle for the CapabilityMintDeps.
   const outputGuard = createOutputGuard();
@@ -325,6 +408,7 @@ export async function constructCapabilityLayer(
         boundedAutonomy.destroy();
       },
       namespacePreflightOk,
+      ...(resolveRootRunId ? { resolveRootRunId } : {}),
     };
   } catch (err) {
     // The socket failed to bind — tear down the bounded-autonomy timers we just

@@ -46,7 +46,7 @@ import { classifyError } from "../executor/error-classifier.js";
 import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import { toolFailureHint } from "./tool-failure-hint.js";
-import type { ExecutionBudgetWindow } from "../budget/budget-guard.js";
+import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
 import { checkSpendCeiling } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
@@ -191,6 +191,42 @@ export interface TtlSplitEstimate {
   cacheWrite1hTokens: number;
 }
 
+/**
+ * The NARROW per-root budget surface the bridge consults (Phase 213-08,
+ * BUDGET-01/02) — the subset of the daemon-wide `BoundedAutonomy` the bridge
+ * needs to reserve a self-spawning loop's LIVE LLM spend per tree-root. Defined
+ * here (the consumer) so `@comis/agent` carries no `@comis/daemon` edge; the
+ * daemon's composite is structurally assignable. `reserveBudget`'s
+ * {@link SpendGateOutcome} return is the SAME the Phase-177 spend gate produces.
+ */
+export interface BoundedAutonomyBudgetPort {
+  /** Reserve one LLM call's spend against the tree root: wall-clock + token limbs
+   *  enforce REGARDLESS of pricing (they bite a zero-price loop), then the 3-state
+   *  $-limb. An `exceeded` outcome means a limb breached → the bridge aborts. */
+  reserveBudget(
+    rootRunId: string,
+    provider: string,
+    model: string,
+    estUsd: number,
+    estTokens: number,
+  ): SpendGateOutcome;
+  /** Anchor a tree root's wall-clock deadline + the rootRunId↔leaseId correlation. */
+  registerRoot(rootRunId: string, leaseId: string, parentLeaseId?: string): void;
+}
+
+/**
+ * The LATE-BOUND holder for {@link BoundedAutonomyBudgetPort}. The daemon
+ * constructs the holder EARLY (before setupAgents/setupSchedulers) and the
+ * capability layer populates `current` AFTER construction (daemon.ts builds the
+ * bridge's deps before the cap layer exists — the `onCronWake` late-bind
+ * pattern). When `current` is undefined (cap layer absent / not yet populated)
+ * the per-root reserve is skipped — byte-identical to today (the spendAccumulator
+ * precedent).
+ */
+export interface BoundedAutonomyBudgetHolder {
+  current?: BoundedAutonomyBudgetPort;
+}
+
 /** Dependencies required by the PiEventBridge. */
 export interface PiEventBridgeDeps {
   eventBus: TypedEventBus;
@@ -259,6 +295,27 @@ export interface PiEventBridgeDeps {
   spendScope?: SpendScope;
   /** `observability.spend.*` — drives the perTurnMax reservation, the action gate, and the pricing gate. */
   spendConfig?: SpendConfig;
+  /**
+   * Phase 213-08 (BUDGET-01/02) — the LATE-BOUND per-root budget holder. A
+   * SIBLING to `spendAccumulator`: where the Phase-177 ceiling is per-`(tenant,
+   * agent)`, this reserves a self-spawning loop's LIVE LLM token/$ spend per
+   * tree-ROOT (keyed on the run's rootRunId), so the token + wall-clock limbs fire
+   * on a reasoning loop — INCLUDING a zero-price native-provider model where the
+   * $-cap can never bite. The holder's `current` is populated by the cap layer
+   * AFTER construction (the daemon builds the bridge before the cap layer exists);
+   * when absent / not-yet-populated the per-root reserve is skipped — byte-identical
+   * to today. Does NOT depend on `spendAccumulator` (a distinct mechanism — a
+   * zero-price loop has the $-ceiling off yet must still trip the token/wall-clock
+   * limbs). Requires {@link resolveRootRunId}.
+   */
+  boundedAutonomyBudget?: BoundedAutonomyBudgetHolder;
+  /**
+   * Resolve THIS run's tree-stable rootRunId from its session key (Phase 213-08).
+   * Returns a registered root for the session, or a SYNTHETIC per-session root the
+   * resolver registers on first use (so a top-level, non-spawned loop is bounded
+   * too). Required whenever {@link boundedAutonomyBudget} is present.
+   */
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Callback to record cache reads for adaptive retention escalation. */
   onCacheReads?: (tokens: number) => void;
   /** Callback to record a completed turn with cache write token count.
@@ -1912,6 +1969,44 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 if (outcome.kind === "ok") {
                   spendAcc.reconcile(outcome.reservation, 0);
                 }
+              }
+            }
+
+            // Phase 213-08 (BUDGET-01/02): the PER-ROOT budget reserve — a SIBLING
+            // to the Phase-177 checkSpendCeiling above. Where that ceiling is
+            // per-(tenant,agent), this reserves a self-spawning loop's LIVE LLM
+            // spend per tree-ROOT (keyed on the run's rootRunId), so the token +
+            // wall-clock limbs fire on a reasoning loop — INCLUDING a zero-price
+            // native-provider model where the $-cap can never bite (criterion #2).
+            //
+            // ADDITIVE + gated on the holder ALONE (NOT spendAccumulator): a
+            // zero-price loop runs with the $-ceiling off yet must still trip the
+            // token/wall-clock limbs. When the holder is absent / its `current` is
+            // not yet populated the whole block is skipped — byte-identical to today.
+            // The wall-clock + token state lives INSIDE the injected meter (its own
+            // ClockPort) — no Date.now here; the bridge just calls reserveBudget and
+            // routes an `exceeded` outcome through the SAME m.aborted spend-abort path.
+            const perRoot = deps.boundedAutonomyBudget?.current;
+            if (perRoot && deps.resolveRootRunId && !m.aborted) {
+              const rootRunId = deps.resolveRootRunId(deps.sessionKey);
+              // The SAME real per-call locals the sibling ceiling consumes: the live
+              // model (a manual /model switch updates getCurrentModel), the provider,
+              // the conservative perTurnMax est $ (0 when spend is unconfigured — the
+              // token/wall-clock limbs still gate), and the turn's true totalTokens.
+              const perRootModel = deps.getCurrentModel?.() ?? deps.model;
+              const perRootEstUsd = deps.spendConfig?.perTurnMax ?? 0;
+              const rootGate = perRoot.reserveBudget(
+                rootRunId,
+                deps.provider,
+                perRootModel,
+                perRootEstUsd,
+                usage.totalTokens,
+              );
+              if (rootGate.kind === "exceeded") {
+                m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.aborted = true;
+                emitSpendAbort(deps); // content-free; also calls onAbort (the existing emit)
               }
             }
 

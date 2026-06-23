@@ -183,6 +183,12 @@ export async function setupAgents(deps: {
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
   summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker; spendAccumulator?: import("@comis/agent").SpendAccumulator; // spendAccumulator = Phase 177 kill-switch: the ONE daemon-wide accumulator (setupObservability), threaded per-agent so every bridge holds the SAME reference.
+  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + the run's
+   *  rootRunId resolver — created early in daemon.ts (before this call) and populated
+   *  by the cap layer after construction; forwarded into each SingleAgentDeps so every
+   *  bridge holds the SAME holder. Absent ⇒ the bridge's per-root reserve is a no-op. */
+  boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
   /** Causal store. Threaded into each per-agent createPiExecutor like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
@@ -451,6 +457,10 @@ export async function setupAgents(deps: {
     entityStore: deps.entityStore,
     lcdStore: deps.lcdStore,
     summarizerSpendBreaker: deps.summarizerSpendBreaker, spendAccumulator: deps.spendAccumulator,
+    // Phase 213-08 (BUDGET-01/02): forward the per-root budget holder + rootRunId
+    // resolver per-agent (the daemon-wide-REF pattern; absent ⇒ no-op).
+    ...(deps.boundedAutonomyBudget ? { boundedAutonomyBudget: deps.boundedAutonomyBudget } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,

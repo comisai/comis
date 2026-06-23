@@ -141,6 +141,7 @@ import {
   type GeminiCacheManager,
   type ServedWindowComparison,
   type SessionTrackerRegistry,
+  type BoundedAutonomyBudgetHolder,
 } from "@comis/agent";
 // resolveAgentMainProvider is the handler-side accessor that delegates to the
 // EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
@@ -150,7 +151,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
-import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
+import { constructCapabilityLayer, createRootRunIdResolver } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03; Phase 213-08 rootRunId resolver
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -1862,6 +1863,16 @@ async function bootAgents(
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
+  // Phase 213-08 (BUDGET-01/02): the daemon-wide LATE-BOUND per-root budget holder
+  // + the session→rootRunId index + the resolver. Created HERE — BEFORE setupAgents
+  // AND setupSchedulers (both hold the holder/resolver) — because the cap layer
+  // that POPULATES holder.current is constructed AFTER them (constructCapabilityLayer
+  // at :~2200). The bridge / cron-fire mint read `holder.current` at fire time, by
+  // which point the cap layer has populated it (the onCronWake late-bind precedent).
+  const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
+  const rootRunIdIndex = new Map<string, string>();
+  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
@@ -1882,7 +1893,9 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08 (BUDGET-01/02): per-root budget holder + rootRunId resolver → each bridge (the per-root reserve sibling)
+    outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -2058,6 +2071,9 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
+    // Phase 213-08: the late-bound per-root budget holder + index + resolver ride
+    // onto boot so bootChannels' constructCapabilityLayer populates the SAME holder.
+    boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId,
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -2194,7 +2210,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     return port;
   };
   // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager });
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, rootRunIdIndex: handle.rootRunIdIndex }); // Phase 213-08: POPULATE the late-bound budget holder (the bridge reads holder.current at turn time) over the SAME holder+index setupAgents/setupSchedulers hold
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,

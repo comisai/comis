@@ -479,7 +479,7 @@ export type { RedactedScrubResult } from "./session/scrub-redacted-tool-calls.js
 
 // Pi event bridge (AgentSessionEvent to TypedEventBus translation)
 export { createPiEventBridge } from "./bridge/pi-event-bridge.js";
-export type { PiEventBridgeDeps, PiEventBridgeResult } from "./bridge/pi-event-bridge.js";
+export type { PiEventBridgeDeps, PiEventBridgeResult, BoundedAutonomyBudgetPort, BoundedAutonomyBudgetHolder } from "./bridge/pi-event-bridge.js";
 
 // ---------------------------------------------------------------------------
 // Adapters (re-export for daemon wiring convenience)

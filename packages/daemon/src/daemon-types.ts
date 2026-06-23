@@ -19,8 +19,9 @@
  * @module
  */
 
-import type { TimerPort } from "@comis/core";
+import type { TimerPort, SessionKey } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelManager } from "@comis/orchestrator";
@@ -554,6 +555,14 @@ export interface BootContext {
   // Subprocess envs
   subprocessEnv?: Record<string, string>;
   execToolEnv?: Record<string, string>;
+  // Phase 213-08 (BUDGET-01/02 + RATE-02): the daemon-wide LATE-BOUND per-root
+  // budget holder + the session→rootRunId index + the resolver. Created in
+  // bootAgents BEFORE the cap layer (which populates the holder); ride onto boot
+  // so bootChannels' constructCapabilityLayer populates the SAME holder/index, and
+  // bootAgents' setupSchedulers reads the holder at cron-fire time.
+  boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
+  rootRunIdIndex?: Map<string, string>;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   // Schedulers
   systemEventQueue?: ReturnType<typeof createSystemEventQueue>;
   cronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];

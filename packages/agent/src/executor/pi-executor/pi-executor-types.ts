@@ -69,6 +69,12 @@ export interface PiExecutorDeps {
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
   stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Phase 177 kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
+  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + the run's
+   *  rootRunId resolver, threaded into the bridge the SAME way spendAccumulator is.
+   *  ONE daemon-wide holder, populated by the cap layer after construction; absent ⇒
+   *  the bridge's per-root reserve is a no-op (byte-identical). */
+  boundedAutonomyBudget?: import("../../bridge/pi-event-bridge.js").BoundedAutonomyBudgetHolder;
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /**

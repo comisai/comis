@@ -1339,6 +1339,17 @@ async function runSessionLocked(
           spendScope: { tenantId: sessionKey.tenantId ?? "default", agentId: agentId ?? "default" },
         }
       : {}),
+    // Phase 213-08 (BUDGET-01/02): thread the late-bound per-root budget holder +
+    // the run's rootRunId resolver into the bridge — the SAME daemon-wide-REF,
+    // absent ⇒ no-op pattern as spendAccumulator. The bridge sibling's the per-root
+    // reserve next to checkSpendCeiling so a self-spawning loop (incl. a zero-price
+    // model) trips the token/wall-clock limbs on the live LLM-spend path.
+    ...(deps.boundedAutonomyBudget && deps.resolveRootRunId
+      ? {
+          boundedAutonomyBudget: deps.boundedAutonomyBudget,
+          resolveRootRunId: deps.resolveRootRunId,
+        }
+      : {}),
     stepCounter: activeStepCounter,
     circuitBreaker: deps.circuitBreaker,
     turnLoopDetector,
