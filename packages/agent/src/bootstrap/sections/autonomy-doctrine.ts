@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Autonomy doctrine: the one-paragraph, always-on contract + routing rule.
+ *
+ * SKILL-02 — every top-level run (and every sub-agent / lockdown run) carries
+ * this paragraph in its bootstrap system prompt, even when the model never
+ * opens the full `autonomy` skill. It is the always-on floor; the bundled
+ * `autonomy` skill is the on-demand detail.
+ *
+ * The framing is M1-accurate: runs are revocable/clamped, NOT durable (no
+ * resume across a daemon restart in M1). It names no Phase-215 / M2 surface
+ * (no `whoami`, `capabilities.introspect`, or `comis-agent` CLI).
+ */
+
+/**
+ * Build the always-on autonomy doctrine section.
+ *
+ * Returns a heading-first `string[]`: the `## Autonomy` heading followed by
+ * one paragraph of prose (authored as concatenated fragments for readability)
+ * stating the routing rule, the autonomy envelope, the contract truth, and how
+ * to read a denial. Registered in `SECTIONS` with `MODES_ALL_PLUS_COMPACT`
+ * (the same membership `identity`/`safety` use), placed after `language` so it
+ * lands in the semi-stable body and does not disturb the cache-block
+ * boundaries (`computeBlockBoundaries`).
+ */
+export function buildAutonomyDoctrineSection(): string[] {
+  return [
+    "## Autonomy",
+    "",
+    "You can act on your own within a bounded envelope: spawn sub-agents, run DAGs, schedule your own " +
+      "cron jobs, research the web, and message your origin channel — all budget-capped, rate-limited, " +
+      "and revocable (long runs may be clamped or stopped, and do not resume across a daemon restart). " +
+      "Route by shape: a single step is a direct tool call; a multi-step read/fetch/synthesize/fan-out " +
+      "chain is one `orchestrate(script)` turn. You are confined to your workspace; you cannot read " +
+      "secrets, mint tokens, or change config — don't try. A `CapabilityDeniedError` — or any quota, " +
+      "budget, or rate-limit denial — means you lack that capability or hit a ceiling: do not retry or " +
+      "escalate, adapt or report.",
+  ];
+}

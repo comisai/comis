@@ -47,7 +47,7 @@ Set `autonomy.profile` to pick a posture. There are four:
 | Profile | Orchestration | Guard rails | When to use |
 |---------|---------------|-------------|-------------|
 | `assistant` | **Off** -- zero orchestration surfaces, the agent only replies | n/a | A pure conversational agent; or the safe floor Comis downshifts to when the jail cannot be built |
-| `standard` _(default)_ | The eight floor capabilities (read, web, write, analyze, spawn, graph, cron, skill) | Budget ceiling, spawn-rate limit, concurrency cap, message quota -- all on | The default for almost everyone |
+| `standard` _(default)_ | The nine floor capabilities (read, web, write, analyze, spawn, graph, cron, skill, message) | Budget ceiling, spawn-rate limit, concurrency cap, message quota -- all on | The default for almost everyone |
 | `unattended` | Same as `standard` in this release | Same | Reserved for long-running, no-human-present operation (the extra surfaces ship later) |
 | `max` | Same as `standard` in this release | Same | Reserved for the fullest coordinator posture (ships later) |
 
@@ -189,6 +189,17 @@ logging so the behavior is legible the moment the probe lands.
 </Warning>
 
 ## Related
+
+<Note>
+**The agent reads its own copy of this guidance.** A bundled `autonomy` skill
+(`packages/daemon/bundled-skills/autonomy/`) auto-seeds into every agent's
+workspace and is surfaced to the model: it is the on-demand, model-facing
+decision guide for *when* to reach for an orchestration surface and *how* to
+route a multi-step task through [`orchestrate`](/agent-tools/orchestrate). A
+one-paragraph always-on doctrine carrying the same contract and routing rule
+also rides every run's system prompt, so the floor applies even when the model
+never opens the skill.
+</Note>
 
 <CardGroup cols={2}>
   <Card title="Capability Model" icon="key" href="/security/capability-model">
