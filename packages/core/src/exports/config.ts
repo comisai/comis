@@ -154,6 +154,9 @@ export {
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
+  // Phase 216: the autonomy.durability sub-block schema — the daemon reads it for
+  // the boot-time durability resolution (setupDurableResume gate + thresholds).
+  DurabilityConfigSchema,
   // Honest legible degrade (Phase 210 / PROFILE-03) — consumed by the daemon
   // boot log + the preflight doctor (Plan 06).
   degradeAutonomy,

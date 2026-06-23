@@ -222,18 +222,10 @@ export interface DaemonOverrides {
   exit?: (code: number) => void;
   /** Override native-dep preflight check for tests that don't need the probe. */
   preflightDoctor?: (exitFn: (code: number) => void) => Promise<void>;
-  /**
-   * Override TimerPort at composition root.
-   *
-   * When provided, replaces the production `createSystemTimers()` adapter in
-   * the daemon composition root. The integration test wires a `createFakeTimers()`
-   * here so it can observe `unref()` / `cancel()` invocations on every long-
-   * running interval scheduled during bootstrap, then assert (after shutdown)
-   * that every entry was either cancelled or unref'd — proving the
-   * `.unref()` preservation contract.
-   *
-   * Production must never set this; the override is test-only.
-   */
+  /** Override TimerPort at composition root (test-only — production never sets it).
+   *  The integration test wires `createFakeTimers()` to observe `unref()`/`cancel()`
+   *  on every bootstrap interval, then asserts (post-shutdown) each was cancelled or
+   *  unref'd — the `.unref()` preservation contract. */
   timers?: TimerPort;
   /**
    * Override the per-channelType activity-renderer factory at the composition
@@ -585,15 +577,18 @@ export interface BootContext {
   wireDispatch?: ReturnType<typeof setupRpcBridge>["wireDispatch"];
   // Approval gate
   approvalGate?: ReturnType<typeof createApprovalGate>;
-  // Interactive-callback wiring: signer for renderers + single-use email
-  // link minter + gateway approval-token map/resolver + the InteractiveCallbackRouter.
-  // Built once in the agents phase; consumed by bootChannels (signer + minter) and
-  // bootGateway (token map + resolveApproval route mount).
+  // Interactive-callback wiring: signer + single-use email link minter + gateway
+  // approval-token map/resolver + the InteractiveCallbackRouter. Built in the agents
+  // phase; consumed by bootChannels (signer/minter) + bootGateway (token map/route).
   interactiveCallbackWiring?: import("./wiring/setup-interactive-callback.js").InteractiveCallbackWiring;
   // Delivery queue (channelAdaptersRef is a forward ref — declared below)
   deliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["deliveryQueue"];
   drainAndStartDeliveryPrune?: Awaited<ReturnType<typeof setupDeliveryQueue>>["drainAndStart"];
   shutdownDeliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["shutdown"];
+  // Phase 216: durable-run + resume engine outputs (undefined when off); shutdown cancels the watchdog.
+  durableRunStore?: import("@comis/core").DurableRunPort;
+  outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
+  durableResumeShutdown?: () => void;
 
   // ===========================================================================
   // Group C: channels (optional, populated by bootChannels)

@@ -10,9 +10,24 @@
  * @module
  */
 
-import type { PerAgentConfig } from "@comis/core";
+import type { PerAgentConfig, DurableRunPort, SessionKey } from "@comis/core";
 import { tryGetContext, parseFormattedSessionKey, resolveAutonomy } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
+
+/**
+ * The OUTWARD message methods (Phase 216, HIGH-1 / NEW-4) — the genuinely-outward
+ * subset (§3.5) that needs a monotonic `_outwardStepIndex` for the exactly-once
+ * ledger. An in-process agent-loop `message.send` reaches the dispatch sink via
+ * THIS factory carrying `_callerSessionKey`; without the index, Plan 05's wrap
+ * would default to 0 and a second send in the same run would collide on
+ * `(rootRunId, 0)` and be silently dropped (the NEW-4 gap). Mirrors the
+ * `OUTWARD_MESSAGE_METHODS` set in setup-capability-endpoint.ts (the jail leg).
+ */
+const OUTWARD_MESSAGE_METHODS: ReadonlySet<string> = new Set([
+  "message.send",
+  "message.reply",
+  "message.react",
+]);
 
 /** Deps for the agent-scoped rpcCall factory (the subset of ToolsDeps it closes over). */
 export interface AgentRpcCallFactoryDeps {
@@ -22,6 +37,24 @@ export interface AgentRpcCallFactoryDeps {
   agents: Record<string, PerAgentConfig>;
   /** Default agent ID from routing config (fallback for unknown agentIds). */
   defaultAgentId: string;
+  /**
+   * Phase 216 (HIGH-1 / NEW-4): the durable-run store — the SOLE source of the
+   * monotonic `_outwardStepIndex` (allocateOutwardStep). For an OUTWARD message
+   * method the factory allocates a UNIQUE per-root index and injects it alongside
+   * `_callerSessionKey` so Plan 05's wrap reads a distinct `(rootRunId, stepIndex)`
+   * per in-process send. Optional; **absent ⇒ no index injected** → the wrap is a
+   * pass-through (byte-identical pre-216). The daemon wires it ONLY when
+   * durability is enabled.
+   */
+  durableRuns?: DurableRunPort;
+  /**
+   * Phase 216 (NEW-4): resolve a `SessionKey` to its tree-stable `rootRunId` (the
+   * same resolver the RPC dispatch uses). Required to allocate the outward index
+   * for an in-process send (the index keys on `rootRunId`, not the session key).
+   * Optional; absent ⇒ no index allocated (pass-through). Paired with
+   * {@link AgentRpcCallFactoryDeps.durableRuns}.
+   */
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
 }
 
 /**
@@ -35,7 +68,7 @@ export interface AgentRpcCallFactoryDeps {
 export function makeCreateAgentRpcCall(
   deps: AgentRpcCallFactoryDeps,
 ): (agentId: string) => RpcCall {
-  const { rpcCall, agents, defaultAgentId } = deps;
+  const { rpcCall, agents, defaultAgentId, durableRuns, resolveRootRunId } = deps;
 
   return function createAgentRpcCall(agentId: string): RpcCall {
     // CAP-03: resolve the agent's held capability set ONCE per closure — the
@@ -55,16 +88,31 @@ export function makeCreateAgentRpcCall(
       const ctx = tryGetContext();
       // Build delivery target from context for cron job routing
       let deliveryTarget: { channelId: string; userId: string; tenantId: string; channelType?: string } | undefined;
-      if (ctx?.sessionKey) {
-        const parsed = parseFormattedSessionKey(ctx.sessionKey);
-        if (parsed) {
-          deliveryTarget = {
-            channelId: parsed.channelId,
-            userId: parsed.userId,
-            tenantId: parsed.tenantId,
-            channelType: ctx.channelType,
-          };
-        }
+      const parsedSession = ctx?.sessionKey ? parseFormattedSessionKey(ctx.sessionKey) : undefined;
+      if (parsedSession) {
+        deliveryTarget = {
+          channelId: parsedSession.channelId,
+          userId: parsedSession.userId,
+          tenantId: parsedSession.tenantId,
+          channelType: ctx?.channelType,
+        };
+      }
+      // HIGH-1 / NEW-4 (Phase 216): an in-process agent-loop OUTWARD send reaches
+      // the dispatch sink THROUGH here with `_callerSessionKey`, so it MUST carry a
+      // UNIQUE `_outwardStepIndex` too — otherwise it is an un-ledgered pass-through
+      // (a second send in one run would collide on (rootRunId, 0) and be dropped).
+      // Resolve rootRunId from the session key (the same resolver the RPC dispatch
+      // uses), then allocate the monotonic index. A non-outward method, an absent
+      // store/resolver, or an unresolvable session ⇒ no index (the wrap is then a
+      // pass-through). `_outwardStepIndex` is in INTERNAL_FIELD_NAMES (NEW-3), so a
+      // forged inbound value never survives to here — this is the trusted allocation.
+      let outwardStepIndex: number | undefined;
+      if (durableRuns && resolveRootRunId && parsedSession && OUTWARD_MESSAGE_METHODS.has(method)) {
+        const rootRunId = resolveRootRunId(parsedSession);
+        const allocated = await durableRuns.allocateOutwardStep(rootRunId);
+        if (allocated.ok) outwardStepIndex = allocated.value;
+        // An allocation error degrades to a pass-through (no index) rather than
+        // substituting a colliding 0 — the same fail-safe as the jail leg.
       }
       // Extract caller channel metadata from DeliveryOrigin
       const origin = ctx?.deliveryOrigin;
@@ -76,6 +124,7 @@ export function makeCreateAgentRpcCall(
         ...(deliveryTarget && { _deliveryTarget: deliveryTarget }),
         ...(origin && { _callerChannelType: origin.channelType }),
         ...(origin && { _callerChannelId: origin.channelId }),
+        ...(outwardStepIndex !== undefined && { _outwardStepIndex: outwardStepIndex }),
       });
     };
   };

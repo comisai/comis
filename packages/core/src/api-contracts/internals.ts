@@ -17,7 +17,7 @@
  * @module
  */
 
-/** The 16 dispatcher-injected internal-field names (sorted alphabetically). */
+/** The 17 dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
   "_agentId",
   "_callerChannelId",
@@ -33,6 +33,16 @@ export const INTERNAL_FIELD_NAMES = [
   "_context",
   "_deliveryTarget",
   "_originChannelId",
+  // The monotonic outward-send index (Phase 216, NEW-3/HIGH-1). Allocated by
+  // durableRuns.allocateOutwardStep at the TRUSTED cap chokepoint (the jail leg
+  // in setup-capability-endpoint.ts + the in-process leg in
+  // setup-tools-capabilities.ts) and injected as `_outwardStepIndex` for the
+  // outward message methods. Listed here so stripInternalFields STRIPS a forged
+  // inbound value BEFORE the chokepoint re-injects the trusted allocated one —
+  // the exact strip-then-inject pattern `_agentId` uses, so a jailed script
+  // cannot forge the index to self-collide its own send (inverting ONCE-02) or
+  // perturb outward ordering. Agent-origin-only by construction.
+  "_outwardStepIndex",
   "_sessionKey",
   "_tenantId",
   "_traceId",

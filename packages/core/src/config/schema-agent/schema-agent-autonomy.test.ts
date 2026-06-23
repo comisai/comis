@@ -422,3 +422,41 @@ describe("resolveAutonomy (213 — every profile surfaces a TOTAL resolved budge
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 216 (DUR-01..04 / HB-01): the durability sub-block. Default-off — a
+// fully-omitted autonomy block (and a fully-omitted durability block) resolves
+// durability.enabled === false, so the daemon constructs no durable stores /
+// boot recovery / watchdog (byte-identical default install). strictObject is the
+// typo guard; each ms limb is a positive int (never fails-open at zero).
+// ---------------------------------------------------------------------------
+describe("AutonomyConfigSchema (216 — durability sub-block defaults off)", () => {
+  it("216-S1: a fully-omitted autonomy block resolves durability.enabled = false", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    expect(parsed.durability.enabled).toBe(false);
+  });
+
+  it("216-S2: an omitted durability block fills the conservative-ratio defaults (stale = 4x keepAlive)", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    expect(parsed.durability.keepAliveMs).toBe(30_000);
+    expect(parsed.durability.staleHeartbeatMs).toBe(120_000);
+    expect(parsed.durability.recoveryBudgetMs).toBe(30_000);
+    // The Pitfall-4 conservative ratio: the stale threshold is 4x the keep-alive.
+    expect(parsed.durability.staleHeartbeatMs).toBe(parsed.durability.keepAliveMs * 4);
+  });
+
+  it("216-S3: an explicit enabled:true is honored", () => {
+    const parsed = AutonomyConfigSchema.parse({ durability: { enabled: true } });
+    expect(parsed.durability.enabled).toBe(true);
+  });
+
+  it("216-S4: strictObject rejects an unknown durability key (typo guard)", () => {
+    expect(AutonomyConfigSchema.safeParse({ durability: { enabld: true } }).success).toBe(false);
+  });
+
+  it("216-S5: each ms limb is a positive int (a zero/negative/float fails closed)", () => {
+    expect(AutonomyConfigSchema.safeParse({ durability: { keepAliveMs: 0 } }).success).toBe(false);
+    expect(AutonomyConfigSchema.safeParse({ durability: { staleHeartbeatMs: -1 } }).success).toBe(false);
+    expect(AutonomyConfigSchema.safeParse({ durability: { recoveryBudgetMs: 1.5 } }).success).toBe(false);
+  });
+});

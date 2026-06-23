@@ -30,7 +30,7 @@ import {
 // Mock helpers (Tests 1-4: handlers in isolation)
 // ---------------------------------------------------------------------------
 
-function createMockDeps(): AutonomyHandlerDeps {
+function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandlerDeps {
   return {
     leaseManager: {
       mintLease: vi.fn(),
@@ -43,7 +43,12 @@ function createMockDeps(): AutonomyHandlerDeps {
     subAgentRunner: {
       killByRootRun: vi.fn().mockReturnValue({ killed: 0 }),
     },
+    // Phase 216 DUR-03: a durable store stub whose invalidateForRevoke is observable.
+    durableRuns: {
+      invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+    },
     logger: { info: vi.fn(), warn: vi.fn() },
+    ...over,
   } as unknown as AutonomyHandlerDeps;
 }
 
@@ -111,6 +116,40 @@ describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", ()
       "Missing required parameter: rootRunId",
     );
     expect(deps.subAgentRunner.killByRootRun).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 216 DUR-03: a revoke ALSO invalidates the persisted run record so a
+  // restart can never re-mint the pre-revoke caps (the resurrection-window close).
+  // -------------------------------------------------------------------------
+  it("DUR-03: lease.revoke by rootRunId ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
+    await handlers["lease.revoke"]!({ rootRunId: "R1" });
+    expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+  });
+
+  it("DUR-03: run.kill ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
+    await handlers["run.kill"]!({ rootRunId: "R1" });
+    expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+  });
+
+  it("DUR-03: lease.revoke by leaseId (no rootRunId) does NOT invalidate a persisted record", async () => {
+    await handlers["lease.revoke"]!({ leaseId: "L1" });
+    expect(deps.durableRuns!.invalidateForRevoke).not.toHaveBeenCalled();
+  });
+
+  it("DUR-03: an invalidate error is WARN-logged but does NOT fail the revoke RPC", async () => {
+    vi.mocked(deps.durableRuns!.invalidateForRevoke).mockResolvedValue({ ok: false, error: new Error("db down") });
+    vi.mocked(deps.leaseManager.revokeByRootRun).mockReturnValue({ revoked: 2 });
+    // The revoke still succeeds (the lease is revoked regardless of the durable write).
+    await expect(handlers["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 2 });
+    expect(deps.logger.warn).toHaveBeenCalled();
+  });
+
+  it("DUR-03: inert when no durableRuns store is wired (durability off) — revoke still succeeds", async () => {
+    const noStoreDeps = createMockDeps({ durableRuns: undefined });
+    const h = createAutonomyHandlers(noStoreDeps);
+    await expect(h["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 0 });
+    await expect(h["run.kill"]!({ rootRunId: "R1" })).resolves.toEqual({ killed: 0 });
   });
 });
 

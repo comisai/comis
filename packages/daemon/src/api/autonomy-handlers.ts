@@ -35,6 +35,7 @@ import {
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
+import type { DurableRunPort } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
 import type { ComisLogger } from "@comis/infra";
 
@@ -66,6 +67,18 @@ export interface AutonomyHandlerDeps {
   leaseManager: LeaseManager;
   /** The sub-agent runner — `killByRootRun` aborts a whole spawn tree (Plan 01). */
   subAgentRunner: { killByRootRun(rootRunId: string): { killed: number } };
+  /**
+   * Phase 216 (DUR-03): the durable-run store. OPTIONAL — when a `rootRunId` is
+   * revoked (lease.revoke by rootRunId, OR run.kill), the handler ALSO calls
+   * `invalidateForRevoke(rootRunId)` so the persisted checkpoint flips to status
+   * `revoked` and a subsequent boot can NEVER re-mint the pre-revoke caps (the
+   * resurrection-window close, invariant #6/#13). **Absent ⇒ inert** (the lease
+   * revoke alone still stops the live bearer; the persisted record is just not
+   * poisoned — only matters once durability is enabled, which is when the daemon
+   * wires this). Best-effort: an invalidate error is WARN-logged, never fails the
+   * revoke RPC (the lease is already revoked — the cooperative/hard stop holds).
+   */
+  durableRuns?: DurableRunPort;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
 }
@@ -79,6 +92,25 @@ export interface AutonomyHandlerDeps {
  * dispatcher alongside `...createSubagentHandlers(deps)`.
  */
 export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string, RpcHandler> {
+  /**
+   * DUR-03: poison the persisted run record on revoke so a subsequent boot finds
+   * status='revoked' and ORPHANS the run rather than re-minting the pre-revoke
+   * caps. Best-effort — a write error is WARN-logged but never fails the revoke
+   * RPC (the in-memory lease is already revoked, so the live bearer is dead
+   * regardless; this only affects post-restart resumability). Inert when no
+   * durable store is wired (durability off).
+   */
+  async function invalidatePersistedRecord(rootRunId: string, method: string): Promise<void> {
+    if (!deps.durableRuns) return;
+    const r = await deps.durableRuns.invalidateForRevoke(rootRunId);
+    if (!r.ok) {
+      deps.logger.warn(
+        { method, err: r.error, hint: "could not flip the durable run record to 'revoked'; a restart could resume it — verify the run is dead", errorKind: "dependency" as const },
+        "Durable record invalidate-on-revoke failed (lease still revoked)",
+      );
+    }
+  }
+
   return {
     [LeaseRevokeContract.method]: async (rawParams) => {
       // Bespoke pre-Zod guard FIRST (one-of required; user-friendly message).
@@ -95,6 +127,9 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       if (rootRunId) {
         // Revoke every lease of the spawn tree (cascading each — Plan 02).
         revoked = deps.leaseManager.revokeByRootRun(rootRunId).revoked;
+        // DUR-03: ALSO poison the persisted checkpoint so a restart cannot
+        // resurrect the pre-revoke caps (the resurrection-window close).
+        await invalidatePersistedRecord(rootRunId, LeaseRevokeContract.method);
       } else if (leaseId) {
         // Single-lease cooperative stop. The LeaseManager.revoke is a void flag;
         // a successful call revokes exactly one lease.
@@ -128,6 +163,9 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       // every lease of the tree so a survivor child cannot keep operating.
       const { killed } = deps.subAgentRunner.killByRootRun(rootRunId);
       deps.leaseManager.revokeByRootRun(rootRunId);
+      // DUR-03: ALSO poison the persisted checkpoint so a restart cannot resume
+      // the killed tree under re-minted pre-revoke caps (REVOKE-03 across restart).
+      await invalidatePersistedRecord(rootRunId, RunKillContract.method);
 
       // §2.7: content-free completion line — the killed COUNT + method only.
       deps.logger.info(

@@ -6,7 +6,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -106,6 +106,11 @@ import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
+  /** Phase 216 (HIGH-1 / NEW-4): durable store + rootRunId resolver → the agent
+   *  rpcCall factory so an in-process OUTWARD send gets a monotonic `_outwardStepIndex`.
+   *  Both optional; absent ⇒ no index → the Plan-05 wrap is a pass-through (pre-216). */
+  durableRuns?: DurableRunPort;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
   /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
@@ -152,20 +157,11 @@ export interface ToolsDeps {
    * without a daemon restart — do NOT cache the result.
    */
   getMcpServerEntries: () => readonly McpServerEntry[];
-  /**
-   * Per-agent ToolCapabilityPort resolver. Populated by daemon.ts from the
-   * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
-   * inside setupSingleAgent). Used by exec / process tools to consult the
-   * live install-detour mode + connected MCP servers + visible skills, and
-   * to read operator-supplied cluster hints. The closure may throw or fall
-   * back to the default agent's port for unknown agentIds -- daemon.ts
-   * decides the contract.
-   *
-   * Consumed via the single mandated form `deps.getCapabilityPortForAgent(agentId)`
-   * inside assembleToolsForAgent (mirrors the deps.<field> direct-access
-   * convention used for nearby fields like deps.eventBus, deps.skillsLogger,
-   * deps.linkRunner, deps.subprocessEnv).
-   */
+  /** Per-agent ToolCapabilityPort resolver (daemon.ts populates it from
+   *  AgentsResult.toolCapabilityPorts). Exec/process tools consult the live
+   *  install-detour mode + MCP servers + visible skills + cluster hints; the
+   *  closure may throw or fall back to the default agent for unknown agentIds.
+   *  Consumed as `deps.getCapabilityPortForAgent(agentId)` in assembleToolsForAgent. */
   getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
@@ -293,17 +289,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
    * daemon startup (detectSandboxProvider runs once). */
   const warnedNoSandboxAgents = new Set<string>();
 
-  /**
-   * Platform-tool descriptor registry -- single source of truth for the 45
-   * platform-tools. Constructed once at `setupTools` invocation (the set is
-   * static at module-load time). Daemon's per-agent assembly filters the
-   * registry by `conditional` predicates and invokes each surviving
-   * descriptor's `build(ctx)` callback with a runtime context. This replaces
-   * the prior 175-line `agentPlatformTools` closure that hand-enumerated
-   * 38 `createXTool(agentRpc, ...)` factory calls. The exec / process /
-   * apply-patch tools stay enumerated inline below — they are `./tools`
-   * subpath (built-in non-platform).
-   */
+  // Platform-tool descriptor registry — SSOT for the 45 platform-tools, built once
+  // (static set). Per-agent assembly filters by `conditional` predicates + invokes
+  // each surviving descriptor's `build(ctx)`. Exec/process/apply-patch tools stay
+  // enumerated inline below (`./tools` subpath, built-in non-platform).
   const PLATFORM_TOOL_REGISTRY = createPlatformToolRegistry();
 
   function getOrCreateRegistry(agentId: string): ProcessRegistry {
@@ -334,7 +323,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // Agent-scoped rpcCall factory (the _capabilities injection point, CAP-03)
   // extracted to setup-tools-capabilities.ts (file-size cap). createAgentRpcCall
   // is the per-agent builder; behavior is byte-identical to the prior inline form.
-  const createAgentRpcCall = makeCreateAgentRpcCall({ rpcCall, agents, defaultAgentId });
+  const createAgentRpcCall = makeCreateAgentRpcCall({
+    rpcCall, agents, defaultAgentId,
+    // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+  });
 
   /** Create MCP tools from connected servers (extracted to bypass profile filtering). */
   function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>): ReturnType<PlatformToolProvider> {
