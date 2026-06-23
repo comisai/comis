@@ -4,14 +4,15 @@
  * surface (real bwrap stdout-only / `~/.comis` mask) is proven in
  * `orchestrate-jail.linux.test.ts`; HERE we unit-test the pure / mockable parts
  * WITHOUT a real spawn: the SDK-write, the cap-socket arg construction (via the
- * genuine `BwrapProvider.buildArgs`), the `*KEY*/*TOKEN*/*SECRET*` env-scrub
- * (with the lease-var exemption), the honest-degrade-on-unavailable-jail, the
+ * genuine `BwrapProvider.buildArgs`), the secret-named env-scrub (KEY/TOKEN/
+ * SECRET, with the lease-var exemption), the honest-degrade-on-unavailable-jail,
+ * the
  * stdout size-bounce, and the run-end `cleanupRun` lifecycle.
  *
  * @module
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -64,14 +65,24 @@ function makeFakeChild(stdout: string, exitCode = 0, stderr = ""): OrchestrateSp
 
 describe("orchestrate-tool", () => {
   let workspacePath: string;
+  let sdkAssetsDir: string;
   const capSocketPath = "/run/comis/cap-test.sock";
 
   beforeEach(() => {
     workspacePath = mkdtempSync(join(tmpdir(), "comis-orchestrate-"));
+    // A fixture SDK-assets dir holding the three files the runner copies into the
+    // jail. (In production this dir is the built module dir, which carries the
+    // committed comis_tools.{d.ts,js} + the compiled orchestrate-sdk-runtime.js;
+    // the source dir lacks the compiled .js, so the unit suite injects a fixture.)
+    sdkAssetsDir = mkdtempSync(join(tmpdir(), "comis-orch-sdk-"));
+    writeFileSync(join(sdkAssetsDir, "comis_tools.d.ts"), "// d.ts\n");
+    writeFileSync(join(sdkAssetsDir, "comis_tools.js"), "// js\n");
+    writeFileSync(join(sdkAssetsDir, "orchestrate-sdk-runtime.js"), "// runtime\n");
   });
 
   afterEach(() => {
     rmSync(workspacePath, { recursive: true, force: true });
+    rmSync(sdkAssetsDir, { recursive: true, force: true });
   });
 
   function makeDeps(over?: {
@@ -87,6 +98,7 @@ describe("orchestrate-tool", () => {
         workspaceResolver: () => workspacePath,
         capSocketPath,
         sandbox: new BwrapProvider(),
+        sdkAssetsDir,
         brokerSpawnEnv: {
           placeholders: {
             COMIS_CAP_LEASE: "lease-xyz",
@@ -116,15 +128,22 @@ describe("orchestrate-tool", () => {
     expect(tool.parameters).toBeDefined();
   });
 
+  /** Extract `<scriptName>` from the jailed `node <scriptName>` bash command. */
+  function scriptNameFromArgs(args: string[]): string {
+    const cmdIdx = args.indexOf("-c");
+    const command = cmdIdx >= 0 ? (args[cmdIdx + 1] ?? "") : "";
+    const m = command.match(/node\s+(\S+)/);
+    return m ? m[1] : "";
+  }
+
   it("writes <workspace>/<runId>.<language> + the comis_tools SDK + the runtime before spawning (SDK-write)", async () => {
     let writtenAtSpawn: { script: boolean; sdkJs: boolean; sdkDts: boolean; runtime: boolean } | undefined;
     const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
-      // The last positional arg the runner passes to bash is the jailed command,
-      // which references `<runId>.ts`; capture the workspace file state NOW.
-      const scriptArg = args.find((a) => /\.ts$|\.js$/.test(a));
-      const runId = scriptArg ? scriptArg.replace(/.*\b([^/ ]+)\.(ts|js)\b.*/, "$1") : "";
+      // The bash command is `node <scriptName>`; capture the workspace file state
+      // NOW (the runner must have written all four files before spawning).
+      const scriptName = scriptNameFromArgs(args);
       writtenAtSpawn = {
-        script: existsSync(join(workspacePath, `${runId}.ts`)),
+        script: scriptName !== "" && existsSync(join(workspacePath, scriptName)),
         sdkJs: existsSync(join(workspacePath, "comis_tools.js")),
         sdkDts: existsSync(join(workspacePath, "comis_tools.d.ts")),
         runtime: existsSync(join(workspacePath, "orchestrate-sdk-runtime.js")),
@@ -146,9 +165,8 @@ describe("orchestrate-tool", () => {
   it("writes the model's script verbatim into the workspace", async () => {
     let scriptPath: string | undefined;
     const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
-      const scriptArg = args.find((a) => /\.ts$/.test(a));
-      const runId = scriptArg ? scriptArg.replace(/.*\b([^/ ]+)\.ts\b.*/, "$1") : "";
-      scriptPath = join(workspacePath, `${runId}.ts`);
+      const scriptName = scriptNameFromArgs(args);
+      scriptPath = join(workspacePath, scriptName);
       return makeFakeChild("x\n");
     };
     const { deps } = makeDeps({ spawnFn });
