@@ -1,0 +1,103 @@
+# Comis Test Configuration — durable resume / exactly-once chaos test.
+#
+# Dedicated config for test/integration/durable-resume-e2e.test.ts (the Phase 216
+# acceptance gate). It enables the opt-in `autonomy.durability` engine on an
+# autonomy-bearing `default` agent so the daemon constructs the durable-run store +
+# the outward-send ledger + the resume engine + the watchdog at boot (Plans 02-07,
+# wired live by 216-12). A UNIQUE gateway port (8811) + a dedicated memory db keep
+# this boot isolated from the 4766 default-config port and other parallel suites.
+#
+# The chaos test reuses ONE per-fork dataDir across a cleanup()+restart cycle
+# (daemon-harness getForkDataDir is memoized per fork), so memory.db — and the
+# durable_runs + outward_send_ledger rows in it — survive the restart and drive
+# boot recovery. The controllable Echo channel is NOT a config channel type; the
+# test registers an EchoChannelAdapter on daemon.adapterRegistry at runtime (the
+# activity-composition precedent), so the wrapped send path reaches it.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis (overridden to a per-fork temp dir by the harness)
+
+agents:
+  default:
+    name: "DurableResumeTestAgent"
+    model: default
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    # The autonomy-bearing posture that makes the durability gate fire. `standard`
+    # resolves enabled:true (the nine floor-contained orchestration caps incl.
+    # orch:message — the §3.5 outward send the ledger wraps). `durability.enabled`
+    # turns ON the durable-run store + outward-send ledger + resume engine +
+    # watchdog. The thresholds are SMALL so the chaos test runs fast: a 500ms stale
+    # cutoff (the watchdog cadence) + a 2s recovery budget.
+    autonomy:
+      profile: "standard"
+      durability:
+        enabled: true
+        staleHeartbeatMs: 500
+        keepAliveMs: 100
+        recoveryBudgetMs: 2000
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8811
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-durable-resume-chaos"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-durable-resume.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

@@ -25,7 +25,11 @@ import type {
   OutwardSendRecord,
   OutwardSendBeginInput,
 } from "@comis/core";
-import { wrapOutwardSend } from "./outward-ledger-wrap.js";
+import {
+  wrapOutwardSend,
+  __setOutwardSendCrashHookForTest,
+  OUTWARD_SEND_CRASH_SENTINEL,
+} from "./outward-ledger-wrap.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -289,5 +293,68 @@ describe("wrapOutwardSend", () => {
     expect(result.ok).toBe(true);
     expect(doSend).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(["doSend"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // MED-6 test-only crash hook (Phase 216 Plan 08): the seam the exactly-once
+  // chaos test arms to crash in the invariant-#12 window (between markUnknown
+  // and commit), leaving a real unknown_after_send row from the REAL code path.
+  // -------------------------------------------------------------------------
+
+  it("crash hook 'before_send' throws AFTER markUnknown but BEFORE doSend (platform truth = not_sent) and leaves the row unknown_after_send", async () => {
+    const { ledger, calls } = makeStubLedger();
+    const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
+      calls.push("doSend");
+      return ok({ messageId: "SHOULD-NOT-HAPPEN" });
+    });
+    __setOutwardSendCrashHookForTest("before_send");
+    try {
+      await expect(
+        wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() }),
+      ).rejects.toThrow(OUTWARD_SEND_CRASH_SENTINEL);
+    } finally {
+      __setOutwardSendCrashHookForTest(undefined);
+    }
+    // markUnknown ran (the durable row exists) but doSend never fired (the
+    // platform never recorded it) and commit was never reached.
+    expect(calls).toEqual(["lookup", "begin", "markUnknown"]);
+    expect(doSend).not.toHaveBeenCalled();
+    expect(ledger.commit).not.toHaveBeenCalled();
+  });
+
+  it("crash hook 'after_send' runs doSend (platform truth = sent) THEN throws BEFORE commit, leaving the row unknown_after_send", async () => {
+    const { ledger, calls } = makeStubLedger();
+    const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
+      calls.push("doSend");
+      return ok({ messageId: "platform-recorded-it" });
+    });
+    __setOutwardSendCrashHookForTest("after_send");
+    try {
+      await expect(
+        wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() }),
+      ).rejects.toThrow(OUTWARD_SEND_CRASH_SENTINEL);
+    } finally {
+      __setOutwardSendCrashHookForTest(undefined);
+    }
+    // The platform call DID happen (Echo would have recorded it) but commit was
+    // never reached — the exact crash window the recovery's reconcileSend resolves.
+    expect(calls).toEqual(["lookup", "begin", "markUnknown", "doSend"]);
+    expect(doSend).toHaveBeenCalledTimes(1);
+    expect(ledger.commit).not.toHaveBeenCalled();
+  });
+
+  it("crash hook disarmed (undefined) → normal commit path (the production default, INERT)", async () => {
+    __setOutwardSendCrashHookForTest(undefined);
+    const { ledger, calls } = makeStubLedger();
+    const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
+      calls.push("doSend");
+      return ok({ messageId: "normal-99" });
+    });
+
+    const result = await wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.messageId).toBe("normal-99");
+    expect(calls).toEqual(["lookup", "begin", "markUnknown", "doSend", "commit"]);
   });
 });
