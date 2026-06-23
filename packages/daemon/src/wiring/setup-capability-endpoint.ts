@@ -10,11 +10,15 @@
  *
  * The endpoint is a NEAR-CLONE of the in-process `createAgentRpcCall`
  * (setup-tools-capabilities.ts): validate the bearer against the LeaseManager
- * (timing-safe, not-expired, not-revoked, audience-bound — 211-01) → resolve
+ * (timing-safe, not-expired, not-revoked, audience-bound — 211-01) → STRIP the
+ * attacker-controlled wire params' internal `_X` fields (ORIGIN-02) → resolve
  * caps to `_capabilities` → inject `_agentId` → dispatch through the SAME
- * `createRpcDispatch` sink. The ONLY differences from the in-process path: the
- * caps come from a VALIDATED LEASE (not `resolveAutonomy(config)`), and the
- * transport is a 0600 unix socket (not in-process).
+ * `createRpcDispatch` sink. The differences from the in-process path: the caps
+ * come from a VALIDATED LEASE (not `resolveAutonomy(config)`), the transport is
+ * a 0600 unix socket (not in-process), and — because the params are RAW WIRE
+ * BYTES, not typed in-process tool args — the endpoint MUST `stripInternalFields`
+ * before injecting the trusted fields (the in-process path can skip that strip;
+ * this boundary cannot).
  *
  * Because it injects `_agentId`, the shipped `createRpcDispatch` chokepoint runs
  * `assertNotAgentOrigin` for ADMIN_METHODS automatically (deny-by-origin —
@@ -31,9 +35,12 @@
  *     so the shipped sink owns that deny — distinct from the denylist pre-check).
  *   - admin method → `assertNotAgentOrigin` (because `_agentId` is injected).
  *
- * The endpoint adds NO new INTERNAL_FIELD_NAME — it reuses the shipped
- * `_agentId` + `_capabilities` (internals.ts explicitly names "the 211 lease
- * endpoint" as a legitimate injector). The rate-limit on the endpoint is wired
+ * The endpoint adds NO new INTERNAL_FIELD_NAME — it strips ALL inbound `_X`
+ * names then reuses the shipped `_agentId` + `_capabilities` (internals.ts
+ * explicitly names "the 211 lease endpoint" as a legitimate injector). The
+ * strip-THEN-inject order is load-bearing: a forged inbound `_agentId`/
+ * `_capabilities` (or any other `_X` gate) is dropped first, so the injected
+ * lease values are the ONLY ones the sink ever sees. The rate-limit on the endpoint is wired
  * in Phase 213; the operator-facing revoke RPC + cascade are Phase 213. The
  * bwrap cap-socket bind is 211-05; the jailed SDK that is the socket CLIENT is
  * Phase 212 (which finalizes the wire format — for 211 the socket-server
@@ -44,7 +51,7 @@
 
 import net from "node:net";
 import { chmodSync, unlinkSync } from "node:fs";
-import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { SUB_AGENT_TOOL_DENYLIST, stripInternalFields } from "@comis/core";
 import type { LeaseManager, LeaseInfo } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
@@ -233,13 +240,27 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       throw new Error("lease invalid/expired/revoked or audience mismatch");
     }
 
+    // ORIGIN-02 at the socket boundary (CR-01): the wire `params` are FULLY
+    // attacker-controlled — the jailed/untrusted script is precisely what this
+    // lease authenticates. STRIP every dispatcher-internal `_X` field
+    // (INTERNAL_FIELD_NAMES) the wire carried BEFORE injecting the trusted ones,
+    // mirroring how the external gateway path defends itself
+    // (setup-gateway-api.ts: "after this strip the PRESENCE of `_agentId` is a
+    // sound, unforgeable agent-origin signal — the prerequisite that makes
+    // deny-by-origin sound"). Without the strip a forged `_trustLevel:"admin"`
+    // (or `_userId`/`_callerChannelId`/…) would reach handler gates like
+    // authorizeChannelAccess, and a forged `_agentId` would impersonate another
+    // agent. The in-process createAgentRpcCall skips this strip safely only
+    // because its params are typed in-process tool args, never raw wire bytes —
+    // this boundary does NOT share that property, so it must strip here.
+    //
     // Inject _agentId + _capabilities and dispatch through the shipped sink.
     // _agentId (Pitfall 2): makes assertNotAgentOrigin fire for admin methods.
     // _capabilities: makes each handler's requireCapability fire (no second gate
     // here — the endpoint passes the lease caps through verbatim and lets the
     // shipped per-handler gate decide).
     return rpcCall(method, {
-      ...params,
+      ...stripInternalFields(params),
       _agentId: lease.agentId,
       _capabilities: lease.caps,
     });
