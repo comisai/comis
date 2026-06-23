@@ -258,12 +258,15 @@ describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilienc
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
 
-    // Tamper the row to a value the Zod row schema / domain union does not allow.
-    // (The SQL CHECK forbids it via the port, so write it directly to simulate a
-    // hand-edited / corrupt on-disk row — createRowMapper must degrade to err.)
-    db.exec(`PRAGMA writable_schema=ON`);
-    db.prepare(`UPDATE outward_send_ledger SET step_index = 'not-a-number' WHERE root_run_id = 'run-A'`).run();
-    db.exec(`PRAGMA writable_schema=OFF`);
+    // Tamper a non-key column to a value the Zod row schema does not allow.
+    // SQLite's INTEGER affinity stores a non-numeric string as TEXT, so on read
+    // attempt_count comes back a string — OutwardLedgerDbRowSchema's z.number()
+    // rejects it and createRowMapper degrades lookup to err (T-216-12), never a
+    // throw that aborts the boot recovery scan. (attempt_count, not step_index,
+    // so the lookup WHERE still matches the now-corrupt row.)
+    db.prepare(
+      `UPDATE outward_send_ledger SET attempt_count = 'not-a-number' WHERE root_run_id = 'run-A'`,
+    ).run();
 
     const found = await ledger.lookup("run-A", 0);
     expect(found.ok).toBe(false);
