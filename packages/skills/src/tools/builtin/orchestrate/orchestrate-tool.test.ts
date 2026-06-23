@@ -29,7 +29,13 @@ import { EventEmitter } from "node:events";
 
 import type { ComisLogger } from "@comis/core";
 
-import { createOrchestrateTool, scrubSecretEnv } from "./orchestrate-tool.js";
+import {
+  createOrchestrateTool,
+  scrubSecretEnv,
+  clampTimeoutMs,
+  MAX_TIMEOUT_MS,
+  DEFAULT_TIMEOUT_MS,
+} from "./orchestrate-tool.js";
 import type {
   OrchestrateSpawnFn,
   OrchestrateSpawnedChild,
@@ -231,6 +237,29 @@ describe("orchestrate-tool", () => {
     it("drops undefined-valued keys and keeps only string values", () => {
       const scrubbed = scrubSecretEnv({ A: "1", B: undefined, C: "3" });
       expect(scrubbed).toEqual({ A: "1", C: "3" });
+    });
+  });
+
+  describe("clampTimeoutMs (WR-02 — bounded wall-clock)", () => {
+    it("clamps a model-supplied timeout above MAX_TIMEOUT_MS down to the ceiling", () => {
+      // A jailed script must not be able to pin a child for ~11.5 days
+      // (timeoutMs: 999_999_999). The clamp caps it at MAX_TIMEOUT_MS.
+      expect(clampTimeoutMs(999_999_999)).toBe(MAX_TIMEOUT_MS);
+    });
+
+    it("passes a sane in-range timeout through unchanged", () => {
+      expect(clampTimeoutMs(30_000)).toBe(30_000);
+    });
+
+    it("falls back to DEFAULT_TIMEOUT_MS for a missing / non-positive value", () => {
+      expect(clampTimeoutMs(undefined)).toBe(DEFAULT_TIMEOUT_MS);
+      expect(clampTimeoutMs(0)).toBe(DEFAULT_TIMEOUT_MS);
+      expect(clampTimeoutMs(-5)).toBe(DEFAULT_TIMEOUT_MS);
+    });
+
+    it("keeps MAX_TIMEOUT_MS itself a bounded ceiling (not larger than 10 minutes)", () => {
+      expect(MAX_TIMEOUT_MS).toBeLessThanOrEqual(10 * 60_000);
+      expect(MAX_TIMEOUT_MS).toBeGreaterThan(DEFAULT_TIMEOUT_MS);
     });
   });
 

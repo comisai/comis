@@ -183,8 +183,17 @@ const SDK_ASSETS = ["comis_tools.d.ts", "comis_tools.js", "orchestrate-sdk-runti
 /** Max stdout characters that re-enter context — the rest is size-bounced. */
 const STDOUT_MAX_CHARS = 30_000;
 
-/** Default hard timeout for a jailed run (ms). */
-const DEFAULT_TIMEOUT_MS = 60_000;
+/** Default hard timeout for a jailed run (ms). Exported for the clamp tests. */
+export const DEFAULT_TIMEOUT_MS = 60_000;
+
+/**
+ * The hard ceiling on a model-supplied `timeoutMs` (WR-02). The schema accepts
+ * any positive integer, so without this a jailed (attacker-controlled) script
+ * could request `timeoutMs: 999_999_999` (~11.5 days) and pin a child for an
+ * arbitrarily long window. 10 minutes is far longer than any legitimate
+ * search→fetch→synthesize chain needs while staying bounded.
+ */
+export const MAX_TIMEOUT_MS = 10 * 60_000;
 
 /** The per-run aggregate `results/` budget passed to the store's GC. */
 const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
@@ -222,6 +231,21 @@ export function scrubSecretEnv(
   return out;
 }
 
+/**
+ * Resolve the effective jailed-run wall-clock timeout from a model-supplied
+ * value (WR-02): a non-positive / non-numeric request falls back to
+ * {@link DEFAULT_TIMEOUT_MS}; any larger request is clamped down to
+ * {@link MAX_TIMEOUT_MS}. Pure so the bound is unit-testable with no spawn.
+ *
+ * @param requested - The `params.timeoutMs` (ms) the model supplied, if any.
+ * @returns A bounded timeout in `[1, MAX_TIMEOUT_MS]`.
+ */
+export function clampTimeoutMs(requested: number | undefined): number {
+  const base =
+    typeof requested === "number" && requested > 0 ? requested : DEFAULT_TIMEOUT_MS;
+  return Math.min(base, MAX_TIMEOUT_MS);
+}
+
 // ---------------------------------------------------------------------------
 // Factory.
 // ---------------------------------------------------------------------------
@@ -256,10 +280,9 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const startedMs = now();
       const runId = `orch-${startedMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const workspacePath = deps.workspaceResolver();
-      const timeoutMs =
-        typeof params.timeoutMs === "number" && params.timeoutMs > 0
-          ? params.timeoutMs
-          : DEFAULT_TIMEOUT_MS;
+      // WR-02: bound the model-supplied timeout (fallback default, clamp ceiling)
+      // so a jailed script cannot pin a child for an arbitrarily long window.
+      const timeoutMs = clampTimeoutMs(params.timeoutMs);
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
