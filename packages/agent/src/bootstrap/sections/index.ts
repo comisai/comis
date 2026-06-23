@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 export * from "./core-sections.js";
+export * from "./autonomy-doctrine.js";
 export * from "./tooling-sections.js";
 export * from "./tool-descriptions.js";
 export * from "./skills-memory-sections.js";

@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createSessionHandlers } from "./session-handlers/index.js";
+import { createSessionHandlers as createSessionHandlersRaw } from "./session-handlers/index.js";
 import type { SessionHandlerDeps } from "./session-handlers/index.js";
 import { scanWorkspaceSessions, scanJsonlSessions } from "./session-handlers/session-helpers.js";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+
+// CAP-03: the gated session.spawn handler requires an injected `_capabilities`
+// (orch:spawn) at its top — production supplies it via createAgentRpcCall
+// (setup-tools-capabilities.ts). These body-tests call the handlers directly,
+// so wrap the bound record to carry the held cap each gated method needs. The
+// ungated session.* methods (delete/reset/export/compact/etc., governed by
+// `_trustLevel`) pass through unchanged.
+function createSessionHandlers(deps: SessionHandlerDeps): ReturnType<typeof createSessionHandlersRaw> {
+  return withHeldCapabilities(createSessionHandlersRaw(deps));
+}
 
 // ---------------------------------------------------------------------------
 // Helper: create isolated deps per test to avoid shared state

@@ -25,6 +25,7 @@ import {
   toolReachableGroups,
   RequiredToolsUnreachableError,
   type UnreachableToolEntry,
+  type SubAgentSpawnRejectedEvent,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
@@ -104,6 +105,12 @@ function deriveCompositeForRun(run: SubAgentRun): {
 // Public interfaces
 // ---------------------------------------------------------------------------
 
+// @optional-field-count: 13 — SubAgentRun is the per-run flight-record state; its
+// optionals are independent, lifecycle-populated facets of ONE run (result/error
+// set at completion; requesterOrigin/announce* at spawn; graphId/nodeId/abortGroup
+// for graph routing; parentLeaseId/ceilingSlotAcquired for the Phase-213 ceiling/
+// cascade). They are not a cluster-split candidate — every field describes the
+// SAME run and is read by the runner's own lifecycle, not handed to a sub-service.
 export interface SubAgentRun {
   runId: string;
   status: "running" | "completed" | "failed" | "queued";
@@ -126,6 +133,12 @@ export interface SubAgentRun {
   requesterOrigin?: DeliveryOrigin;
   /** Spawn depth in the chain (0 = first child, 1 = grandchild, etc.). */
   depth: number;
+  /** Tree-stable run identity (CEIL-01/REVOKE-03). Every run belongs to exactly one
+   *  spawn tree; the root mints this id and descendants inherit it. The unified
+   *  semaphore keys on it and killByRootRun enumerates a whole tree by it. */
+  rootRunId: string;
+  /** Lease that authorized this spawn (REVOKE-02 cascade correlation); undefined for the root. */
+  parentLeaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
@@ -138,6 +151,13 @@ export interface SubAgentRun {
   nodeId?: string;
   /** Abort/cleanup group key. Graph spawns: `graph:${graphId}`. Regular: callerSessionKey. */
   abortGroup?: string;
+  /** Phase 213 CR-02: true when this run reserved a tree-wide ceiling slot
+   *  (`checkSpawnCeiling` returned ok). The slot is released EXACTLY ONCE on the
+   *  run's first terminal transition (`releaseCeilingSlotOnce` clears the flag),
+   *  so a kill→later-settle or a double-fired completion never double-releases
+   *  (which would steal a sibling's slot under a shared root). A promoted queued
+   *  run never sets this (it never acquired) so it never releases. */
+  ceilingSlotAcquired?: boolean;
 }
 
 /** Minimal pino-compatible logger for sub-agent runner diagnostics. */
@@ -202,6 +222,35 @@ export interface SubAgentRunnerDeps {
    * compare; older test wiring). The daemon ALWAYS wires it in production.
    */
   resolvePosture?: (agentId: string, callerAgentId?: string) => SandboxPosture;
+  /**
+   * Tree-wide spawn ceiling consult (CEIL-01). Called at the spawn chokepoint —
+   * the SINGLE convergence point `session.spawn`, `graph.*`, AND the in-process
+   * agent loop ALL hit (they all call `runner.spawn`) — so a `for(;;) spawn()`
+   * fork-bomb is bounded tree-wide where the per-caller depth/fanout gates cannot
+   * (RESEARCH anti-pattern: "a semaphore that only sees the cap-endpoint path
+   * misses the in-process path"). Receives the run's tree-stable `rootRunId`, the
+   * `depth`, and the active-children `fanout`. On `{ ok:false }` the spawn is
+   * rejected EXACTLY like the depth/children gates (event + WARN + no run/session
+   * created). **Absent ⇒ inert** (non-daemon constructions / older test wiring);
+   * the daemon wires it to `boundedAutonomy.tryAcquireSpawn`.
+   */
+  checkSpawnCeiling?: (
+    rootRunId: string,
+    depth: number,
+    fanout: number,
+  ) => { ok: true } | { ok: false; reason: string };
+  /**
+   * Symmetric release of a slot reserved by {@link checkSpawnCeiling} (Phase 213
+   * CR-02). Called 1:1 with every successful acquire on EVERY terminal transition
+   * of the run that reserved it — the run-completion `finally` and the queue-
+   * timeout fail path. Without it the per-`rootRunId` `active` counter only ever
+   * increments and a tree is bricked after `maxConcurrentSelfAgents` spawns
+   * (a permanent spawn brick, masked pre-CR-01 only because roots never shared).
+   * Idempotent at the sink (the semaphore floors `active` at 0). **Absent ⇒
+   * inert** (older/non-daemon wiring); the daemon wires it to
+   * `boundedAutonomy.releaseSpawn`.
+   */
+  releaseSpawnCeiling?: (rootRunId: string) => void;
   /** Optional structured logger for lifecycle diagnostics. */
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
@@ -350,6 +399,15 @@ export interface SpawnParams {
   depth?: number;
   /** Maximum allowed spawn depth from config. */
   maxDepth?: number;
+  /** Tree-stable run identity (CEIL-01/REVOKE-03). Established ONCE at the root spawn
+   *  (depth 0) and propagated to every descendant so the tree-wide semaphore (Plan 04)
+   *  and kill-by-root primitive see one id per spawn tree. When absent, spawn() mints
+   *  one (the root); a child MUST pass its parent's id down — a fresh id per child would
+   *  escape the parent's ceiling (RESEARCH Pitfall 1 — the silent under-count). */
+  rootRunId?: string;
+  /** Lease that authorized this spawn (REVOKE-02 cascade correlation). Recorded on the
+   *  run so a future revoke-by-root can map runs to leases; omitted for the root. */
+  parentLeaseId?: string;
   /** Caller type for GraphCoordinator bypass of children limit. */
   callerType?: "agent" | "graph";
   /** File paths for the sub-agent to reference. */
@@ -541,6 +599,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // -------------------------------------------------------------------------
   // Proxy typing stop helper (avoids repeating guard+emit in 5 paths)
   // -------------------------------------------------------------------------
+
+  /**
+   * Release a run's reserved tree-wide ceiling slot EXACTLY ONCE (Phase 213
+   * CR-02). Pairs 1:1 with the `checkSpawnCeiling` acquire recorded on the run.
+   * Clearing `ceilingSlotAcquired` first makes this idempotent across the several
+   * terminal paths a single run can traverse (kill marks failed, then the
+   * underlying executeAgent promise later settles and fires `execPromise.finally`
+   * — both must not double-release, which would steal a sibling slot under a
+   * shared root since `releaseSpawn` floors at 0 but cannot tell whose slot it is).
+   */
+  function releaseCeilingSlotOnce(run: SubAgentRun): void {
+    if (!run.ceilingSlotAcquired) return;
+    run.ceilingSlotAcquired = false;
+    deps.releaseSpawnCeiling?.(run.rootRunId);
+  }
 
   function emitProxyStop(
     run: SubAgentRun,
@@ -802,6 +875,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
     const isGraphSpawn = params.callerType === "graph";
 
+    // Establish the tree-stable rootRunId (CEIL-01/REVOKE-03 foundation). The root
+    // (the first caller with no rootRunId) mints one; every descendant MUST pass its
+    // parent's id down via params.rootRunId. We mint whenever it is absent — regardless
+    // of depth — so a missing id never silently splits a tree into per-spawn ids that
+    // each escape the parent's ceiling (RESEARCH Pitfall 1). Uses the injected
+    // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
+    const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
+
     // Depth check (applies to ALL spawns including graph)
     if (currentDepth >= maxDepth) {
       deps.eventBus.emit("session:sub_agent_spawn_rejected", {
@@ -1040,6 +1121,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           queuedAt: now,
           requesterOrigin: params.requesterOrigin,
           depth: currentDepth,
+          rootRunId,
+          ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
@@ -1086,21 +1169,87 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
-    // 1. Allowlist check
+    // 1. Allowlist check.
+    // WR-03 (213-REVIEW): hoisted ABOVE the ceiling acquire below. The allowlist
+    // check has NO side effects and can throw; if it ran AFTER the ceiling
+    // reserve (the prior order), a not-allowlisted spawn would reserve a slot and
+    // then throw with no run ever created — so no completion `finally` would ever
+    // release it (a slot leak the instant CR-02's release landed). Refusing here,
+    // before any reserve, keeps the acquire the LAST gate before run creation so
+    // every successful acquire is paired 1:1 with a run that will release it.
     if (
       deps.config.allowAgents.length > 0 &&
       !deps.config.allowAgents.includes(params.agentId)
     ) {
       // `callerAgentId` is `string | undefined` -- a top-level spawn call
       // (no parent agent in flight) omits it. Use the same "unknown" sentinel
-      // as the success-path log line at the bottom of this function (around
-      // line 889) so failure records and observability payloads don't grep
-      // for the literal string "undefined".
+      // as the success-path log line at the bottom of this function so failure
+      // records and observability payloads don't grep for the literal "undefined".
       const callerLabel = params.callerAgentId ?? "unknown";
       // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
       throw new Error(
         `Agent "${callerLabel}" is not allowed to spawn "${params.agentId}". Allowed: ${deps.config.allowAgents.join(", ")}`,
       );
+    }
+
+    // Tree-wide spawn ceiling (CEIL-01). The SINGLE consult both session.spawn
+    // AND graph.* AND the in-process agent loop hit (they all reach here via
+    // runner.spawn), keyed on the tree-stable rootRunId — so a for(;;) spawn()
+    // is bounded across the whole tree, not just one caller. Placed AFTER the
+    // per-caller depth/children/queue gates AND the allowlist (WR-03) and BEFORE
+    // any runId/session is created, so it rejects with the SAME shape as the
+    // depth/children gates (event + WARN + no run/session) and is the LAST gate
+    // before run creation (every acquire pairs 1:1 with a releasing run). The
+    // fanout arg is the caller's active children (0 for a top-level / graph spawn
+    // with no callerSessionKey). Inert when the callback is absent (older/non-
+    // daemon wiring).
+    let ceilingSlotAcquired = false;
+    if (deps.checkSpawnCeiling) {
+      const ceilingFanout = countActiveChildren(params.callerSessionKey);
+      const ceiling = deps.checkSpawnCeiling(rootRunId, currentDepth, ceilingFanout);
+      if (ceiling.ok) {
+        // The consult RESERVED a slot (tryAcquireSpawn increments on ok). Record
+        // it so the run's terminal transition releases it 1:1 (CR-02). This is the
+        // last gate before run creation, so a successful acquire is always paired
+        // with a run that will release.
+        ceilingSlotAcquired = true;
+      }
+      if (!ceiling.ok) {
+        // Map the ceiling's reason (concurrency/depth/fanout) to the closed
+        // event union's tree-wide `ceiling_*` member; an unknown reason folds to
+        // ceiling_concurrency (the catch-all bound). Keeps the event distinct
+        // from the per-caller depth_exceeded/children_exceeded gates.
+        const eventReason: SubAgentSpawnRejectedEvent["reason"] =
+          ceiling.reason === "depth"
+            ? "ceiling_depth"
+            : ceiling.reason === "fanout"
+              ? "ceiling_fanout"
+              : "ceiling_concurrency";
+        deps.eventBus.emit("session:sub_agent_spawn_rejected", {
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId,
+          task: params.task,
+          reason: eventReason,
+          currentDepth,
+          maxDepth,
+          currentChildren: ceilingFanout,
+          maxChildren: deps.config.subagentContext?.maxChildrenPerAgent ?? 5,
+          timestamp: clock.now(),
+        });
+        deps.logger?.warn({
+          agentId: params.agentId,
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          reason: ceiling.reason,
+          rootRunId,
+          currentDepth,
+          hint: "Spawn rejected: tree-wide autonomy ceiling reached; the spawn tree hit its concurrency/depth/fanout bound (autonomy.spawn.*). Wait for sibling sub-agents to finish or raise the bound.",
+          errorKind: "resource" as const,
+        }, "Subagent spawn rejected");
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
+        throw new Error(
+          `Spawn rejected: tree-wide spawn ceiling reached (reason: ${ceiling.reason}). This spawn tree is at its concurrency/depth/fanout bound.`,
+        );
+      }
     }
 
     // Normal (non-queued) path: create run and start execution
@@ -1110,6 +1259,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       task: params.task, sessionKey: "", startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
+      rootRunId,
+      ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
@@ -1118,6 +1269,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       abortGroup: params.callerType === "graph" && params.graphId
         ? `graph:${params.graphId}`
         : params.callerSessionKey,
+      ...(ceilingSlotAcquired ? { ceilingSlotAcquired: true } : {}),
     };
     runs.set(runId, run);
 
@@ -1847,6 +1999,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     activePromises.add(execPromise);
     execPromise.finally(() => {
       activePromises.delete(execPromise);
+      // CR-02: release the tree-wide ceiling slot this run reserved (idempotent;
+      // a no-op for promoted queued runs, which never acquired). This fires for
+      // EVERY started run on its terminal settle — completion, failure, AND a
+      // kill/ghost/watchdog (those mark the run failed but the underlying
+      // executeAgent promise still settles here), so a long-running tree's slots
+      // are reclaimed rather than monotonically leaking.
+      releaseCeilingSlotOnce(run);
       // Drain queue when a slot opens (use abortGroup for graph-scoped draining)
       const drainKey = run.abortGroup ?? run.callerSessionKey;
       if (drainKey) {
@@ -1888,6 +2047,29 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   function getRunStatus(runId: string): SubAgentRun | undefined {
     return runs.get(runId);
+  }
+
+  /**
+   * Resolve the running/queued sub-agent run whose child session key equals
+   * `sessionKey` (Phase 213 CR-01). When a sub-agent itself calls
+   * `sessions_spawn`, the dispatcher injects ITS session key as the spawn's
+   * `_callerSessionKey`; that key is exactly the spawning run's `run.sessionKey`.
+   * The daemon spawn handler uses this to make a descendant INHERIT its parent
+   * run's tree-stable `rootRunId`/`parentLeaseId` instead of minting a fresh root
+   * (the fork-bomb-defeating defect). Returns the most-recently-started match
+   * among live runs; `undefined` for a top-level (operator) caller whose session
+   * is not a sub-agent run. Terminal runs are ignored (a finished parent cannot
+   * own a new child).
+   */
+  function getRunBySessionKey(sessionKey: string): SubAgentRun | undefined {
+    if (!sessionKey) return undefined;
+    let best: SubAgentRun | undefined;
+    for (const run of runs.values()) {
+      if (run.sessionKey !== sessionKey) continue;
+      if (run.status !== "running" && run.status !== "queued") continue;
+      if (!best || run.startedAt > best.startedAt) best = run;
+    }
+    return best;
   }
 
   /**
@@ -2010,6 +2192,31 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
+   * REVOKE-03: hard-stop a whole spawn tree. Fans the per-run {@link killRun}
+   * (which marks the run failed and aborts its in-flight SDK session) over every
+   * running/queued run sharing `rootRunId`, and returns the count killed.
+   *
+   * Filters STRICTLY on `run.rootRunId === rootRunId` (threat T-213-01-02 — a
+   * different tree must be untouched) and on the same status guard killRun uses,
+   * so already-terminal runs are skipped. An unknown root is a clean no-op
+   * (`{ killed: 0 }`), never a throw — the count return is the contract the
+   * daemon-side `run.kill` RPC handler (the @allow-throw boundary, Plan 06)
+   * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
+   */
+  function killByRootRun(rootRunId: string): { killed: number } {
+    let killed = 0;
+    for (const run of runs.values()) {
+      if (
+        run.rootRunId === rootRunId &&
+        (run.status === "running" || run.status === "queued")
+      ) {
+        if (killRun(run.runId).killed) killed++;
+      }
+    }
+    return { killed };
+  }
+
+  /**
    * STEER-01: inject a steer message into a RUNNING child's live SDK session
    * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
    * helper to keep the mechanism OUT of this (already large) file.
@@ -2095,5 +2302,5 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  return { spawn, getRunStatus, getRunBySessionKey, listRuns, killRun, killByRootRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }

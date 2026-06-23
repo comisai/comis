@@ -71,6 +71,11 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
       // kind="all" + sinceMinutes=undefined). Internal-field reads BEFORE strip.
       const callerMetadata = rawParams._callerMetadata as Record<string, unknown> | undefined;
       const callerSessionKey = rawParams._callerSessionKey as string | undefined;
+      // CR-03: the tool.invoke rpc route injects `_agentId = lease.agentId`; its
+      // PRESENCE is the unforgeable agent-origin signal (inbound _agentId is
+      // stripped from external callers at the gateway). Admin/operator/CLI calls
+      // arrive with NO _agentId and keep full enumeration.
+      const callerAgentId = rawParams._agentId as string | undefined;
       const tenantId = rawParams._tenantId as string | undefined;
 
       const userParams = stripInternalFields(rawParams);
@@ -104,6 +109,22 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
               return true;
           }
         });
+      }
+
+      // AgentId self-scope (CR-03): an agent-origin caller may enumerate ONLY
+      // its own sessions. Mirror session.search's `_agentId` filter exactly
+      // (the predicate `parseFormattedSessionKey(s.sessionKey)?.agentId ===
+      // callerAgentId`) so a jailed orch:read script cannot harvest the
+      // directory of every agent's/user's sessions (the keys that would turn
+      // the CR-02 single-session read into a turnkey cross-tenant exfiltration,
+      // plus a userId/channelId enumeration leak in its own right). Fail CLOSED
+      // (filter to the caller's own) — composes with the sub-agent narrowing
+      // below. When `callerAgentId` is undefined (admin / operator / CLI) the
+      // full directory is preserved, as before.
+      if (callerAgentId) {
+        sessions = sessions.filter(
+          (s) => parseFormattedSessionKey(s.sessionKey)?.agentId === callerAgentId,
+        );
       }
 
       // Sandboxed visibility: sub-agents only see sessions they spawned

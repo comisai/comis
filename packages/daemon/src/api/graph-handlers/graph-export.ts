@@ -12,6 +12,7 @@
 import {
   GraphLoadContract,
   stripInternalFields,
+  requireCapability,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
@@ -27,6 +28,11 @@ import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
 export function bindGraphExportHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
   return {
     [GraphLoadContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:graph is enforced here (graph.load is in the gated
+      // graph family per HANDLER_CAPABILITY_MAP). Read _capabilities BEFORE strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
+
       // Bespoke pre-Zod validation FIRST.
       if (!deps.namedGraphStore) {
         throw new Error("Named graph storage not available");

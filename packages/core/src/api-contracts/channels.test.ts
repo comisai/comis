@@ -79,10 +79,16 @@ describe("CHANNELS_CONTRACTS aggregator", () => {
         .filter((c) => c.scopes.includes("rpc"))
         .map((c) => c.method),
     );
+    // 210-GAP CR-01: message.send/reply/react re-scoped admin→rpc — the
+    // genuinely-outward send subset (§3.5) is the orchestration surface
+    // governed by orch:message, not control plane.
     expect(rpcMethods).toEqual(new Set([
       "channels.health",
       "channels.capabilities",
       "delivery.queue.status",
+      "message.send",
+      "message.reply",
+      "message.react",
     ]));
   });
 
@@ -92,15 +98,14 @@ describe("CHANNELS_CONTRACTS aggregator", () => {
         .filter((c) => c.scopes.includes("admin"))
         .map((c) => c.method),
     );
+    // 210-GAP / §3.5: message.edit/delete/fetch/attach STAY admin-only
+    // (deny-by-origin) — NOT part of orch:message.
     expect(adminMethods).toEqual(new Set([
       "channels.list",
       "channels.get",
       "channels.enable",
       "channels.disable",
       "channels.restart",
-      "message.send",
-      "message.reply",
-      "message.react",
       "message.edit",
       "message.delete",
       "message.fetch",
@@ -417,7 +422,7 @@ describe("MessageSendContract", () => {
     ).toThrow();
   });
 
-  it("accepts response", () => {
+  it("accepts a well-formed message.send response", () => {
     expect(() =>
       MessageSendContract.response.parse({ messageId: "msg-1", channelId: "123" })
     ).not.toThrow();
@@ -448,7 +453,7 @@ describe("MessageReplyContract", () => {
 });
 
 describe("MessageReactContract", () => {
-  it("accepts request", () => {
+  it("accepts a well-formed message.react request", () => {
     expect(() =>
       MessageReactContract.request.parse({
         channel_type: "telegram",

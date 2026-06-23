@@ -1412,6 +1412,76 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "capabilities.introspect": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "caps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "tokensRemaining": {
+              "type": "number"
+            },
+            "wallClockMsRemaining": {
+              "type": "number"
+            },
+            "usdRemaining": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tokensRemaining",
+            "wallClockMsRemaining",
+            "usdRemaining"
+          ],
+          "additionalProperties": false
+        },
+        "outwardQuota": {
+          "type": "object",
+          "properties": {
+            "perHourRemaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "perHourRemaining"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "agentId",
+        "caps"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "channels.capabilities": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4135,6 +4205,39 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "lease.revoke": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "leaseId": {
+          "type": "string"
+        },
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "link.process": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6652,7 +6755,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.reply": {
@@ -6735,7 +6838,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.send": {
@@ -6814,7 +6917,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "models.list": {
@@ -7890,6 +7993,56 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "capSource",
               "tokenBudget",
               "tokensUsed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spawnTree": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "leaseId": {
+                "type": "string"
+              },
+              "parentLeaseId": {
+                "type": "string"
+              },
+              "rootRunId": {
+                "type": "string"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "caps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "toolsInvoked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "denials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "budgetTokensUsed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "leaseId",
+              "rootRunId",
+              "agentId",
+              "caps",
+              "toolsInvoked",
+              "denials"
             ],
             "additionalProperties": false
           }
@@ -9534,6 +9687,39 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "run.kill": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "killed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "killed"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "scheduler.wake": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -9807,7 +9993,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.delete": {
@@ -10156,7 +10342,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset": {
@@ -10196,7 +10382,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset_conversation": {
@@ -10596,7 +10782,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.delete": {
@@ -10639,7 +10825,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.import": {
@@ -10697,7 +10883,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.list": {
@@ -10808,7 +10994,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.upload": {
@@ -10878,7 +11064,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "slack.action": {

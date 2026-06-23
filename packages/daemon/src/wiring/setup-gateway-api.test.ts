@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { INTERNAL_FIELD_NAMES } from "@comis/core";
 import { registerRpcMethods, type RpcMethodDeps } from "./setup-gateway-api.js";
 
 describe("registerRpcMethods", () => {
@@ -227,7 +228,10 @@ describe("registerRpcMethods", () => {
     const adminMethods = [
       "admin.approval.pending", "admin.approval.resolve", "admin.approval.clearDenialCache",
       "agents.create", "agents.get", "agents.update", "agents.delete", "agents.suspend", "agents.resume",
-      "session.list", "session.delete", "session.reset", "session.export", "session.compact",
+      // 210-GAP MD-01: session.list/reset/compact moved to rpc (agent-self
+      // reads/lifecycle). delete/export stay admin (in-handler admin check +
+      // arbitrary-session targeting → deny-by-origin).
+      "session.delete", "session.export",
       "memory.stats", "memory.browse", "memory.delete", "memory.flush", "memory.export", "memory.store",
       "models.list", "models.test",
       "tokens.list", "tokens.create", "tokens.revoke", "tokens.rotate",
@@ -237,6 +241,16 @@ describe("registerRpcMethods", () => {
       const call = calls.find(([m]: [string]) => m === name);
       expect(call, `expected ${name} to be registered`).toBeDefined();
       expect(call![1]).toBe("admin");
+    }
+  });
+
+  it("210-GAP MD-01: session.list/reset/compact are registered as rpc passthroughs (agent-reachable self reads/lifecycle)", () => {
+    registerRpcMethods(deps);
+    const calls = registerMethod.mock.calls;
+    for (const name of ["session.list", "session.reset", "session.compact"]) {
+      const call = calls.find(([m]: [string]) => m === name);
+      expect(call, `expected ${name} to be registered`).toBeDefined();
+      expect(call![1]).toBe("rpc");
     }
   });
 
@@ -252,13 +266,16 @@ describe("registerRpcMethods", () => {
     expect(call![1]).toBe("rpc");
   });
 
-  it("registers skills.upload/import/delete as admin passthroughs", () => {
+  it("210-GAP CR-01: skills.upload/import/delete are registered as rpc passthroughs (orch:skill surface)", () => {
+    // Re-scoped admin→rpc so the deny-by-origin chokepoint no longer denies an
+    // agent its own orch:skill grant. Admin gateway tokens carry rpc, so the
+    // web-UI skills manager (which calls these) is unaffected.
     registerRpcMethods(deps);
     const calls = registerMethod.mock.calls;
     for (const name of ["skills.upload", "skills.import", "skills.delete"]) {
       const call = calls.find(([m]: [string]) => m === name);
       expect(call, `expected ${name} to be registered`).toBeDefined();
-      expect(call![1]).toBe("admin");
+      expect(call![1]).toBe("rpc");
     }
   });
 
@@ -323,5 +340,85 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
     // Each registerMethod call registers one method
     expect(registerMethod.mock.calls.length).toBeGreaterThanOrEqual(90);
+  });
+
+  // -----------------------------------------------------------------------
+  // ORIGIN-02: strip INTERNAL_FIELD_NAMES at the external WS/REST boundary
+  //
+  // An external rpc/admin-token holder can spread an `_agentId` (or any
+  // `_X` control field) into params. The dispatcher must project those
+  // away BEFORE re-injecting the trusted `_trustLevel` so that `_agentId`
+  // PRESENCE becomes an unforgeable agent-origin signal (the prerequisite
+  // that makes deny-by-origin sound). v8 ORIGIN-02 / section 3.1.
+  // -----------------------------------------------------------------------
+
+  function handlerFor(method: string): (params: unknown) => Promise<unknown> {
+    registerRpcMethods(deps);
+    const call = registerMethod.mock.calls.find(([m]: [string]) => m === method);
+    expect(call, `expected ${method} to be registered`).toBeDefined();
+    return call![2] as (params: unknown) => Promise<unknown>;
+  }
+
+  it("admin branch strips a forged _agentId but re-injects _trustLevel and keeps user fields", async () => {
+    const handler = handlerFor("obs.diagnostics");
+
+    await handler({ _agentId: "forged", category: "usage" });
+
+    const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as Record<string, unknown>;
+    // Forged origin field is stripped before dispatch.
+    expect(forwarded).not.toHaveProperty("_agentId");
+    // Trusted control field is re-injected (strip-then-inject ordering).
+    expect(forwarded._trustLevel).toBe("admin");
+    // Legitimate user field survives the strip.
+    expect(forwarded.category).toBe("usage");
+  });
+
+  it("rpc branch strips forged internal fields but keeps user fields", async () => {
+    const handler = handlerFor("session.send");
+
+    await handler({ _agentId: "forged", _capabilities: ["orch:spawn"], text: "hello" });
+
+    const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as Record<string, unknown>;
+    // Forged agent-origin field is stripped on the non-admin path too.
+    expect(forwarded).not.toHaveProperty("_agentId");
+    // Legitimate user field survives.
+    expect(forwarded.text).toBe("hello");
+    // `_capabilities` is forward-correct: stripped iff it is an internal field
+    // (it joins INTERNAL_FIELD_NAMES once Plan 01 lands). Guarded by membership
+    // so this assertion is correct whether Plan 03 runs before or after Plan 01.
+    if ((INTERNAL_FIELD_NAMES as readonly string[]).includes("_capabilities")) {
+      expect(forwarded).not.toHaveProperty("_capabilities");
+    }
+  });
+
+  it("strips every INTERNAL_FIELD_NAMES entry forged by an external admin caller", async () => {
+    const handler = handlerFor("obs.diagnostics");
+
+    const forged: Record<string, unknown> = { category: "usage" };
+    for (const name of INTERNAL_FIELD_NAMES) {
+      forged[name] = "forged";
+    }
+    await handler(forged);
+
+    const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as Record<string, unknown>;
+    for (const name of INTERNAL_FIELD_NAMES) {
+      if (name === "_trustLevel") continue; // re-injected by the admin branch
+      expect(forwarded, `expected ${name} to be stripped`).not.toHaveProperty(name);
+    }
+    expect(forwarded._trustLevel).toBe("admin");
+    expect(forwarded.category).toBe("usage");
+  });
+
+  it("does not drop legitimate-only params (strip removes nothing it should not)", async () => {
+    const handler = handlerFor("session.send");
+
+    await handler({ text: "hello", foo: 1 });
+
+    const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as Record<string, unknown>;
+    expect(forwarded).toEqual({ text: "hello", foo: 1 });
   });
 });

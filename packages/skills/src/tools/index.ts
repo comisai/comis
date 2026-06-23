@@ -27,6 +27,12 @@
 // Built-in tools (web-search, web-fetch)
 export { createWebSearchTool, __clearSearchCache } from "./builtin/web-search-tool/index.js";
 export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builtin/web-fetch-tool.js";
+// Web-fetch internals reused by the daemon-side `tool.invoke` executor (Phase 212,
+// WEB-02): the DNS-pinned fetch primitive + the fetch-free readability extractor.
+// The autonomous `orch:web` path is validateUrl → fetchPinned → extractReadableContent
+// (undici, DNS-pinned, NO impit re-resolve), distinct from the in-process web_fetch tool.
+export { fetchPinned, createPinnedAgent } from "./integrations/pinned-fetch.js";
+export { extractReadableContent, type ExtractMode } from "./builtin/web-fetch-utils.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)
 export {
@@ -191,6 +197,12 @@ export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./built
 // Built-in tools -- Exec sandbox detection
 export { detectSandboxProvider } from "./builtin/sandbox/detect-provider.js";
 export type { DetectLogger } from "./builtin/sandbox/detect-provider.js";
+// JAIL-03 namespace preflight (Phase 211) — the boot probe that PRODUCES
+// `namespacePreflightOk` for the shipped degradeAutonomy downshift. Re-exported
+// on the barrel now that the daemon (211-06) is the out-of-package consumer
+// (mirrors detectSandboxProvider — was deep-path-only in 211-04 to avoid a dead export).
+export { namespacePreflight } from "./builtin/sandbox/detect-provider.js";
+export type { NamespacePreflightResult } from "./builtin/sandbox/detect-provider.js";
 
 // Browser -- service
 export { createBrowserService } from "./browser/index.js";
@@ -280,3 +292,33 @@ export {
   createFalVideoAdapter,
 } from "./integrations/video-gen/index.js";
 export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";
+
+// Orchestrate — the Surface-2 autonomy runner (Phase 212, ORCH-01/02). The
+// runner + its ResultRef store; consumed by Phase 212 Plan 05's daemon wiring
+// (the dormancy activation threads capSocketPath + the store into the runner and
+// adds `orchestrate` to the autonomy tool set). The cap-socket runtime shim
+// (invoke/wrapResultRef) is NOT surfaced here — the generated comis_tools.js
+// imports it by a relative in-jail path, never through this barrel.
+export {
+  createOrchestrateTool,
+  scrubSecretEnv,
+  createResultRefStore,
+  // Plan 05 dormancy activation: the shipped daemon-side executor cores
+  // (read/grep/find/ls/jq + web_search) the Plan-02 tool.invoke executor routes to.
+  createOrchestrateExecutorCores,
+} from "./builtin/orchestrate/index.js";
+export type {
+  OrchestrateToolDeps,
+  OrchestrateResultStore,
+  ResultRefStore,
+  ResultRefStoreDeps,
+  MaterializeContext,
+  GcRunContext,
+  CleanupRunContext,
+  OrchestrateExecutorCores,
+  OrchestrateExecutorCoresDeps,
+  OrchestrateFileCores,
+  OrchestrateFileCore,
+  OrchestrateFileCoreContext,
+  OrchestrateWebSearchCore,
+} from "./builtin/orchestrate/index.js";

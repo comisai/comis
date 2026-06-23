@@ -31,9 +31,18 @@ export interface SandboxOptions {
    * "none" = --unshare-net with NO socket and NO proxy (kernel-enforced deny-all
    *   egress; the skill-validation jail uses this so a synthesized script cannot
    *   reach the network to exfiltrate during dynamic validation, T-201-35).
+   * "cap-socket" = --unshare-net + unix-socket bind for the capability-lease
+   *   loopback endpoint (Phase 211, ENDPOINT-03). Mirrors broker-only arg-order:
+   *   the bound unix socket stays reachable under netns (netns affects IP sockets
+   *   only) so the jailed orchestrate child can dial the lease endpoint while all
+   *   general IP egress stays cut.
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
-  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string } | { mode: "none" };
+  network?:
+    | { mode: "open" }
+    | { mode: "broker-only"; brokerSocketPath: string }
+    | { mode: "none" }
+    | { mode: "cap-socket"; capSocketPath: string };
   /**
    * When true, skip the ~/.local/share RW bind so credential material living
    * under that XDG dir is not read-write-exposed inside the sandbox.
@@ -42,7 +51,53 @@ export interface SandboxOptions {
    * flag no longer needs to gate them.)
    */
   secureCredentialHome?: boolean;
+  /**
+   * Open file descriptor to a precompiled raw-BPF seccomp blob (JAIL-01).
+   * bwrap `--seccomp N` takes an FD to raw BPF bytecode (NOT a JSON profile).
+   * The caller/provider resolves this via loadSeccompProfileFd() (so buildArgs
+   * stays a PURE arg generator with no live fs probe). When a number, buildArgs
+   * emits `--seccomp <fd>`; when undefined/null the blob is absent and buildArgs
+   * OMITS --seccomp (graceful degrade — the other §4.7 controls still apply).
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  seccompFd?: number | null;
+  /**
+   * The user HOME against which the JAIL-03 credential-denylist backstop
+   * screens caller-supplied binds (WR-05). `validateBindMount(hostPath, home)`
+   * treats `home` as the trusted base for the `~/.ssh`/`~/.config`/… denylist —
+   * so it MUST be an explicit, trusted value, not an ambient read buried inside
+   * the otherwise-pure `buildArgs` generator. Resolve it once from trusted
+   * config at the provider's call site and pass it in. When OMITTED, buildArgs
+   * falls back to `os.homedir()` (the production daemon's HOME) so existing
+   * callers are unaffected — but the fallback is now an EXPLICIT, documented
+   * default rather than a hidden ambient dependency, and tests inject a fixed
+   * `home` to make the screen-vs-bind interaction deterministic.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  home?: string;
+  /**
+   * Resolved Node-runtime placement for the jail (JAIL-04 / v8 §4.6).
+   * The provider resolves this via resolveJailNode() (probe node on the jail
+   * PATH → bind process.execPath → mark unavailable) and passes the result in,
+   * so buildArgs stays a pure arg generator (no live fs probe). buildArgs emits
+   * `--ro-bind execPath execPath` ONLY when mode === "bind" (the binary is bound
+   * READ-ONLY — a writable interpreter is a host-RCE vector). "path" means node
+   * already resolves under the bound RO paths (no bind needed); "unavailable"
+   * means surfaces 2/3 (orchestrate/CLI) cannot run inside the jail — the caller
+   * surfaces a loud doctor/boot signal and NEVER claims a bundled Node.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  jailNode?: JailNodeResolution;
 }
+
+/**
+ * The three-mode result of resolveJailNode() (JAIL-04). Exhaustive: there is no
+ * "bundled Node" mode — that claim is a spoofing vector (T-211-21).
+ */
+export type JailNodeResolution =
+  | { mode: "path" }
+  | { mode: "bind"; execPath: string }
+  | { mode: "unavailable"; hint: string };
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */
 export interface SandboxProvider {

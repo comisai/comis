@@ -22,6 +22,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | sessionStore | required | — | packages/daemon/src/api/types.ts:74 |
 | crossSessionSender | required | — | packages/daemon/src/api/types.ts:88 |
 | subAgentRunner | required | — | packages/daemon/src/api/types.ts:89 |
+| resolveRootRunId | optional | session.spawn falls back to the runner's last-resort `root-<agentId>-<ts>` mint (no tree-stable root propagated) — pre-213 behavior; the daemon wires it so the spawn ceiling/kill/budget see one tree per spawn tree | packages/daemon/src/api/types.ts:96 |
 | securityConfig | required | — | packages/daemon/src/api/types.ts:90 |
 | tenantId | required | — | packages/daemon/src/api/types.ts:91 |
 | logger | required | — | packages/daemon/src/api/types.ts:95 |

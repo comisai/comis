@@ -43,9 +43,20 @@ vi.mock("./graph-helpers.js", async (importOriginal) => {
   };
 });
 
-import { bindGraphMutateHandlers } from "./graph-mutate.js";
+import { bindGraphMutateHandlers as bindGraphMutateHandlersRaw } from "./graph-mutate.js";
 import * as graphHelpers from "./graph-helpers.js";
 import type { GraphHandlerDeps } from "./graph-helpers.js";
+import type { RpcHandler } from "../types.js";
+import { withHeldCapabilities } from "../../../../../test/support/held-capabilities.js";
+
+// CAP-03: the gated graph.define/execute/save/load/delete/cancel/deleteRun
+// handlers now require an injected _capabilities (production supplies it via
+// createAgentRpcCall). Wrap the bound record so these body-tests reach the
+// handler BODY, not the gate (proven RED-first in the CAP-05 tests). Read-only
+// graph methods pass through unchanged.
+function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, RpcHandler> {
+  return withHeldCapabilities(bindGraphMutateHandlersRaw(deps));
+}
 
 /** The delegating spies (typed as Mock) for argument capture. */
 const buildGraphInputSpy = graphHelpers.buildGraphInput as unknown as ReturnType<typeof vi.fn>;

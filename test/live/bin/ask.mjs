@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+/* global process, console, fetch */
 //
 // ask.mjs — out-of-process driver for the standalone VPS emulator (§6.4).
 //

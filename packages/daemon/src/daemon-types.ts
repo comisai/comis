@@ -19,13 +19,14 @@
  * @module
  */
 
-import type { TimerPort } from "@comis/core";
+import type { TimerPort, SessionKey } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelManager } from "@comis/orchestrator";
 import type { ChannelHealthMonitor } from "@comis/channels";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
 import type { GatewayServerHandle, WsConnectionManager } from "@comis/gateway";
 import type {
@@ -329,13 +330,10 @@ export interface BootContext {
   // coordinator. Structurally the `ActivityBreakerGate` slice the coordinator
   // consumes (the concrete breaker's record/isTripped satisfy it).
   activityBreaker: import("@comis/orchestrator").ActivityBreakerGate;
-  // Test-only renderer-injection seam, captured from the daemon override
-  // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
-  // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field
-  // (which is the canonical test-only seam) so the seam declaration stays
-  // single-sourced. Optional + default-undefined; production never sets it
-  // (mirrors the `timers` test-only discipline). Inert on the inbound path until
-  // the inbound coordinatorFactory is built over the renderers map.
+  // Test-only renderer-injection seam, captured from the daemon override in
+  // bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps` →
+  // `buildActivityRenderers` (named distinctly from the DaemonOverrides field, the
+  // canonical test seam). Optional + default-undefined; production never sets it.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
   // Secrets (5 fields) — secretStore is always wired
   secretStore: SecretStorePort;
@@ -536,24 +534,26 @@ export interface BootContext {
   /** The ONE mode-selected MCP OAuth token store (selectMcpTokenStore), constructed at the
    * composition root in bootAgents and threaded as the SAME instance into both consumers:
    * setupMcp's manager wiring (consumed at construction) AND the login/handler path
-   * (buildRpcDispatchDeps reads it for the createTokenStore pass-through). Undefined in env mode
-   * (no writable MCP OAuth persistence). Kills the encrypted-mode split-brain. */
+   * (buildRpcDispatchDeps reads it for createTokenStore). Undefined in env mode (no writable
+   * MCP OAuth persistence); kills the encrypted-mode split-brain. */
   mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
-  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured
-   *  comparison per provider, populated in setup-agents beside the per-agent
-   *  registry (bootAgents) and read at the bootShutdown posture write
-   *  (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
+  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured comparison
+   *  per provider, populated in setup-agents (bootAgents), read at the bootShutdown posture
+   *  write (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info
-   *  (registry-mirrored configured + reconciled effective window + profile),
-   *  populated in setup-agents (bootAgents) and consumed by the bootChannels
-   *  viable-floor loop between setupTools and setupChannels. */
+  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info (configured
+   *  + reconciled effective window + profile), populated in setup-agents (bootAgents),
+   *  consumed by the bootChannels viable-floor loop between setupTools and setupChannels. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
   // Restart continuation tracker
   continuationTracker?: ReturnType<typeof createRestartContinuationTracker>;
   // Subprocess envs
   subprocessEnv?: Record<string, string>;
   execToolEnv?: Record<string, string>;
+  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
+  boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  sharedLeaseManager?: LeaseManager;
   // Schedulers
   systemEventQueue?: ReturnType<typeof createSystemEventQueue>;
   cronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];
@@ -622,8 +622,10 @@ export interface BootContext {
   announceToParent?: ReturnType<typeof setupCrossSession>["announceToParent"];
   deadLetterQueue?: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
   announcementBatcher?: ReturnType<typeof setupCrossSession>["announcementBatcher"];
-  // Sandbox + image generation
+  // Sandbox + image generation. Phase 211/212 cap layer (built in bootChannels, read in bootShutdown).
   sandboxProvider?: SandboxProvider;
+  capEndpointHandle?: import("./wiring/setup-capability-endpoint-boot.js").CapabilityLayerHandle;
+  namespacePreflightOk?: boolean;
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];

@@ -79,8 +79,8 @@ export interface SessionsApiDeps {
     deleteByFormattedKey: (sessionKey: string) => boolean;
     saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
   };
-  crossSessionSender: ReturnType<typeof createCrossSessionSender>;
-  subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  crossSessionSender: ReturnType<typeof createCrossSessionSender>; subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string; // Phase 213 CR-01: tree-stable rootRunId resolver — session.spawn propagates ONE tree root so CEIL-01/killByRootRun work (see AUDIT-sessions.md). Absent ⇒ runner mints.
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
@@ -266,17 +266,13 @@ export interface ChannelsApiDeps {
   onGatewayAttachment?: (channelId: string, marker: string) => void;
   // Delivery queue + service
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
-  /** DeliveryService constructed once at the daemon composition root
-   *  (setup-channels.ts). Passed through to createMessageHandlers so
-   *  `message.send` / `message.reply` use the method form
-   *  `deps.deliveryService.deliverToChannel(...)`. */
+  /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */
   deliveryService: import("@comis/core").DeliveryService;
   // Channel health monitor
   healthMonitor?: import("@comis/channels").ChannelHealthMonitor;
-  // Channel plugins for capabilities RPC. Required: the production
-  // composition root (setup-channels-adapters.ts) always wires this Map
-  // with ≥9 plugin entries before `buildRpcDispatchDeps` runs. Tests must
-  // pass a Map (possibly empty) — see message-handlers.test.ts fixtures.
+  // Channel plugins for capabilities RPC. Required: the production composition
+  // root (setup-channels-adapters.ts) always wires this Map with ≥9 plugin
+  // entries before `buildRpcDispatchDeps` runs. Tests pass a Map (possibly empty).
   channelPlugins: Map<string, import("@comis/core").ChannelPluginPort>;
   /** message-handlers reads deps.defaultAgentId, deps.defaultWorkspaceDir,
    *  deps.workspaceDirs, deps.logger. channel-handlers reads deps.persistDeps. */
@@ -285,6 +281,10 @@ export interface ChannelsApiDeps {
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
   persistDeps?: PersistToConfigDeps;
+  /** Phase 213 (QUOTA-01/02): the bounded-autonomy service. message.send/reply/react
+   *  consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional;
+   *  absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
+  boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
 }
 
 /**
@@ -356,8 +356,9 @@ export interface OrchestratorApiDeps {
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */
   dataDir?: string;
-  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer. */
+  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers (213-06) reads killByRootRun for run.kill. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
   // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   eventBus?: AppContainer["eventBus"];
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;

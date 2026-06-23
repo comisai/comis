@@ -29,7 +29,11 @@ export type OrchestrationBridgedEventName =
   // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
   | "security:sandbox_downgrade_refused"
   | "subagent:delivery_deadlettered"
-  | "subagent:budget_exceeded";
+  | "subagent:budget_exceeded"
+  // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-cap authorization decision
+  // — the spawn-tree's per-node producer. Content-free: caps/tool-NAME/decision/
+  // lease-root ids ONLY, NEVER args/body/secret.
+  | "capability:audited";
 
 /**
  * Translate a v2.27 authoring / orchestration EventBus payload into the
@@ -76,6 +80,22 @@ export function translateOrchestrationPayload(
       // explain view DOES want them, unlike the fleet aggregate) — NEVER a task or output.
       // agentId/timestamp envelope-only.
       return { graphId: payload.graphId, nodeId: payload.nodeId, capSource: payload.capSource, tokenBudget: payload.tokenBudget, tokensUsed: payload.tokensUsed };
+
+    case "capability:audited":
+      // AUDIT-01 / TREE (215): the per-node spawn-tree source — capability + tool
+      // NAME + the closed-union decision + the lease/root ids ONLY. NEVER the
+      // tool.invoke args, a message body, or a secret name (the highest-risk leak,
+      // T-215-01 / Pitfall 5). agentId/timestamp/method are envelope-ish labels and
+      // are stripped (the subagent:steered/budget_exceeded precedent). leaseId/
+      // parentLeaseId/tool are honestly absent on the in-process record (no lease, G1).
+      return {
+        capability: payload.capability,
+        tool: payload.tool,
+        decision: payload.decision,
+        leaseId: payload.leaseId,
+        parentLeaseId: payload.parentLeaseId,
+        rootRunId: payload.rootRunId,
+      };
 
     default: {
       // Exhaustiveness — the switch covers every OrchestrationBridgedEventName.

@@ -17,8 +17,10 @@ import {
   SessionSpawnContract,
   SessionCompactContract,
   stripInternalFields,
+  requireCapability,
   computeReachableToolNames,
   tryGetContext,
+  parseFormattedSessionKey,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
@@ -61,7 +63,13 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionSpawnContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod: agent-to-agent policy check FIRST.
+      // CAP-03/05 (v8 §3.7): the capability gate lives HERE because the agent
+      // loop reaches handlers without passing checkScope (the in-process
+      // bypass). Read the injected _capabilities from raw params BEFORE the
+      // strip; throws CapabilityDeniedError when orch:spawn is not held.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:spawn");
+
+      // Bespoke pre-Zod: agent-to-agent policy check.
       if (!deps.securityConfig.agentToAgent?.enabled) {
         throw new Error("Agent-to-agent messaging is disabled by policy.");
       }
@@ -136,12 +144,41 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const reachableToolNames: ReadonlySet<string> | undefined =
         reachableToolNamesSet !== null ? reachableToolNamesSet : undefined;
 
+      // Phase 213 CR-01: establish the tree-stable rootRunId (+ parentLeaseId)
+      // BEFORE the spawn so the tree-wide ceiling (CEIL-01), killByRootRun, and
+      // the per-root budget all key on ONE id per spawn tree. Two cases:
+      //   - DESCENDANT: this spawn was initiated by a running sub-agent calling
+      //     sessions_spawn. The dispatcher injected THAT sub-agent's session key
+      //     as `_callerSessionKey`, which equals the spawning run's
+      //     `run.sessionKey`. Inherit that run's rootRunId AND its parentLeaseId
+      //     (the lease that authorized the parent) so the whole subtree shares
+      //     one root — without this every descendant minted a fresh root and the
+      //     fork-bomb escaped the ceiling (RESEARCH Pitfall 1, the silent
+      //     under-count).
+      //   - TOP-LEVEL: an operator/channel turn with no parent run. Reuse the
+      //     session's stable synthetic root via resolveRootRunId so the ceiling
+      //     and the budget meter agree on the same tree id.
+      // Falls back to undefined (the runner mints a last-resort root) only when
+      // neither is available (older wiring with no resolver).
+      const parentRun = callerSessionKey
+        ? deps.subAgentRunner.getRunBySessionKey?.(callerSessionKey)
+        : undefined;
+      const parsedCallerKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+      const resolvedRootRunId =
+        parentRun?.rootRunId
+        ?? (parsedCallerKey ? deps.resolveRootRunId?.(parsedCallerKey) : undefined);
+      const inheritedParentLeaseId = parentRun?.parentLeaseId;
+
       // Async (only path): non-blocking spawn.
       const runId = deps.subAgentRunner.spawn({
         task,
         agentId: spawnAgentId,
         callerSessionKey,
         callerAgentId: callerAgentIdInternal,
+        // CEIL-01/REVOKE-03: propagate the resolved tree root + the authorizing
+        // lease so the ceiling/kill/budget see one tree (omit when absent).
+        ...(resolvedRootRunId !== undefined ? { rootRunId: resolvedRootRunId } : {}),
+        ...(inheritedParentLeaseId !== undefined ? { parentLeaseId: inheritedParentLeaseId } : {}),
         announceChannelType: explicitAnnounceType ?? callerChannelType,
         announceChannelId: explicitAnnounceId ?? callerChannelId,
         model: params.model,

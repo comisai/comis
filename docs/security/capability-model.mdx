@@ -1,0 +1,196 @@
+---
+title: "Capability Model"
+description: "The single capability gate, deny-by-origin on the control plane, and why no capability implies admin"
+icon: "key"
+---
+
+Comis governs what an in-process agent may do with a small, closed set of
+**capabilities** -- permission tokens like `orch:spawn` and `orch:cron` -- checked
+by a **single gate** on every privileged action. Capabilities are deliberately
+**orthogonal** to the gateway's network scopes, and the control plane is
+unreachable to any agent-originated call by construction. This page describes
+the model; the operator-facing dial that grants capabilities is the
+[Autonomy](/agents/autonomy) profile.
+
+<Note>
+**Why a separate axis from gateway scopes.** External callers authenticate to
+the gateway and carry a network **scope** (`rpc`, `admin`, `mcp-client`). An
+agent's own tool calls, by contrast, reach the RPC dispatcher **directly**, in
+process -- they never pass through the gateway scope check. That in-process path
+is exactly the bypass the capability gate closes: the gate lives at the handler
+boundary that every call reaches, scope check or not.
+</Note>
+
+## The Closed Capability Union
+
+Capabilities are a closed string-literal union -- one member per orchestration
+surface. The runtime list is the single source of truth; the static type is
+inferred from it, so the two can never drift.
+
+| Capability | Surface it gates |
+|------------|------------------|
+| `orch:read` | Read content and workspace files |
+| `orch:web` | Fetch untrusted external web content |
+| `orch:write` | Write to the agent's jailed workspace |
+| `orch:analyze` | Cost-bearing media analysis |
+| `orch:spawn` | Spawn sub-agents |
+| `orch:graph` | Run execution graphs |
+| `orch:cron` | Author and run scheduled jobs |
+| `orch:skill` | Invoke skills |
+| `orch:message` | Send a message to the agent's origin channel (the outward send subset: `message.send`/`reply`/`react`). Editing, deleting, fetching, and attaching stay admin-only and are not part of this capability. |
+| `orch:browse` | Drive a real browser (outward; off in every default profile) |
+
+Every member is namespaced `orch:`. None of them is, or implies, a gateway
+scope -- the two sets are **disjoint**, and an architecture test asserts the
+intersection is empty.
+
+## The Curated Tool-Capability Surface (`tool.invoke`)
+
+An autonomous [`orchestrate`](/agent-tools/orchestrate) script does not call RPC
+methods directly -- it calls **named tools** through `tool.invoke` over the
+lease-authenticated [capability socket](/reference/json-rpc#the-agent-cap-socket-surface-tool-invoke).
+A second curated map -- the **tool→capability map** -- decides which tools that
+surface exposes and which capability each requires. It is **default-deny**: a
+tool that is not on the map has no capability and is **undispatchable**.
+
+| Tool | Capability | How it runs |
+|------|------------|-------------|
+| `read`, `grep`, `find`, `ls`, `jq` | `orch:read` | In-process builtins, run daemon-side under the agent's jailed workspace |
+| `memory_search`, `memory_get`, `session_search`, `sessions_list`, `session_status`, `sessions_history`, `extract_document` | `orch:read` | Routed to the existing registered RPC handler (self-scoped to the agent) |
+| `web_search`, `web_fetch` | `orch:web` | Daemon-side on the daemon's network (the jail stays `--unshare-net`), DNS-pinned |
+
+The map above is representative; the **authoritative list is `TOOL_CAPABILITY_MAP`**
+in the daemon (the same table the dispatch gate, the lease audience, and the
+generated in-jail SDK all read, so they cannot drift). Two invariants hold by
+construction, asserted by architecture tests:
+
+<Steps>
+  <Step title="No cap-mapped tool is denylisted">
+    Every tool on the map is checked against the never-delegate denylist at
+    module load. The administrative/destructive tools (`mcp_manage`, `mcp_login`,
+    `gateway`, the `*_manage` family) are **never** on this surface -- they stay
+    unreachable, and deny-by-origin covers the control plane behind them.
+  </Step>
+  <Step title="An unmapped tool is undispatchable">
+    A `tool.invoke` for a tool absent from the map raises `CapabilityDeniedError`
+    before any lease is even consulted -- default-deny by absence. The MCP
+    export-policy is **not** the gate (it would admit the wrong set); the cap-map
+    plus the denylist are the only gates.
+  </Step>
+</Steps>
+
+## One Gate, No Bypass, No Wildcard
+
+A single predicate decides every privileged action. It is a plain membership
+test:
+
+```typescript
+// Pure predicate -- returns a boolean, never throws.
+checkCapability(held, "orch:spawn"); // true iff "orch:spawn" is in `held`
+
+// Boundary gate -- throws CapabilityDeniedError when the cap is absent
+// (including the missing/undefined case). The RPC dispatcher converts the
+// throw into a JSON-RPC error response.
+requireCapability(held, "orch:spawn");
+```
+
+Two properties make least-privilege hold **by construction**:
+
+<Steps>
+  <Step title="No wildcard branch">
+    Unlike the gateway's scope check -- which has an asterisk-implies-all rule --
+    the capability predicate has no lattice and no catch-all. A held set is
+    exactly the capabilities it lists; no entry (an asterisk string included)
+    confers any other capability. No capability can ever imply `admin`, `rpc`,
+    or "all".
+  </Step>
+  <Step title="Disjoint from network scope">
+    Capabilities are `orch:*`; gateway scopes are `rpc | admin | mcp-client`.
+    Because the two vocabularies do not overlap, holding a capability can never
+    be mistaken for holding a scope, and vice versa.
+  </Step>
+</Steps>
+
+When a caller lacks the required capability, the gate raises a
+`CapabilityDeniedError` discriminated by `kind: "capability_denied"`, so the
+denial is recorded as a content-free security signal in the audit trail.
+
+## Deny-by-Origin on the Control Plane
+
+Capabilities govern what an agent **may** do. A second, stricter rule governs
+what an agent may **never** do regardless of capabilities: **reach the control
+plane.** Administrative handlers (the ones that manage secrets, tokens, config,
+channels, and the other privileged-surface methods) reject any call that carries
+an agent-origin marker outright -- before any capability is even consulted.
+
+The deny-by-origin set is exactly the **true control plane** -- the
+`admin`-scoped methods. The orchestration surface an agent legitimately reaches
+(its granted `orch:*` methods, and its own session reads) is **not** in this set:
+those are capability-gated or agent-reachable, not denied by origin. A handful of
+methods stay control-plane-only even within otherwise-agent-facing namespaces:
+the message subset that is not part of `orch:message`
+(`message.edit`/`delete`/`fetch`/`attach`) and the lifecycle ops that delete or
+export an **arbitrary** session (`session.delete`/`export`/`reset_conversation`).
+
+This is sound because of how agent origin is established:
+
+<Steps>
+  <Step title="Internal markers are injected in-process only">
+    The legitimate path that tags a call as agent-originated (injecting
+    `_agentId` and `_capabilities`) runs **inside** the daemon, never across the
+    network boundary.
+  </Step>
+  <Step title="Inbound internal fields are stripped at the gateway">
+    Every field whose name begins with an underscore -- the whole internal-field
+    registry, including `_agentId` and `_capabilities` -- is stripped from
+    external WebSocket and REST callers **before** dispatch. An external caller
+    therefore cannot forge agent origin.
+  </Step>
+  <Step title="Presence becomes an unforgeable signal">
+    With inbound markers stripped, the *presence* of `_agentId` on a call is a
+    sound, unforgeable "this came from an agent" signal -- which is what lets the
+    admin handlers deny-by-origin safely.
+  </Step>
+</Steps>
+
+<Warning>
+**Deny-by-origin is independent of trust level.** An admin handler rejects an
+agent-origin call even if the call also presents an admin trust level -- the two
+checks are separate, and origin wins. This closes the gap where an agent might
+otherwise reach a control-plane method through the in-process dispatcher.
+</Warning>
+
+## How Capabilities Get Granted
+
+An agent does not request capabilities; the operator grants them through an
+[Autonomy profile](/agents/autonomy). The profile resolves to a concrete
+capability set, those capabilities are injected onto the agent's in-process
+calls, and each privileged handler checks the one it requires. The mapping from
+method to required capability is fixed in the daemon -- an agent cannot raise its
+own grant.
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Autonomy profile** | Operator picks a posture; it resolves to a capability set |
+| **Injection** | The resolved capabilities ride the agent's in-process RPC calls |
+| **The gate** | Each privileged handler calls `requireCapability` for the capability it needs |
+| **Deny-by-origin** | Admin handlers reject agent-origin calls before capabilities are consulted |
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Autonomy" icon="sliders" href="/agents/autonomy">
+    Named profiles, the zero-config default, and the legible degrade that
+    grant and bound capabilities.
+  </Card>
+  <Card title="Security Model" icon="lock" href="/reference/security-model">
+    The capability axis in the context of the full input/skill/execution/output
+    defense layers.
+  </Card>
+  <Card title="Approvals" icon="circle-check" href="/security/approvals">
+    The escalation gate for outward, hard-to-reverse actions.
+  </Card>
+  <Card title="Audit" icon="scroll" href="/security/audit">
+    The content-free trail that records capability denials and origin rejections.
+  </Card>
+</CardGroup>

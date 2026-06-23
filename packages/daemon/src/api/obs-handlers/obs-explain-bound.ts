@@ -54,6 +54,11 @@ import { fingerprint } from "@comis/core";
 import type { IncidentReport } from "@comis/core";
 import { limitPayloadValue } from "@comis/observability";
 import {
+  capNewestFirst,
+  digestIfOversized,
+  type TruncationEntry,
+} from "./obs-explain-bound-helpers.js";
+import {
   SUMMARY_MAX_FAILURES,
   SUMMARY_MAX_BREAKER,
   SUMMARY_MAX_OFFLOADS,
@@ -65,6 +70,8 @@ import {
   MAX_INLINE_STRING,
   SUMMARY_MAX_CACHE_BREAKS,
   FULL_MAX_CACHE_BREAKS,
+  SUMMARY_MAX_SPAWN_NODES,
+  FULL_MAX_SPAWN_NODES,
   MAX_SHED_ITERATIONS,
   SHED_SUMMARY_CHARS,
 } from "./obs-explain-bound-caps.js";
@@ -85,67 +92,17 @@ const REPORT_ARRAY_FIELDS: ReadonlySet<string> = new Set([
   "failures",
   "breakerTimeline",
   "offloads",
+  // CR-01: spawnTree is report-level-capped below (SUMMARY/FULL_MAX_SPAWN_NODES,
+  // both can exceed the backstop's 64-item cap), so exempt it from the structural
+  // backstop — otherwise a >64-lease fan-out becomes a {__bounded__} sentinel and
+  // the typed `SpawnTreeNode[]` slot fails IncidentReportSchema.parse.
+  "spawnTree",
 ]);
 
-/**
- * A single honest-lossiness ledger entry: the report-level sentinel. Distinct
- * from `limitPayloadValue`'s structural `{__bounded__:…}` sentinel.
- */
-export interface TruncationEntry {
-  field: string;
-  reason: string;
-  pointer?: string;
-}
-
-// ---------------------------------------------------------------------------
-
-/**
- * Cap a `{seq:number}`-keyed array to its `max` NEWEST entries (highest seq
- * first), pushing an honest `truncations[]` entry naming the dropped tail when
- * it fires. Used by the CR-01 breaker/offload caps (failures has bespoke
- * messaging inline). Re-sorts defensively so "newest" is well-defined
- * regardless of upstream ordering; a no-op (returns the input array) when the
- * length is already within budget so a clean report records no spurious entry.
- */
-function capNewestFirst<T extends { seq: number }>(
-  arr: readonly T[],
-  max: number,
-  field: string,
-  truncations: TruncationEntry[],
-): T[] {
-  if (arr.length <= max) return [...arr];
-  const sorted = [...arr].sort((a, b) => b.seq - a.seq);
-  truncations.push({
-    field,
-    reason: `capped at ${max} newest entries (had ${arr.length})`,
-    pointer: "obs.explain depth=full",
-  });
-  return sorted.slice(0, max);
-}
-
-/**
- * Collapse a free-text scalar string to a `[digest:…]` fingerprint when it
- * exceeds `MAX_INLINE_STRING`, pushing an honest `truncations[]` entry under
- * `field`. Returns the input unchanged (and records nothing) when within the
- * cap. The STRING→string shape is preserved so the structural backstop never
- * coerces the field into a `{__bounded__}` sentinel and the schema's `string`
- * type still holds. Used by the WR-03 report-level free-text sweep
- * (channel.id/type, agentId, traceId, endReason) — these come from session
- * metadata (channel.id is channel/peer-derived, attacker-influenced) and were
- * previously bounded only by `limitPayloadValue`'s 32 KB floor.
- */
-function digestIfOversized(
-  value: string,
-  field: string,
-  truncations: TruncationEntry[],
-): string {
-  if (value.length <= MAX_INLINE_STRING) return value;
-  truncations.push({
-    field,
-    reason: `oversized (${value.length} chars) — replaced with digest`,
-  });
-  return `[digest:${fingerprint(value)}]`;
-}
+// `TruncationEntry`, `capNewestFirst`, and `digestIfOversized` live in the
+// sibling `obs-explain-bound-helpers.ts` (file-size-cap-driven extraction, CR-01).
+// Re-export the type so the module's public surface is unchanged.
+export type { TruncationEntry };
 
 /**
  * Apply the X2 report-level bounding pass, then the structural backstop.
@@ -312,6 +269,22 @@ export function boundIncidentReport(
     cacheBreaks = cacheBreaks.slice(0, maxCacheBreaks);
   }
 
+  // CR-01 (TREE-01/02): cap spawnTree first-seen (the fold's materialization
+  // order — slicing the HEAD keeps the topology head: root + earliest children),
+  // recording a truncations[] entry for the dropped tail. Combined with the
+  // REPORT_ARRAY_FIELDS exemption above, this keeps the typed `SpawnTreeNode[]`
+  // shape so IncidentReportSchema.parse holds even on a deep fan-out.
+  let spawnTree = report.spawnTree;
+  const maxSpawn = depth === "summary" ? SUMMARY_MAX_SPAWN_NODES : FULL_MAX_SPAWN_NODES;
+  if (spawnTree !== undefined && spawnTree.length > maxSpawn) {
+    truncations.push({
+      field: "spawnTree",
+      reason: `capped at ${maxSpawn} nodes (had ${spawnTree.length})`,
+      pointer: "obs.explain depth=full",
+    });
+    spawnTree = spawnTree.slice(0, maxSpawn);
+  }
+
   let bounded: IncidentReport = {
     ...report,
     channel,
@@ -324,6 +297,7 @@ export function boundIncidentReport(
     breakerTimeline,
     offloads,
     ...(cacheBreaks !== undefined ? { cacheBreaks } : {}),
+    ...(spawnTree !== undefined ? { spawnTree } : {}),
     truncations,
   };
 
@@ -445,6 +419,26 @@ export function boundIncidentReport(
             {
               field: "nodeBudgetBreaches",
               reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; nodeBudgetBreaches trimmed to ${half}`,
+              pointer: "obs.explain depth=full",
+            },
+          ],
+        };
+        continue;
+      }
+
+      // CR-01: halve the spawnTree (first-seen retained) — the pre-loop cap
+      // already brings it to ≤40 at summary, so this is the convergence backstop
+      // for a tree whose nodes are individually large (many caps/tools per node).
+      if (bounded.spawnTree !== undefined && bounded.spawnTree.length > 1) {
+        const half = Math.max(1, Math.floor(bounded.spawnTree.length / 2));
+        bounded = {
+          ...bounded,
+          spawnTree: bounded.spawnTree.slice(0, half),
+          truncations: [
+            ...bounded.truncations,
+            {
+              field: "spawnTree",
+              reason: `report exceeded ${SUMMARY_MAX_BYTES} bytes; spawnTree trimmed to ${half}`,
               pointer: "obs.explain depth=full",
             },
           ],

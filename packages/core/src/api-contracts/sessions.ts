@@ -189,7 +189,12 @@ export const SessionListContract = defineContract({
     })),
     total: z.number(),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP MD-01: agent-self read (classified "ungated" — read-only/lifecycle,
+  // no in-handler admin check). Re-scoped admin→rpc so an agent's own _agentId
+  // rides it for self-scoping (the handler already filters to the caller's
+  // sessions when _agentId is present) instead of being denied by the
+  // deny-by-origin chokepoint. No cap required.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -508,7 +513,10 @@ export const SessionResetContract = defineContract({
     reset: z.literal(true),
     previousMessageCount: z.number(),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP MD-01: agent-reachable lifecycle op (classified "ungated"; NO
+  // in-handler admin check, unlike session.delete/export/reset_conversation).
+  // Re-scoped admin→rpc so an agent can reset a session it operates on. No cap.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -584,7 +592,10 @@ export const SessionCompactContract = defineContract({
     compactionTriggered: z.literal(true),
     instructions: z.nullable(z.string()),
   }),
-  scopes: ["admin"] as const,
+  // 210-GAP MD-01: agent-reachable lifecycle op (classified "ungated"; NO
+  // in-handler admin check). Re-scoped admin→rpc so an agent can compact a
+  // session it operates on. No cap.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------

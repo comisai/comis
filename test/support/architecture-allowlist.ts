@@ -1490,8 +1490,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   {
     file: "packages/daemon/src/wiring/setup-shutdown.ts",
     typeName: "ShutdownDeps",
-    optionalCount: 22,
-    reason: "(a) Shutdown handle aggregator; every `?` field is a subsystem that MAY not be running at shutdown time (graphCoordinator absent in single-agent deployments, channelManager absent if no channels configured, heartbeatRunner absent if heartbeats disabled, mediaTempManager absent if media features off, etc). Marking required would force composition-root to fabricate no-op stubs; instead shutdown.ts:withStepTimeout skips absent subsystems..",
+    optionalCount: 23,
+    reason: "(a) Shutdown handle aggregator; every `?` field is a subsystem that MAY not be running at shutdown time (graphCoordinator absent in single-agent deployments, channelManager absent if no channels configured, heartbeatRunner absent if heartbeats disabled, mediaTempManager absent if media features off, capEndpointStop absent without an autonomy-bearing agent — Phase 211, etc). Marking required would force composition-root to fabricate no-op stubs; instead shutdown.ts:withStepTimeout skips absent subsystems..",
     removedIn: "phase-D",
   },
   {
@@ -1891,8 +1891,6 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/cli/src/tooling-fill/validators.test.ts", line: 34, kind: "test", text: "", reason: "Captured(min-length=0; use-case-shape heuristic miss); shrink in follow-on work"},
   { file: "packages/cli/src/tooling-fill/validators.test.ts", line: 35, kind: "test", text: "-leading-dash", reason: "Captured(min-length=13; use-case-shape heuristic miss); shrink in follow-on work"},
   { file: "packages/cli/src/tooling-fill/validators.test.ts", line: 36, kind: "test", text: "@/no-name", reason: "Captured(min-length=9; use-case-shape heuristic miss); shrink in follow-on work"},
-  { file: "packages/core/src/api-contracts/channels.test.ts", line: 420, kind: "it", text: "accepts response", reason: "Captured(min-length=16); shrink in follow-on work"},
-  { file: "packages/core/src/api-contracts/channels.test.ts", line: 451, kind: "it", text: "accepts request", reason: "Captured(min-length=15); shrink in follow-on work"},
   { file: "packages/core/src/api-contracts/daemon.test.ts", line: 94, kind: "it", text: "scopes are correct", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/api-contracts/observability.test.ts", line: 437, kind: "it", text: "obs.delivery.stats: response shape", reason: "Captured(use-case-shape heuristic miss); shrink in follow-on work"},
   { file: "packages/core/src/api-contracts/observability.test.ts", line: 565, kind: "it", text: "obs.getCacheStats: response shape", reason: "Captured(use-case-shape heuristic miss); shrink in follow-on work"},

@@ -811,6 +811,40 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── tool.invoke surface + ResultRef (Phase 212, interface-first) ──
+      // TOOL_CAPABILITY_MAP/TOOL_ROUTE_MAP are the single source of truth for
+      // the tool.invoke surface; ResultRef + its pure threshold/GC math are the
+      // minimal result-handle. They land FIRST (Plan 01) so the four downstream
+      // consumers draw from one table without drift — the daemon gate + the
+      // lease audience (Plan 02) and the comis_tools SDK codegen (Plan 03). Until
+      // those plans land, the only callers are the two cap-map arch-tests + the
+      // pure unit tests (intra-core / test-scope, excluded from the consumer
+      // scan). Shrink each entry as the real cross-package production caller
+      // (Plan 02 dispatch / lease-manager, Plan 03 codegen + result-ref-store)
+      // lands. Mirrors the validateBindMount (211-03 interface-first) precedent
+      // below.
+      "TOOL_CAPABILITY_MAP",
+      "TOOL_ROUTE_MAP",
+      "ToolName",
+      "ToolRoute",
+      "RESULT_REF_THRESHOLDS",
+      "DEFAULT_INLINE_THRESHOLD_BYTES",
+      "PER_FILE_CAP_BYTES",
+      "PER_RUN_AGGREGATE_CAP_BYTES",
+      "getResultRefThreshold",
+      "shouldMaterialize",
+      "isExpired",
+      "selectEvictions",
+      "checkPerFileCap",
+      "computeExpiresAt",
+      "ResultRef",
+      // ── JAIL-03 bind-mount validator (Phase 211) ──
+      // validateBindMount is the pure denylist backstop the bwrap-provider calls
+      // before emitting any bind. It lands in @comis/core (211-03) so the jail
+      // wiring (211-05) consumes it; until that plan lands, the only callers are
+      // its own deny-branch tests (intra-core, excluded from the consumer scan).
+      // Shrink this entry once 211-05 wires it into the bwrap provider.
+      "validateBindMount",
       // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
       // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
@@ -1662,6 +1696,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "defineContract",
       "INTERNAL_FIELD_NAMES",
       "stripInternalFields",
+      // Autonomy-domain admin contracts (213-03, REVOKE-01/03). LeaseRevokeContract
+      // + RunKillContract are scopes:["admin"] RPC contracts declared in Wave 1
+      // (this plan); their `[LeaseRevokeContract.method]` / `[RunKillContract.method]`
+      // daemon handlers land in Plan 06 (Wave 3) — a documented cross-wave seam
+      // (the same VideoGenerateContract pattern in @comis/core/media). Until the
+      // handler lands they have no in-repo consumer; the bidirectional 1:1 +
+      // codegen-drift arch tests exercise them at test-time. AUTONOMY_HANDLERS_CONTRACTS
+      // is the per-domain aggregator array, composed into ORCHESTRATOR_CONTRACTS →
+      // API_CONTRACTS_ORDERED intra-package (the walker skips self-imports).
+      "LeaseRevokeContract",
+      "RunKillContract",
+      "AUTONOMY_HANDLERS_CONTRACTS",
+      // Capabilities-domain aggregator (215, INTRO-01/02). Same pattern as
+      // DAEMON_CONTRACTS / AUTH_CONTRACTS: the per-method
+      // `CapabilitiesIntrospectContract` HAS in-repo consumers (its
+      // `[CapabilitiesIntrospectContract.method]` daemon handler in
+      // capabilities-handlers.ts + the `comis whoami` CLI in commands/whoami.ts),
+      // so it is NOT policy-listed. `CAPABILITIES_CONTRACTS` IS policy-listed: it
+      // is composed into `API_CONTRACTS_ORDERED` inside @comis/core's own
+      // index.ts (intra-package — the walker skips self-imports), and no external
+      // consumer imports the per-domain array directly.
+      "CAPABILITIES_CONTRACTS",
       // Daemon-domain contracts. The per-method contracts
       // (`DaemonSetLogLevelContract`, `SystemPingContract`) have in-repo
       // consumers (daemon-handlers.ts + CLI's daemon-guard.ts +
@@ -2151,6 +2207,59 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // imports the type NAME (callers use it inline via the returned value), so the
       // walker still counts it an orphan. Shrink when a consumer imports it by name.
       "TrigramRoute",
+      // ── agent autonomy named-profile resolver (Phase 210 / v8 §3.8) ──
+      // The §3.8 named-profile layer (AutonomyConfigSchema -> resolveAutonomy)
+      // lands FIRST so the cap injection (Plan 04: createAgentRpcCall computes
+      // _capabilities from resolveAutonomy(agent.autonomy)) and the legible
+      // boot log (Plan 06) receive the exact resolved cap/guard shape. Until
+      // those land, the only callers are this leaf's own tests + the
+      // section-registry/serializer derivations (intra-core, excluded from the
+      // consumer scan). Shrink each entry as a real cross-package production
+      // caller lands.
+      "AutonomyConfigSchema",
+      "AutonomyMessageConfigSchema",
+      "AUTONOMY_PROFILES",
+      "AGENT_CAPABILITIES",
+      "STANDARD_FLOOR_CAPABILITIES",
+      "resolveAutonomy",
+      "AutonomyConfig",
+      "AutonomyMessageConfig",
+      "AutonomyProfileName",
+      "AutonomyMode",
+      "AgentCapability",
+      "ResolvedAutonomy",
+      "ResolvedCapability",
+      // Honest legible degrade (Phase 210 / PROFILE-03). Consumed by the daemon
+      // boot log + the preflight doctor (Plan 06, same wave). Listed here so the
+      // type-only `AutonomyDownshift`/`AutonomyPreflightResult` (erased at runtime,
+      // never named cross-package) don't read as orphans; shrink as those callers
+      // import them by name.
+      "degradeAutonomy",
+      "AutonomyDownshift",
+      "AutonomyPreflightResult",
+      // The security-layer capability primitives (Phase 210 / security/capability.ts).
+      // AGENT_CAPABILITIES + AgentCapability above are imported from this same
+      // canonical module (single source of truth — the config leaf no longer keeps
+      // its own copy). The cross-package consumer lands with Plan 04 (daemon handler
+      // gating: requireCapability on each gated handler reads injected _capabilities).
+      "checkCapability",
+      "requireCapability",
+      "CapabilityDeniedError",
+      // HANDLER_CAPABILITY_MAP — the single auditable method→capability
+      // source-of-truth (CAP-04, security/capability.ts). It is consumed TODAY
+      // inside @comis/core (the capability layer's own invariant tests assert
+      // map↔gate parity) and by the daemon's per-handler gate, but the daemon's
+      // _capabilities injection (Plan 04) reads it via the resolveAutonomy →
+      // _capabilities flow rather than name-importing the map, so the
+      // cross-package name-consumer scan sees no importer yet. The full
+      // cross-package consumers (an operator-facing capability-audit surface that
+      // enumerates the map, and the gateway-side gate enumeration) land in Phase
+      // 211/212. HandlerCapabilityClassification + GatedMethodName are the map's
+      // value/key shape types (erased at runtime, never named cross-package).
+      // Shrink each entry as a real cross-package name-importer lands.
+      "HANDLER_CAPABILITY_MAP",
+      "HandlerCapabilityClassification",
+      "GatedMethodName",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

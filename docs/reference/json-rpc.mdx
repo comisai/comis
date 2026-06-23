@@ -1,12 +1,12 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 167 JSON-RPC methods across 39 namespaces"
+description: "Complete reference for all 169 JSON-RPC methods across 41 namespaces"
 icon: "code"
 ---
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 167 methods across 39 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 169 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
 Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
 
@@ -3948,6 +3948,116 @@ Rate-limited to one steer per `target` every 2 seconds (shared across both modes
 
 </Accordion>
 
+<Accordion title="capabilities (1 method)">
+
+The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` are the write side).
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `capabilities.introspect` | `rpc` | The caller's resolved capabilities + remaining per-root budget/quota (self-scoped, no capability required) |
+
+### `capabilities.introspect`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` (read-only — **no capability required**; the [`comis whoami`](/reference/cli#comis-whoami) surface) |
+| **Parameters** | `{}` — **self-scoped**: the caller is resolved from the connection (the dispatcher-injected `_agentId` for an in-process agent, the default agent for an operator token). There is NO `agentId` param — a caller cannot introspect another agent. |
+| **Returns** | `{ agentId, caps: string[], budget?, outwardQuota? }` — `caps` is the resolved `orch:*` capability list; `budget` (`{ tokensRemaining, wallClockMsRemaining, usdRemaining }`, `usdRemaining` nullable for an unpriceable model) and `outwardQuota` (`{ perHourRemaining }`) are present ONLY when the run has a live root (an in-flight turn / spawn tree), and OMITTED otherwise (in-process pre-spawn) — never fabricated as zero. |
+
+Read-only and **not capability-gated** (an agent reading its OWN posture needs no capability) and **not** admin-scoped, so the in-process agent loop can reach it directly. It is **self-scoped** — the read returns capabilities/budget for the caller's own `_agentId` only, never an arbitrary agent (an information-disclosure boundary). The remaining budget/quota is **live daemon state** (never persisted), so this is a LIVE-only read with no offline equivalent — the post-mortem authorization topology of a finished run is on [`obs.explain`](#obs-explain)'s `spawnTree` instead.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "capabilities.introspect",
+  "params": {},
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "agentId": "default",
+    "caps": ["orch:read", "orch:web"],
+    "budget": { "tokensRemaining": 384000, "wallClockMsRemaining": 1740000, "usdRemaining": 4.82 },
+    "outwardQuota": { "perHourRemaining": 18 }
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="autonomy / live control (2 methods)">
+
+Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop a runaway or misbehaving spawn tree. Both methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke or un-kill itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these two methods are the manual override.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `lease.revoke` | `admin` | Cooperative stop — revoke a capability lease so the bearer's next RPC is denied |
+| `run.kill` | `admin` | Hard stop — kill a whole spawn tree by `rootRunId` (abort each SDK session) and revoke its leases |
+
+### `lease.revoke`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ leaseId?: string, rootRunId?: string }` — exactly one. `leaseId` revokes a single lease; `rootRunId` revokes every lease of that spawn tree. Neither/both is rejected. |
+| **Returns** | `{ revoked: number }` — the count of leases revoked (0 when the selector matched nothing) |
+
+Cooperative: the revoked lease's next `validate`/`renew` is denied, so the bearer cannot keep acting or re-lease — but an in-flight call already past validation runs to completion. For a hard stop use `run.kill`.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "lease.revoke",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "revoked": 3 },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `run.kill`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ rootRunId: string }` — the root run identifying the whole spawn tree |
+| **Returns** | `{ killed: number }` — the count of runs killed across the tree |
+
+Hard stop: aborts every running/queued SDK session of the tree (by `rootRunId`) AND revokes its leases (the cascade reaches grandchildren via `parentLeaseId`). Use this for a runaway `for(;;) spawn()` loop the cooperative `lease.revoke` cannot interrupt mid-flight.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "run.kill",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "killed": 4 },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
 <Accordion title="telegram (1 method)">
 
 Telegram platform action dispatch. Sends a platform-specific action to the Telegram channel adapter.
@@ -4519,6 +4629,26 @@ Common error conditions:
 | Internal error | `-32603` | Handler threw an exception |
 
 See the [WebSocket Protocol](/reference/websocket) error codes table for transport-level errors (parse error, rate limiting, message size).
+
+## The agent cap-socket surface: `tool.invoke`
+
+Everything above is reached over the operator-facing WebSocket/HTTP gateway. There is a **second, internal** RPC surface an autonomous agent reaches from inside a jail: `tool.invoke`, dispatched over the lease-authenticated loopback **capability socket** (`COMIS_ORCH_SOCKET`, a `0600` owner-only Unix socket) — never the public gateway. It is the one-route generalization that lets a jailed [`orchestrate`](/agent-tools/orchestrate) script call a capability-scoped tool.
+
+### `tool.invoke`
+
+| Property | Value |
+|----------|-------|
+| **Transport** | The cap socket only (`COMIS_ORCH_SOCKET`); the wire is one `{ bearer, method: "tool.invoke", params: { tool, args } }` newline-JSON line per connection. Not reachable over the public WS/HTTP gateway. |
+| **Auth** | A capability **lease** bearer (`COMIS_CAP_LEASE`), audience-bound to the inner `tool` — a captured lease cannot dispatch a tool whose capability it lacks. |
+| **Origin** | **Agent-origin.** Deny-by-origin keeps the entire control plane unreachable through this route. |
+| **Parameters** | `{ tool: string, args: object }` — `tool` is a name on the curated [tool→capability map](/security/capability-model#the-curated-tool-capability-surface-tool-invoke); `args` are the inner tool's parameters. |
+| **Returns** | The inner tool's result, or a `ResultRef` handle when the return is over the per-tool size threshold (see [orchestrate](/agent-tools/orchestrate#resultref-high-volume-returns)). |
+
+The dispatch gates in a fixed order — **cap-map allow-list** (an unmapped tool is undispatchable: a `CapabilityDeniedError`, default-deny) → **denylist** (no cap-mapped tool is denylisted; `mcp_manage`/`mcp_login`/`gateway`/`*_manage` stay unreachable) → **deny-by-origin** (automatic on the RPC route, since the lease's `_agentId` is injected) → **`requireCapability`** → **route** (an RPC-backed read forwards to its registered handler with the lease's identity strip-then-injected; an in-process builtin — `read`/`grep`/`find`/`ls`/`jq` and the daemon-side, DNS-pinned `web_search`/`web_fetch` — runs on the daemon under the agent's jailed workspace).
+
+```json Request (over COMIS_ORCH_SOCKET, not the gateway)
+{ "bearer": "<COMIS_CAP_LEASE>", "method": "tool.invoke", "params": { "tool": "web_fetch", "args": { "url": "https://example.com" } } }
+```
 
 ## Related
 

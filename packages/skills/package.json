@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-sandbox-assets.mjs",
     "test": "vitest run"
   },
   "dependencies": {

@@ -32,7 +32,7 @@ vi.mock(import("node:os"), async (importOriginal) => {
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
-import { BwrapProvider } from "./bwrap-provider.js";
+import { BwrapProvider, resolveJailNode } from "./bwrap-provider.js";
 import type { SandboxOptions } from "./types.js";
 
 function makeOpts(overrides?: Partial<SandboxOptions>): SandboxOptions {
@@ -249,6 +249,46 @@ describe("BwrapProvider", () => {
       expect(args).toContain("/home/testuser/.gitconfig");
     });
 
+    // WR-05: the JAIL-03 credential-denylist base is the EXPLICIT `opts.home`,
+    // not the ambient `os.homedir()`. A caller-supplied shared path that is a
+    // credential dir under the INJECTED home (~/.ssh) must be screened and
+    // rejected — proving buildArgs screens against opts.home. The ambient
+    // os.homedir() is mocked to a DIFFERENT path (/home/testuser), so if
+    // buildArgs still read the ambient home (pre-fix) the bind would NOT match
+    // the denylist and would be wrongly emitted instead of throwing.
+    it("screens caller binds against the injected opts.home, not the ambient homedir", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser"); // ambient (must be ignored)
+      vi.mocked(existsSync).mockReturnValue(true);
+
+      const provider = createAvailableProvider();
+      // A shared path under the INJECTED home that is a credential dir (~/.ssh).
+      const opts = makeOpts({
+        home: "/home/injected",
+        sharedPaths: ["/home/injected/.ssh"],
+      });
+
+      expect(() => provider.buildArgs(opts)).toThrow(/refusing unsafe jail bind/);
+    });
+
+    // WR-05: with opts.home supplied the generator does NOT consult the ambient
+    // homedir at all — the screen-vs-bind interaction is deterministic without
+    // mocking process env. A safe bind under the injected home is emitted, and a
+    // credential dir under the AMBIENT home (which buildArgs must ignore) is NOT
+    // treated as denylisted (it is just an unrelated, non-existent path here).
+    it("uses opts.home for the user RO binds when supplied (ambient homedir not consulted)", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/ambient");
+      vi.mocked(existsSync).mockImplementation((p) => String(p) === "/home/injected/.gitconfig");
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts({ home: "/home/injected" }));
+
+      // The RO user-config bind resolves against the INJECTED home.
+      expect(args).toContain("/home/injected/.gitconfig");
+      // The ambient home's config is never bound (existsSync false for it anyway,
+      // but more importantly buildArgs derived its paths from opts.home).
+      expect(args).not.toContain("/home/ambient/.gitconfig");
+    });
+
     it("omits hardcoded claude CLI credential paths even when they exist on disk", () => {
       // Worst case: all three claude credential paths exist on disk. The
       // hardcoded claude binds were removed from the provider, so none may
@@ -425,6 +465,320 @@ describe("BwrapProvider", () => {
       expect(args).toContain("--share-net");
       expect(args).toContain("--die-with-parent");
       expect(args).toContain("--new-session");
+    });
+
+    // -- Network modes (ENDPOINT-03: cap-socket bind for the lease endpoint) --
+
+    describe("network modes", () => {
+      /** Locate the index of the "--bind <path> <path>" triple, or -1. */
+      function bindTripleIndex(args: string[], target: string): number {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      it("cap-socket mode binds the socket after --unshare-all then --unshare-net (arg-order)", () => {
+        // ENDPOINT-03: the lease endpoint listens on a unix socket the jailed
+        // child must reach. netns affects IP sockets only, so a bound unix path
+        // stays reachable under --unshare-net — but the --bind MUST follow the
+        // --unshare-net so bwrap applies it inside the new namespace (mirrors
+        // broker-only). With no cap-socket branch the _exhaustive guard throws.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        // The cap socket is a DAEMON-MINTED per-run path (conventionally under
+        // /run/comis) — it is NOT screened by validateBindMount even though /run
+        // is denylisted for caller binds (it is part of the trusted allow-list).
+        const capSock = "/run/comis/cap.sock";
+        const args = provider.buildArgs(
+          makeOpts({ network: { mode: "cap-socket", capSocketPath: capSock } }),
+        );
+
+        const unshareAllIdx = args.indexOf("--unshare-all");
+        const unshareNetIdx = args.indexOf("--unshare-net");
+        const capBindIdx = bindTripleIndex(args, capSock);
+
+        expect(unshareAllIdx).toBeGreaterThan(0);
+        expect(unshareNetIdx).toBeGreaterThan(0);
+        expect(capBindIdx).toBeGreaterThan(0);
+        // Arg-order is load-bearing: --unshare-all, then --unshare-net, then the bind.
+        expect(unshareNetIdx).toBeGreaterThan(unshareAllIdx);
+        expect(capBindIdx).toBeGreaterThan(unshareNetIdx);
+
+        // cap-socket must NOT re-share the net (no --share-net) and still hardens.
+        expect(args).not.toContain("--share-net");
+        expect(args).toContain("--new-session");
+        expect(args).toContain("--die-with-parent");
+      });
+
+      it("open mode is unregressed (--share-net, no --unshare-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ network: { mode: "open" } }));
+
+        expect(args).toContain("--share-net");
+        expect(args).not.toContain("--unshare-net");
+      });
+
+      it("broker-only mode is unregressed (binds broker socket after --unshare-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        // Daemon-minted broker socket — also under /run/comis, also un-screened.
+        const brokerSock = "/run/comis/broker.sock";
+        const args = provider.buildArgs(
+          makeOpts({ network: { mode: "broker-only", brokerSocketPath: brokerSock } }),
+        );
+
+        const unshareNetIdx = args.indexOf("--unshare-net");
+        const brokerBindIdx = bindTripleIndex(args, brokerSock);
+        expect(unshareNetIdx).toBeGreaterThan(0);
+        expect(brokerBindIdx).toBeGreaterThan(unshareNetIdx);
+        expect(args).not.toContain("--share-net");
+      });
+
+      it("none mode is unregressed (--unshare-net, no socket bind, no --share-net)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ network: { mode: "none" } }));
+
+        expect(args).toContain("--unshare-net");
+        expect(args).not.toContain("--share-net");
+      });
+    });
+
+    // -- §4.7 hardening: --seccomp fd (JAIL-01) --
+
+    describe("--seccomp fd emission (JAIL-01)", () => {
+      it("emits --seccomp <fd> when a seccomp fd is provided", () => {
+        // The provider/caller resolves the fd via loadSeccompProfileFd() and
+        // passes it in; buildArgs is PURE (no live fs probe). The fd rides
+        // beside --new-session/--die-with-parent.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ seccompFd: 7 }));
+
+        const seccompIdx = args.indexOf("--seccomp");
+        expect(seccompIdx).toBeGreaterThan(0);
+        expect(args[seccompIdx + 1]).toBe("7");
+      });
+
+      it("OMITS --seccomp when no fd is provided (degrade, not crash)", () => {
+        // loadSeccompProfileFd returns null when the BPF blob is absent →
+        // buildArgs must omit --seccomp entirely; the other §4.7 controls hold.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts());
+
+        expect(args).not.toContain("--seccomp");
+      });
+
+      it("OMITS --seccomp when the fd is explicitly null", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ seccompFd: null }));
+
+        expect(args).not.toContain("--seccomp");
+      });
+    });
+
+    // -- §4.7 hardening: validateBindMount screening (JAIL-03) --
+
+    describe("validateBindMount screening (JAIL-03)", () => {
+      it("THROWS at jail construction when a host bind resolves into a denylisted dir", () => {
+        // A denylisted bind (here a system /etc/* path supplied as a shared path)
+        // is a misconfig that must FAIL LOUD — never silently emitted as a hole.
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() =>
+          provider.buildArgs(makeOpts({ sharedPaths: ["/etc/cron.d"] })),
+        ).toThrow(/unsafe jail bind/i);
+      });
+
+      it("THROWS when a host bind is a credential dir under HOME (~/.ssh)", () => {
+        vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() =>
+          provider.buildArgs(makeOpts({ sharedPaths: ["/home/testuser/.ssh"] })),
+        ).toThrow(/unsafe jail bind/i);
+      });
+
+      it("does NOT throw for a safe workspace bind", () => {
+        vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        expect(() => provider.buildArgs(makeOpts())).not.toThrow();
+      });
+    });
+
+    // -- §4.7 hardening: writable-path audit (JAIL-02) --
+    //
+    // The audit asserts the emitted bind list for a typical autonomy jail does
+    // NOT RW-bind any host-trusted writable path enumerated by ROADMAP
+    // success-criterion 4 / JAIL-02. Each ROADMAP target is a NAMED case (no
+    // shorthand subset): config, hooks, cron, ~/.nvm, learned-memory/skill,
+    // execPath. AND a RO-bound parent must not let a nonexistent child config be
+    // created (the CVE-2026-25725 hole).
+
+    describe("writable-path audit (JAIL-02) — full ROADMAP success-criterion-4 enumeration", () => {
+      const HOME = "/home/testuser";
+
+      /** True iff `target` appears as the source of a `--bind` (RW) triple. */
+      function isRwBound(args: string[], target: string): boolean {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /** True iff `target` appears as the source of a `--ro-bind` (RO) triple. */
+      function isRoBound(args: string[], target: string): boolean {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /**
+       * Build a typical autonomy jail with EVERYTHING on disk (worst case) so the
+       * audit proves the bind list excludes the trusted writable paths even when
+       * they exist — not merely because existsSync filtered them out.
+       */
+      function autonomyJailArgs(): string[] {
+        vi.mocked(os.homedir).mockReturnValue(HOME);
+        vi.mocked(existsSync).mockReturnValue(true);
+        const provider = createAvailableProvider();
+        return provider.buildArgs(
+          makeOpts({ workspacePath: `${HOME}/.comis/workspace-agent`, cwd: `${HOME}/.comis/workspace-agent` }),
+        );
+      }
+
+      it("does NOT RW-bind the agent config dir/file (config)", () => {
+        const args = autonomyJailArgs();
+        // The ~/.comis config tree must not be writable from inside the jail.
+        expect(isRwBound(args, `${HOME}/.comis/config.yaml`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.comis`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.config`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the hooks dir (hooks)", () => {
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, `${HOME}/.comis/hooks`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the cron dir (cron)", () => {
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, `${HOME}/.comis/cron`)).toBe(false);
+      });
+
+      it("does NOT RW-bind ~/.nvm (the Node toolchain is RO, never writable)", () => {
+        const args = autonomyJailArgs();
+        // ~/.nvm is RO-bound by getUserRoPaths; it must NEVER be RW-bound (a
+        // writable Node toolchain is a host-RCE persistence vector).
+        expect(isRwBound(args, `${HOME}/.nvm`)).toBe(false);
+      });
+
+      it("does NOT RW-bind learned-memory / learned-skill files", () => {
+        const args = autonomyJailArgs();
+        // The agent's learned memory + skills are host-trusted state; a jailed
+        // surface must not be able to rewrite them (poisoning vector).
+        expect(isRwBound(args, `${HOME}/.comis/memory.db`)).toBe(false);
+        expect(isRwBound(args, `${HOME}/.comis/skills`)).toBe(false);
+      });
+
+      it("does NOT RW-bind the bound execPath (the Node binary is never writable)", () => {
+        // A writable interpreter binary is a host-RCE vector. The default
+        // autonomy jail never RW-binds the daemon's process.execPath. (The
+        // JAIL-04 bind mode that RO-binds execPath when node is absent on the
+        // jail PATH is asserted in the Node-runtime-honesty suite.)
+        const args = autonomyJailArgs();
+        expect(isRwBound(args, process.execPath)).toBe(false);
+        expect(isRwBound(args, "/usr/local/bin/node")).toBe(false);
+      });
+
+      it("does NOT RO-bind a PARENT that lets a nonexistent child config be created (CVE-2026-25725)", () => {
+        // The CVE-2026-25725 hole: a RO-bind of a parent dir whose named child
+        // config does NOT yet exist still lets the child be CREATED inside the
+        // jail (bwrap RO-binds the dir, not the absent file). The audit forbids
+        // RO-binding the ~/.comis parent (which would expose config/hooks/cron
+        // creation) — only specific existing leaves may be bound.
+        vi.mocked(os.homedir).mockReturnValue(HOME);
+        // ~/.comis exists but the config FILE does not (the nonexistent child).
+        vi.mocked(existsSync).mockImplementation((p) => String(p) !== `${HOME}/.comis/config.yaml`);
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ workspacePath: `${HOME}/.comis/workspace-agent`, cwd: `${HOME}/.comis/workspace-agent` }),
+        );
+        // Neither RW nor RO bind of the ~/.comis parent (which would smuggle a
+        // creatable config child).
+        expect(isRwBound(args, `${HOME}/.comis`)).toBe(false);
+        expect(isRoBound(args, `${HOME}/.comis`)).toBe(false);
+      });
+    });
+
+    // -- §4.6 Node-runtime honesty (JAIL-04): buildArgs binds execPath on "bind" --
+
+    describe("Node-runtime bind in buildArgs (JAIL-04)", () => {
+      it("RO-binds execPath when jailNode mode is 'bind'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const execPath = "/usr/local/bin/node";
+        const args = provider.buildArgs(
+          makeOpts({ jailNode: { mode: "bind", execPath } }),
+        );
+
+        // The daemon node binary is bound READ-ONLY (never RW — a writable
+        // interpreter is a host-RCE vector).
+        const hasRoBind = (target: string) => {
+          for (let i = 0; i < args.length - 2; i++) {
+            if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+              return true;
+            }
+          }
+          return false;
+        };
+        expect(hasRoBind(execPath)).toBe(true);
+        // Never RW.
+        expect(args.some((a, i) => a === "--bind" && args[i + 1] === execPath)).toBe(false);
+      });
+
+      it("does NOT bind execPath when jailNode mode is 'path' (node already on the jail PATH)", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts({ jailNode: { mode: "path" } }));
+
+        // No spurious execPath bind — node resolves from the bound RO paths.
+        expect(args).not.toContain("/usr/local/bin/node");
+      });
+
+      it("does NOT bind execPath when jailNode mode is 'unavailable'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ jailNode: { mode: "unavailable", hint: "no node" } }),
+        );
+
+        expect(args).not.toContain("/usr/local/bin/node");
+      });
     });
 
     it("includes --chdir with opts.cwd", () => {
@@ -640,5 +994,82 @@ describe("BwrapProvider", () => {
         expect(segments).not.toContain(".");
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveJailNode (JAIL-04 / v8 §4.6) — Node-runtime honesty.
+// PURE three-mode resolver: probe node on the jail PATH → bind execPath →
+// mark unavailable. macOS-unit-testable via an injected `exists` predicate.
+// ---------------------------------------------------------------------------
+
+describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
+  it("mode 'path' when a node executable resolves under the bound RO pathDirs", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin", "/usr/local/bin"],
+      execPath: "/opt/daemon/node",
+      // A fake exists predicate: node lives under /usr/local/bin.
+      exists: (p) => p === "/usr/local/bin/node",
+    });
+    expect(result.mode).toBe("path");
+  });
+
+  it("mode 'bind' with execPath when node is NOT on the jail PATH but execPath is set", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin", "/usr/local/bin"],
+      execPath: "/opt/daemon/node",
+      // No node under any pathDir; execPath exists.
+      exists: (p) => p === "/opt/daemon/node",
+    });
+    expect(result.mode).toBe("bind");
+    if (result.mode === "bind") {
+      expect(result.execPath).toBe("/opt/daemon/node");
+    }
+  });
+
+  it("mode 'unavailable' with a hint when neither a jail-PATH node nor a bindable execPath exists", () => {
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin"],
+      execPath: undefined,
+      exists: () => false,
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      expect(typeof result.hint).toBe("string");
+      expect(result.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the unavailable hint NEVER claims a bundled Node and names the remediation", () => {
+    const result = resolveJailNode({ pathDirs: [], execPath: undefined, exists: () => false });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      const h = result.hint.toLowerCase();
+      // Must explicitly DENY a bundled Node (the spoofing class T-211-21).
+      expect(h).toContain("bundled");
+      // Names the remediation (install node / make the daemon binary bindable)
+      // and which surfaces degrade.
+      expect(h).toMatch(/install node|bindable|process\.execpath|execpath/);
+      expect(h).toMatch(/unavailable|surface/);
+    }
+  });
+
+  it("mode 'unavailable' even when execPath is set but does not exist on disk", () => {
+    // An execPath that the exists-predicate says is absent must NOT be claimed
+    // bindable — honesty over an optimistic bind.
+    const result = resolveJailNode({
+      pathDirs: ["/usr/bin"],
+      execPath: "/gone/node",
+      exists: () => false,
+    });
+    expect(result.mode).toBe("unavailable");
+  });
+
+  it("defaults to fs.existsSync when no exists predicate is injected", () => {
+    // Production omits the predicate → the resolver uses the real existsSync
+    // (mocked here). Mock says /usr/bin/node exists → "path".
+    vi.mocked(existsSync).mockImplementation((p) => String(p) === "/usr/bin/node");
+    const result = resolveJailNode({ pathDirs: ["/usr/bin"], execPath: "/opt/node" });
+    expect(result.mode).toBe("path");
   });
 });

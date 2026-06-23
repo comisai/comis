@@ -1674,6 +1674,165 @@ describe("createSubAgentRunner", () => {
       );
       expect(rejectionCalls).toHaveLength(0);
     });
+
+    // ---------------------------------------------------------------------
+    // Tree-wide spawn ceiling consult (CEIL-01). The injected
+    // checkSpawnCeiling is the SINGLE seam both session.spawn AND graph.*
+    // (and the in-process agent loop) hit — it bounds a for(;;) spawn() tree-
+    // wide where the per-caller depth/fanout gates cannot.
+    // ---------------------------------------------------------------------
+    it("rejects spawn when the injected checkSpawnCeiling returns ok:false (tree-wide concurrency)", () => {
+      const ceilingDeps = createLimitDeps();
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: false, reason: "concurrency" });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      expect(() =>
+        runner.spawn({
+          task: "fork-bomb child",
+          agentId: "agent-a",
+          callerSessionKey: "default:user1:ch1",
+          depth: 0,
+          maxDepth: 3,
+        }),
+      ).toThrow(/spawn ceiling|concurrency/i);
+
+      // The reject mirrors the depth/children reject: the rejection event fires
+      // (the ceiling's "concurrency" reason maps to the closed-union tree-wide
+      // member "ceiling_concurrency") and NO run/session is created (the ceiling
+      // sits before run creation).
+      expect(ceilingDeps.eventBus.emit).toHaveBeenCalledWith(
+        "session:sub_agent_spawn_rejected",
+        expect.objectContaining({ reason: "ceiling_concurrency" }),
+      );
+      expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
+    });
+
+    it("proceeds with the spawn when checkSpawnCeiling returns ok:true (or is absent)", () => {
+      const ceilingDeps = createLimitDeps();
+      // never-resolving executeAgent keeps the run "running"
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      const runId = runner.spawn({
+        task: "ordinary child",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      });
+
+      expect(typeof runId).toBe("string");
+      expect(runId.length).toBeGreaterThan(0);
+      expect(checkSpawnCeiling).toHaveBeenCalled();
+    });
+
+    it("passes the run's rootRunId, depth, and active-children fanout to checkSpawnCeiling", () => {
+      const ceilingDeps = createLimitDeps();
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      runner.spawn({
+        task: "child with a stable root",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 1,
+        maxDepth: 3,
+        rootRunId: "root-stable-xyz",
+      });
+
+      // (rootRunId, depth, fanout): the caller's rootRunId rides through (NOT a
+      // fresh per-spawn id — RESEARCH Pitfall 1), depth is the current depth, and
+      // fanout is the active-children count (0 for the first child).
+      expect(checkSpawnCeiling).toHaveBeenCalledWith("root-stable-xyz", 1, 0);
+    });
+
+    // WR-03 (213-REVIEW): the allowlist check is hoisted ABOVE the ceiling
+    // acquire, so a not-allowlisted spawn never reserves a slot it cannot
+    // release (no run is created → no completion finally fires).
+    it("does NOT acquire a ceiling slot when the spawn is rejected by the allowlist (WR-03)", () => {
+      const ceilingDeps = createLimitDeps();
+      ceilingDeps.config.allowAgents = ["only-this-agent"];
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const releaseSpawnCeiling = vi.fn();
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, releaseSpawnCeiling });
+
+      expect(() =>
+        runner.spawn({
+          task: "blocked",
+          agentId: "not-allowed-agent",
+          callerSessionKey: "default:user1:ch1",
+          depth: 0,
+          maxDepth: 3,
+        }),
+      ).toThrow(/not allowed to spawn/i);
+
+      // The acquire must NOT have run (the allowlist refuses first), so there is
+      // no orphaned reservation and nothing to release.
+      expect(checkSpawnCeiling).not.toHaveBeenCalled();
+      expect(releaseSpawnCeiling).not.toHaveBeenCalled();
+    });
+
+    // CR-02 (213-REVIEW): every run that reserved a slot releases it 1:1 on its
+    // terminal transition (the run-completion finally), so the per-root counter
+    // does not monotonically leak.
+    it("releases the ceiling slot once on run completion (CR-02)", async () => {
+      const ceilingDeps = createLimitDeps();
+      // executeAgent resolves so the run reaches its completion finally.
+      vi.mocked(ceilingDeps.executeAgent).mockResolvedValue({
+        response: "ok", tokensUsed: { total: 1 }, cost: { total: 0 },
+        finishReason: "stop", stepsExecuted: 1,
+      });
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const releaseSpawnCeiling = vi.fn();
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, releaseSpawnCeiling });
+
+      runner.spawn({
+        task: "completes",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 1,
+        maxDepth: 3,
+        rootRunId: "root-rel",
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Released exactly once, against the run's tree root.
+      expect(releaseSpawnCeiling).toHaveBeenCalledTimes(1);
+      expect(releaseSpawnCeiling).toHaveBeenCalledWith("root-rel");
+    });
+
+    // CR-02: a killed run also releases (kill marks failed, then the underlying
+    // executeAgent promise settles and fires the finally) — and only ONCE.
+    it("releases the ceiling slot exactly once even when the run is killed before settling (CR-02)", async () => {
+      const ceilingDeps = createLimitDeps();
+      let resolveExec!: (v: unknown) => void;
+      vi.mocked(ceilingDeps.executeAgent).mockReturnValue(
+        new Promise((resolve) => { resolveExec = resolve as (v: unknown) => void; }),
+      );
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const releaseSpawnCeiling = vi.fn();
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling, releaseSpawnCeiling });
+
+      const runId = runner.spawn({
+        task: "killed",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 1,
+        maxDepth: 3,
+        rootRunId: "root-kill",
+      });
+
+      // Kill marks the run failed but the executeAgent promise is still pending.
+      expect(runner.killRun(runId).killed).toBe(true);
+      // Now let the underlying promise settle → the finally fires.
+      resolveExec({ response: "late", tokensUsed: { total: 1 }, cost: { total: 0 }, finishReason: "stop", stepsExecuted: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Despite two terminal paths (kill + settle), release fires exactly once.
+      expect(releaseSpawnCeiling).toHaveBeenCalledTimes(1);
+      expect(releaseSpawnCeiling).toHaveBeenCalledWith("root-kill");
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -4275,5 +4434,165 @@ describe("sandbox no-downgrade gate", () => {
 
     expect(typeof runId).toBe("string");
     expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rootRunId / parentLeaseId plumbing (CEIL-01 / REVOKE-03 foundation).
+// A tree-stable rootRunId is the key the unified semaphore (Plan 04) and the
+// kill-by-root primitive (Plan 06/07) consult. A child that mints a fresh id
+// escapes its parent's ceiling (RESEARCH Pitfall 1 — the silent under-count),
+// so the inheritance invariant (Test 3) is load-bearing.
+// ---------------------------------------------------------------------------
+describe("createSubAgentRunner rootRunId/parentLeaseId tree plumbing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("records the rootRunId passed in SpawnParams onto the SubAgentRun", () => {
+    const deps = createMockDeps();
+    // Never-resolving execute keeps the run in `running` so getRunStatus reads it.
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "research topic",
+      agentId: "researcher",
+      rootRunId: "root-X",
+    });
+
+    expect(runner.getRunStatus(runId)?.rootRunId).toBe("root-X");
+  });
+
+  it("mints a non-empty rootRunId for a depth-0 root spawn that omits one", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "summarize document",
+      agentId: "default",
+      depth: 0,
+      // rootRunId intentionally omitted — this IS the root, it must mint one.
+    });
+
+    const minted = runner.getRunStatus(runId)?.rootRunId;
+    expect(typeof minted).toBe("string");
+    expect((minted ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("a child spawn inherits the parent rootRunId rather than minting a fresh one", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    // The root mints its id...
+    const parentRunId = runner.spawn({
+      task: "parent task",
+      agentId: "parent",
+      depth: 0,
+    });
+    const parentRootId = runner.getRunStatus(parentRunId)?.rootRunId;
+    expect(typeof parentRootId).toBe("string");
+
+    // ...and a child passing that id down must carry the SAME id (one tree → one id).
+    const childRunId = runner.spawn({
+      task: "child task",
+      agentId: "child",
+      depth: 1,
+      rootRunId: parentRootId,
+    });
+
+    expect(runner.getRunStatus(childRunId)?.rootRunId).toBe(parentRootId);
+  });
+
+  it("records parentLeaseId on the run when provided and leaves it undefined when omitted", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const withLease = runner.spawn({
+      task: "child with lease",
+      agentId: "child",
+      depth: 1,
+      rootRunId: "root-X",
+      parentLeaseId: "lease-parent-1",
+    });
+    expect(runner.getRunStatus(withLease)?.parentLeaseId).toBe("lease-parent-1");
+
+    const withoutLease = runner.spawn({
+      task: "root no lease",
+      agentId: "root",
+      depth: 0,
+    });
+    expect(runner.getRunStatus(withoutLease)?.parentLeaseId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// killByRootRun fans killRun over every run of a tree (REVOKE-03 foundation).
+// The per-run killRun aborts each SDK session; killByRootRun applies it to
+// every running/queued run sharing a rootRunId, filtering strictly so a
+// different tree is untouched (threat T-213-01-02).
+// ---------------------------------------------------------------------------
+describe("createSubAgentRunner killByRootRun tree fan-out", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("kills every running/queued run of a rootRunId and leaves other trees untouched", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const a = runner.spawn({ task: "a", agentId: "x", depth: 1, rootRunId: "root-K" });
+    const b = runner.spawn({ task: "b", agentId: "y", depth: 1, rootRunId: "root-K" });
+    const c = runner.spawn({ task: "c", agentId: "z", depth: 1, rootRunId: "root-K" });
+    const other = runner.spawn({ task: "o", agentId: "w", depth: 1, rootRunId: "root-OTHER" });
+
+    const result = runner.killByRootRun("root-K");
+
+    expect(result.killed).toBe(3);
+    expect(runner.getRunStatus(a)?.status).toBe("failed");
+    expect(runner.getRunStatus(b)?.status).toBe("failed");
+    expect(runner.getRunStatus(c)?.status).toBe("failed");
+    // The other tree is verifiably untouched.
+    expect(runner.getRunStatus(other)?.status).toBe("running");
+  });
+
+  it("skips runs already terminal and counts only the still-killable ones of the tree", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const stillRunning = runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
+    const toComplete = runner.spawn({ task: "done", agentId: "y", depth: 1, rootRunId: "root-K" });
+
+    // Drive `toComplete` to a terminal state via a per-run kill first.
+    expect(runner.killRun(toComplete).killed).toBe(true);
+    expect(runner.getRunStatus(toComplete)?.status).toBe("failed");
+
+    // killByRootRun must skip the already-failed run and only count the live one.
+    const result = runner.killByRootRun("root-K");
+    expect(result.killed).toBe(1);
+    expect(runner.getRunStatus(stillRunning)?.status).toBe("failed");
+  });
+
+  it("returns a zero count for an unknown rootRunId without throwing", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
+
+    expect(runner.killByRootRun("no-such-root")).toEqual({ killed: 0 });
   });
 });

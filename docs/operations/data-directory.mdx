@@ -35,6 +35,7 @@ data directory.
 ├── .daemon.lock             # exclusive lock held while daemon is running
 ├── daemon.console.log       # raw daemon stdout/stderr capture (CLI launcher only)
 ├── broker.sock              # Unix socket for credential broker (when active)
+├── cap.sock                 # Unix socket for the capability endpoint (0600; when an autonomy-bearing agent is configured)
 ├── ecosystem.config.js      # pm2 process definition (created by pm2 setup)
 ├── logs/
 │   ├── daemon.N.log         # structured JSON log (pino-roll; live file = newest N)
@@ -63,6 +64,7 @@ Some entries only appear under specific conditions.
 - `.daemon.lock` — present only while the daemon is running. Safe to delete when the daemon is stopped (it will be recreated on the next start).
 - `daemon.console.log` — present only when the daemon was launched by the CLI (the `comis init` wizard's start step or `comis daemon start`). Under systemd the process output goes to the journal instead, and under pm2 to `~/.pm2/logs/` — so this file is absent in those setups.
 - `broker.sock` — present only when the credential broker is active (`executor.broker.enabled: true` in `config.yaml`). Ephemeral — deleted and recreated on each daemon start.
+- `cap.sock` — present only when an autonomy-bearing agent is configured (the loopback capability endpoint). Ephemeral — `0600` owner-only, deleted and recreated on each daemon start. The lease itself is **in-memory** (run-scoped), so there is no `cap.db` / lease table on disk. The [bounded-autonomy](/agents/autonomy) control-plane state (the per-root spawn-ceiling counters, the call-rate windows, the per-root budget meters, and the outward-quota windows) is likewise **in-memory only** — there is no on-disk autonomy state file, so the bounds gate a single live daemon run and reset on restart (the M1 scope; a durable budget/sent-ledger is future work). The data-dir layout is unchanged by autonomy.
 - `ecosystem.config.js` — created only by `comis pm2 setup`.
 - Named workspaces like `workspace-myagent/` — appear only when you define more than one agent.
 - `terminal-drive/` — the per-agent **durable** terminal drive-state journals. A durable drive is the **default** (`drive.durable: true`), so this appears whenever an agent runs a terminal drive; absent only for an explicit `drive.durable: false` (non-durable) drive or on a tmux-less host.
@@ -427,6 +429,16 @@ A Unix domain socket created by the credential broker at daemon startup when the
 **Written by:** the daemon at startup (when `executor.broker` is configured).
 **Safe to delete?** The socket is ephemeral — deleted and recreated on each daemon start. If you see a stale `broker.sock` after a crash, you can delete it safely before restarting.
 **Not present when:** `executor.broker` is not configured or the broker is disabled.
+
+---
+
+### `cap.sock`
+
+A Unix domain socket (`0600`, owner-only) created for the **loopback capability endpoint** when an autonomy-bearing agent is configured. The jailed script surface dials this socket, presents its [`COMIS_CAP_LEASE`](/reference/environment-variables#comis_cap_lease) bearer, and the endpoint validates the lease (timing-safe, not-expired, not-revoked, audience-bound) and dispatches through the same handler gates as every other origin. The lease the endpoint validates is held **in memory** (run-scoped) — there is no lease table on disk, so this socket is the only on-disk artifact of the capability layer.
+
+**Written by:** the daemon at startup (when an agent resolves to an autonomy-bearing profile).
+**Safe to delete?** The socket is ephemeral — `0600`, deleted and recreated on each daemon start. A stale `cap.sock` after a crash is safe to delete before restarting.
+**Not present when:** no agent resolves to an autonomy-bearing profile.
 
 ## Backing up
 

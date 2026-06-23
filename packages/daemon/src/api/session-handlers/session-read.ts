@@ -75,12 +75,36 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // The session-not-found error message preserves the user-friendly hint
       // including the list of available keys — that path runs AFTER the
       // parse since session_key must be present to do the lookup.
+      // Internal-field read BEFORE strip (caller-scoping — CR-02). The
+      // tool.invoke rpc route injects `_agentId = lease.agentId`; its PRESENCE
+      // is the unforgeable agent-origin signal (inbound _agentId is stripped
+      // from external callers at the gateway). Admin/operator/CLI calls arrive
+      // with NO _agentId and keep full access.
+      const callerAgentId = rawParams._agentId as string | undefined;
+
       const userParams = stripInternalFields(rawParams);
       const params = SessionHistoryContract.request.parse(userParams);
 
       const sessionKey = params.session_key;
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
+
+      // CR-02 self-scope: an agent-origin caller may read ONLY its own
+      // session. Mirror session.search's `_agentId` filter exactly
+      // (session-list.ts:163-168) — the session belongs to the caller iff
+      // `parseFormattedSessionKey(sessionKey)?.agentId === callerAgentId`.
+      // Fail CLOSED with a content-free "not found" (do not confirm the
+      // session exists for another agent) so a jailed orch:read script can
+      // never exfiltrate another agent's/user's transcript. Because this gate
+      // lives in the handler it closes the orchestrate path AND any other
+      // agent-origin path. When `callerAgentId` is undefined (admin / operator
+      // / CLI) the read is unrestricted, as before.
+      if (callerAgentId) {
+        const owner = parseFormattedSessionKey(sessionKey)?.agentId;
+        if (owner !== callerAgentId) {
+          throw new Error(`Session not found: ${sessionKey}`);
+        }
+      }
 
       // Snapshot the DeliveryQueuePort once per request and build the join
       // keyset BEFORE the message loop. The key is (channelId, text) -- the

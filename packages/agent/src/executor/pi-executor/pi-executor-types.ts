@@ -69,14 +69,14 @@ export interface PiExecutorDeps {
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
   stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Phase 177 kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
+  /** Phase 213-08 (BUDGET-01/02): late-bound per-root budget holder + rootRunId resolver, threaded into the bridge like spendAccumulator; absent ⇒ no-op. */
+  boundedAutonomyBudget?: import("../../bridge/pi-event-bridge.js").BoundedAutonomyBudgetHolder;
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
-  /**
-   * Optional ExecutionPlanPort holder. When provided, session-bootstrap
-   * publishes the per-turn SEP ref into it (SEP-on) / clears it (SEP-off) so the
-   * gateway/ACP plan bridge reads the live plan via the shared port. Absent in
-   * non-ACP runtimes — existing callers are unaffected.
-   */
+  /** Optional ExecutionPlanPort holder. When provided, session-bootstrap publishes
+   *  the per-turn SEP ref into it (SEP-on) / clears it (SEP-off) so the gateway/ACP
+   *  plan bridge reads the live plan via the shared port. Absent in non-ACP runtimes. */
   executionPlanHolder?: import("./execution-plan-holder.js").ExecutionPlanHolder;
   // Adapters
   authStorage: AuthStorage;

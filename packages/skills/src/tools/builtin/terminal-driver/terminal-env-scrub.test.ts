@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { scrubChildEnv } from "./terminal-env-scrub.js";
+import { scrubChildEnv, JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
 
 describe("scrubChildEnv — interpreter-control blocklist", () => {
   it("strips EVERY interpreter-control var and keeps PATH", () => {
@@ -112,5 +112,110 @@ describe("scrubChildEnv — non-string values are skipped", () => {
     } as NodeJS.ProcessEnv);
     expect(out.KEEP).toBe("yes");
     expect(out).not.toHaveProperty("UNDEF");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JAIL-04: the interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_) — a
+// dynamic-linker preload / package-index redirection that loads attacker code
+// at child startup → RCE. Stripped on BOTH sources (dangerous regardless of
+// origin). RED until INTERPRETER_CONTROL_PREFIXES exists in the scrub.
+// ---------------------------------------------------------------------------
+describe("scrubChildEnv — JAIL-04 interpreter-vector prefix families (LD_/DYLD_/PIP_/UV_)", () => {
+  it("strips EVERY LD_/DYLD_/PIP_/UV_ prefixed key and keeps a benign TERM", () => {
+    const out = scrubChildEnv({
+      LD_PRELOAD: "/tmp/evil.so",
+      LD_LIBRARY_PATH: "/tmp",
+      DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib",
+      DYLD_LIBRARY_PATH: "/tmp",
+      PIP_INDEX_URL: "http://evil/simple",
+      PIP_EXTRA_INDEX_URL: "http://evil/simple",
+      UV_INDEX_URL: "http://evil/simple",
+      UV_EXTRA_INDEX_URL: "http://evil/simple",
+      TERM: "xterm-256color",
+    });
+
+    for (const blocked of [
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH",
+      "PIP_INDEX_URL",
+      "PIP_EXTRA_INDEX_URL",
+      "UV_INDEX_URL",
+      "UV_EXTRA_INDEX_URL",
+    ]) {
+      expect(out, `${blocked} (interpreter vector) must be stripped`).not.toHaveProperty(blocked);
+    }
+    // A benign var still survives — this stays a blocklist.
+    expect(out.TERM).toBe("xterm-256color");
+  });
+
+  it("regression: still strips NODE_OPTIONS and still copies a benign LANG", () => {
+    // The new prefix families must not regress the shipped exact-name blocklist.
+    const out = scrubChildEnv({ NODE_OPTIONS: "--require /tmp/evil.js", LANG: "en_US.UTF-8" });
+    expect(out).not.toHaveProperty("NODE_OPTIONS");
+    expect(out.LANG).toBe("en_US.UTF-8");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JAIL-04 / RESEARCH Open Q3 — the source-distinction correctness point. The
+// COMIS_ fail-closed block applies to an UNTRUSTED workspace .env source ONLY,
+// NEVER to the daemon's own COMIS_CAP_LEASE/COMIS_ORCH_SOCKET injection (which
+// rides the trusted placeholders/inherited path). RED until scrubChildEnv takes
+// an `opts.source` and gates the COMIS_ block on `source === "workspace"`.
+// ---------------------------------------------------------------------------
+describe("scrubChildEnv — JAIL-04 COMIS_ block is source-distinct (Open Q3)", () => {
+  it("default/inherited source PRESERVES the daemon-injected COMIS_CAP_LEASE/COMIS_ORCH_SOCKET", () => {
+    // The daemon's own lease vars ride the trusted inherited/placeholders path —
+    // blocking them would break the cap socket. They MUST survive the default scrub.
+    const out = scrubChildEnv({
+      COMIS_CAP_LEASE: "lease-bearer-abc",
+      COMIS_ORCH_SOCKET: "/run/comis/cap.sock",
+      TERM: "xterm-256color",
+    });
+    expect(out.COMIS_CAP_LEASE).toBe("lease-bearer-abc");
+    expect(out.COMIS_ORCH_SOCKET).toBe("/run/comis/cap.sock");
+    expect(out.TERM).toBe("xterm-256color");
+  });
+
+  it('workspace source FAIL-CLOSED-blocks the whole COMIS_ prefix while keeping a benign FOO', () => {
+    // An attacker-supplied workspace .env must not smuggle a COMIS_ runtime-control
+    // var (or an interpreter vector) into the jailed child.
+    const out = scrubChildEnv(
+      { COMIS_CAP_LEASE: "forged-by-attacker", FOO: "keep", LD_PRELOAD: "/tmp/evil.so" },
+      { source: "workspace" },
+    );
+    expect(out).not.toHaveProperty("COMIS_CAP_LEASE");
+    expect(out).not.toHaveProperty("LD_PRELOAD");
+    expect(out.FOO).toBe("keep");
+  });
+
+  it("default source does NOT block a benign COMIS_-prefixed key (the block is workspace-gated)", () => {
+    // Explicit contrast: only the workspace source applies the COMIS_ block.
+    const out = scrubChildEnv({ COMIS_DATA_DIR: "/var/lib/comis" });
+    expect(out.COMIS_DATA_DIR).toBe("/var/lib/comis");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JAIL-04: the bwrap `--unsetenv` half takes a NAME (not a glob), so the prefix
+// families stay in the scrub-object check ONLY — JAIL_UNSET_ENV_VARS lists the
+// exact-named interpreter vars + the exact CLAUDECODE sentinel, never a prefix.
+// ---------------------------------------------------------------------------
+describe("scrubChildEnv — JAIL_UNSET_ENV_VARS stays exact-name-only (bwrap --unsetenv)", () => {
+  it("lists the exact-named interpreter vars (NODE_OPTIONS etc.) but NOT the prefix families", () => {
+    // Exact names bwrap can --unsetenv are present.
+    expect(JAIL_UNSET_ENV_VARS).toContain("NODE_OPTIONS");
+    expect(JAIL_UNSET_ENV_VARS).toContain("BASH_ENV");
+    expect(JAIL_UNSET_ENV_VARS).toContain("CLAUDECODE");
+    // The prefix-family STEMS are NOT names — bwrap --unsetenv can't glob them.
+    for (const prefixStem of ["LD_", "DYLD_", "PIP_", "UV_", "COMIS_"]) {
+      expect(JAIL_UNSET_ENV_VARS).not.toContain(prefixStem);
+    }
+    // And no concrete prefix-family instance leaked in either (it would be a NAME,
+    // but the family is open-ended — only the exact-name blocklist belongs here).
+    expect(JAIL_UNSET_ENV_VARS).not.toContain("LD_PRELOAD");
   });
 });

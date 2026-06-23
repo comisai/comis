@@ -95,6 +95,14 @@ export interface SingleAgentDeps {
    *  into each per-agent createPiExecutor so every bridge holds the SAME
    *  reference (Pitfall 4). Absent ⇒ the bridge's spend path is a no-op. */
   spendAccumulator?: import("@comis/agent").SpendAccumulator;
+  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + the
+   *  run's rootRunId resolver. ONE daemon-wide holder created early (before
+   *  setupAgents) and populated by the cap layer after construction (the
+   *  onCronWake late-bind pattern); threaded into each per-agent createPiExecutor
+   *  so every bridge sees the SAME holder. Absent ⇒ the bridge's per-root reserve
+   *  is a no-op (byte-identical). */
+  boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables

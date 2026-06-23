@@ -3,8 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
 import { registerToolMetadata } from "@comis/core";
 import type { ModelOperationType, ErrorKind } from "@comis/core";
-import { BudgetError } from "../budget/budget-guard.js";
-import { createSpendAccumulator } from "../budget/spend-accumulator.js";
+import { BudgetError, checkSpendCeiling } from "../budget/budget-guard.js";
+import type { SpendGateOutcome } from "../budget/budget-guard.js";
+import { createSpendAccumulator, SpendError } from "../budget/spend-accumulator.js";
 import type { SpendAccumulator, SpendScope } from "../budget/spend-accumulator.js";
 import type { SpendConfig } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -6270,5 +6271,164 @@ describe("createPiEventBridge — spend kill-switch wiring", () => {
     // The reservation was reconciled (released) — the bridge does NOT permanently
     // add cost.total here; the live subscriber is the sole actual-adder.
     expect(spyAcc.reconcile).toHaveBeenCalledWith(reserveResult.value, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-root budget sibling at the LLM-spend path (Phase 213-08, BUDGET-01/02).
+//
+// A self-spawning reasoning loop's LIVE LLM token/$ spend flows through THIS
+// per-LLM-call turn_end path (the Phase-177 checkSpendCeiling reserve). The
+// per-root reserve is a SIBLING to that ceiling, keyed on the run's rootRunId,
+// so the token + wall-clock limbs fire on a reasoning loop — INCLUDING a
+// zero-price native-provider model where the $-cap can never bite (the locked
+// criterion-#2 case). ADDITIVE: when boundedAutonomyBudget is absent the bridge
+// path is byte-identical (the spendAccumulator precedent).
+// ---------------------------------------------------------------------------
+describe("createPiEventBridge — per-root budget sibling (BUDGET-01/02)", () => {
+  let deps: PiEventBridgeDeps;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+  });
+
+  /**
+   * A faithful per-root meter mirroring the daemon's `createPerRootBudget`
+   * (Plan 04): wall-clock + token limbs FIRST (they enforce REGARDLESS of
+   * pricing — the limbs that bite a zero-price loop), then the $-limb via the
+   * SHIPPED 3-state {@link checkSpendCeiling}. `@comis/agent` cannot import
+   * `@comis/daemon`, so the meter is rebuilt here from the agent's own budget
+   * primitives — the SAME limb semantics the production meter composes. An
+   * injected FakeClock drives the wall-clock limb (no Date.now).
+   */
+  function makePerRootMeter(opts: {
+    clock: ReturnType<typeof createFakeClock>;
+    tokens: number;
+    wallClockMs: number;
+    aggregateUsd?: number;
+  }): { reserveBudget: (rootRunId: string, provider: string, model: string, estUsd: number, estTokens: number) => SpendGateOutcome; registerRoot: (rootRunId: string) => void } {
+    const rootStartMs = new Map<string, number>();
+    const tokenTotals = new Map<string, number>();
+    const usdAcc = createSpendAccumulator({
+      clock: opts.clock,
+      ceilings: { perAgentUsd: opts.aggregateUsd ?? null, perTenantUsd: null, daemonGlobalUsd: null, warnAtFraction: 1 },
+    });
+    return {
+      registerRoot(rootRunId): void {
+        if (!rootStartMs.has(rootRunId)) rootStartMs.set(rootRunId, opts.clock.now());
+      },
+      reserveBudget(rootRunId, provider, model, estUsd, estTokens): SpendGateOutcome {
+        const startMs = rootStartMs.get(rootRunId) ?? opts.clock.now();
+        if (opts.clock.now() - startMs > opts.wallClockMs) {
+          return { kind: "exceeded", error: new SpendError("agent", opts.clock.now() - startMs, opts.wallClockMs, 0) };
+        }
+        const prior = tokenTotals.get(rootRunId) ?? 0;
+        if (prior + estTokens > opts.tokens) {
+          return { kind: "exceeded", error: new SpendError("agent", prior, opts.tokens, estTokens) };
+        }
+        tokenTotals.set(rootRunId, prior + estTokens);
+        const r = checkSpendCeiling(
+          usdAcc,
+          { tenantId: "_root", agentId: rootRunId },
+          provider,
+          model,
+          estUsd,
+          { onUnknownPricing: "abort", pricingFallback: "snapshot" },
+          estTokens > 0,
+        );
+        return r.ok ? r.value : { kind: "exceeded", error: r.error };
+      },
+    };
+  }
+
+  it("a ZERO-PRICE native-provider self-spawning loop trips the TOKEN limb via the bridge and aborts the turn", () => {
+    // provider:anthropic (native) + a model with NO catalog entry → resolvePricingState "unknown":
+    // the $-cap can NEVER bite (unpriceable), so ONLY the token/wall-clock limbs bound the loop.
+    const clock = createFakeClock(1_000_000);
+    const meter = makePerRootMeter({ clock, tokens: 250, wallClockMs: 600_000 });
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "qwen2.5-coder-32b-instruct", // no native-anthropic catalog rate → "unknown"
+      getCurrentModel: () => "qwen2.5-coder-32b-instruct",
+      boundedAutonomyBudget: { current: meter },
+      resolveRootRunId: () => "root-loop-1",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    // Each turn_end burns 150 tokens (the makeTurnEndEvent default totalTokens).
+    // Turn 1: 150 ≤ 250 → ok. Turn 2: 150+150=300 > 250 → token limb trips.
+    listener(makeTurnEndEvent({ totalTokens: 150 }) as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    listener(makeTurnEndEvent({ totalTokens: 150 }) as any);
+
+    expect(getResult().finishReason).toBe("spend_exceeded");
+    expect(deps.onAbort).toHaveBeenCalled();
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({ reason: "spend_exceeded", agentId: "test-agent" }));
+  });
+
+  it("a ZERO-PRICE native-provider loop trips the WALL-CLOCK limb via the bridge once the FakeClock advances past the deadline", () => {
+    const clock = createFakeClock(1_000_000);
+    // Generous token cap; tight wall-clock so the deadline is the limb that bites.
+    const meter = makePerRootMeter({ clock, tokens: 1_000_000, wallClockMs: 5_000 });
+    meter.registerRoot("root-wall-1"); // anchor the deadline at clock.now()
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "qwen2.5-coder-32b-instruct",
+      getCurrentModel: () => "qwen2.5-coder-32b-instruct",
+      boundedAutonomyBudget: { current: meter },
+      resolveRootRunId: () => "root-wall-1",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent({ totalTokens: 10 }) as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    // Advance PAST the 5s wall-clock deadline; the next per-LLM-call reserve trips.
+    clock.advance(6_000);
+    listener(makeTurnEndEvent({ totalTokens: 10 }) as any);
+
+    expect(getResult().finishReason).toBe("spend_exceeded");
+    expect(deps.onAbort).toHaveBeenCalled();
+  });
+
+  it("calls the per-root reserve with the REAL per-call provider/model/tokens (the same locals checkSpendCeiling consumes)", () => {
+    const clock = createFakeClock(1_000_000);
+    const spy = vi.fn().mockReturnValue({ kind: "ok" as const, reservation: { scopeKey: "_root root-args", tenantKey: "_root", reservedUsd: 0, warn: false }, warn: null });
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      getCurrentModel: () => "claude-opus-4-1", // a manual /model switch — the reserve must read the LIVE model
+      spendAccumulator: createSpendAccumulator({ clock, ceilings: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: 5.0, warnAtFraction: 0.8 } }),
+      spendScope: { tenantId: "t1", agentId: "test-agent" } as SpendScope,
+      spendConfig: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: 5.0, perTurnMax: 0.5, action: "abort", warnAtFraction: 0.8, pricingFallback: "snapshot", onUnknownPricing: "warn" } as SpendConfig,
+      boundedAutonomyBudget: { current: { reserveBudget: spy, registerRoot: vi.fn() } },
+      resolveRootRunId: () => "root-args",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener } = createPiEventBridge(deps);
+
+    listener(makeTurnEndEvent({ totalTokens: 222 }) as any);
+
+    // rootRunId, the LIVE provider, the LIVE getCurrentModel(), the perTurnMax est $, the real totalTokens.
+    expect(spy).toHaveBeenCalledWith("root-args", "anthropic", "claude-opus-4-1", 0.5, 222);
+  });
+
+  it("ADDITIVE: with boundedAutonomyBudget ABSENT the bridge path is byte-identical (no per-root reserve, no abort on a normal priced turn)", () => {
+    deps = createMockDeps(); // no boundedAutonomyBudget / resolveRootRunId
+    const { listener, getResult } = createPiEventBridge(deps);
+    listener(makeTurnEndEvent() as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    // No spend/abort events at all (the whole per-root + spend blocks are skipped).
+    expect(emit.mock.calls.filter((c) => c[0] === "execution:aborted")).toHaveLength(0);
+  });
+
+  it("a present holder whose `current` is undefined (cap layer not yet populated) is a no-op (byte-identical)", () => {
+    deps = createMockDeps({
+      boundedAutonomyBudget: { current: undefined },
+      resolveRootRunId: () => "root-x",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener, getResult } = createPiEventBridge(deps);
+    listener(makeTurnEndEvent() as any);
+    expect(getResult().finishReason).not.toBe("spend_exceeded");
   });
 });

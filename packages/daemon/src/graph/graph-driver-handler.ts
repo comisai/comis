@@ -611,6 +611,8 @@ export function executeDriverAction(
           callerSessionKey: gs.callerSessionKey,
           callerAgentId: gs.callerAgentId,
           callerType: "graph",
+          // Phase 213 CR-01: share the graph run's tree root (killByRootRun reach).
+          ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
           graphSharedDir: gs.sharedDir,
           graphTraceId: gs.graphTraceId,
           graphId: gs.graphId,
@@ -665,6 +667,8 @@ export function executeDriverAction(
             callerSessionKey: gs.callerSessionKey,
             callerAgentId: gs.callerAgentId,
             callerType: "graph",
+            // Phase 213 CR-01: share the graph run's tree root (killByRootRun reach).
+            ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
             graphSharedDir: gs.sharedDir,
             graphTraceId: gs.graphTraceId,
             graphId: gs.graphId,

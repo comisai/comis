@@ -1290,6 +1290,76 @@
       "rpc"
     ]
   },
+  "capabilities.introspect": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "caps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "tokensRemaining": {
+              "type": "number"
+            },
+            "wallClockMsRemaining": {
+              "type": "number"
+            },
+            "usdRemaining": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tokensRemaining",
+            "wallClockMsRemaining",
+            "usdRemaining"
+          ],
+          "additionalProperties": false
+        },
+        "outwardQuota": {
+          "type": "object",
+          "properties": {
+            "perHourRemaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "perHourRemaining"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "agentId",
+        "caps"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "channels.capabilities": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4013,6 +4083,39 @@
       "rpc"
     ]
   },
+  "lease.revoke": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "leaseId": {
+          "type": "string"
+        },
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "link.process": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6530,7 +6633,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.reply": {
@@ -6613,7 +6716,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "message.send": {
@@ -6692,7 +6795,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "models.list": {
@@ -7768,6 +7871,56 @@
               "capSource",
               "tokenBudget",
               "tokensUsed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spawnTree": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "leaseId": {
+                "type": "string"
+              },
+              "parentLeaseId": {
+                "type": "string"
+              },
+              "rootRunId": {
+                "type": "string"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "caps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "toolsInvoked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "denials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "budgetTokensUsed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "leaseId",
+              "rootRunId",
+              "agentId",
+              "caps",
+              "toolsInvoked",
+              "denials"
             ],
             "additionalProperties": false
           }
@@ -9412,6 +9565,39 @@
       "admin"
     ]
   },
+  "run.kill": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "killed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "killed"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "scheduler.wake": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -9685,7 +9871,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.delete": {
@@ -10034,7 +10220,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset": {
@@ -10074,7 +10260,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "session.reset_conversation": {
@@ -10474,7 +10660,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.delete": {
@@ -10517,7 +10703,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.import": {
@@ -10575,7 +10761,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.list": {
@@ -10686,7 +10872,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "skills.upload": {
@@ -10756,7 +10942,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "slack.action": {

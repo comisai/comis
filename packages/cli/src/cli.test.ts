@@ -82,6 +82,9 @@ describe("CLI entry point", () => {
       "trace",
       // IncidentReport post-mortem surface (obs.explain).
       "explain",
+      // Live resolved-caps + remaining-budget read (capabilities.introspect) —
+      // the `comis whoami` surface (215, INTRO-01/02; live-only, no --offline).
+      "whoami",
       // Cross-session FleetHealthReport triage (obs.fleet.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
       "fleet",
@@ -95,8 +98,8 @@ describe("CLI entry point", () => {
       "cost",
     ] as const;
 
-    it("registers exactly 26 commands", () => {
-      expect(program.commands).toHaveLength(26);
+    it("registers exactly 27 commands", () => {
+      expect(program.commands).toHaveLength(27);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

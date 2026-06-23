@@ -24,7 +24,20 @@
 
 import { describe, it, expect } from "vitest";
 import type { IncidentReport, IncidentFailure } from "@comis/core";
+import { IncidentReportSchema } from "@comis/core";
 import { boundIncidentReport } from "./obs-explain-bound.js";
+
+/** Build `count` distinct-lease spawn-tree nodes (one per leaseId). */
+function manySpawnNodes(count: number): NonNullable<IncidentReport["spawnTree"]> {
+  return Array.from({ length: count }, (_, i) => ({
+    leaseId: `lease-${String(i).padStart(3, "0")}`,
+    rootRunId: "root-session-abc",
+    agentId: "test-agent",
+    caps: ["orch:read"],
+    toolsInvoked: ["read"],
+    denials: [],
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // Local factories — build a VALID §6.3 IncidentReport (no real session data).
@@ -422,5 +435,37 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
         ["channel.id", "channel.type", "agentId", "traceId", "outcome.endReason"].includes(t.field),
       ),
     ).toBe(false);
+  });
+
+  // CR-01: spawnTree was added (215-03) without a report-level cap OR a backstop
+  // exemption. >64 distinct leases → limitPayloadValue replaces the WHOLE array
+  // with a {__bounded__} sentinel → IncidentReportSchema.parse throws client-side
+  // (comis explain, and --offline) on EXACTLY the unattended run the tree exists
+  // to diagnose. These pin the cap + exemption.
+  it("caps spawnTree at summary depth as a valid SpawnTreeNode[] — never a {__bounded__} sentinel — + records a truncations[] entry (CR-01)", () => {
+    const report = makeReport({ spawnTree: manySpawnNodes(80) });
+    const bounded = boundIncidentReport(report, "summary");
+
+    // (a) Still a real array of typed nodes — NOT the structural sentinel object.
+    expect(Array.isArray(bounded.spawnTree)).toBe(true);
+    expect(bounded.spawnTree).not.toHaveProperty("__bounded__");
+    expect(bounded.spawnTree!.every((n) => typeof n.leaseId === "string")).toBe(true);
+
+    // (b) The whole report still satisfies the typed schema (the client-side parse).
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+
+    // (c) Capped first-seen + an honest truncations[] ledger entry for the drop.
+    expect(bounded.spawnTree!.length).toBeLessThanOrEqual(40);
+    expect(bounded.truncations.some((t) => t.field === "spawnTree")).toBe(true);
+  });
+
+  it("relaxes the spawnTree cap at full depth but stays a schema-valid array (CR-01)", () => {
+    const report = makeReport({ spawnTree: manySpawnNodes(80) });
+    const bounded = boundIncidentReport(report, "full");
+    expect(Array.isArray(bounded.spawnTree)).toBe(true);
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+    // 80 < FULL_MAX_SPAWN_NODES (200) → full retains all, no spawnTree truncation.
+    expect(bounded.spawnTree!.length).toBe(80);
+    expect(bounded.truncations.some((t) => t.field === "spawnTree")).toBe(false);
   });
 });

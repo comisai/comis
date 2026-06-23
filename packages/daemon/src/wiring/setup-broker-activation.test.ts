@@ -141,6 +141,11 @@ vi.mock("@comis/core", () => ({
   leaveConfigMutationFence: vi.fn(),
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
+  // CAP-03: makeCreateAgentRpcCall (via assembleToolsForAgent) resolves the
+  // agent's held capability set with resolveAutonomy(autonomy).capabilities.
+  // This wiring test never exercises the cap set, so a zero-cap resolved shape
+  // is enough to let the broker activation seam under test load and run.
+  resolveAutonomy: vi.fn(() => ({ capabilities: [] })),
   sanitizeLogString: mockSanitizeLogString,
   systemNowMs: () => 1_700_000_000_000,
   safePath: (...segments: string[]) => segments.join("/"),

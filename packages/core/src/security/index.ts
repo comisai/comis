@@ -3,6 +3,10 @@
 
 export { safePath, PathTraversalError } from "./safe-path.js";
 
+// JAIL-03 bind-mount validator (Phase 211) — pure denylist backstop reusing the
+// safe-path symlink-resolve-through-ancestors primitive.
+export { validateBindMount } from "./bind-mount-validator.js";
+
 // Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "./master-key.js";
 export type { MasterKeyWriteResult } from "./master-key.js";
@@ -34,6 +38,34 @@ export type { ActionClassification } from "./action-classifier.js";
 // Audit events
 export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "./audit.js";
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "./audit.js";
+
+// Agent orchestration capabilities (Phase 210)
+export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError, attenuateCaps } from "./capability.js";
+export type { AgentCapability } from "./capability.js";
+
+// HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
+export { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
+export type { HandlerCapabilityClassification, GatedMethodName } from "./handler-capability-map.js";
+
+// TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP — the single source for the tool.invoke
+// surface (gate + lease audience + SDK codegen) (Phase 212, DISPATCH/READ)
+export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "./tool-capability-map.js";
+export type { ToolName, ToolRoute } from "./tool-capability-map.js";
+
+// ResultRef — minimal structured result-handle + its pure threshold/GC math (Phase 212, REF)
+export {
+  RESULT_REF_THRESHOLDS,
+  DEFAULT_INLINE_THRESHOLD_BYTES,
+  PER_FILE_CAP_BYTES,
+  PER_RUN_AGGREGATE_CAP_BYTES,
+  getResultRefThreshold,
+  shouldMaterialize,
+  isExpired,
+  selectEvictions,
+  checkPerFileCap,
+  computeExpiresAt,
+} from "./result-ref.js";
+export type { ResultRef } from "./result-ref.js";
 
 // Log sanitizer
 export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";

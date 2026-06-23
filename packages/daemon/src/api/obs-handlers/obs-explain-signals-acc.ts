@@ -22,12 +22,21 @@ import type {
 } from "./obs-explain-signals-fields.js";
 import type { LearningFoldState } from "./obs-explain-signal-folds.js";
 
+/** TREE (215-03): the per-node working shape the `capability.audited` fold
+ *  accumulates into (one per leaseId). Materialized into
+ *  `IncidentSignals["spawnTree"]` at the end of `toIncidentSignals`. */
+export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
+
 export interface Acc {
   toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];
   breakerEvents: IncidentSignals["breakerEvents"];
   offloads: IncidentSignals["offloads"];
   nodeBudgetBreaches: IncidentSignals["nodeBudgetBreaches"];
+  /** TREE (215-03): the `capability.audited` fold groups nodes by leaseId
+   *  (in-process records key on the synthetic rootRunId). Materialized into
+   *  `spawnTree` at the end; absent → the section is omitted. */
+  spawnNodesByLease: Map<string, SpawnNode>;
   breakerOpenedTool?: string;
   hasDoNotRetrySignal: boolean;
   /** Tools for which a log-shape breaker "opened" event was already synthesized

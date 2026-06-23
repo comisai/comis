@@ -74,6 +74,7 @@ import {
   VerificationConfigSchema,
   HonestyConfigSchema,
 } from "./schema-agent-prompt.js";
+import { AutonomyConfigSchema } from "./schema-agent-autonomy.js";
 
 export const AgentConfigSchema = z.strictObject({
     /** Display name for the agent */
@@ -357,6 +358,8 @@ export const PerAgentSchedulerConfigSchema = z.strictObject({
 export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** Per-agent skills configuration (toolPolicy, builtinTools, discoveryPaths) */
   skills: SkillsConfigSchema.optional(),
+  /** Per-agent autonomy posture (v8 §3.8 named profiles). NOT .optional(): §6.4 — a missing block resolves to the `standard` default (zero-config + MIG-01). Resolve via `resolveAutonomy(...)`. */
+  autonomy: AutonomyConfigSchema.default(() => AutonomyConfigSchema.parse({})),
   /** Per-agent scheduler configuration (cron settings) */
   scheduler: PerAgentSchedulerConfigSchema.optional(),
   /** Session configuration (reset policy + DM scope + pruning + compaction) */

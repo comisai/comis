@@ -17,13 +17,17 @@
  * @module
  */
 
-/** The 15 dispatcher-injected internal-field names (sorted alphabetically). */
+/** The 16 dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
   "_agentId",
   "_callerChannelId",
   "_callerChannelType",
   "_callerMetadata",
   "_callerSessionKey",
+  // The trusted in-process caller's resolved orchestration capabilities
+  // (Phase 210). Injected by createAgentRpcCall / the 211 lease endpoint;
+  // stripped from external WS/REST callers so caps cannot be forged.
+  "_capabilities",
   "_channelType",
   "_chatType",
   "_context",

@@ -104,6 +104,30 @@ export function registerExplainCommand(program: Command): void {
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
           );
           info(`Summary:    ${report.summary}`);
+          // TREE-01/02 (215): the root→children spawn tree (present only when the
+          // session emitted per-cap audit records). Each node names its leaseId,
+          // the parent edge (or "(root)"), the attenuated caps it held, the tool
+          // NAMES it invoked, and any CapabilityDeniedError cap (DENIED=[...]) —
+          // "one call to root-cause an unattended run". --format json emits the
+          // whole report (spawnTree included) above.
+          if (report.spawnTree && report.spawnTree.length > 0) {
+            info(`Spawn tree:`);
+            // WR-03: bound each per-node list in the table view so a hot root
+            // (many distinct tools/caps) cannot print one unbounded line. The
+            // full lists always ride `--format json` (json(report) above).
+            const MAX_LIST = 12;
+            const cappedList = (xs: readonly string[]): string => {
+              const head = xs.slice(0, MAX_LIST).join(",");
+              return xs.length > MAX_LIST ? `${head},+${xs.length - MAX_LIST} more` : head;
+            };
+            for (const n of report.spawnTree) {
+              const parent = n.parentLeaseId ? ` ←${n.parentLeaseId}` : " (root)";
+              info(
+                `  ${n.leaseId}${parent}  caps=[${cappedList(n.caps)}] tools=[${cappedList(n.toolsInvoked)}]` +
+                  (n.denials.length > 0 ? ` DENIED=[${cappedList(n.denials)}]` : ""),
+              );
+            }
+          }
           if (report.likelyRootCause) {
             info(
               `Root cause [${report.likelyRootCause.code}]: ${report.likelyRootCause.detail}`,

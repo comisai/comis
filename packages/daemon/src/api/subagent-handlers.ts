@@ -190,11 +190,17 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       }
 
       // Respawn with new task — reads internal fields directly off rawParams.
+      // Phase 213 CR-01: the respawn must stay in the KILLED run's spawn tree, so
+      // inherit its rootRunId (+ the authorizing parentLeaseId). Without this the
+      // steer-respawn minted a fresh root → a later run.kill {rootRunId} of the
+      // original tree would miss the steered continuation (a survivor — REVOKE-03).
       const newRunId = deps.subAgentRunner.spawn({
         task: message,
         agentId: run.agentId,
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
         callerAgentId: rawParams._agentId as string | undefined,
+        ...(run.rootRunId !== undefined ? { rootRunId: run.rootRunId } : {}),
+        ...(run.parentLeaseId !== undefined ? { parentLeaseId: run.parentLeaseId } : {}),
       });
 
       deps.logger?.info(

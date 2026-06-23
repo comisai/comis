@@ -384,6 +384,12 @@ export function assembleIncidentReport(
     // session's subagent.budget_exceeded records — capSource names WHICH knob bound
     // each node. Absent when the session had no breach (additive; schemaVersion 1).
     ...((signals.nodeBudgetBreaches ?? []).length > 0 ? { nodeBudgetBreaches: signals.nodeBudgetBreaches } : {}),
+    // TREE-01/02 (215): the root→children spawn tree reconstructed from the
+    // session's capability.audited records (one node per leaseId; each carries its
+    // attenuated caps, tool NAMES, and any CapabilityDeniedError cap in denials).
+    // Absent when the session emitted no per-cap audit records (additive;
+    // schemaVersion 1) — the offline path assembles it for free (same assembler).
+    ...((signals.spawnTree ?? []).length > 0 ? { spawnTree: signals.spawnTree } : {}),
     // W3: the terminal per-call budget equation (absent for pre-W2 sessions).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).

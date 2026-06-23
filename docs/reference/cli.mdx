@@ -1493,6 +1493,8 @@ The positional argument is routed automatically: a **session key** (`tenant:user
 
 When the session included a transcription or synthesis, the report carries a `voice` block reconstructing that turn: the `provider`, whether it ran `keyless`, the `model`, `durationMs`, the `outcome`, the resolved selection `source` rung (with the `onSkip` reasons when `auto` skipped a higher rung), the `costUsd` (`0` for a keyless turn; omitted for a keyed turn — the audio ports return no per-call cost), and the failure `errorKind`. Content-free — ids, labels, and numbers only, never the audio or transcript text. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
+When the session made capability-gated calls (an autonomous agent, or one that spawned children via `orchestrate`), the report carries a `spawnTree` block reconstructing the run's authorization topology — the **one call to root-cause an unattended run**. Each node is a `leaseId` (the in-process root groups under its synthetic `rootRunId`) and surfaces its `parentLeaseId` (the child→root edge; absent on the root), the `agentId`, the attenuated `caps` it held, the tool NAMES it invoked (`toolsInvoked`), and any capability it was DENIED (`denials` — each a `CapabilityDeniedError` cap). In the table view a node renders as `<leaseId> ←<parent>  caps=[…] tools=[…] DENIED=[…]`; `--format json` emits the full `spawnTree` array. The tree is reconstructed offline from the session's `capability.audited` trajectory records, so `--offline` shows it too. Content-free — ids, caps, tool NAMES, and decision-derived denials only, never a tool argument, a message body, or a secret. Per-node remaining **budget** is *not* on the offline tree (it is live daemon state) — use `comis whoami` for an in-flight run's remaining budget; the spawn tree is the post-mortem topology.
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
@@ -1506,7 +1508,7 @@ comis explain "default:user123:telegram:1717000000"
 # Explain by trace ID, with the uncapped (full) report
 comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 
-# Machine-readable output
+# Machine-readable output (includes the spawnTree array for an autonomous run)
 comis explain "default:user123:telegram:1717000000" --format json
 
 # No daemon required — assemble from the local files
@@ -1550,6 +1552,34 @@ comis fleet --since 24 --offline
 ```
 
 Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`) — unless `--offline`. Unreachable-gateway calls fall back to the offline assembly automatically; a token rejection surfaces the auth error (with the `--offline` tip) instead of masking the misconfiguration.
+
+---
+
+### `comis whoami`
+
+Show the run's **resolved orchestration capabilities** plus the **remaining per-root budget and outward quota** — "what can I do, and how much budget is left". Backed by `CapabilitiesIntrospectContract` (`capabilities.introspect`, `rpc` scope — read-only, no capability required). The read is **self-scoped**: the daemon resolves the caller from the connection, so an operator token sees the default agent's posture and an in-process agent sees its OWN (never another agent's — the request carries no `agentId`).
+
+The `Caps:` line is the resolved [autonomy-profile](/agents/autonomy) capabilities (`orch:*` strings). When the run has an in-flight root (an active agent turn / spawn tree) the `Budget:` line shows the remaining `tokensRemaining` · `wallClockMsRemaining` (· `$usdRemaining` when the model is priced, `$ uncountable` for a zero-price subscription/Codex model — the token and wall-clock limbs are authoritative regardless), and the `Outward:` line the remaining per-hour outward-send allowance. With no live root (an idle agent, pre-spawn) the budget/quota lines are **omitted** rather than shown as zero.
+
+**`comis whoami` is LIVE-only.** Unlike [`comis explain`](#comis-explain) / [`comis fleet`](#comis-fleet) there is **no `--offline` mode**: the remaining budget/quota lives only in the running daemon's in-memory autonomy state, never on disk, so there is nothing to reconstruct offline. When the daemon is unreachable (or rejects the token) the command **fails clearly** with a non-zero exit — it never fabricates an empty/zero snapshot (a false posture). Use [`comis explain`](#comis-explain)'s `spawnTree` for the post-mortem authorization topology of a *finished* run; `whoami` is for an *in-flight* run's remaining budget.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--caps` | `boolean` | `false` | Show capabilities only (omit the budget/quota lines) |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# Show caps + remaining budget/quota (live)
+comis whoami
+
+# Capabilities only
+comis whoami --caps
+
+# Machine-readable output
+comis whoami --format json
+```
+
+Requires a gateway token (the `rpc` scope — any valid token works; no admin scope needed, unlike `comis explain` / `comis fleet`). There is no offline fallback — the daemon must be running.
 
 ---
 

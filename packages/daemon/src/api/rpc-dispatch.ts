@@ -19,7 +19,23 @@ import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
 import { PreconditionError, ValidationError } from "./errors.js";
-import { RequiredToolsUnreachableError } from "@comis/core";
+import {
+  RequiredToolsUnreachableError,
+  API_CONTRACTS_ORDERED,
+  HANDLER_CAPABILITY_MAP,
+  CapabilityDeniedError,
+  parseFormattedSessionKey,
+} from "@comis/core";
+// ORIGIN-01 deny-by-origin chokepoint: the in-process agent loop dispatches
+// straight through this closure (bypassing the gateway scope-router's
+// checkScope), so the positive control-plane boundary MUST live here in the
+// dispatch closure — the convergence point of the in-process and gateway legs.
+import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
+// AUDIT-01 (Phase 215): the per-cap audit emitter — emits audit:event (the
+// durable AUDIT-02 trail) + capability:audited (the spawn-tree producer) for an
+// allowed AND a denied gated call at THIS chokepoint. The in-process leg has no
+// lease (G1): rootRunId via resolveRootRunId, leaseId honestly absent.
+import { emitCapabilityAudit } from "./shared/emit-capability-audit.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
@@ -42,6 +58,17 @@ import { createSecretsHandlers } from "./secrets-handlers.js";
 import { createAuthHandlers } from "./auth-handlers.js";
 import { createBrowserHandlers } from "./browser-handlers.js";
 import { createSubagentHandlers } from "./subagent-handlers.js";
+// Phase 213-06 (REVOKE-01/03): the operator-facing live-control RPC handlers.
+// lease.revoke / run.kill are scopes:["admin"] (Plan 03) → ADMIN_METHODS →
+// deny-by-origin is automatic via the chokepoint below (no manual _agentId check
+// in the handler). They drive the LeaseManager revoke fan-outs + the runner's
+// killByRootRun.
+import { createAutonomyHandlers } from "./autonomy-handlers.js";
+// INTRO-01/02 (Phase 215-04): capabilities.introspect — the read-only,
+// agent-reachable `comis whoami` surface. scopes:["rpc"] + "ungated" (NO
+// requireCapability, NOT in ADMIN_METHODS), self-scoped to the caller's
+// _agentId. Gated on deps.boundedAutonomy being wired (the snapshot source).
+import { createCapabilitiesHandlers } from "./capabilities-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
@@ -139,6 +166,23 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
 }
 
 // ---------------------------------------------------------------------------
+// ORIGIN-01 deny-by-origin: the authoritative admin-method set.
+// ---------------------------------------------------------------------------
+//
+// Derived ONCE from the contract registry (`scopes.includes("admin")`) — the
+// single source of truth for the ~146 admin-scoped control-plane methods. This
+// is drift-proof: a NEW admin contract is automatically covered by the
+// chokepoint below; there is NO hand-maintained method list to fall out of
+// sync. The chokepoint (in the dispatch closure) calls `assertNotAgentOrigin`
+// for exactly the methods in this set, so an agent-origin (`_agentId`-bearing)
+// call can never reach an admin handler, INDEPENDENT of its ALS `_trustLevel`
+// (v8 §3.1 / §22.3 floor item 1). Non-admin methods are NOT in this set, so an
+// agent's own `_agentId` rides them untouched for self-scoping (Pitfall 2).
+const ADMIN_METHODS: ReadonlySet<string> = new Set(
+  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+);
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -202,6 +246,36 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     }),
     ...createBrowserHandlers(deps),
     ...createSubagentHandlers(deps),
+    // Phase 213-06: lease.revoke + run.kill. Gated on deps.leaseManager being
+    // wired (Plan 07 constructs it at the composition root); subAgentRunner +
+    // logger ride the OrchestratorApiDeps slice. Deny-by-origin fires in the
+    // dispatch chokepoint below for these admin-scoped methods (no manual check).
+    // When leaseManager is absent (a partial boot) the methods are simply not
+    // registered — the dispatcher's unknown-method path handles a stray call.
+    ...(deps.leaseManager
+      ? createAutonomyHandlers({
+          ...deps,
+          leaseManager: deps.leaseManager,
+        })
+      : {}),
+    // INTRO-01/02 (Phase 215-04): capabilities.introspect (the `comis whoami`
+    // read). Gated on deps.boundedAutonomy (the remaining-budget snapshot
+    // source, Plan 02). The handler resolves the CALLER's per-agent
+    // AutonomyConfig itself from deps.agents (caps are per-caller; the handler is
+    // built once) — do NOT pre-resolve a single config at wiring time. It is
+    // scopes:["rpc"] + "ungated" (no requireCapability, NOT in ADMIN_METHODS) so
+    // the agent reaches it; the spread closes the contract↔handler parity gate
+    // via [CapabilitiesIntrospectContract.method] in the SAME wave the handler +
+    // codegen land (the 188 BLOCKER-1 same-wave rule).
+    ...(deps.boundedAutonomy
+      ? createCapabilitiesHandlers({
+          boundedAutonomy: deps.boundedAutonomy,
+          resolveRootRunId: deps.resolveRootRunId,
+          agents: deps.agents,
+          defaultAgentId: deps.defaultAgentId,
+          logger: deps.logger,
+        })
+      : {}),
     ...((deps.graphCoordinator || deps.namedGraphStore) ? createGraphHandlers({
       // Handler factory consumes OrchestratorApiDeps (narrowed to require
       // graphCoordinator). Spread `...deps` so broader slice fields
@@ -475,7 +549,79 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       throw new Error(`Unknown RPC method: ${method}`);
     }
     try {
-      return await handler(params);
+      // ORIGIN-01 deny-by-origin chokepoint. BOTH the in-process agent path
+      // (createAgentRpcCall -> the same injected rpcCall) AND the gateway path
+      // funnel through this one closure to reach every handler — so this is the
+      // single seam at which an agent-origin call to an admin-scoped method is
+      // rejected. `params._agentId` is the trusted agent-origin signal (Plan 03
+      // strips external forgeries, so presence == agent-origin). The guard fires
+      // only for ADMIN_METHODS; a non-admin method's `_agentId` passes untouched.
+      // assertNotAgentOrigin emits the content-free audited denial and throws;
+      // the catch below logs + re-throws it as the JSON-RPC error (so the denial
+      // is both audited AND structured-logged for full observability).
+      if (ADMIN_METHODS.has(method)) {
+        assertNotAgentOrigin(params, deps, method);
+      }
+
+      // AUDIT-01 (Phase 215): the per-CAPABILITY audit. Emit ONLY when the
+      // method maps to a real AgentCapability in HANDLER_CAPABILITY_MAP (skip
+      // "ungated" + "deny-by-origin" — the latter already audits via
+      // assertNotAgentOrigin above, so excluding it here avoids the double-audit
+      // for the admin path). The in-process leg has NO lease (G1): source
+      // rootRunId from the synthetic-root resolver; leaseId is honestly ABSENT.
+      const classification = HANDLER_CAPABILITY_MAP[method as keyof typeof HANDLER_CAPABILITY_MAP];
+      const isCapGated =
+        classification !== undefined &&
+        classification !== "ungated" &&
+        classification !== "deny-by-origin";
+      // The trusted agent-origin signal — present only on the in-process leg.
+      const agentOrigin = typeof params._agentId === "string" ? params._agentId : undefined;
+      // ≈ the call's run id (the formatted caller session key), if present.
+      const callerSessionKey =
+        typeof params._callerSessionKey === "string" ? params._callerSessionKey : undefined;
+      // The synthetic per-session root (setup-capability-endpoint-boot.ts). Omit
+      // the whole record when there is no session key + no resolver — never fabricate.
+      const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+      const rootRunId =
+        parsedKey !== undefined ? deps.resolveRootRunId?.(parsedKey) : undefined;
+      // WR-02: gate the durable AUDIT-02 trail on a real cap + agent origin ONLY —
+      // a gated decision is a security fact regardless of tree-root resolution.
+      // emitCapabilityAudit emits `audit:event` unconditionally and SUPPRESSES the
+      // `capability:audited` tree producer when rootRunId is absent (an unplaceable
+      // node), so a missing _callerSessionKey no longer silently drops the security
+      // row — only the tree node. rootRunId is honestly absent in-process when
+      // unresolvable (never fabricated, G1).
+      const shouldAudit = isCapGated && agentOrigin !== undefined;
+
+      try {
+        const result = await handler(params);
+        if (shouldAudit) {
+          emitCapabilityAudit(deps, {
+            agentId: agentOrigin,
+            capability: classification,
+            method,
+            ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
+            ...(rootRunId !== undefined ? { rootRunId } : {}),
+            // leaseId honestly ABSENT in-process (G1) — never fabricated.
+            decision: "allow",
+          });
+        }
+        return result;
+      } catch (innerErr) {
+        // A capability denial (the handler's requireCapability) is a first-class
+        // audited deny — emit it, then rethrow for the normal classify/log path.
+        if (shouldAudit && innerErr instanceof CapabilityDeniedError) {
+          emitCapabilityAudit(deps, {
+            agentId: agentOrigin,
+            capability: classification,
+            method,
+            ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
+            ...(rootRunId !== undefined ? { rootRunId } : {}),
+            decision: "deny",
+          });
+        }
+        throw innerErr;
+      }
     } catch (err) {
       // Classify by raw object (instanceof) and severity-dispatch
       // warn vs error. `params` joins the payload so subsequent

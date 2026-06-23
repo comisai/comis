@@ -72,6 +72,258 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
+    "default": {
+      "budget": {
+        "aggregateUsd": 2,
+        "tokens": 2000000,
+        "wallClockMs": 1800000
+      },
+      "message": {
+        "channels": [
+          "origin"
+        ],
+        "maxPerHour": 20
+      },
+      "outward": {
+        "originOnly": true,
+        "perTargetGrants": [],
+        "volumeCap": 4000
+      },
+      "profile": "standard",
+      "rate": {
+        "connectionChurnPerMin": 60,
+        "perRootCallsPerSec": 20,
+        "perSocketCallsPerSec": 10
+      },
+      "spawn": {
+        "maxChildrenPerAgent": 5,
+        "maxConcurrentSelfAgents": 4,
+        "maxSpawnDepth": 3
+      }
+    },
+    "immutable": true,
+    "path": "agents.autonomy",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.aggregateBudgetUsd",
+    "type": "number"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.analyze",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.browse",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "aggregateUsd": 2,
+      "tokens": 2000000,
+      "wallClockMs": 1800000
+    },
+    "immutable": true,
+    "path": "agents.autonomy.budget",
+    "type": "object"
+  },
+  {
+    "default": 2,
+    "immutable": true,
+    "path": "agents.autonomy.budget.aggregateUsd",
+    "type": "number"
+  },
+  {
+    "default": 2000000,
+    "immutable": true,
+    "path": "agents.autonomy.budget.tokens",
+    "type": "integer"
+  },
+  {
+    "default": 1800000,
+    "immutable": true,
+    "path": "agents.autonomy.budget.wallClockMs",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.capabilities",
+    "type": "array"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.cli",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.cronSelfMax",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.enabled",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.lease",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.lease.leaseMaxTtlMin",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.maxConcurrentSelfAgents",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.maxSelfSpawnRatePerMin",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "channels": [
+        "origin"
+      ],
+      "maxPerHour": 20
+    },
+    "immutable": true,
+    "path": "agents.autonomy.message",
+    "type": "object"
+  },
+  {
+    "default": [
+      "origin"
+    ],
+    "immutable": true,
+    "path": "agents.autonomy.message.channels",
+    "type": "array"
+  },
+  {
+    "default": 20,
+    "immutable": true,
+    "path": "agents.autonomy.message.maxPerHour",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.mode",
+    "type": "string"
+  },
+  {
+    "default": {
+      "originOnly": true,
+      "perTargetGrants": [],
+      "volumeCap": 4000
+    },
+    "immutable": true,
+    "path": "agents.autonomy.outward",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": true,
+    "path": "agents.autonomy.outward.originOnly",
+    "type": "boolean"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "agents.autonomy.outward.perTargetGrants",
+    "type": "array"
+  },
+  {
+    "default": 4000,
+    "immutable": true,
+    "path": "agents.autonomy.outward.volumeCap",
+    "type": "integer"
+  },
+  {
+    "default": "standard",
+    "immutable": true,
+    "path": "agents.autonomy.profile",
+    "type": "string"
+  },
+  {
+    "default": {
+      "connectionChurnPerMin": 60,
+      "perRootCallsPerSec": 20,
+      "perSocketCallsPerSec": 10
+    },
+    "immutable": true,
+    "path": "agents.autonomy.rate",
+    "type": "object"
+  },
+  {
+    "default": 60,
+    "immutable": true,
+    "path": "agents.autonomy.rate.connectionChurnPerMin",
+    "type": "integer"
+  },
+  {
+    "default": 20,
+    "immutable": true,
+    "path": "agents.autonomy.rate.perRootCallsPerSec",
+    "type": "integer"
+  },
+  {
+    "default": 10,
+    "immutable": true,
+    "path": "agents.autonomy.rate.perSocketCallsPerSec",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.script",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "maxChildrenPerAgent": 5,
+      "maxConcurrentSelfAgents": 4,
+      "maxSpawnDepth": 3
+    },
+    "immutable": true,
+    "path": "agents.autonomy.spawn",
+    "type": "object"
+  },
+  {
+    "default": 5,
+    "immutable": true,
+    "path": "agents.autonomy.spawn.maxChildrenPerAgent",
+    "type": "integer"
+  },
+  {
+    "default": 4,
+    "immutable": true,
+    "path": "agents.autonomy.spawn.maxConcurrentSelfAgents",
+    "type": "integer"
+  },
+  {
+    "default": 3,
+    "immutable": true,
+    "path": "agents.autonomy.spawn.maxSpawnDepth",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.web",
+    "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "agents.autonomy.write",
+    "type": "boolean"
+  },
+  {
     "immutable": true,
     "path": "agents.backgroundTasks",
     "type": "object"
@@ -8392,6 +8644,35 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "advancedCacheOptimization": {
           "enableRecentZonePromotion": true
         },
+        "autonomy": {
+          "budget": {
+            "aggregateUsd": 2,
+            "tokens": 2000000,
+            "wallClockMs": 1800000
+          },
+          "message": {
+            "channels": [
+              "origin"
+            ],
+            "maxPerHour": 20
+          },
+          "outward": {
+            "originOnly": true,
+            "perTargetGrants": [],
+            "volumeCap": 4000
+          },
+          "profile": "standard",
+          "rate": {
+            "connectionChurnPerMin": 60,
+            "perRootCallsPerSec": 20,
+            "perSocketCallsPerSec": 10
+          },
+          "spawn": {
+            "maxChildrenPerAgent": 5,
+            "maxConcurrentSelfAgents": 4,
+            "maxSpawnDepth": 3
+          }
+        },
         "bootstrap": {
           "groupChatFiltering": true,
           "maxChars": 20000,
@@ -15929,6 +16210,302 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
+    "autonomy": {
+      "additionalProperties": false,
+      "default": {
+        "budget": {
+          "aggregateUsd": 2,
+          "tokens": 2000000,
+          "wallClockMs": 1800000
+        },
+        "message": {
+          "channels": [
+            "origin"
+          ],
+          "maxPerHour": 20
+        },
+        "outward": {
+          "originOnly": true,
+          "perTargetGrants": [],
+          "volumeCap": 4000
+        },
+        "profile": "standard",
+        "rate": {
+          "connectionChurnPerMin": 60,
+          "perRootCallsPerSec": 20,
+          "perSocketCallsPerSec": 10
+        },
+        "spawn": {
+          "maxChildrenPerAgent": 5,
+          "maxConcurrentSelfAgents": 4,
+          "maxSpawnDepth": 3
+        }
+      },
+      "properties": {
+        "aggregateBudgetUsd": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "analyze": {
+          "type": "boolean"
+        },
+        "browse": {
+          "type": "boolean"
+        },
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "aggregateUsd": 2,
+            "tokens": 2000000,
+            "wallClockMs": 1800000
+          },
+          "properties": {
+            "aggregateUsd": {
+              "default": 2,
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "tokens": {
+              "default": 2000000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "wallClockMs": {
+              "default": 1800000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "aggregateUsd",
+            "tokens",
+            "wallClockMs"
+          ],
+          "type": "object"
+        },
+        "capabilities": {
+          "items": {
+            "enum": [
+              "orch:spawn",
+              "orch:graph",
+              "orch:cron",
+              "orch:message",
+              "orch:skill",
+              "orch:read",
+              "orch:web",
+              "orch:analyze",
+              "orch:write",
+              "orch:browse"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cli": {
+          "type": "boolean"
+        },
+        "cronSelfMax": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "lease": {
+          "additionalProperties": false,
+          "properties": {
+            "leaseMaxTtlMin": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "maxConcurrentSelfAgents": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "maxSelfSpawnRatePerMin": {
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "message": {
+          "additionalProperties": false,
+          "default": {
+            "channels": [
+              "origin"
+            ],
+            "maxPerHour": 20
+          },
+          "properties": {
+            "channels": {
+              "default": [
+                "origin"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "maxPerHour": {
+              "default": 20,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "channels",
+            "maxPerHour"
+          ],
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "default",
+            "accept-reversible",
+            "unattended",
+            "max"
+          ],
+          "type": "string"
+        },
+        "outward": {
+          "additionalProperties": false,
+          "default": {
+            "originOnly": true,
+            "perTargetGrants": [],
+            "volumeCap": 4000
+          },
+          "properties": {
+            "originOnly": {
+              "default": true,
+              "type": "boolean"
+            },
+            "perTargetGrants": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "volumeCap": {
+              "default": 4000,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "originOnly",
+            "perTargetGrants",
+            "volumeCap"
+          ],
+          "type": "object"
+        },
+        "profile": {
+          "default": "standard",
+          "enum": [
+            "assistant",
+            "standard",
+            "unattended",
+            "max"
+          ],
+          "type": "string"
+        },
+        "rate": {
+          "additionalProperties": false,
+          "default": {
+            "connectionChurnPerMin": 60,
+            "perRootCallsPerSec": 20,
+            "perSocketCallsPerSec": 10
+          },
+          "properties": {
+            "connectionChurnPerMin": {
+              "default": 60,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "perRootCallsPerSec": {
+              "default": 20,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "perSocketCallsPerSec": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "perRootCallsPerSec",
+            "perSocketCallsPerSec",
+            "connectionChurnPerMin"
+          ],
+          "type": "object"
+        },
+        "script": {
+          "type": "boolean"
+        },
+        "spawn": {
+          "additionalProperties": false,
+          "default": {
+            "maxChildrenPerAgent": 5,
+            "maxConcurrentSelfAgents": 4,
+            "maxSpawnDepth": 3
+          },
+          "properties": {
+            "maxChildrenPerAgent": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxConcurrentSelfAgents": {
+              "default": 4,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxSpawnDepth": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxConcurrentSelfAgents",
+            "maxSpawnDepth",
+            "maxChildrenPerAgent"
+          ],
+          "type": "object"
+        },
+        "web": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "profile",
+        "message",
+        "budget",
+        "rate",
+        "spawn",
+        "outward"
+      ],
+      "type": "object"
+    },
     "backgroundTasks": {
       "additionalProperties": false,
       "properties": {
@@ -20364,6 +20941,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "sdkRetry",
     "promptTimeout",
     "operationModels",
+    "autonomy",
     "concurrency",
     "broadcastGroups",
     "elevatedReply",
@@ -27010,6 +27588,302 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "autonomy": {
+            "additionalProperties": false,
+            "default": {
+              "budget": {
+                "aggregateUsd": 2,
+                "tokens": 2000000,
+                "wallClockMs": 1800000
+              },
+              "message": {
+                "channels": [
+                  "origin"
+                ],
+                "maxPerHour": 20
+              },
+              "outward": {
+                "originOnly": true,
+                "perTargetGrants": [],
+                "volumeCap": 4000
+              },
+              "profile": "standard",
+              "rate": {
+                "connectionChurnPerMin": 60,
+                "perRootCallsPerSec": 20,
+                "perSocketCallsPerSec": 10
+              },
+              "spawn": {
+                "maxChildrenPerAgent": 5,
+                "maxConcurrentSelfAgents": 4,
+                "maxSpawnDepth": 3
+              }
+            },
+            "properties": {
+              "aggregateBudgetUsd": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "analyze": {
+                "type": "boolean"
+              },
+              "browse": {
+                "type": "boolean"
+              },
+              "budget": {
+                "additionalProperties": false,
+                "default": {
+                  "aggregateUsd": 2,
+                  "tokens": 2000000,
+                  "wallClockMs": 1800000
+                },
+                "properties": {
+                  "aggregateUsd": {
+                    "default": 2,
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  "tokens": {
+                    "default": 2000000,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "wallClockMs": {
+                    "default": 1800000,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "aggregateUsd",
+                  "tokens",
+                  "wallClockMs"
+                ],
+                "type": "object"
+              },
+              "capabilities": {
+                "items": {
+                  "enum": [
+                    "orch:spawn",
+                    "orch:graph",
+                    "orch:cron",
+                    "orch:message",
+                    "orch:skill",
+                    "orch:read",
+                    "orch:web",
+                    "orch:analyze",
+                    "orch:write",
+                    "orch:browse"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "cli": {
+                "type": "boolean"
+              },
+              "cronSelfMax": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lease": {
+                "additionalProperties": false,
+                "properties": {
+                  "leaseMaxTtlMin": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "maxConcurrentSelfAgents": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "maxSelfSpawnRatePerMin": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "message": {
+                "additionalProperties": false,
+                "default": {
+                  "channels": [
+                    "origin"
+                  ],
+                  "maxPerHour": 20
+                },
+                "properties": {
+                  "channels": {
+                    "default": [
+                      "origin"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "maxPerHour": {
+                    "default": 20,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "channels",
+                  "maxPerHour"
+                ],
+                "type": "object"
+              },
+              "mode": {
+                "enum": [
+                  "default",
+                  "accept-reversible",
+                  "unattended",
+                  "max"
+                ],
+                "type": "string"
+              },
+              "outward": {
+                "additionalProperties": false,
+                "default": {
+                  "originOnly": true,
+                  "perTargetGrants": [],
+                  "volumeCap": 4000
+                },
+                "properties": {
+                  "originOnly": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "perTargetGrants": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "volumeCap": {
+                    "default": 4000,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "originOnly",
+                  "perTargetGrants",
+                  "volumeCap"
+                ],
+                "type": "object"
+              },
+              "profile": {
+                "default": "standard",
+                "enum": [
+                  "assistant",
+                  "standard",
+                  "unattended",
+                  "max"
+                ],
+                "type": "string"
+              },
+              "rate": {
+                "additionalProperties": false,
+                "default": {
+                  "connectionChurnPerMin": 60,
+                  "perRootCallsPerSec": 20,
+                  "perSocketCallsPerSec": 10
+                },
+                "properties": {
+                  "connectionChurnPerMin": {
+                    "default": 60,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "perRootCallsPerSec": {
+                    "default": 20,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "perSocketCallsPerSec": {
+                    "default": 10,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "perRootCallsPerSec",
+                  "perSocketCallsPerSec",
+                  "connectionChurnPerMin"
+                ],
+                "type": "object"
+              },
+              "script": {
+                "type": "boolean"
+              },
+              "spawn": {
+                "additionalProperties": false,
+                "default": {
+                  "maxChildrenPerAgent": 5,
+                  "maxConcurrentSelfAgents": 4,
+                  "maxSpawnDepth": 3
+                },
+                "properties": {
+                  "maxChildrenPerAgent": {
+                    "default": 5,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxConcurrentSelfAgents": {
+                    "default": 4,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxSpawnDepth": {
+                    "default": 3,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "maxConcurrentSelfAgents",
+                  "maxSpawnDepth",
+                  "maxChildrenPerAgent"
+                ],
+                "type": "object"
+              },
+              "web": {
+                "type": "boolean"
+              },
+              "write": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "profile",
+              "message",
+              "budget",
+              "rate",
+              "spawn",
+              "outward"
+            ],
+            "type": "object"
+          },
           "backgroundTasks": {
             "additionalProperties": false,
             "properties": {
@@ -31445,6 +32319,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "sdkRetry",
           "promptTimeout",
           "operationModels",
+          "autonomy",
           "concurrency",
           "broadcastGroups",
           "elevatedReply",
@@ -31482,6 +32357,35 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "adaptiveCacheRetention": true,
           "advancedCacheOptimization": {
             "enableRecentZonePromotion": true
+          },
+          "autonomy": {
+            "budget": {
+              "aggregateUsd": 2,
+              "tokens": 2000000,
+              "wallClockMs": 1800000
+            },
+            "message": {
+              "channels": [
+                "origin"
+              ],
+              "maxPerHour": 20
+            },
+            "outward": {
+              "originOnly": true,
+              "perTargetGrants": [],
+              "volumeCap": 4000
+            },
+            "profile": "standard",
+            "rate": {
+              "connectionChurnPerMin": 60,
+              "perRootCallsPerSec": 20,
+              "perSocketCallsPerSec": 10
+            },
+            "spawn": {
+              "maxChildrenPerAgent": 5,
+              "maxConcurrentSelfAgents": 4,
+              "maxSpawnDepth": 3
+            }
           },
           "bootstrap": {
             "groupChatFiltering": true,

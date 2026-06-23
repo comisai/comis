@@ -131,6 +131,14 @@ export {
   SourceGateConfigSchema,
   ToolLifecycleConfigSchema,
   TracingConfigSchema,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  AutonomyConfigSchema,
+  AutonomyMessageConfigSchema,
+  AUTONOMY_PROFILES,
+  STANDARD_FLOOR_CAPABILITIES,
+  resolveAutonomy,
+  // Honest legible degrade (Phase 210 / PROFILE-03)
+  degradeAutonomy,
 } from "./schema-agent/index.js";
 export { ChannelConfigSchema, ChannelEntrySchema, AckReactionConfigSchema, MediaProcessingSchema, ChannelHealthCheckSchema, EmailChannelEntrySchema } from "./schema-channel.js";
 export {
@@ -294,6 +302,16 @@ export type {
   SourceGateConfig,
   ToolLifecycleConfig,
   TracingConfig,
+  // Agent autonomy named-profile resolver (Phase 210 / v8 §3.8)
+  AutonomyConfig,
+  AutonomyMessageConfig,
+  AutonomyProfileName,
+  AutonomyMode,
+  ResolvedAutonomy,
+  ResolvedCapability,
+  // Honest legible degrade (Phase 210 / PROFILE-03)
+  AutonomyDownshift,
+  AutonomyPreflightResult,
 } from "./schema-agent/index.js";
 export type {
   AppConfig,

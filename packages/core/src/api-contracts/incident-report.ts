@@ -15,6 +15,19 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+// The section sub-schemas live in a sibling module (file-size cap). Imported
+// locally for use in IncidentReportSchema/IncidentSignals AND re-exported below
+// so the public barrel surface is unchanged.
+import {
+  IncidentContextBudgetSchema,
+  IncidentPromptTimeoutSchema,
+  SpawnTreeNodeSchema,
+} from "./incident-report-sections.js";
+import type {
+  IncidentContextBudget,
+  IncidentPromptTimeout,
+  SpawnTreeNode,
+} from "./incident-report-sections.js";
 
 /**
  * The §6.3 `IncidentReport` wire shape (the `obs.explain` response).
@@ -32,73 +45,15 @@ import { defineContract } from "./types.js";
  * `likelyRootCause` (matching the heuristic `RootCause` 1:1) and at the report
  * root (report-level guidance); both are required-or-default.
  */
-/**
- * W3 (obs-llm-troubleshooting): the per-LLM-call context budget equation,
- * extracted from the trajectory's `context.budget` records (last record wins —
- * the terminal fit check explains the end state). Carried on the report so a
- * `context_exhausted` abort is explainable with numbers (assembled vs window,
- * cap knob, tool-schema share, kept history) instead of speculation. Bounded
- * by construction: ten numbers/enums, no free text.
- */
-export const IncidentContextBudgetSchema = z.object({
-  /** The EFFECTIVE window the fit check ran against (post capability-class cap). */
-  windowTokens: z.number(),
-  /** The model's declared contextWindow before any cap (== windowTokens when uncapped). */
-  rawContextWindowTokens: z.number(),
-  /** What clamped the window. The cap members are contextEngine.budget.* knob
-   *  names; "served" (KNOB-02) means the Ollama-served num_ctx bound the window
-   *  (knobs: OLLAMA_CONTEXT_LENGTH env / Modelfile PARAMETER num_ctx);
-   *  "capabilityClass" (WR-01) means the executor-side class cap from the
-   *  operator's providers.entries.<id>.capabilities.capabilityClass pin bound
-   *  — the pin is the lever (the budget knobs are inert on that branch). */
-  windowCapSource: z.enum(["effectiveContextCapSmall", "effectiveContextCapNano", "served", "capabilityClass", "none"]),
-  /** S: system prompt + tool schemas estimate. */
-  systemTokens: z.number(),
-  /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
-  freshTailTokens: z.number(),
-  /** Token sum of the history items kept by budget eviction. */
-  budgetedHistoryTokens: z.number(),
-  /** Count of history items kept by budget eviction (0 = model saw no history). */
-  keptCount: z.number(),
-  /** S + kept history + fresh tail — what was actually dispatched. */
-  assembledInputTokens: z.number(),
-  /** Output headroom reserved at the final effective thinking level. */
-  outputHeadroom: z.number(),
-  /** Fit-check outcome. */
-  verdict: z.enum(["fits", "downshifted", "exhausted"]),
-});
-
-/** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */
-export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
-
-/**
- * LAT-04 (177): the terminal prompt-timeout attribution record — the LAST
- * `execution.prompt_timeout` trajectory row. Content-free: numbers + closed
- * enums + the pre-rendered config-KEY string (`bindingKnob` — knob NAME + ids
- * only, never values/bodies). Wholesale-validated by the signals normalizer
- * (the contextBudget discipline); a malformed/partial record is ignored
- * (forward-compatible). Signals-only — NOT on `IncidentReportSchema`
- * (mirroring the GBNF-02 `toolSchemaUnsupported` precedent: the heuristic
- * verdict carries what the operator needs).
- */
-export const IncidentPromptTimeoutSchema = z.object({
-  /** The configured ms value of the limit that FIRED. */
-  timeoutMs: z.number(),
-  /** Elapsed wall-clock ms at kill. */
-  durationMs: z.number().optional(),
-  /** Which limit fired: stall budget vs makespan ceiling. Absent = whole-turn (retry-path/pre-LAT-02 rows). */
-  limit: z.enum(["stall", "makespan"]).optional(),
-  /** Binding resolution level (LAT-01 — the agent-side TimeoutSource union). */
-  source: z.string().optional(),
-  /** Pre-rendered config-key string from the agent-side source→knob table. */
-  bindingKnob: z.string().optional(),
-  operationType: z.string().optional(),
-  stallBudgetMs: z.number().optional(),
-  makespanMs: z.number().optional(),
-});
-
-/** The terminal prompt-timeout attribution record (see {@link IncidentPromptTimeoutSchema}). */
-export type IncidentPromptTimeout = z.infer<typeof IncidentPromptTimeoutSchema>;
+// Re-export the section sub-schemas + types (imported above) so the public
+// barrel (observability.ts → @comis/core) and all consumers are unchanged after
+// the file-size split.
+export {
+  IncidentContextBudgetSchema,
+  IncidentPromptTimeoutSchema,
+  SpawnTreeNodeSchema,
+};
+export type { IncidentContextBudget, IncidentPromptTimeout, SpawnTreeNode };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -180,6 +135,13 @@ export const IncidentReportSchema = z.object({
       }),
     )
     .optional(),
+  /** TREE-01/02 (215): the root→children SPAWN TREE reconstructed from the
+   *  session's `capability.audited` records — the unattended-run authorization
+   *  topology ("one call to root-cause an unattended run"). Node shape +
+   *  rationale: {@link SpawnTreeNodeSchema}. Optional + additive (present only
+   *  when the trajectory carried `capability.audited` records; schemaVersion stays
+   *  1 — the `nodeBudgetBreaches` presence-conditional precedent). */
+  spawnTree: SpawnTreeNodeSchema.array().optional(),
   /** W3: the terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
@@ -520,18 +482,19 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
-// @optional-field-count: 17 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198)
+// @optional-field-count: 18 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198/215)
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
-// videoGenerated / voice / learning / channel / agentId / …) — absent when that
-// record class did not occur. Clustering them would couple unrelated heuristics;
-// the read sites already key on each independently. Grows by one per Glass-Box
-// signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
+// videoGenerated / voice / learning / channel / agentId / spawnTree / …) — absent
+// when that record class did not occur. Clustering them would couple unrelated
+// heuristics; the read sites already key on each independently. Grows by one per
+// Glass-Box signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
 // videoGenerated added in 192 — OBS-03/OBS-04 video; learning added in 198 —
 // OBS-02, the Verified-Learning outcome-signal shadow; spend added in 179 —
-// WEBUI-04, the spend-kill breach numbers for the Incident view).
+// WEBUI-04, the spend-kill breach numbers for the Incident view; spawnTree added
+// in 215 — TREE-01/02, the per-cap spawn-tree topology for an autonomous run).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
@@ -567,6 +530,12 @@ export interface IncidentSignals {
     tokenBudget: number;
     tokensUsed: number;
   }>;
+  /** TREE-01/02 (215): the spawn-tree nodes folded from `capability.audited`
+   *  records — one node per `leaseId` (in-process records group under their
+   *  synthetic `rootRunId`). Optional (the `recall`/`spend` presence-conditional
+   *  mold): absent when the trajectory carried no `capability.audited` records, so
+   *  the assembler omits the report section. Node shape: {@link SpawnTreeNode}. */
+  spawnTree?: SpawnTreeNode[];
   // derived booleans/strings for the heuristic registry:
   breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName
   hasDoNotRetrySignal: boolean; // any errorText contains "DO NOT retry"

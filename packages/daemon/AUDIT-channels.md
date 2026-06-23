@@ -28,6 +28,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:172 |
 | logger | required | — | packages/daemon/src/api/types.ts:173 |
 | persistDeps | optional | channel.start / channel.stop runtime state changes are NOT persisted to config.yaml; reverts on next daemon restart (in-memory only) | packages/daemon/src/api/types.ts:174 |
+| boundedAutonomy | optional | the Phase-213 outward quota (QUOTA-01/02) is inert — message.send/reply/react are NOT gated on origin/grant/per-hour/volume (the cap gate + authorizeChannelAccess still apply); wired only when an autonomy-bearing agent is configured | packages/daemon/src/api/types.ts:287 |
 
 ## Removed Fields (stale-fallback — deleted)
 

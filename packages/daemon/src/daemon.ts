@@ -149,10 +149,8 @@ import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-too
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
-import {
-  createFileStateTracker,
-  detectSandboxProvider,
-} from "@comis/skills";
+import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -198,10 +196,11 @@ import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/se
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
+import { emitAutonomyBootLog } from "./wiring/emit-autonomy-boot-log.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -643,8 +642,7 @@ function buildGraphCoordinatorDeps(deps: {
     sendToChannel: channels.sendToChannel, announceToParent: channels.announceToParent,
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
-    maxResultLength: a2aSec.graphMaxResultLength as number | undefined,
-    maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
+    maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
     // BUDGET-02/03 (D3): operator default per-node token-budget inherit-share source.
     subAgentTokenBudget: (a2aSec.tokenBudget as number | null | undefined) ?? null,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
@@ -659,6 +657,7 @@ function buildGraphCoordinatorDeps(deps: {
     touchParentSession: channels.commandQueue
       ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
       : undefined,
+    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // Phase 213 CR-01: graph nodes share one tree root (killByRootRun reach).
     preWarm,
   };
 }
@@ -908,8 +907,8 @@ function buildRpcDispatchDeps(deps: {
     recallTraceEnabled: c.container.config.diagnostics?.recallTrace?.enabled ?? false, // memory.recall_trace honest-empty gate
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
-    sessionStore: g.sessionStoreBridge,
-    crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
+    sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
+    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // Phase 213 CR-01: session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
@@ -956,6 +955,7 @@ function buildRpcDispatchDeps(deps: {
     tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
+    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, // Phase 213 QUOTA-01/02: the outward-quota service the message handlers gate on
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
@@ -1152,6 +1152,8 @@ function emitStartupBanner(deps: {
   visionRegistry: BootContext["visionRegistry"];
   startupStartMs: number;
   instanceId: string;
+  /** PROFILE-03 host preflight RESULT (see emitAutonomyBootLog). Defaults true in M1; Phase 211 (JAIL-03) supplies the real value. */
+  namespacePreflightOk?: boolean;
 }): void {
   const {
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
@@ -1185,6 +1187,9 @@ function emitStartupBanner(deps: {
     logLevel: container.config.logLevel ?? "debug", nodeVersion: process.versions.node,
     manifest,
   }, "Comis daemon started");
+  // PROFILE-03 — legible resolved-autonomy boot logging (per-agent INFO + the
+  // optional namespace-downshift WARN), extracted to emit-autonomy-boot-log.ts.
+  emitAutonomyBootLog({ daemonLogger, agents, namespacePreflightOk: deps.namespacePreflightOk });
   // Docker-only: surface restart-policy requirement immediately after the
   // startup banner. No-op outside containers. Wired here so the WARN lands
   // in `docker logs` next to the banner, where operators look first.
@@ -1857,6 +1862,9 @@ async function bootAgents(
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
+  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
+  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
@@ -1877,7 +1885,9 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08: per-root budget holder + rootRunId resolver → each bridge
+    outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -1928,25 +1938,18 @@ async function bootAgents(
   // Credential-free env for the exec tool (agent-issued shell commands).
   const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
-  // Deferred wake callback ref -- populated by bootChannels once
-  // wakeCoalescer is constructed. Same shape as channelPluginsRef /
-  // bgNotifyRef (cross-stage deferred-ref pattern).
+  // Deferred wake callback ref -- populated by bootChannels once wakeCoalescer is
+  // constructed (the channelPluginsRef / bgNotifyRef cross-stage deferred-ref pattern).
   const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
 
   // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
   const systemEventQueue = createSystemEventQueue({ logger: schedulerLogger });
 
-  // 6.6.5. Schedulers — inline buildDeferredCronWakeCallback for the
-  // onCronWake handler. Reads `cronWakeCallbackRef.ref` at INVOCATION time
-  // (deferred), so the live wakeCoalescer wired up later in bootChannels is
-  // what actually receives the wake. If a cron fires in the gap (typically
-  // milliseconds, but a heavy startup may stretch it to seconds), surface
-  // the drop with a debug log so the silent miss is visible.
-  //
-  // Observability-only: we intentionally do NOT buffer-then-drain (the
-  // precedent set by channelPluginsRef / bgNotifyRef etc.). Cron wakes are
-  // timer-driven; replaying a backlog could cause a wake storm if N timers
-  // fired during a slow startup.
+  // 6.6.5. Schedulers — the onCronWake handler reads `cronWakeCallbackRef.ref` at
+  // INVOCATION time (deferred), so the live wakeCoalescer wired in bootChannels
+  // receives the wake; a cron firing in the handoff gap is DEBUG-logged (the silent
+  // miss is visible). Observability-only: NO buffer-then-drain (channelPluginsRef/
+  // bgNotifyRef precedent) — replaying timer-driven wakes could cause a wake storm.
   const {
     cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
@@ -1967,6 +1970,7 @@ async function bootAgents(
       }
     },
     clock, timers,
+    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // Phase 213-08 (RATE-02): the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -2053,6 +2057,7 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
+    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -2116,7 +2121,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
     | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
     | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
-    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices"
+    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices" | "getAgentCronScheduler"
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
@@ -2188,11 +2193,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
     }
     return port;
   };
-  // shutdownBackgroundProcesses returned from setupTools — the
-  // previous eventBus.on("system:shutdown", ...) inline closure is now a
-  // hoisted function threaded through ShutdownDeps.
+  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
-    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
+    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
     // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
     // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
@@ -2350,6 +2355,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
+    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CEIL-01/CR-02: tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });
@@ -2697,7 +2703,7 @@ async function bootShutdown(
     | "lockCleanupTimer"
   >>;
   const {
-    container, dataDir, configPaths,
+    container, dataDir, configPaths, capEndpointHandle, namespacePreflightOk,
     logger, logLevelManager, daemonLogger, daemonVersion,
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
@@ -2736,9 +2742,7 @@ async function bootShutdown(
   // shutdownRef.value — setupShutdown reads .fn at teardown time.
   const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
 
-  // 8. Graceful shutdown: signal-handler registration + teardown ordering
-  //    both owned by setupShutdown; the previous
-  //    `_registerGracefulShutdown` factory seam is gone.
+  // 8. Graceful shutdown: signal-handler registration + teardown ordering (setupShutdown).
   const { shutdownHandle } = setupShutdown({
     logger, daemonLogger, processMonitor, container, exitFn,
     tokenTracker, startupTimestamp: startupStartMs,
@@ -2783,6 +2787,7 @@ async function bootShutdown(
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
+    capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // Phase 211/212: stops+unlinks cap.sock
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
@@ -2803,6 +2808,7 @@ async function bootShutdown(
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
     db, secretStore, cachedPort, ttsAdapter, visionRegistry,
     startupStartMs, instanceId,
+    namespacePreflightOk, // Phase 211: the real probe result → emitAutonomyBootLog.
   });
 
   // 9.1. Boot invariant record + duplicate-wiring WARN.

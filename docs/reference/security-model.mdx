@@ -39,7 +39,7 @@ single check will catch everything.
 | **R**epudiation | Audit aggregator + structured event schema with traceId |
 | **I**nformation disclosure | Output guard, log sanitizer, config redaction, scoped secrets, canary tokens |
 | **D**enial of service | Injection rate limiter, budget guard, circuit breaker, audit aggregator dedup, ReDoS guard on log sanitizer |
-| **E**levation of privilege | Action classifier (fail-closed), approval gate, exec sandbox, exec security validator, safe path, SSRF guard, tool policy |
+| **E**levation of privilege | Capability gate (one gate, no wildcard, disjoint from scope) + deny-by-origin on the control plane; action classifier (fail-closed), approval gate, exec sandbox, exec security validator, safe path, SSRF guard, tool policy |
 
 ---
 
@@ -465,6 +465,54 @@ Network modes (`SandboxOptions.network`):
 
 <Info>
 Source: `packages/infra/src/credential-broker/mitm-broker.ts` — fail-closed gates; `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts` — `broker-only` branch. See [Credential Broker](/security/credential-broker) for the full deep-dive.
+</Info>
+
+---
+
+## Authorization Layer
+
+Authorization governs **what an in-process agent may do**. It is an axis
+orthogonal to the gateway's network scopes, enforced by a single capability gate
+on every privileged action, with a stricter deny-by-origin rule guarding the
+control plane. See [Capability Model](/security/capability-model) for the full
+treatment.
+
+### Capability Axis
+
+An agent holds a set of `orch:*` **capabilities** (for example `orch:spawn`,
+`orch:cron`, `orch:browse`) granted by its [autonomy profile](/agents/autonomy).
+Every privileged handler checks the one capability it requires before acting:
+
+- **One gate, no bypass.** The agent's tool calls reach the RPC dispatcher
+  directly, in process — they never pass through the gateway scope check. The
+  capability gate lives at the handler boundary every call reaches, closing that
+  in-process bypass.
+- **No wildcard, disjoint from scope.** The capability predicate is a plain
+  membership test with no asterisk-implies-all rule, so no capability can ever
+  imply `admin`, `rpc`, or "all". The capability vocabulary (`orch:*`) is
+  **disjoint** from the gateway scope vocabulary (`rpc | admin | mcp-client`) —
+  an architecture test asserts the intersection is empty.
+- **Denied content-free.** A missing capability raises `CapabilityDeniedError`
+  (discriminated `kind: "capability_denied"`), recorded as a security signal in
+  the audit trail without bodies or secrets.
+
+### Deny-by-Origin (control plane)
+
+Administrative handlers — secrets, tokens, config, channel management — reject
+**any** agent-origin call outright, before capabilities are consulted and
+independent of the call's trust level. This is sound because inbound internal
+fields (the whole underscore-prefixed registry, including `_agentId` and
+`_capabilities`) are stripped from external WebSocket and REST callers before
+dispatch, while the legitimate in-process injector runs inside the daemon. The
+*presence* of `_agentId` is therefore an unforgeable agent-origin signal, and
+the control plane stays unreachable to agents by construction.
+
+<Info>
+Source: `packages/core/src/security/capability.ts` — the closed `AgentCapability`
+union + `checkCapability` / `requireCapability` / `CapabilityDeniedError`;
+`packages/core/src/api-contracts/internals.ts` — `stripInternalFields` + the
+`INTERNAL_FIELD_NAMES` registry; `packages/daemon/src/wiring/setup-gateway-api.ts`
+— the external-boundary strip that makes deny-by-origin sound.
 </Info>
 
 ---

@@ -31,4 +31,11 @@
 export * from "./schema-agent-model.js";
 export * from "./schema-agent-context.js";
 export * from "./schema-agent-prompt.js";
+export * from "./schema-agent-autonomy.js";
+// 213-03: the autonomy BOUNDS sub-blocks + the honest-degrade path live in
+// sibling leaves (file-size cap + concern split); exported here so the public
+// surface is unchanged. `*-bounds` imports only zod; `*-degrade` imports one-way
+// from `*-autonomy` (no cycle — see no-cycles.test.ts).
+export * from "./schema-agent-autonomy-bounds.js";
+export * from "./schema-agent-autonomy-degrade.js";
 export * from "./schema-agent-runtime.js";

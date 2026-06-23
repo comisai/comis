@@ -33,6 +33,8 @@ import {
   SlackActionContract,
   WhatsappActionContract,
   stripInternalFields,
+  requireCapability,
+  CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -151,6 +153,43 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 }
 
 /**
+ * Phase 213 (QUOTA-01/02): the outward irreversible-action gate for an agent-
+ * initiated orch:message send. Called AFTER authorizeChannelAccess, BEFORE
+ * deliver, for message.send/reply/react. Consults `boundedAutonomy.tryOutward`
+ * (origin-only + per-target grant + per-hour + volume); on a deny it throws a
+ * `CapabilityDeniedError` whose §2.7 WARN names the reason.
+ *
+ * NOT gated when: (a) there is no agent origin (`_agentId` absent — a daemon-
+ * initiated cron/heartbeat send, mirroring authorizeChannelAccess's daemon-allow),
+ * or (b) `boundedAutonomy` is not wired (older/non-autonomy daemon). `isOrigin` is
+ * `channelId === _callerChannelId`; `volume` is the text length (react: the emoji).
+ */
+function enforceOutwardQuota(
+  deps: MessageHandlerDeps,
+  rawParams: Record<string, unknown>,
+  channelId: string,
+  volume: number,
+): void {
+  const agentId = rawParams._agentId as string | undefined;
+  // Daemon-initiated (no agent origin) or no service wired → not gated.
+  if (agentId === undefined || deps.boundedAutonomy === undefined) return;
+  const isOrigin = channelId === (rawParams._callerChannelId as string | undefined);
+  const quota = deps.boundedAutonomy.tryOutward(agentId, channelId, isOrigin, volume);
+  if (!quota.ok) {
+    deps.logger.warn(
+      {
+        agentId,
+        channelId,
+        errorKind: "validation" as const,
+        hint: `outward quota: ${quota.error.reason} — the agent's send was bounded (autonomy.outward.* / autonomy.message.maxPerHour); only the origin channel + explicitly-granted targets are auto-allowable`,
+      },
+      "Outward message quota denied",
+    );
+    throw new CapabilityDeniedError("orch:message");
+  }
+}
+
+/**
  * Create message and platform-action RPC handlers.
  * @param deps - Injected dependencies (channel adapter registry)
  * @returns Record mapping method names to handler functions
@@ -158,10 +197,18 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, RpcHandler> {
   return {
     [MessageSendContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate — the agent loop skips
+      // checkScope, so orch:message is enforced here, reading the injected
+      // _capabilities from raw params BEFORE the strip.
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward send (origin/grant/per-hour/volume) for an
+      // agent origin, before deliver. Volume = the message body length.
+      enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageSendContract.request.parse(userParams);
@@ -185,11 +232,16 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReplyContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward reply (volume = the reply body length).
+      enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageReplyContract.request.parse(userParams);
@@ -214,12 +266,22 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageReactContract.method]: async (rawParams) => {
+      // CAP-03/05 (v8 §3.7): in-process capability gate (see message.send).
+      requireCapability(rawParams._capabilities as string[] | undefined, "orch:message");
+
       const channelType = rawParams.channel_type as string;
       assertCapability("message.react", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const emoji = rawParams.emoji as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward reaction as ONE fixed unit (IN-01, 213-REVIEW).
+      // A reaction is a single irreversible action; counting it as `emoji.length`
+      // (1–few chars) made the per-action volumeCap (4000) effectively inert for
+      // reactions while giving the unit inconsistent meaning vs send/reply (which
+      // pass text.length). A flat 1 keeps the per-hour quota the real bound on
+      // mass-react and makes the volume semantics uniform across actions.
+      enforceOutwardQuota(deps, rawParams, channelId, 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageReactContract.request.parse(userParams);
@@ -236,6 +298,12 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     // AUDIT(498): All text->channel paths verified. sendMessage uses deliverToChannel
     // (formats internally). editMessage formats here. sendAttachment is binary-only.
     [MessageEditContract.method]: async (rawParams) => {
+      // 210-GAP / §3.5: message.edit is admin-only (deny-by-origin), NOT part of
+      // orch:message. No in-handler cap gate — an agent origin is rejected at the
+      // rpc-dispatch chokepoint (scopes:["admin"]); a legitimate admin gateway
+      // caller (whose _capabilities is stripped at the boundary) must NOT be
+      // forced through a cap gate it can never satisfy. The §3.5 send subset
+      // (send/reply/react) keeps its orch:message gate; edit/delete/attach do not.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.edit", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -257,6 +325,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageDeleteContract.method]: async (rawParams) => {
+      // 210-GAP / §3.5: message.delete is admin-only (deny-by-origin), NOT part
+      // of orch:message — see message.edit. No in-handler cap gate.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
@@ -296,6 +366,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageAttachContract.method]: async (rawParams) => {
+      // 210-GAP / §3.5: message.attach is admin-only (deny-by-origin), NOT part
+      // of orch:message — see message.edit. No in-handler cap gate.
       const channelType = rawParams.channel_type as string;
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;

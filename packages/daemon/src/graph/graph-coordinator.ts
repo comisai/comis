@@ -7,7 +7,7 @@
  */
 
 import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext } from "@comis/core";
+import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext, parseFormattedSessionKey } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
@@ -188,9 +188,27 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const stateMachine = createGraphStateMachine(params.graph);
 
+    // Phase 213 CR-01: resolve ONE tree-stable rootRunId for the whole graph run
+    // so every node spawn shares it (the tree-wide ceiling + killByRootRun see
+    // one tree, not a fresh root per node). A graph submitted BY a sub-agent
+    // (its session key maps to a live run) inherits that run's root; a top-level
+    // submission resolves the caller session's stable root. Undefined when no
+    // resolver is wired (older path; nodes mint per-spawn — graph fan-out is
+    // still bounded by the graph concurrency gate).
+    const graphParentRun = params.callerSessionKey
+      ? deps.subAgentRunner.getRunBySessionKey?.(params.callerSessionKey)
+      : undefined;
+    const graphParsedCaller = params.callerSessionKey
+      ? parseFormattedSessionKey(params.callerSessionKey)
+      : undefined;
+    const graphRootRunId =
+      graphParentRun?.rootRunId
+      ?? (graphParsedCaller ? deps.resolveRootRunId?.(graphParsedCaller) : undefined);
+
     const gs: GraphRunState = {
       graphId,
       graphTraceId,
+      ...(graphRootRunId !== undefined ? { rootRunId: graphRootRunId } : {}),
       graph: params.graph,
       stateMachine,
       runIdToNode: new Map(),

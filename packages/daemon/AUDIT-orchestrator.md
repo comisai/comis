@@ -32,6 +32,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | subAgentRunner | required | — | packages/daemon/src/api/types.ts:248 |
 | eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event (TELEM-01); the small-model pipeline-authoring fleet metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
 | getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
+| leaseManager | optional | the autonomy-handlers (213-06) `lease.revoke` / `run.kill` are not registered in the dispatcher (a partial boot); a stray call hits the dispatcher's unknown-method path. Plan 07 wires the real instance at the composition root, so production always carries it | packages/daemon/src/api/types.ts:362 |
 
 ## Removed Fields (stale-fallback — deleted)
 

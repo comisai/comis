@@ -400,4 +400,77 @@ describe("assembleIncidentReportFromSources", () => {
     ).toBe(true);
     expect(report.failures).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // TREE-02 (215-03) — THE HEADLINE: a 2-level spawn tree round-trips from
+  // FIXTURE trajectory sources into report.spawnTree (the 149/156 fixture-reader
+  // mold). This proves the FOLD + the new section + the reader seam end-to-end
+  // WITHOUT modifying the FROZEN assembler — exactly how Plan 03 reconstructs
+  // "the root→children spawn tree, one call to root-cause an unattended run".
+  //
+  // PRODUCER coverage (Pitfall 2 / G3, AGENTS §2.10): this fixture test proves
+  // the FOLD half. The PRODUCER half ("the gate chokepoint emits
+  // capability:audited") is proven by Plan 01's emit tests
+  // (setup-capability-endpoint-audit.test.ts + the rpc-dispatch in-process emit
+  // test) — do NOT re-test the emit here; Plan 01 owns it. The two halves stitch
+  // via the capability.audited trajectory record both sides agree on.
+  it("TREE-02 (headline): a 2-level spawn tree round-trips into report.spawnTree", async () => {
+    const SESSION_KEY = "default:unattended:unattended:peer:0";
+    // The 2-level tree of hand-built capability.audited records — the exact shape
+    // the Plan-01 translator emits (data: {capability, tool, decision, leaseId,
+    // parentLeaseId, rootRunId}; agentId on the envelope).
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "capability.audited",
+        seq: 1,
+        agentId: "default",
+        data: {
+          leaseId: "L-root",
+          rootRunId: "R",
+          capability: "orch:read",
+          tool: "memory_search",
+          decision: "allow",
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "capability.audited",
+        seq: 2,
+        agentId: "default",
+        data: {
+          leaseId: "L-child",
+          parentLeaseId: "L-root",
+          rootRunId: "R",
+          capability: "orch:web",
+          tool: "web_fetch",
+          decision: "deny",
+        },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "default" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", { sessionKey: SESSION_KEY });
+
+    expect(report.spawnTree).toBeDefined();
+    expect(report.spawnTree).toHaveLength(2);
+    const byLease = new Map(report.spawnTree!.map((n) => [n.leaseId, n]));
+    const root = byLease.get("L-root")!;
+    const child = byLease.get("L-child")!;
+    // Root: no parent edge; the allowed tool is collected.
+    expect(root.parentLeaseId).toBeUndefined();
+    expect(root.toolsInvoked).toContain("memory_search");
+    expect(root.caps).toContain("orch:read");
+    // Child: the parent edge points to the root; the denied cap surfaces (TREE-02).
+    expect(child.parentLeaseId).toBe("L-root");
+    expect(child.denials).toContain("orch:web");
+  });
 });
