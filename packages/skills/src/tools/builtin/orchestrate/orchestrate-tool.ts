@@ -60,7 +60,7 @@ import { createToolResultSizeGuard } from "@comis/agent";
 
 import { resolveJailNode, SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
 import type { JailNodeResolution, SandboxProvider } from "../sandbox/types.js";
-import { loadSeccompProfileFd } from "../sandbox/seccomp-profile.js";
+import { loadSeccompProfileFd, closeSeccompProfileFd } from "../sandbox/seccomp-profile.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 import type { CleanupRunContext, GcRunContext, MaterializeContext } from "./result-ref-store.js";
 import type { ResultRef } from "@comis/core";
@@ -263,6 +263,17 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
+      // Resolve the seccomp fd ONCE, BEFORE the try (CR-01 + seccomp-profile.ts
+      // §21-43). The fd is opened WITHOUT O_CLOEXEC so the bwrap child inherits
+      // it — the parent (daemon) keeps its OWN copy after fork and MUST close it
+      // in the finally below, or every jailed run leaks one descriptor and a
+      // long-running daemon exhausts its fd table. Opening it here (not inside
+      // the try) means the finally always closes it even when writeFileSync /
+      // copyFileSync / resolveNode throws (those run after this point today, so
+      // a throw there would otherwise leak the fd). Null on macOS (blob absent →
+      // no --seccomp); closeSeccompProfileFd is null-safe + double-close-safe.
+      const seccompFd = loadSeccompFd();
+
       try {
         // 1. Write the model's script verbatim into the jailed workspace.
         const scriptName = `${runId}.${params.language}`;
@@ -291,10 +302,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           );
         }
 
-        // 4. Resolve the seccomp profile fd (null on macOS → no --seccomp).
-        const seccompFd = loadSeccompFd();
-
-        // 5. Build the cap-socket jail args (--unshare-net + the cap socket
+        // 4. Build the cap-socket jail args (--unshare-net + the cap socket
         //    --bind + the workspace-only FS; ~/.comis is never bound → masked).
         //    The provider binds the curated SYSTEM_RO_PATHS itself (so jq + node
         //    resolve); we pass NO extra readOnlyPaths (mirrors the cap-socket
@@ -316,14 +324,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         const bin = args[0]!;
         const spawnArgs = [...args.slice(1), "/bin/bash", "-c", command];
 
-        // 6. Env: the ORCH-02 scrub over the BASE env, THEN the lease placeholders
+        // 5. Env: the ORCH-02 scrub over the BASE env, THEN the lease placeholders
         //    merged LAST (Pitfall 4 — they survive the scrub by construction).
         const childEnv: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv);
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
         }
 
-        // 7. Spawn the jailed child; capture stdout ONLY (stderr/intermediate
+        // 6. Spawn the jailed child; capture stdout ONLY (stderr/intermediate
         //    never re-enter); size-bounce the stdout.
         const stdout = await runJailedChild(
           spawnFn,
@@ -341,6 +349,13 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         );
         return { content: bounced, details: { runId, stdoutBytes: stdout.length } };
       } finally {
+        // 7. CR-01: close the PARENT's copy of the seccomp fd. By the time the
+        //    finally runs the child has already inherited it (spawn returned, or
+        //    threw — either way the parent's copy is open and must be released).
+        //    null-safe + double-close-safe, so this is unconditional. Closing
+        //    BEFORE gcRun/cleanupRun guarantees a throwing GC cannot skip it.
+        closeSeccompProfileFd(seccompFd);
+
         // 8. REF-03: the runner owns the run lifecycle — GC then drop the run's
         //    results/ entries, on success AND on failure.
         try {

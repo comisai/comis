@@ -12,7 +12,17 @@
  * @module
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -90,6 +100,7 @@ describe("orchestrate-tool", () => {
     resolveJailNodeFn?: () => { mode: "path" } | { mode: "bind"; execPath: string } | { mode: "unavailable"; hint: string };
     cleanupRun?: ReturnType<typeof vi.fn>;
     baseEnv?: Record<string, string | undefined>;
+    loadSeccompFdFn?: () => number | null;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -112,7 +123,7 @@ describe("orchestrate-tool", () => {
         },
         spawnFn: over?.spawnFn ?? ((): OrchestrateSpawnedChild => makeFakeChild("ok-output\n")),
         resolveJailNodeFn: over?.resolveJailNodeFn ?? (() => ({ mode: "path" as const })),
-        loadSeccompFdFn: () => null,
+        loadSeccompFdFn: over?.loadSeccompFdFn ?? (() => null),
         now: () => 1_700_000_000_000,
         baseEnv: over?.baseEnv ?? { PATH: "/usr/bin", HOME: "/home/x" },
       },
@@ -313,5 +324,82 @@ describe("orchestrate-tool", () => {
     await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
 
     expect(cleanupRun).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // CR-01: the parent's seccomp fd MUST be closed once the child has been
+  // spawned. The fd is opened WITHOUT O_CLOEXEC (so the bwrap child inherits
+  // it), so the daemon keeps its OWN copy after fork — leaking one descriptor
+  // per orchestrate run exhausts the fd table on a long-running daemon
+  // (seccomp-profile.ts:21-43 documents this lifecycle as MANDATORY). On the
+  // macOS unit path the real loader returns null (blob absent), so we inject a
+  // REAL fd (a temp file stands in for the BPF blob) and prove the runner
+  // releases the PARENT copy: fstatSync on it after the run must fail EBADF (a
+  // leaked fd would still fstat cleanly). This is the property the production
+  // (Linux) path relies on.
+  // -------------------------------------------------------------------------
+  describe("CR-01 seccomp fd lifecycle (close in finally)", () => {
+    let fdDir: string;
+    let realFd: number;
+
+    beforeEach(() => {
+      fdDir = mkdtempSync(join(tmpdir(), "comis-orch-seccomp-fd-"));
+      realFd = openSync(join(fdDir, "blob"), "w");
+      writeSync(realFd, Buffer.from([0])); // make it a genuine, open fd
+    });
+
+    afterEach(() => {
+      // Best-effort cleanup if a regression left the fd open.
+      try {
+        fstatSync(realFd);
+        // still open → close so the test process does not leak it
+        closeSync(realFd);
+      } catch {
+        /* already closed by the runner (the GREEN expectation) */
+      }
+      rmSync(fdDir, { recursive: true, force: true });
+    });
+
+    it("closes the parent's seccomp fd after a successful jailed run (no fd leak)", async () => {
+      const { deps } = makeDeps({ loadSeccompFdFn: () => realFd });
+      const tool = createOrchestrateTool(deps);
+
+      // Pre-condition: the parent's copy is open before the run.
+      expect(() => fstatSync(realFd)).not.toThrow();
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      // The runner must have closed the PARENT's copy in its finally.
+      let err: NodeJS.ErrnoException | undefined;
+      try {
+        fstatSync(realFd);
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      }
+      expect(err).toBeDefined();
+      expect(err?.code).toBe("EBADF");
+    });
+
+    it("closes the parent's seccomp fd even when the spawn throws (finally on the error path)", async () => {
+      const spawnFn: OrchestrateSpawnFn = () => {
+        throw new Error("spawn EACCES");
+      };
+      const { deps } = makeDeps({ spawnFn, loadSeccompFdFn: () => realFd });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
+
+      // A spawn that throws still opened the parent's fd — the finally must
+      // close it regardless (seccomp-profile.ts: "do NOT skip the finally on
+      // the spawn error path").
+      let err: NodeJS.ErrnoException | undefined;
+      try {
+        fstatSync(realFd);
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      }
+      expect(err).toBeDefined();
+      expect(err?.code).toBe("EBADF");
+    });
   });
 });
