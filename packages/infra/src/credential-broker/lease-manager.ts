@@ -122,6 +122,15 @@ export interface LeaseManager {
    * admin `lease.revoke`/`run.kill` RPC (Phase 213) drives.
    */
   cascadeRevoke(leaseId: string, visited?: Set<string>): void;
+  /**
+   * Revoke EVERY lease of a root-run (REVOKE-01), cascading each to its
+   * descendants. Scans on `rootRunId` and `cascadeRevoke`s each match through
+   * ONE shared `visited` set, so the returned `revoked` is the distinct number
+   * of leases flipped (a parent + its already-cascaded child are not
+   * double-counted). An unknown root is a clean `{ revoked: 0 }` no-op — the
+   * daemon RPC handler is the throw boundary, not this fan-out.
+   */
+  revokeByRootRun(rootRunId: string): { revoked: number };
 }
 
 export interface LeaseManagerDeps {
@@ -291,6 +300,20 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
 
     cascadeRevoke(leaseId: string, visited = new Set<string>()): void {
       cascadeRevoke(leaseId, visited);
+    },
+
+    revokeByRootRun(rootRunId: string): { revoked: number } {
+      // ONE shared `visited` set dedupes across the scan so the count is the
+      // distinct number of leases revoked (a parent + its already-cascaded child
+      // are not double-counted). An unknown root is a clean 0-revoke no-op — the
+      // daemon RPC handler (Phase 213, Plan 06) is the throw boundary.
+      const visited = new Set<string>();
+      for (const [id, entry] of leases) {
+        if (entry.rootRunId === rootRunId) {
+          cascadeRevoke(id, visited);
+        }
+      }
+      return { revoked: visited.size };
     },
   };
 }
