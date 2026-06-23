@@ -857,6 +857,26 @@ describe("outward quota gate (QUOTA-01/02)", () => {
     expect(tryOutward).toHaveBeenCalledTimes(2);
   });
 
+  it("counts a message.react as ONE volume unit regardless of emoji length (IN-01)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    deps.channelPlugins = new Map([["telegram", createMockPlugin({
+      reactions: true, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: false,
+    })]]);
+    const tryOutward = vi.fn().mockReturnValue(ok(undefined));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+
+    // A multi-codepoint emoji (ZWJ sequence) whose .length is > 1 — pre-fix this
+    // would have passed emoji.length (here 7) as the volume; now it must be 1.
+    await handlers["message.react"]({
+      channel_type: "telegram", channel_id: "ch-A", emoji: "👨‍👩‍👧", message_id: "m1",
+      _agentId: "agent-1", _callerChannelId: "ch-A",
+    });
+
+    const [, , , volume] = tryOutward.mock.calls[0];
+    expect(volume).toBe(1);
+  });
+
   it("does NOT quota-gate a daemon-initiated send (no agent origin) — cron/heartbeat delivery", async () => {
     const deps = createMockDeps(workspaceDir);
     const tryOutward = vi.fn().mockReturnValue(err({ reason: "per_hour" }));

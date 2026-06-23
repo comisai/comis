@@ -150,9 +150,19 @@ export function createPerRootBudget(deps: {
 
     reserveBudget(rootRunId, provider, model, estUsd, estTokens): SpendGateOutcome {
       // ── Limb 1: WALL-CLOCK (enforced regardless of pricing). ──
-      // Anchor: the root's registration time, or now() for an unregistered root
-      // (a call before registerRoot anchors here so the deadline still bounds it).
-      const startMs = rootStartMs.get(rootRunId) ?? clock.now();
+      // Anchor: the root's registration time, or now() for an unregistered root.
+      // IN-02 (213-REVIEW): PERSIST the anchor on the first reserve for an unknown
+      // root, so the deadline measures from this FIRST call onward (matching the
+      // documented "a call before registerRoot anchors here so the deadline still
+      // bounds it" intent). Without the write, every call for an unregistered
+      // root re-anchored at now() → elapsedMs stayed ~0 and the wall-clock limb
+      // could NEVER fire (the token limb still gated, but the wall-clock backstop
+      // was silently inert). This also covers a root re-used after WR-05 eviction.
+      let startMs = rootStartMs.get(rootRunId);
+      if (startMs === undefined) {
+        startMs = clock.now();
+        rootStartMs.set(rootRunId, startMs);
+      }
       const elapsedMs = clock.now() - startMs;
       if (elapsedMs > config.wallClockMs) {
         logger.warn(

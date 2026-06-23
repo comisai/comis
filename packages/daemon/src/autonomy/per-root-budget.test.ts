@@ -198,4 +198,27 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     const { budget } = makeBudget();
     expect(() => budget.evictRoot("never-seen")).not.toThrow();
   });
+
+  // -------------------------------------------------------------------------
+  // IN-02 (213-REVIEW): the wall-clock limb must bound an UNREGISTERED root too
+  // — the first reserve persists the anchor, so a later call past the deadline
+  // trips. Pre-fix, an unregistered root re-anchored at now() every call, so the
+  // wall-clock limb was permanently inert for it.
+  // -------------------------------------------------------------------------
+  it("anchors the wall-clock deadline on the FIRST reserve for an unregistered root so the limb can still fire (IN-02)", () => {
+    const wallClockMs = 60_000;
+    // NOTE: no registerRoot — the root is unregistered (e.g. holder absent at
+    // resolver time). High token cap so ONLY the wall-clock limb can trip.
+    const { budget, clock } = makeBudget({ tokens: 1_000_000, wallClockMs });
+
+    // First reserve at t0 anchors the deadline here; within the window → ok.
+    expect(budget.reserveBudget("root-U", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+
+    // Advance PAST the deadline measured from that first call.
+    clock.advance(wallClockMs + 1);
+
+    // The wall-clock limb now fires (it would NOT have, pre-fix, because each
+    // call re-anchored at now() leaving elapsedMs ~0).
+    expect(budget.reserveBudget("root-U", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
+  });
 });

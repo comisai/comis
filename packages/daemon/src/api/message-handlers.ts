@@ -275,8 +275,13 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const emoji = rawParams.emoji as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
-      // QUOTA-01/02: gate the outward reaction (a small fixed volume — the emoji).
-      enforceOutwardQuota(deps, rawParams, channelId, typeof emoji === "string" ? emoji.length : 1);
+      // QUOTA-01/02: gate the outward reaction as ONE fixed unit (IN-01, 213-REVIEW).
+      // A reaction is a single irreversible action; counting it as `emoji.length`
+      // (1–few chars) made the per-action volumeCap (4000) effectively inert for
+      // reactions while giving the unit inconsistent meaning vs send/reply (which
+      // pass text.length). A flat 1 keeps the per-hour quota the real bound on
+      // mass-react and makes the volume semantics uniform across actions.
+      enforceOutwardQuota(deps, rawParams, channelId, 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageReactContract.request.parse(userParams);
