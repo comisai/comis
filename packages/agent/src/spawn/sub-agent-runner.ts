@@ -105,6 +105,12 @@ function deriveCompositeForRun(run: SubAgentRun): {
 // Public interfaces
 // ---------------------------------------------------------------------------
 
+// @optional-field-count: 13 — SubAgentRun is the per-run flight-record state; its
+// optionals are independent, lifecycle-populated facets of ONE run (result/error
+// set at completion; requesterOrigin/announce* at spawn; graphId/nodeId/abortGroup
+// for graph routing; parentLeaseId/ceilingSlotAcquired for the Phase-213 ceiling/
+// cascade). They are not a cluster-split candidate — every field describes the
+// SAME run and is read by the runner's own lifecycle, not handed to a sub-service.
 export interface SubAgentRun {
   runId: string;
   status: "running" | "completed" | "failed" | "queued";

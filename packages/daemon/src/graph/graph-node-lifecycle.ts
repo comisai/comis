@@ -298,15 +298,12 @@ export function spawnNode(
       agentId: node.agentId ?? deps.defaultAgentId,
       model: node.model,
       max_steps: node.maxSteps,
-      // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution
-      // cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
+      // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
       tokenBudget: resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget),
       callerSessionKey: gs.callerSessionKey,
       callerAgentId: gs.callerAgentId,
       callerType: "graph",
-      // Phase 213 CR-01: every node of this graph run shares the graph's tree
-      // root so killByRootRun reaches all nodes (omit ⇒ runner mints per node).
-      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}), // Phase 213 CR-01: nodes share the graph's tree root (killByRootRun reach)
       graphSharedDir: gs.sharedDir,
       graphTraceId: gs.graphTraceId,
       graphId: gs.graphId,
