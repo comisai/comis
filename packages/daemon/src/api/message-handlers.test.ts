@@ -802,8 +802,10 @@ describe("outward quota gate (QUOTA-01/02)", () => {
       }),
     ).rejects.toThrow();
     expect(deliver).not.toHaveBeenCalled();
-    // isOrigin true (target === caller), so the gate fired on the grant/quota itself.
-    const [, channelId, , isOrigin] = tryOutward.mock.calls[0];
+    // tryOutward(agentId, channelId, isOrigin, volume): isOrigin true here
+    // (target === caller), so the gate fired on the grant/quota itself.
+    const [agentArg, channelId, isOrigin] = tryOutward.mock.calls[0];
+    expect(agentArg).toBe("agent-1");
     expect(channelId).toBe("ch-A");
     expect(isOrigin).toBe(true);
   });
@@ -821,8 +823,9 @@ describe("outward quota gate (QUOTA-01/02)", () => {
         _agentId: "agent-1", _callerChannelId: "ch-A",
       }),
     ).rejects.toThrow();
-    // The 4th arg (volume) is derived from text.length.
-    const [, , , , volume] = tryOutward.mock.calls[0];
+    // tryOutward(agentId, channelId, isOrigin, volume): the 4th arg (volume) is
+    // derived from text.length.
+    const [, , , volume] = tryOutward.mock.calls[0];
     expect(volume).toBe(big.length);
   });
 

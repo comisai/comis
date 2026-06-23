@@ -34,6 +34,7 @@ import {
   WhatsappActionContract,
   stripInternalFields,
   requireCapability,
+  CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
@@ -152,6 +153,43 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 }
 
 /**
+ * Phase 213 (QUOTA-01/02): the outward irreversible-action gate for an agent-
+ * initiated orch:message send. Called AFTER authorizeChannelAccess, BEFORE
+ * deliver, for message.send/reply/react. Consults `boundedAutonomy.tryOutward`
+ * (origin-only + per-target grant + per-hour + volume); on a deny it throws a
+ * `CapabilityDeniedError` whose §2.7 WARN names the reason.
+ *
+ * NOT gated when: (a) there is no agent origin (`_agentId` absent — a daemon-
+ * initiated cron/heartbeat send, mirroring authorizeChannelAccess's daemon-allow),
+ * or (b) `boundedAutonomy` is not wired (older/non-autonomy daemon). `isOrigin` is
+ * `channelId === _callerChannelId`; `volume` is the text length (react: the emoji).
+ */
+function enforceOutwardQuota(
+  deps: MessageHandlerDeps,
+  rawParams: Record<string, unknown>,
+  channelId: string,
+  volume: number,
+): void {
+  const agentId = rawParams._agentId as string | undefined;
+  // Daemon-initiated (no agent origin) or no service wired → not gated.
+  if (agentId === undefined || deps.boundedAutonomy === undefined) return;
+  const isOrigin = channelId === (rawParams._callerChannelId as string | undefined);
+  const quota = deps.boundedAutonomy.tryOutward(agentId, channelId, isOrigin, volume);
+  if (!quota.ok) {
+    deps.logger.warn(
+      {
+        agentId,
+        channelId,
+        errorKind: "validation" as const,
+        hint: `outward quota: ${quota.error.reason} — the agent's send was bounded (autonomy.outward.* / autonomy.message.maxPerHour); only the origin channel + explicitly-granted targets are auto-allowable`,
+      },
+      "Outward message quota denied",
+    );
+    throw new CapabilityDeniedError("orch:message");
+  }
+}
+
+/**
  * Create message and platform-action RPC handlers.
  * @param deps - Injected dependencies (channel adapter registry)
  * @returns Record mapping method names to handler functions
@@ -168,6 +206,9 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelId = rawParams.channel_id as string;
       const text = rawParams.text as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward send (origin/grant/per-hour/volume) for an
+      // agent origin, before deliver. Volume = the message body length.
+      enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageSendContract.request.parse(userParams);
@@ -199,6 +240,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const text = rawParams.text as string;
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward reply (volume = the reply body length).
+      enforceOutwardQuota(deps, rawParams, channelId, typeof text === "string" ? text.length : 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageReplyContract.request.parse(userParams);
@@ -232,6 +275,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const messageId = resolveMessageId(deps.inboundMessageIdResolver, rawParams.message_id as string, channelType, channelId);
       const emoji = rawParams.emoji as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // QUOTA-01/02: gate the outward reaction (a small fixed volume — the emoji).
+      enforceOutwardQuota(deps, rawParams, channelId, typeof emoji === "string" ? emoji.length : 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageReactContract.request.parse(userParams);

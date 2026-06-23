@@ -285,6 +285,15 @@ export interface ChannelsApiDeps {
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
   persistDeps?: PersistToConfigDeps;
+  /**
+   * Phase 213 (QUOTA-01/02): the daemon-wide bounded-autonomy service. The outward
+   * send handlers (message.send/reply/react) consult `tryOutward` AFTER
+   * authorizeChannelAccess, BEFORE deliver — origin-only + per-target grant +
+   * per-hour + volume. Optional — absent (no autonomy-bearing agent / older
+   * wiring) ⇒ the quota gate is inert (no regression). A daemon-initiated send
+   * (no `_agentId`) is never gated regardless.
+   */
+  boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
 }
 
 /**

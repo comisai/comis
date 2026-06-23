@@ -955,6 +955,7 @@ function buildRpcDispatchDeps(deps: {
     tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
+    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, // Phase 213 QUOTA-01/02: the outward-quota service the message handlers gate on
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
