@@ -237,6 +237,30 @@ export async function setupSchedulers(deps: {
           // crons do NOT mint). Best-effort: absent leaseManager/holder → skip (byte-
           // identical to pre-213 unbounded cron); a mint throw is WARN-logged and the
           // job STILL runs (the lease tracks the bound, never crashes scheduling).
+          //
+          // WR-04 (213-REVIEW), cron fire-concurrency bound — DELIBERATE scope:
+          // a cron-fired run is dispatched via the `scheduler:job_result` event
+          // below, NOT through `runner.spawn`, so it does NOT consult the
+          // tree-wide spawn ceiling (CEIL-01) and never acquires/releases a
+          // semaphore slot. That is intentional for M1: cron fire-concurrency is
+          // already bounded by THREE other limbs, so CEIL-01 would be redundant
+          // here (and the event-dispatch path cannot pair a symmetric
+          // acquire/release the way the spawn path does):
+          //   1. the scheduler's OWN per-agent `cron.maxConcurrentRuns` gate
+          //      (`cron-scheduler.ts:99` breaks `findDueJobs` once
+          //      `runningCount + due.length >= maxConcurrentRuns`; runningCount is
+          //      inc/dec around every job exec — it caps simultaneous FIRES),
+          //   2. the per-root BUDGET this mint anchors (token + wall-clock limbs
+          //      bound a single runaway cron run regardless of pricing), and
+          //   3. `cronSelfMax` (caps the NUMBER of self-owned cron jobs an agent
+          //      can create — the upstream supply of fan-out).
+          // A cron-spawned SUB-AGENT (the cron turn calling sessions_spawn) is
+          // STILL bound by CEIL-01: it re-enters `session.spawn`, which resolves
+          // the cron session's stable root via `resolveRootRunId` and bounds that
+          // sub-agent subtree on the same concurrency/depth/fanout caps. (The
+          // sub-agent subtree keys on the session's `root-session-*` id, not this
+          // `root-cron-*` mint — they are distinct roots; correlating them is a
+          // future enhancement, not an M1 bound gap.)
           const capLayer = boundedAutonomyHolder?.current;
           if (isAgentTurn && leaseManager && capLayer) {
             try {
