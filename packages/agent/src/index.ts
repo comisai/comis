@@ -479,7 +479,9 @@ export type { RedactedScrubResult } from "./session/scrub-redacted-tool-calls.js
 
 // Pi event bridge (AgentSessionEvent to TypedEventBus translation)
 export { createPiEventBridge } from "./bridge/pi-event-bridge.js";
-export type { PiEventBridgeDeps, PiEventBridgeResult } from "./bridge/pi-event-bridge.js";
+// BoundedAutonomyBudgetPort is intentionally NOT exported — it is the internal shape
+// of BoundedAutonomyBudgetHolder.current (the only cross-package consumer is the holder).
+export type { PiEventBridgeDeps, PiEventBridgeResult, BoundedAutonomyBudgetHolder } from "./bridge/pi-event-bridge.js";
 
 // ---------------------------------------------------------------------------
 // Adapters (re-export for daemon wiring convenience)

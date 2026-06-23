@@ -49,12 +49,17 @@ vi.mock("@comis/skills", () => ({
   createBrowserService: mockCreateBrowserService,
 }));
 
+const mockResolveAutonomy = vi.hoisted(() => vi.fn((_autonomy?: unknown) => ({ enabled: false, capabilities: [] as string[] })));
+
 vi.mock("@comis/core", () => ({
   safePath: mockSafePath,
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   formatSessionKey: vi.fn(() => "test|heartbeat|hb-agent-1"),
   systemNowMs: () => Date.now(),
   systemSetTimeout: (cb: () => void, ms: number) => setTimeout(cb, ms),
+  // Phase 213-08 (RATE-02): the cron-fire mint resolves the JOB agent's autonomy
+  // caps via resolveAutonomy. Default disabled; tests override per-case.
+  resolveAutonomy: mockResolveAutonomy,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -135,6 +140,7 @@ describe("setupSchedulers", () => {
       builtinTools: { browser: false, exec: false, process: false },
       toolPolicy: { profile: "default" },
     });
+    mockResolveAutonomy.mockReturnValue({ enabled: false, capabilities: [] });
   });
 
   async function getSetupSchedulers() {
@@ -1579,5 +1585,141 @@ describe("setupSchedulers", () => {
 
     const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
     expect(skillAdds.length, "the kill switch force-disables the skill-synthesis cron").toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // RATE-02 (Phase 213-08): a cron-FIRED agent_turn run mints a FRESH attenuated
+  // lease at the fire site — scoped to the JOB's agentId (NOT operator/system) +
+  // the agent's RESOLVED caps + a fresh root-cron-* id, then registerRoot anchors
+  // it. system_event crons do NOT mint; an absent cap layer is a no-op.
+  // -------------------------------------------------------------------------
+  describe("RATE-02 — fresh attenuated lease on cron-fire", () => {
+    /** A leaseManager spy whose mintLease returns a stable issued lease. */
+    function makeLeaseManager() {
+      const mintLease = vi.fn(() => ({ leaseId: "lease-cron-1", bearer: "bearer-xyz" }));
+      return { mintLease } as unknown as { mintLease: ReturnType<typeof vi.fn> };
+    }
+
+    /** Extract the executeJob callback from the (single) createCronScheduler call. */
+    function extractExecuteJob() {
+      const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+      return cronArgs.executeJob as (job: unknown) => Promise<{ status: string }>;
+    }
+
+    /** An agent_turn cron job WITH a delivery target (so it reaches the execution branch). */
+    function agentTurnJob(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "job-at-1",
+        name: "agent-turn-cron",
+        agentId: "agent-1",
+        payload: { kind: "agent_turn", message: "do the thing" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        ...overrides,
+      };
+    }
+
+    /** Deps whose eventBus.emit resolves the agent_turn deferred `onComplete`
+     *  immediately, so `executeJob` returns fast (the mint runs synchronously
+     *  BEFORE the await — we just don't want to block on the 10-min race). */
+    function depsWithFastComplete(over: Record<string, unknown>) {
+      const deps = createMinimalDeps({ cronEnabled: true, ...over });
+      deps.container.eventBus.emit = vi.fn((_event: string, payload?: { onComplete?: (r: { status: string }) => void }) => {
+        payload?.onComplete?.({ status: "ok" });
+      });
+      return deps;
+    }
+
+    it("mints a FRESH lease scoped to the JOB's agentId + its RESOLVED caps + a fresh root-cron-* id (no parentLeaseId)", async () => {
+      mockResolveAutonomy.mockReturnValue({ enabled: true, capabilities: ["orch:read", "orch:web"] });
+      const leaseManager = makeLeaseManager();
+      const registerRoot = vi.fn();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = depsWithFastComplete({
+        leaseManager,
+        boundedAutonomyHolder: { current: { registerRoot } },
+      });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(agentTurnJob());
+
+      expect(leaseManager.mintLease).toHaveBeenCalledTimes(1);
+      const mintArg = leaseManager.mintLease.mock.calls[0][0];
+      expect(mintArg.agentId).toBe("agent-1"); // the JOB's agent — NOT a system/operator identity
+      expect(mintArg.caps).toEqual(["orch:read", "orch:web"]); // attenuated to the agent's OWN resolved caps
+      expect(mintArg.rootRunId).toMatch(/^root-cron-job-at-1-/); // a FRESH root id for this cron run
+      expect(mintArg.parentLeaseId).toBeUndefined(); // a cron-fired run is a NEW root
+    });
+
+    it("registerRoot anchors the minted lease (rootRunId + returned leaseId)", async () => {
+      mockResolveAutonomy.mockReturnValue({ enabled: true, capabilities: ["orch:read"] });
+      const leaseManager = makeLeaseManager();
+      const registerRoot = vi.fn();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = depsWithFastComplete({
+        leaseManager,
+        boundedAutonomyHolder: { current: { registerRoot } },
+      });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(agentTurnJob());
+
+      const mintArg = leaseManager.mintLease.mock.calls[0][0];
+      expect(registerRoot).toHaveBeenCalledWith(mintArg.rootRunId, "lease-cron-1");
+    });
+
+    it("a system_event cron job does NOT mint a lease (RATE-02 is the agent_turn case)", async () => {
+      mockResolveAutonomy.mockReturnValue({ enabled: true, capabilities: ["orch:read"] });
+      const leaseManager = makeLeaseManager();
+      const registerRoot = vi.fn();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({
+        cronEnabled: true,
+        leaseManager,
+        boundedAutonomyHolder: { current: { registerRoot } },
+      });
+      await setupSchedulers(deps);
+
+      // A memory cron (system_event) — must NOT mint.
+      await extractExecuteJob()({
+        id: "memory-review-agent-1",
+        name: "Memory review",
+        agentId: "agent-1",
+        payload: { kind: "system_event", text: "__MEMORY_REVIEW__" },
+        schedule: { kind: "cron", expr: "0 2 * * *" },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+      });
+
+      expect(leaseManager.mintLease).not.toHaveBeenCalled();
+      expect(registerRoot).not.toHaveBeenCalled();
+    });
+
+    it("absent cap layer (no holder / no leaseManager) is a no-op — an agent_turn fire does NOT throw and does NOT mint", async () => {
+      mockResolveAutonomy.mockReturnValue({ enabled: true, capabilities: ["orch:read"] });
+      const leaseManager = makeLeaseManager();
+      const setupSchedulers = await getSetupSchedulers();
+      // No boundedAutonomyHolder at all → the mint is skipped (byte-identical).
+      const deps = depsWithFastComplete({ leaseManager });
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()(agentTurnJob());
+      expect(result.status).toBe("ok");
+      expect(leaseManager.mintLease).not.toHaveBeenCalled();
+    });
+
+    it("a disabled-autonomy agent (resolveAutonomy.enabled false) does NOT mint even with the cap layer present", async () => {
+      mockResolveAutonomy.mockReturnValue({ enabled: false, capabilities: [] });
+      const leaseManager = makeLeaseManager();
+      const registerRoot = vi.fn();
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = depsWithFastComplete({
+        leaseManager,
+        boundedAutonomyHolder: { current: { registerRoot } },
+      });
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(agentTurnJob());
+      expect(leaseManager.mintLease).not.toHaveBeenCalled();
+    });
   });
 });

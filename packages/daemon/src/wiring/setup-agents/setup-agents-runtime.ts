@@ -413,8 +413,7 @@ export async function setupSingleAgent(
     ? createAuthRotationAdapter({ authStorage: piAuthStorage, profileManager: authProfileManager })
     : undefined;
 
-  // One ExecutionPlanHolder per agent runtime, shared by reference into
-  // PiExecutorDeps.executionPlanHolder AND AcpServerDeps via createAcpWiring.
+  // One ExecutionPlanHolder per agent runtime, shared by reference into PiExecutorDeps.executionPlanHolder AND AcpServerDeps via createAcpWiring.
   const { holder: executionPlanHolder } = createAcpWiring({ eventBus: container.eventBus, logger: perAgentLogger });
 
   const executor = createPiExecutor(effectiveConfig, {
@@ -424,6 +423,10 @@ export async function setupSingleAgent(
     lastKnownModel: deps.lastKnownModel,
     budgetGuard,
     costTracker, spendAccumulator: deps.spendAccumulator, spendConfig: container.config.observability.spend, // Phase 177 kill-switch: daemon-wide accumulator REF (Pitfall 4 — same instance every bridge) + config; absent ⇒ no-op.
+    // Phase 213-08 (BUDGET-01/02): per-root budget holder + rootRunId resolver (same daemon-wide-REF pattern as spendAccumulator; absent ⇒ no-op).
+    ...(deps.boundedAutonomyBudget && deps.resolveRootRunId
+      ? { boundedAutonomyBudget: deps.boundedAutonomyBudget, resolveRootRunId: deps.resolveRootRunId }
+      : {}),
     stepCounter,
     eventBus: container.eventBus,
     logger: perAgentLogger,

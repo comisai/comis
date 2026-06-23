@@ -15,9 +15,12 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, SessionKey } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
+import { createLeaseManager, type LeaseManager } from "@comis/infra";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
+import { createRootRunIdResolver } from "./setup-capability-endpoint-boot.js";
 // Video generation (Phase 188 / Plan 04): the FAL queue factory + per-agent rate
 // limiter, imported from the bare @comis/skills barrel exactly like the image
 // route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
@@ -54,6 +57,27 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // VIS-01 (187): the provider-following vision bridge (Plan 01) — the bundle
 // builds its capability by closing over the cred resolvers + resolveAgentModel.
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
+
+/** The Phase 213-08 (BUDGET-01/02 + RATE-02) bounded-autonomy late-bind seam built in
+ *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
+ *  the session→rootRunId index + resolver (synthetic root-session-* fallback) + the
+ *  daemon-wide LeaseManager (shared by the cron-fire mint AND the cap layer). Built before
+ *  setupAgents/setupSchedulers since the cap layer is LATER — reads at fire time. */
+export interface BoundedAutonomyWiring {
+  boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
+  rootRunIdIndex: Map<string, string>;
+  resolveRootRunId: (sessionKey: SessionKey) => string;
+  sharedLeaseManager: LeaseManager;
+}
+
+/** Build the {@link BoundedAutonomyWiring} late-bind seam (see the interface doc). */
+export function createBoundedAutonomyWiring(deps: { clock: ClockPort }): BoundedAutonomyWiring {
+  const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
+  const rootRunIdIndex = new Map<string, string>();
+  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
+  const sharedLeaseManager = createLeaseManager({ clock: deps.clock });
+  return { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager };
+}
 
 /**
  * Restore approval pending requests and cache from disk at startup.

@@ -12,8 +12,9 @@
  */
 
 import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
-import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout, resolveAutonomy } from "@comis/core";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
+import type { ComisLogger, LeaseManager } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
 import type { createSessionLifecycle, SessionResetScheduler } from "@comis/agent";
 import { createSessionResetScheduler } from "@comis/agent";
@@ -86,8 +87,17 @@ export async function setupSchedulers(deps: {
   clock: ClockPort;
   /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
+  /** Phase 213-08 (RATE-02): the credential-broker lease manager. With the holder, a
+   *  cron-FIRED agent_turn run mints a fresh attenuated lease at the fire site.
+   *  Optional — absent ⇒ no mint (byte-identical to the pre-213 unbounded cron). */
+  leaseManager?: LeaseManager;
+  /** Phase 213-08 (RATE-02): the daemon-wide LATE-BOUND per-root budget holder. The
+   *  schedulers are built BEFORE the cap layer that populates `current`, so the mint
+   *  reads `holder.current` at FIRE time; registerRoot anchors the cron run. Optional
+   *  — absent / `current` undefined ⇒ no mint. */
+  boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -219,6 +229,46 @@ export async function setupSchedulers(deps: {
           const deferredPromise = isAgentTurn
             ? new Promise<{ status: "ok" | "error"; error?: string }>((resolve) => { deferredResolve = resolve; })
             : undefined;
+
+          // Phase 213-08 (RATE-02): a cron-FIRED agent_turn run mints a FRESH lease
+          // scoped to the JOB's agentId + the agent's RESOLVED caps (NOT operator/
+          // system) + a fresh root-cron-* id (a new root, no parentLeaseId), then
+          // registerRoot anchors it. STRICTLY gated on agent_turn (system_event memory
+          // crons do NOT mint). Best-effort: absent leaseManager/holder → skip (byte-
+          // identical to pre-213 unbounded cron); a mint throw is WARN-logged and the
+          // job STILL runs (the lease tracks the bound, never crashes scheduling).
+          const capLayer = boundedAutonomyHolder?.current;
+          if (isAgentTurn && leaseManager && capLayer) {
+            try {
+              const resolved = resolveAutonomy(agents[job.agentId]?.autonomy);
+              if (resolved.enabled) {
+                const rootRunId = `root-cron-${job.id}-${systemNowMs().toString(36)}`;
+                const issued = leaseManager.mintLease({
+                  agentId: job.agentId, // the JOB's agent — the attenuation identity (NOT operator/system)
+                  caps: resolved.capabilities, // attenuated to the agent's OWN resolved caps
+                  budgetRef: `run-cron-${job.id}-${systemNowMs().toString(36)}`,
+                  sessionKey: resolveMainSessionKey(job.agentId),
+                  rootRunId,
+                  // no parentLeaseId — a cron-fired run is a NEW root
+                });
+                capLayer.registerRoot(rootRunId, issued.leaseId);
+                jobLogger.info(
+                  { rootRunId, agentId: job.agentId, hint: "cron-fired run minted a fresh attenuated lease" },
+                  "Cron run lease minted",
+                );
+              }
+            } catch (mintErr) {
+              jobLogger.warn(
+                {
+                  err: mintErr,
+                  agentId: job.agentId,
+                  hint: "cron-fire lease mint failed; the job still runs but is not bound by the per-root ceiling/budget this run (degraded to pre-213 unbounded-cron behavior)",
+                  errorKind: "internal" as const,
+                },
+                "Cron-fire lease mint failed (degrading to unbounded cron run)",
+              );
+            }
+          }
 
           container.eventBus.emit("scheduler:job_result", {
             jobId: job.id,

@@ -196,7 +196,7 @@ import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/se
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
@@ -1862,6 +1862,9 @@ async function bootAgents(
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
+  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
+  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
@@ -1882,7 +1885,9 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08: per-root budget holder + rootRunId resolver → each bridge
+    outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -1933,25 +1938,18 @@ async function bootAgents(
   // Credential-free env for the exec tool (agent-issued shell commands).
   const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
-  // Deferred wake callback ref -- populated by bootChannels once
-  // wakeCoalescer is constructed. Same shape as channelPluginsRef /
-  // bgNotifyRef (cross-stage deferred-ref pattern).
+  // Deferred wake callback ref -- populated by bootChannels once wakeCoalescer is
+  // constructed (the channelPluginsRef / bgNotifyRef cross-stage deferred-ref pattern).
   const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
 
   // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
   const systemEventQueue = createSystemEventQueue({ logger: schedulerLogger });
 
-  // 6.6.5. Schedulers — inline buildDeferredCronWakeCallback for the
-  // onCronWake handler. Reads `cronWakeCallbackRef.ref` at INVOCATION time
-  // (deferred), so the live wakeCoalescer wired up later in bootChannels is
-  // what actually receives the wake. If a cron fires in the gap (typically
-  // milliseconds, but a heavy startup may stretch it to seconds), surface
-  // the drop with a debug log so the silent miss is visible.
-  //
-  // Observability-only: we intentionally do NOT buffer-then-drain (the
-  // precedent set by channelPluginsRef / bgNotifyRef etc.). Cron wakes are
-  // timer-driven; replaying a backlog could cause a wake storm if N timers
-  // fired during a slow startup.
+  // 6.6.5. Schedulers — the onCronWake handler reads `cronWakeCallbackRef.ref` at
+  // INVOCATION time (deferred), so the live wakeCoalescer wired in bootChannels
+  // receives the wake; a cron firing in the handoff gap is DEBUG-logged (the silent
+  // miss is visible). Observability-only: NO buffer-then-drain (channelPluginsRef/
+  // bgNotifyRef precedent) — replaying timer-driven wakes could cause a wake storm.
   const {
     cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
@@ -1972,6 +1970,7 @@ async function bootAgents(
       }
     },
     clock, timers,
+    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // Phase 213-08 (RATE-02): the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -2058,6 +2057,7 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
+    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -2194,7 +2194,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     return port;
   };
   // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager });
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
