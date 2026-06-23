@@ -212,8 +212,17 @@ const PER_RUN_AGGREGATE_CAP_BYTES = 64 * 1024 * 1024;
 // Pure exported helper — the ORCH-02 env-scrub (macOS-unit-testable).
 // ---------------------------------------------------------------------------
 
-/** Matches any env key that could carry a credential (ORCH-02). */
-const SECRET_KEY_PATTERN = /KEY|TOKEN|SECRET/i;
+/**
+ * Matches any env key that could carry a credential (ORCH-02 + IN-01). Covers
+ * the obvious `KEY/TOKEN/SECRET` names PLUS common credential names that contain
+ * none of those substrings (`PASSWORD`, `PASSPHRASE`, `CREDENTIAL(S)`,
+ * `PRIVATE`, `BEARER`, `AUTH`, a `_PAT` suffix, `DSN`). `_PAT\b` is anchored so
+ * it matches `GITHUB_PAT` but NOT `PATH` (which would match a bare `PAT`). This
+ * is defense-in-depth — the orchestrate base env is the credential-free
+ * `execToolEnv` today — but it keeps the scrub honest as the documented
+ * credential boundary under any future wiring change.
+ */
+const SECRET_KEY_PATTERN = /KEY|TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL|PRIVATE|BEARER|AUTH|_PAT\b|DSN/i;
 
 /**
  * Filter a base/inherited env map for the jailed child (ORCH-02): drop every key

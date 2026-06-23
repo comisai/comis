@@ -239,6 +239,57 @@ describe("orchestrate-tool", () => {
       const scrubbed = scrubSecretEnv({ A: "1", B: undefined, C: "3" });
       expect(scrubbed).toEqual({ A: "1", C: "3" });
     });
+
+    it("drops common credential names that contain no KEY/TOKEN/SECRET substring (IN-01 defense-in-depth)", () => {
+      // The base env is the credential-free execToolEnv today, so this is pure
+      // defense-in-depth — but the scrub is the documented credential boundary,
+      // so it must also drop the credential classes that name no
+      // KEY/TOKEN/SECRET substring.
+      const scrubbed = scrubSecretEnv({
+        PATH: "/usr/bin",
+        DB_PASSWORD: "p1",
+        SSH_PASSPHRASE: "p2",
+        AWS_CREDENTIALS: "p3",
+        AWS_CREDENTIAL: "p3b",
+        TLS_PRIVATE: "p4",
+        GH_BEARER: "p5",
+        PROXY_AUTH: "p6",
+        GITHUB_PAT: "p7",
+        DATABASE_DSN: "p8",
+      });
+      expect(scrubbed.PATH).toBe("/usr/bin");
+      expect(scrubbed.DB_PASSWORD).toBeUndefined();
+      expect(scrubbed.SSH_PASSPHRASE).toBeUndefined();
+      expect(scrubbed.AWS_CREDENTIALS).toBeUndefined();
+      expect(scrubbed.AWS_CREDENTIAL).toBeUndefined();
+      expect(scrubbed.TLS_PRIVATE).toBeUndefined();
+      expect(scrubbed.GH_BEARER).toBeUndefined();
+      expect(scrubbed.PROXY_AUTH).toBeUndefined();
+      expect(scrubbed.GITHUB_PAT).toBeUndefined();
+      expect(scrubbed.DATABASE_DSN).toBeUndefined();
+    });
+
+    it("keeps the lease + benign env vars that must survive the scrub", () => {
+      // Regression guard: broadening the pattern must NOT drop the lease vars or
+      // benign names. COMIS_CAP_LEASE/COMIS_ORCH_SOCKET ride placeholders merged
+      // AFTER the scrub, but PATH/HOME/LANG/TERM/NODE_ENV/TZ pass THROUGH it.
+      const scrubbed = scrubSecretEnv({
+        PATH: "/usr/bin",
+        HOME: "/home/x",
+        LANG: "en_US.UTF-8",
+        TERM: "xterm",
+        NODE_ENV: "production",
+        TZ: "UTC",
+      });
+      expect(scrubbed).toEqual({
+        PATH: "/usr/bin",
+        HOME: "/home/x",
+        LANG: "en_US.UTF-8",
+        TERM: "xterm",
+        NODE_ENV: "production",
+        TZ: "UTC",
+      });
+    });
   });
 
   describe("clampTimeoutMs (WR-02 — bounded wall-clock)", () => {
