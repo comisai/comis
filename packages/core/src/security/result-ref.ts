@@ -27,6 +27,7 @@
  * @module
  */
 import { err, ok, type Result } from "@comis/shared";
+import { systemDateFrom } from "../runtime/system-time.js";
 
 /**
  * A structured handle to a materialized tool result on the jailed workspace
@@ -128,10 +129,12 @@ export function isExpired(expiresAtIso: string, nowMs: number): boolean {
 
 /**
  * Compute an ISO-8601 expiry `ttlMs` after the injected `nowMs` (pure; reads no
- * ambient clock). Used to stamp `ResultRef.expiresAt` at materialize time.
+ * ambient clock — `systemDateFrom` is a value→Date converter, not a clock read,
+ * so the deterministic input→output property holds). Used to stamp
+ * `ResultRef.expiresAt` at materialize time.
  */
 export function computeExpiresAt(nowMs: number, ttlMs: number): string {
-  return new Date(nowMs + ttlMs).toISOString();
+  return systemDateFrom(nowMs + ttlMs).toISOString();
 }
 
 /**
