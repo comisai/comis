@@ -198,6 +198,62 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
+  // Test 3b (WR-01, 213-REVIEW): perSocketCallsPerSec is a DISTINCT limit from
+  // perRootCallsPerSec — a single socket exceeding its own per-socket cap is
+  // denied even while well under the per-root cap. Pre-fix, tryCall applied the
+  // per-ROOT limiter to BOTH keys, so perSocketCallsPerSec was dead config.
+  // -------------------------------------------------------------------------
+  it("enforces perSocketCallsPerSec independently of perRootCallsPerSec (WR-01)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      // Socket cap (2) STRICTLY below the root cap (10) so the socket limit is
+      // the binding bound for a single socket — it cannot be the root cap in
+      // disguise.
+      rate: { perRootCallsPerSec: 10, perSocketCallsPerSec: 2, connectionChurnPerMin: 60 },
+    };
+    const { service } = makeService({ config });
+
+    // One socket: 2 calls allowed, the 3rd denied by the SOCKET cap — even though
+    // only 3 calls have hit the root (cap 10, far from binding).
+    expect(service.tryCall("root-1", "socket-A")).toEqual({ ok: true });
+    expect(service.tryCall("root-1", "socket-A")).toEqual({ ok: true });
+    expect(service.tryCall("root-1", "socket-A")).toEqual({ ok: false, reason: "rate" });
+
+    // A DIFFERENT socket under the SAME root still has its own fresh per-socket
+    // budget (the deny above was per-socket, not per-root): 2 more allowed.
+    expect(service.tryCall("root-1", "socket-B")).toEqual({ ok: true });
+    expect(service.tryCall("root-1", "socket-B")).toEqual({ ok: true });
+    // socket-B's 3rd is denied by its own socket cap too.
+    expect(service.tryCall("root-1", "socket-B")).toEqual({ ok: false, reason: "rate" });
+
+    service.destroy();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3c (WR-01): the per-ROOT cap still binds the whole tree's aggregate
+  // across many sockets — each socket under its own cap, but the root cap trips.
+  // -------------------------------------------------------------------------
+  it("the per-root cap binds the aggregate across sockets even when each socket is under its socket cap (WR-01)", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      // Root cap (3) BELOW socket cap (10): the root is the binding bound across
+      // many one-call sockets.
+      rate: { perRootCallsPerSec: 3, perSocketCallsPerSec: 10, connectionChurnPerMin: 60 },
+    };
+    const { service } = makeService({ config });
+
+    // Three distinct sockets, one call each — each well under the socket cap (10)
+    // but together they reach the root cap (3).
+    expect(service.tryCall("root-agg", "s1")).toEqual({ ok: true });
+    expect(service.tryCall("root-agg", "s2")).toEqual({ ok: true });
+    expect(service.tryCall("root-agg", "s3")).toEqual({ ok: true });
+    // The 4th distinct socket's first call trips the per-ROOT cap.
+    expect(service.tryCall("root-agg", "s4")).toEqual({ ok: false, reason: "rate" });
+
+    service.destroy();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 4: idempotent construction + destroy() tears down the rate timers
   // -------------------------------------------------------------------------
   it("constructs sub-modules once and destroy() cancels the rate limiter's scheduled timers", () => {

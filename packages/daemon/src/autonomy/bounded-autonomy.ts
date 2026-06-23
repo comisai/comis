@@ -74,7 +74,10 @@ export interface BoundedAutonomy {
   releaseSpawn(rootRunId: string): void;
   /**
    * Record one cap-socket call (RATE-01). Composes the per-root AND per-socket
-   * sliding-window limits — denies if EITHER trips (`config.rate.perRootCallsPerSec`).
+   * sliding-window limits — denies if EITHER trips: the per-root key on
+   * `config.rate.perRootCallsPerSec`, the per-socket key on its OWN
+   * `config.rate.perSocketCallsPerSec` (WR-01 — these are two distinct caps with
+   * two distinct limiters, not one cap applied twice).
    */
   tryCall(rootRunId: string, socketId: string): { ok: true } | { ok: false; reason: "rate" };
   /** Record one cap-socket (re)connection for `rootRunId` (the churn cap, RATE-01). */
@@ -159,11 +162,33 @@ export function createBoundedAutonomy(deps: {
     logger,
   });
 
+  // The per-ROOT call limiter (+ the connection-churn cap, which is per-root).
+  // `tryCall` applies its callWindow to the `root:<id>` key (the whole tree's
+  // call rate).
   const rate = createCallRateLimiter({
     clock,
     timers,
     callWindowMs: CALL_WINDOW_MS,
     maxCallsPerWindow: config.rate.perRootCallsPerSec,
+    churnWindowMs: CHURN_WINDOW_MS,
+    maxChurnPerWindow: config.rate.connectionChurnPerMin,
+    maxEntries: RATE_MAX_ENTRIES,
+  });
+
+  // WR-01 (213-REVIEW): a SEPARATE limiter for the per-SOCKET dimension. The
+  // shared sliding-window body enforces ONE `maxPerWindow`, so a single limiter
+  // cannot apply two different per-key caps — pre-fix, both the root AND socket
+  // keys rode the per-root cap, making `perSocketCallsPerSec` (default 10) dead
+  // config. This second limiter's callWindow uses `perSocketCallsPerSec` so the
+  // `socket:<id>` key is bounded by its own configured cap. Its churn limb is
+  // unused (churn is per-root, gated by `rate.tryChurn`); a positive placeholder
+  // keeps the constructor's `int().positive()` contract without affecting the
+  // socket call cap. Torn down in `destroy()`.
+  const rateSocket = createCallRateLimiter({
+    clock,
+    timers,
+    callWindowMs: CALL_WINDOW_MS,
+    maxCallsPerWindow: config.rate.perSocketCallsPerSec,
     churnWindowMs: CHURN_WINDOW_MS,
     maxChurnPerWindow: config.rate.connectionChurnPerMin,
     maxEntries: RATE_MAX_ENTRIES,
@@ -196,11 +221,13 @@ export function createBoundedAutonomy(deps: {
 
     tryCall(rootRunId, socketId): { ok: true } | { ok: false; reason: "rate" } {
       // Compose the per-root AND per-socket sliding-window limits — deny if EITHER
-      // trips. The per-root key bounds the whole tree's call rate; the per-socket
-      // key bounds a single orchestration socket. Both ride the same window cap.
+      // trips. The per-root key bounds the whole tree's call rate
+      // (`perRootCallsPerSec`); the per-socket key bounds a single orchestration
+      // socket via its OWN limiter (`perSocketCallsPerSec`, WR-01). Check the root
+      // bound first (the tree-wide cap), then the socket bound.
       const perRoot = rate.tryCall(`root:${rootRunId}`);
       if (!perRoot.ok) return perRoot;
-      const perSocket = rate.tryCall(`socket:${socketId}`);
+      const perSocket = rateSocket.tryCall(`socket:${socketId}`);
       if (!perSocket.ok) return perSocket;
       return { ok: true };
     },
@@ -241,6 +268,7 @@ export function createBoundedAutonomy(deps: {
 
     destroy(): void {
       rate.destroy();
+      rateSocket.destroy();
     },
   };
 }
