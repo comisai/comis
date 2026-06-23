@@ -45,15 +45,21 @@ export { createBudgetGuard, BudgetError } from "./budget/budget-guard.js";
 export type { BudgetGuard, BudgetSnapshot } from "./budget/budget-guard.js";
 export { createCostTracker } from "./budget/cost-tracker.js";
 export type { CostTracker, CostRecord, UsageInput } from "./budget/cost-tracker.js";
-// Spend kill-switch (Phase 177): ONLY the surface the daemon composition root
-// consumes cross-package — the daemon-wide accumulator factory + the instance
-// type + the scope type (setup-observability wiring + the PiExecutorDeps thread).
-// checkSpendCeiling / SpendGateOutcome / SpendError / SpendReservation /
-// SpendCeilings stay INTRA-package (budget-guard + bridge + their tests import
-// them via relative paths) — they are NOT on the barrel (public-export-consumers
-// gate: a barrel export needs a cross-package consumer).
-export { createSpendAccumulator } from "./budget/spend-accumulator.js";
+// Spend kill-switch (Phase 177): the surface the daemon composition root consumes
+// cross-package — the daemon-wide accumulator factory + the instance type + the
+// scope type (setup-observability wiring + the PiExecutorDeps thread).
+// The 3-state spend GATE (`checkSpendCeiling` + its outcome/error/ceilings/config
+// types) is now consumed cross-package by the per-`rootRunId` budget meter
+// (`@comis/daemon` `autonomy/per-root-budget.ts`, Phase 213-04 BUDGET-01/02/03):
+// the meter REUSES the shipped 3-state gate VERBATIM for its $-limb (the
+// ffe11736 fail-closed semantics — never re-implemented). These were previously
+// intra-package; the daemon meter is the first cross-package consumer, so they
+// graduate to the barrel (public-export-consumers gate: a barrel export needs a
+// cross-package consumer, which now exists).
+export { createSpendAccumulator, SpendError } from "./budget/spend-accumulator.js";
 export type { SpendAccumulator, SpendScope } from "./budget/spend-accumulator.js";
+export { checkSpendCeiling } from "./budget/budget-guard.js";
+export type { SpendGateOutcome, SpendGateConfig } from "./budget/budget-guard.js";
 export { createTurnBudgetTracker } from "./budget/turn-budget-tracker.js";
 export type { TurnBudgetTracker, TurnBudgetDecision, TurnBudgetStopReason } from "./budget/turn-budget-tracker.js";
 
