@@ -79,12 +79,18 @@ export type BudgetHook = (estimate: { tool: string; bytes?: number }) => void;
 
 /**
  * The injected ResultRef writer (Plan 03's `result-ref-store`). Called when a
- * return is over the per-tool threshold; writes the payload to the workspace
- * `results/` dir and returns the handle, or `undefined` if it declined.
+ * return is over the per-tool threshold; writes the payload to the offloading
+ * AGENT's workspace `results/` dir and returns the handle, or `undefined` if it
+ * declined. The `lease` is threaded so the writer can resolve the correct
+ * per-agent workspace (Plan 05 — the store's MaterializeContext needs the
+ * workspace path; without the lease the daemon-side writer could not know WHICH
+ * agent's `results/` to write to, so the in-jail `jq`/`read` slice over the ref
+ * would target the wrong dir — REF-01/02 would be unreachable).
  */
 export type MaterializeWriter = (
   payload: string,
   toolName: string,
+  lease: ToolInvokeLease,
 ) => Promise<ResultRef | undefined>;
 
 /** Deps for {@link createToolInvokeExecutor} (DI — AGENTS.md §2.4). */
@@ -218,7 +224,7 @@ export function createToolInvokeExecutor(
         { step: "materialize", toolName: "web_fetch", bytes: byteCount },
         "tool.invoke web_fetch over threshold — materializing to ResultRef",
       );
-      const ref = await deps.materialize(text, "web_fetch");
+      const ref = await deps.materialize(text, "web_fetch", lease);
       if (ref) {
         log?.info(
           { toolName: "web_fetch", durationMs: systemNowMs() - started, bytes: byteCount, materialized: true },

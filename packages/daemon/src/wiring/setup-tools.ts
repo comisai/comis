@@ -88,12 +88,21 @@ import {
 // keep this file under 800 lines. BrokerContextDeps is re-exported here so
 // existing imports of it from setup-tools.ts continue to resolve.
 export type { BrokerContextDeps } from "./setup-broker-activation.js";
-import { buildBrokerSpawnEnv, type BrokerContextDeps } from "./setup-broker-activation.js";
+import type { BrokerContextDeps } from "./setup-broker-activation.js";
+// Phase 212 Gap 3: the KEPT cap-layer handle (leaseManager + capSocketPath +
+// outputGuard) the dormancy activation threads in so an autonomy-bearing agent
+// mints a per-spawn lease + gets the orchestrate tool (Plan 04). The mint +
+// orchestrate-assembly bodies are in setup-tools-autonomy.ts (file-size cap).
+import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
+import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 
 
 // Deps / Result types
 
 /** Dependencies for tool assembly setup. */
+// @optional-field-count: composition-root deps; each optional field is an independent capability
+// seam (image/video/sandbox/broker/lcd/timers/cap), present only when configured — a sub-object
+// would obscure the per-field "absent ⇒ off" contract.
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
@@ -184,6 +193,10 @@ export interface ToolsDeps {
    *  assembleToolsForAgent wires the dag-mode `ctx_*` tools (E1/E2); the agent sees only the
    *  core port TYPE (the agent-to-store cut). Absent ⇒ ctx_* not wired. */
   lcdStore?: ContextStorePort;
+  /** Phase 212 Gap 3 — the KEPT capability-layer handle (lease + cap socket + outputGuard),
+   *  present when ANY agent is autonomy-bearing. buildAutonomyToolWiring (setup-tools-autonomy.ts)
+   *  reads it to mint the per-spawn lease + assemble orchestrate. Absent ⇒ neither (no regression). */
+  capEndpointHandle?: CapabilityLayerHandle;
 }
 
 /** Options for assembleToolsForAgent controlling platform tool selection. */
@@ -559,6 +572,13 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         }
       }
 
+      // Phase 212 Gap 3 (dormancy activation, setup-tools-autonomy.ts): the per-spawn lease + the
+      // orchestrate tool minted ONCE (SAME env for exec+orchestrate; both off w/o autonomy/handle/sandbox).
+      const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring({
+        agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
+        brokerContext: deps.brokerContext, sandboxProvider,
+        sessionKey: options?.sessionKey, logger: skillsLogger, baseEnv: subprocessEnv,
+      });
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
       {
@@ -580,10 +600,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
-          // Broker proxy env — only present when brokerContext wired.
-          // Issues the single-use token + builds the placeholder/CA/proxy env;
-          // extracted to setup-broker-activation.ts (buildBrokerSpawnEnv).
-          brokerSpawnEnv: buildBrokerSpawnEnv(deps.brokerContext, agentId),
+          // Broker proxy env + (212) the minted cap lease — only present when the
+          // broker is wired and/or the agent is autonomy-bearing (Gap 3).
+          brokerSpawnEnv,
         }));
       }
 
@@ -602,6 +621,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
+
+      // Orchestrate tool (Phase 212 Plan 04, ORCH-01) — built by buildAutonomyToolWiring above.
+      if (orchestrateTool) tools.push(orchestrateTool);
 
       // Terminal driver (v2.11): per-agent registry + nine never-export tools (165-07 durability
       // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.

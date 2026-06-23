@@ -4520,6 +4520,26 @@ Common error conditions:
 
 See the [WebSocket Protocol](/reference/websocket) error codes table for transport-level errors (parse error, rate limiting, message size).
 
+## The agent cap-socket surface: `tool.invoke`
+
+Everything above is reached over the operator-facing WebSocket/HTTP gateway. There is a **second, internal** RPC surface an autonomous agent reaches from inside a jail: `tool.invoke`, dispatched over the lease-authenticated loopback **capability socket** (`COMIS_ORCH_SOCKET`, a `0600` owner-only Unix socket) — never the public gateway. It is the one-route generalization that lets a jailed [`orchestrate`](/agent-tools/orchestrate) script call a capability-scoped tool.
+
+### `tool.invoke`
+
+| Property | Value |
+|----------|-------|
+| **Transport** | The cap socket only (`COMIS_ORCH_SOCKET`); the wire is one `{ bearer, method: "tool.invoke", params: { tool, args } }` newline-JSON line per connection. Not reachable over the public WS/HTTP gateway. |
+| **Auth** | A capability **lease** bearer (`COMIS_CAP_LEASE`), audience-bound to the inner `tool` — a captured lease cannot dispatch a tool whose capability it lacks. |
+| **Origin** | **Agent-origin.** Deny-by-origin keeps the entire control plane unreachable through this route. |
+| **Parameters** | `{ tool: string, args: object }` — `tool` is a name on the curated [tool→capability map](/security/capability-model#the-curated-tool-capability-surface-tool-invoke); `args` are the inner tool's parameters. |
+| **Returns** | The inner tool's result, or a `ResultRef` handle when the return is over the per-tool size threshold (see [orchestrate](/agent-tools/orchestrate#resultref-high-volume-returns)). |
+
+The dispatch gates in a fixed order — **cap-map allow-list** (an unmapped tool is undispatchable: a `CapabilityDeniedError`, default-deny) → **denylist** (no cap-mapped tool is denylisted; `mcp_manage`/`mcp_login`/`gateway`/`*_manage` stay unreachable) → **deny-by-origin** (automatic on the RPC route, since the lease's `_agentId` is injected) → **`requireCapability`** → **route** (an RPC-backed read forwards to its registered handler with the lease's identity strip-then-injected; an in-process builtin — `read`/`grep`/`find`/`ls`/`jq` and the daemon-side, DNS-pinned `web_search`/`web_fetch` — runs on the daemon under the agent's jailed workspace).
+
+```json Request (over COMIS_ORCH_SOCKET, not the gateway)
+{ "bearer": "<COMIS_CAP_LEASE>", "method": "tool.invoke", "params": { "tool": "web_fetch", "args": { "url": "https://example.com" } } }
+```
+
 ## Related
 
 <CardGroup cols={2}>

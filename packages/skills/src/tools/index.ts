@@ -303,6 +303,9 @@ export {
   createOrchestrateTool,
   scrubSecretEnv,
   createResultRefStore,
+  // Plan 05 dormancy activation: the shipped daemon-side executor cores
+  // (read/grep/find/ls/jq + web_search) the Plan-02 tool.invoke executor routes to.
+  createOrchestrateExecutorCores,
 } from "./builtin/orchestrate/index.js";
 export type {
   OrchestrateToolDeps,
@@ -312,4 +315,10 @@ export type {
   MaterializeContext,
   GcRunContext,
   CleanupRunContext,
+  OrchestrateExecutorCores,
+  OrchestrateExecutorCoresDeps,
+  OrchestrateFileCores,
+  OrchestrateFileCore,
+  OrchestrateFileCoreContext,
+  OrchestrateWebSearchCore,
 } from "./builtin/orchestrate/index.js";

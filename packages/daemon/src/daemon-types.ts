@@ -622,8 +622,10 @@ export interface BootContext {
   announceToParent?: ReturnType<typeof setupCrossSession>["announceToParent"];
   deadLetterQueue?: ReturnType<typeof setupCrossSession>["deadLetterQueue"];
   announcementBatcher?: ReturnType<typeof setupCrossSession>["announcementBatcher"];
-  // Sandbox + image generation
+  // Sandbox + image generation. Phase 211/212 cap layer (built in bootChannels, read in bootShutdown).
   sandboxProvider?: SandboxProvider;
+  capEndpointHandle?: import("./wiring/setup-capability-endpoint-boot.js").CapabilityLayerHandle;
+  namespacePreflightOk?: boolean;
   imageGenProvider?: ReturnType<typeof createImageGenProvider> extends import("@comis/shared").Result<infer P, unknown> ? P | undefined : never;
   imageGenRateLimiter?: ImageGenRateLimiter;
   imageGenConfig?: BootContext["container"]["config"]["integrations"]["media"]["imageGeneration"];

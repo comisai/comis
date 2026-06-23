@@ -37,6 +37,19 @@ export type {
   MaterializeError,
 } from "./result-ref-store.js";
 
+// The shipped daemon-side `tool.invoke` executor cores (Plan 05): the real
+// read/grep/find/ls/jq file cores + the web_search core the Plan-02 executor
+// routes to. Consumed by the daemon's dormancy-activation wiring.
+export { createOrchestrateExecutorCores } from "./orchestrate-executor-cores.js";
+export type {
+  OrchestrateExecutorCores,
+  OrchestrateExecutorCoresDeps,
+  OrchestrateFileCores,
+  OrchestrateFileCore,
+  OrchestrateFileCoreContext,
+  OrchestrateWebSearchCore,
+} from "./orchestrate-executor-cores.js";
+
 // The cap-socket CLIENT runtime the generated SDK imports by a relative path
 // (`./orchestrate-sdk-runtime.js`) at jail-run time. Re-exported here for local
 // cohesion; the in-jail import does NOT go through this barrel.

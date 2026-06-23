@@ -44,6 +44,41 @@ Every member is namespaced `orch:`. None of them is, or implies, a gateway
 scope -- the two sets are **disjoint**, and an architecture test asserts the
 intersection is empty.
 
+## The Curated Tool-Capability Surface (`tool.invoke`)
+
+An autonomous [`orchestrate`](/agent-tools/orchestrate) script does not call RPC
+methods directly -- it calls **named tools** through `tool.invoke` over the
+lease-authenticated [capability socket](/reference/json-rpc#the-agent-cap-socket-surface-tool-invoke).
+A second curated map -- the **tool→capability map** -- decides which tools that
+surface exposes and which capability each requires. It is **default-deny**: a
+tool that is not on the map has no capability and is **undispatchable**.
+
+| Tool | Capability | How it runs |
+|------|------------|-------------|
+| `read`, `grep`, `find`, `ls`, `jq` | `orch:read` | In-process builtins, run daemon-side under the agent's jailed workspace |
+| `memory_search`, `memory_get`, `session_search`, `sessions_list`, `session_status`, `sessions_history`, `extract_document` | `orch:read` | Routed to the existing registered RPC handler (self-scoped to the agent) |
+| `web_search`, `web_fetch` | `orch:web` | Daemon-side on the daemon's network (the jail stays `--unshare-net`), DNS-pinned |
+
+The map above is representative; the **authoritative list is `TOOL_CAPABILITY_MAP`**
+in the daemon (the same table the dispatch gate, the lease audience, and the
+generated in-jail SDK all read, so they cannot drift). Two invariants hold by
+construction, asserted by architecture tests:
+
+<Steps>
+  <Step title="No cap-mapped tool is denylisted">
+    Every tool on the map is checked against the never-delegate denylist at
+    module load. The administrative/destructive tools (`mcp_manage`, `mcp_login`,
+    `gateway`, the `*_manage` family) are **never** on this surface -- they stay
+    unreachable, and deny-by-origin covers the control plane behind them.
+  </Step>
+  <Step title="An unmapped tool is undispatchable">
+    A `tool.invoke` for a tool absent from the map raises `CapabilityDeniedError`
+    before any lease is even consulted -- default-deny by absence. The MCP
+    export-policy is **not** the gate (it would admit the wrong set); the cap-map
+    plus the denylist are the only gates.
+  </Step>
+</Steps>
+
 ## One Gate, No Bypass, No Wildcard
 
 A single predicate decides every privileged action. It is a plain membership
