@@ -18,7 +18,19 @@
  * Returns a heading-first `string[]`: the `## Autonomy` heading followed by
  * one paragraph of prose (authored as concatenated fragments for readability)
  * stating the routing rule, the autonomy envelope, the contract truth, and how
- * to read a denial. Registered in `SECTIONS` with `MODES_ALL_PLUS_COMPACT`
+ * to read a denial.
+ *
+ * The capability claim is PROFILE-CONDITIONAL by phrasing, not by plumbing: the
+ * opener says "When your agent profile grants autonomy capabilities (the
+ * `standard` default does; `assistant` does not), you can …" so the always-on
+ * paragraph stays accurate for EVERY resolved profile — including `assistant`
+ * (`enabled:false, capabilities:[]`, `schema-agent-autonomy.ts`) — without
+ * threading the resolved posture through `AssemblerParams`. This keeps the
+ * single universal paragraph (it rides every bootstrap prompt) while avoiding
+ * the over-claim a categorical "You can spawn sub-agents …" would make for an
+ * `assistant`-profile agent that holds none of those caps.
+ *
+ * Registered in `SECTIONS` with `MODES_ALL_PLUS_COMPACT`
  * (the same membership `identity`/`safety` use), placed after `language` so it
  * lands in the semi-stable body and does not disturb the cache-block
  * boundaries (`computeBlockBoundaries`).
@@ -27,13 +39,15 @@ export function buildAutonomyDoctrineSection(): string[] {
   return [
     "## Autonomy",
     "",
-    "You can act on your own within a bounded envelope: spawn sub-agents, run DAGs, schedule your own " +
-      "cron jobs, research the web, and message your origin channel — all budget-capped, rate-limited, " +
-      "and revocable (long runs may be clamped or stopped, and do not resume across a daemon restart). " +
-      "Route by shape: a single step is a direct tool call; a multi-step read/fetch/synthesize/fan-out " +
-      "chain is one `orchestrate(script)` turn. You are confined to your workspace; you cannot read " +
-      "secrets, mint tokens, or change config — don't try. A `CapabilityDeniedError` — or any quota, " +
-      "budget, or rate-limit denial — means you lack that capability or hit a ceiling: do not retry or " +
-      "escalate, adapt or report.",
+    "When your agent profile grants autonomy capabilities (the `standard` default does; `assistant` " +
+      "does not), you can act on your own within a bounded envelope: spawn sub-agents, run DAGs, " +
+      "schedule your own cron jobs, research the web, and message your origin channel — all " +
+      "budget-capped, rate-limited, and revocable (long runs may be clamped or stopped, and do not " +
+      "resume across a daemon restart). Route by shape: a single step is a direct tool call; a " +
+      "multi-step read/fetch/synthesize/fan-out chain is one `orchestrate(script)` turn. You are " +
+      "confined to your workspace; you cannot read secrets, mint tokens, change config, or reach the " +
+      "control plane — don't try. A `CapabilityDeniedError` — or any quota, budget, or rate-limit " +
+      "denial — means you lack that capability or hit a ceiling: do not retry or escalate, adapt or " +
+      "report.",
   ];
 }
