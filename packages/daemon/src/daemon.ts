@@ -2355,8 +2355,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
-    // Phase 213 CEIL-01: bind the tree-wide spawn ceiling at the convergence point (the runner) — session.spawn + graph.* + in-process loop all bounded.
-    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout) } : {}),
+    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout) } : {}), // Phase 213 CEIL-01: tree-wide spawn ceiling at the runner convergence point (session.spawn + graph.* + in-process loop)
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });

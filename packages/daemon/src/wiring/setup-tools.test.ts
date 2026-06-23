@@ -1923,10 +1923,12 @@ describe("setupTools", () => {
     }
     function mockCapHandle() {
       return {
-        leaseManager: { mintLease: vi.fn(() => ({ bearer: "lease-bearer-xyz" })), validate: vi.fn(), renew: vi.fn(), revoke: vi.fn() },
+        leaseManager: { mintLease: vi.fn(() => ({ bearer: "lease-bearer-xyz", leaseId: "leaseid-1" })), validate: vi.fn(), renew: vi.fn(), revoke: vi.fn() },
         endpoint: { handleCapCall: vi.fn(), startSocket: vi.fn(), stopSocket: vi.fn() },
         capSocketPath: "/test/data/cap.sock",
         outputGuard: { scan: vi.fn(), registerSecret: vi.fn() },
+        // Phase 213: buildAutonomyToolWiring anchors the tree root here after the mint.
+        boundedAutonomy: { registerRoot: vi.fn() },
       } as any;
     }
     const autonomyAgent = {
