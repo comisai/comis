@@ -126,10 +126,15 @@ describe("autonomy SKILL.md names only real caps + tools (SKILL-03 — no drift)
   });
 
   it("every comis_tools.<name> the skill names is a real cap-mapped tool", () => {
-    const tokens = [...body.matchAll(/comis_tools\.([a-z_]+)/g)].map((m) => m[1]);
+    // Match only the METHOD-CALL form `comis_tools.<name>(` — the trailing `(`
+    // excludes the SDK IMPORT path `"./comis_tools.js"` (which would otherwise
+    // capture `js` as a bogus tool name). The optional `?` allows `.read?.(` etc.
+    const tokens = [...body.matchAll(/comis_tools\.([a-z_]+)\s*\??\(/g)].map(
+      (m) => m[1],
+    );
     expect(
       tokens.length,
-      "the skill must actually name in-script comis_tools.* (non-vacuous)",
+      "the skill must actually name in-script comis_tools.*(...) calls (non-vacuous)",
     ).toBeGreaterThan(0);
     const unknown = [...new Set(tokens)].filter((t) => !TOOL_SET.has(t));
     expect(
@@ -166,14 +171,16 @@ describe("autonomy SKILL.md names only real caps + tools (SKILL-03 — no drift)
       `skill does not mention these orchestration tools it should teach: ${missingFromBody.join(", ")}`,
     ).toEqual([]);
 
-    // THE load-bearing assertion: the body must NOT present `tool.invoke` /
-    // `tool_invoke` as a tool the model calls. It is the in-script socket
-    // dispatch verb (orchestrate → comis_tools.* over the socket), NOT a
-    // model-facing tool. Catch the call-form typo class (`tool_invoke(...)` /
-    // `tool.invoke(...)`).
+    // THE load-bearing assertion (Pitfall-1): the body must NOT present a
+    // model-facing `tool_invoke(...)` CALL. Model-facing tools are snake_case
+    // (`sessions_spawn`, `web_search`), so the UNDERSCORE call-form `tool_invoke(`
+    // is precisely the mistyped fake-tool class to catch. The DOTTED `tool.invoke`
+    // is the real in-script socket dispatch verb — the skill legitimately names it
+    // to EXPLAIN (and forbid) it, so it must NOT trip this guard. Hence we forbid
+    // only `tool_invoke(`, not `tool.invoke`.
     expect(
-      /tool[._]invoke\s*\(/.test(body),
-      "the skill frames tool.invoke/tool_invoke as a model-facing CALL — it is the in-script socket dispatch verb, not an agent tool (Pitfall-1)",
+      /\btool_invoke\s*\??\(/.test(body),
+      "the skill frames tool_invoke(...) as a model-facing CALL — model tools are snake_case but tool.invoke is the in-script socket dispatch verb, not an agent tool (Pitfall-1)",
     ).toBe(false);
   });
 });
