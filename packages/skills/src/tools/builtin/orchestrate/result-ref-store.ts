@@ -269,7 +269,9 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
         {
           toolName,
           bytes,
-          errorKind: "result_ref_too_large",
+          // "resource": a size/budget limit exceeded (the closed ErrorKind union).
+          // The specific reason rides the `error` return + the hint.
+          errorKind: "resource" as const,
           hint: `Result is ${bytes}B, over the ${PER_FILE_CAP_BYTES}B per-file cap — narrow the tool call (a query/limit) so the return fits.`,
         },
         "Refusing to materialize an over-cap result",
@@ -297,7 +299,8 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
       log.warn(
         {
           toolName,
-          errorKind: "path_traversal",
+          // "validation": a path validation rejection (closed ErrorKind union).
+          errorKind: "validation" as const,
           err: e,
           hint: "The results/ path escaped the workspace — refusing the write.",
         },
@@ -322,7 +325,8 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
         {
           toolName,
           bytes,
-          errorKind: "result_ref_write_failed",
+          // "internal": an unexpected I/O / confinement failure on the write.
+          errorKind: "internal" as const,
           err: dirResult.ok ? writeResult.ok ? undefined : writeResult.error : dirResult.error,
           hint: "The contained write was rejected (confinement escape or I/O error) — the result was NOT materialized.",
         },
@@ -403,7 +407,8 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
         {
           runId: ctx.runId,
           err: e,
-          errorKind: "result_ref_cleanup_failed",
+          // "internal": an unexpected I/O failure during best-effort cleanup.
+          errorKind: "internal" as const,
           hint: "Best-effort cleanup of results/ failed — a later run-GC or workspace teardown will reclaim it.",
         },
         "Failed to clean a run's results/",
