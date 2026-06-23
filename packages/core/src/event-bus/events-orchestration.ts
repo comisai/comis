@@ -74,6 +74,41 @@ export interface OrchestrationEvents {
   };
 
   /**
+   * AUDIT-01 / TREE (v2.29 Phase 215): the per-capability authorization decision
+   * (allow + deny) for a gated call, emitted at the single chokepoint
+   * (rpc-dispatch.ts in-process; setup-capability-endpoint.ts socket). SEPARATE
+   * from `audit:event` (the durable AUDIT-02 trail) — this one bridges to the
+   * trajectory (`capability.audited`) as the spawn-tree's per-node producer
+   * (Plan 03's TREE fold groups these by leaseId, beside subagent:budget_exceeded).
+   * One chokepoint emits BOTH. Content-free by construction (T-215-01):
+   * ids/caps/tool-NAME/method/decision ONLY — NO args/body/param field, so a
+   * careless emit cannot leak the tool.invoke args/a body/a secret. Asymmetry
+   * (G1): in-process has NO lease → leaseId/parentLeaseId/tool ABSENT, rootRunId
+   * is the synthetic `root-session-<key>`; the socket carries the full real tuple.
+   * `decision` is a closed string-literal union (AGENTS §2.8).
+   */
+  "capability:audited": {
+    timestamp: number;
+    agentId: string;
+    /** The required AgentCapability the method/tool maps to. */
+    capability: string;
+    /** The inner tool NAME (socket tool.invoke). Absent in-process / direct methods. */
+    tool?: string;
+    /** The dispatch method identifier (content-free — never a param value). */
+    method: string;
+    /** CLOSED union — the authorization outcome (§2.8). */
+    decision: "allow" | "deny";
+    /** ≈ the sessionKey/traceId. Absent when neither is available. */
+    runId?: string;
+    /** The tree-stable root (the real lease's rootRunId, or the synthetic in-process root). */
+    rootRunId: string;
+    /** The real lease id (socket). ABSENT in-process — never fabricated (G1). */
+    leaseId?: string;
+    /** The parent lease id (socket, when present) — the spawn-tree parent edge. */
+    parentLeaseId?: string;
+  };
+
+  /**
    * STEER-01 (v2.27 P3, Phase 175): a running sub-agent was steered IN-FLIGHT —
    * a high-priority message injected at the child's next step boundary
    * (transcript + progress preserved) instead of today's kill+respawn. Emitted

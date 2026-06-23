@@ -1636,6 +1636,19 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       capSource: "node",
       timestamp: 0,
     },
+    // AUDIT-01 / TREE (215): the per-cap audit — the correlation invariant must
+    // hold (agentId/traceId/sessionKey/sessionId never leak into data).
+    "capability:audited": {
+      capability: "orch:read",
+      tool: "memory_search",
+      method: "tool.invoke",
+      decision: "allow",
+      rootRunId: "run-1",
+      leaseId: "lease-abc",
+      parentLeaseId: "lease-root",
+      agentId: "agent-1",
+      timestamp: 0,
+    },
     // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
     // + provider/model config ids); the envelope correlation keys are stripped.
     "observability:spend_warning": {
@@ -3628,7 +3641,13 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   diagnosable via `comis explain` (the security-review WR-4 blind spot).
     //   Content-free: the closed SpendScopeKind enum + dollar amounts as NUMBERS +
     //   provider/model config ids ONLY, NEVER a message/prompt/query body — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(108);
+    // + capability:audited (AUDIT-01/TREE, v2.29 Phase 215 Plan 01 — APPEND-ONLY;
+    //   the per-cap audit's spawn-tree producer, DAEMON-emitted (rpc-dispatch.ts /
+    //   setup-capability-endpoint.ts) → outside the agent/orchestrator emit-scanner
+    //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
+    //   needed; the mapping is for operator trajectory visibility + arch closure.
+    //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(109);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -4051,5 +4070,60 @@ describe("attachTrajectoryToEventBus -- cache break (PERSIST-01, content-free)",
     // Envelope-only correlation keys must NOT appear in data.
     expect(data.agentId).toBeUndefined();
     expect(data.sessionKey).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT-01 / TREE (Phase 215 Plan 01): the per-cap audit's `capability:audited`
+// spawn-tree producer event. DAEMON-emitted (rpc-dispatch.ts / setup-capability-
+// endpoint.ts) → outside the agent/orchestrator emit-scanner scope (the
+// subagent:budget_exceeded precedent), so no EVENTS_NOT_TRAJECTORY_MAPPED entry
+// is needed; the mapping here is for OPERATOR TRAJECTORY VISIBILITY + arch
+// closure of keyof TrajectoryBridgedEventName. Content-free: caps/tool-NAME/
+// decision/ids ONLY — NEVER the tool.invoke args, a message body, or a secret.
+// ---------------------------------------------------------------------------
+
+describe("capability:audited entry (AUDIT-01/TREE spawn-tree producer)", () => {
+  it("TRAJECTORY_BRIDGE_MAPPING maps capability:audited to capability.audited", () => {
+    expect(
+      (TRAJECTORY_BRIDGE_MAPPING as Record<string, string>)["capability:audited"],
+    ).toBe("capability.audited");
+  });
+
+  it("capability.audited is a known TrajectoryEventType (enumerated in types.ts)", () => {
+    expect(Array.from(TRAJECTORY_EVENT_TYPES as readonly string[])).toContain("capability.audited");
+  });
+
+  it("emitting capability:audited records capability.audited with the content-free tuple (envelope stripped)", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("capability:audited", {
+      timestamp: 1000,
+      agentId: "agent-1",
+      capability: "orch:read",
+      tool: "memory_search",
+      method: "tool.invoke",
+      decision: "allow",
+      rootRunId: "run-1",
+      leaseId: "lease-abc",
+      parentLeaseId: "lease-root",
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0].type).toBe("capability.audited");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.capability).toBe("orch:read");
+    expect(data.tool).toBe("memory_search");
+    expect(data.decision).toBe("allow");
+    expect(data.rootRunId).toBe("run-1");
+    expect(data.leaseId).toBe("lease-abc");
+    expect(data.parentLeaseId).toBe("lease-root");
+    // Envelope-only correlation keys MUST NOT appear in data.
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+    // method is an envelope-ish label, not part of the node tuple.
+    expect(data.method).toBeUndefined();
   });
 });

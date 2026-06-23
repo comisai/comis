@@ -155,6 +155,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
+  // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization
+  // decision for a gated call (allow + deny) — the spawn-tree's per-node
+  // producer (Plan 03's TREE fold groups these by leaseId). DAEMON-emitted
+  // (rpc-dispatch.ts / setup-capability-endpoint.ts), so the trajectory-event-
+  // types-known arch gate — which walks only packages/agent + packages/
+  // orchestrator — does NOT require it (the subagent:budget_exceeded daemon-
+  // emitted precedent); the registration here is for OPERATOR TRAJECTORY
+  // VISIBILITY (`comis explain` spawn tree) + arch closure of the keyof
+  // TrajectoryBridgedEventName. Content-free (translate-orchestration-payload.ts):
+  // caps + tool NAME + decision + lease/root ids ONLY — NEVER the tool.invoke
+  // args, a message body, or a secret name (§2.7 / H1 / T-215-01).
+  "capability:audited": "capability.audited",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch

@@ -19,12 +19,23 @@ import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
 import { PreconditionError, ValidationError } from "./errors.js";
-import { RequiredToolsUnreachableError, API_CONTRACTS_ORDERED } from "@comis/core";
+import {
+  RequiredToolsUnreachableError,
+  API_CONTRACTS_ORDERED,
+  HANDLER_CAPABILITY_MAP,
+  CapabilityDeniedError,
+  parseFormattedSessionKey,
+} from "@comis/core";
 // ORIGIN-01 deny-by-origin chokepoint: the in-process agent loop dispatches
 // straight through this closure (bypassing the gateway scope-router's
 // checkScope), so the positive control-plane boundary MUST live here in the
 // dispatch closure — the convergence point of the in-process and gateway legs.
 import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
+// AUDIT-01 (Phase 215): the per-cap audit emitter — emits audit:event (the
+// durable AUDIT-02 trail) + capability:audited (the spawn-tree producer) for an
+// allowed AND a denied gated call at THIS chokepoint. The in-process leg has no
+// lease (G1): rootRunId via resolveRootRunId, leaseId honestly absent.
+import { emitCapabilityAudit } from "./shared/emit-capability-audit.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
@@ -528,7 +539,60 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       if (ADMIN_METHODS.has(method)) {
         assertNotAgentOrigin(params, deps, method);
       }
-      return await handler(params);
+
+      // AUDIT-01 (Phase 215): the per-CAPABILITY audit. Emit ONLY when the
+      // method maps to a real AgentCapability in HANDLER_CAPABILITY_MAP (skip
+      // "ungated" + "deny-by-origin" — the latter already audits via
+      // assertNotAgentOrigin above, so excluding it here avoids the double-audit
+      // for the admin path). The in-process leg has NO lease (G1): source
+      // rootRunId from the synthetic-root resolver; leaseId is honestly ABSENT.
+      const classification = HANDLER_CAPABILITY_MAP[method as keyof typeof HANDLER_CAPABILITY_MAP];
+      const isCapGated =
+        classification !== undefined &&
+        classification !== "ungated" &&
+        classification !== "deny-by-origin";
+      // The trusted agent-origin signal — present only on the in-process leg.
+      const agentOrigin = typeof params._agentId === "string" ? params._agentId : undefined;
+      // ≈ the call's run id (the formatted caller session key), if present.
+      const callerSessionKey =
+        typeof params._callerSessionKey === "string" ? params._callerSessionKey : undefined;
+      // The synthetic per-session root (setup-capability-endpoint-boot.ts). Omit
+      // the whole record when there is no session key + no resolver — never fabricate.
+      const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+      const rootRunId =
+        parsedKey !== undefined ? deps.resolveRootRunId?.(parsedKey) : undefined;
+      // Emit only with a real agent origin, a real cap, AND a resolvable root.
+      const shouldAudit = isCapGated && agentOrigin !== undefined && rootRunId !== undefined;
+
+      try {
+        const result = await handler(params);
+        if (shouldAudit) {
+          emitCapabilityAudit(deps, {
+            agentId: agentOrigin,
+            capability: classification,
+            method,
+            ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
+            rootRunId,
+            // leaseId honestly ABSENT in-process (G1) — never fabricated.
+            decision: "allow",
+          });
+        }
+        return result;
+      } catch (innerErr) {
+        // A capability denial (the handler's requireCapability) is a first-class
+        // audited deny — emit it, then rethrow for the normal classify/log path.
+        if (shouldAudit && innerErr instanceof CapabilityDeniedError) {
+          emitCapabilityAudit(deps, {
+            agentId: agentOrigin,
+            capability: classification,
+            method,
+            ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
+            rootRunId,
+            decision: "deny",
+          });
+        }
+        throw innerErr;
+      }
     } catch (err) {
       // Classify by raw object (instanceof) and severity-dispatch
       // warn vs error. `params` joins the payload so subsequent
