@@ -221,4 +221,77 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate 
     // call re-anchored at now() leaving elapsedMs ~0).
     expect(budget.reserveBudget("root-U", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
   });
+
+  // -------------------------------------------------------------------------
+  // INTRO-01 (Phase 215-02): a PURE `remaining(rootRunId)` read accessor — the
+  // numbers the `capabilities.introspect` / `whoami` RPC reports. The 213 gate
+  // tracks `tokenTotals`/`rootStartMs`/the per-root $ accumulator internally but
+  // exposed NO read surface (RESEARCH Pitfall 3). `remaining` exposes the live
+  // remaining token / wall-clock / $ headroom as a READ-ONLY view: no mutation,
+  // no anchor write, no window reset (Pitfall 3 / T-215-05). The $ limb is a REAL
+  // number from the SAME `perRootUsdAccumulator` the gate enforces against (A3
+  // RESOLVED — not null), so the read matches the gate (T-215-06).
+  // -------------------------------------------------------------------------
+  it("remaining(rootRunId) reports tokens/wall-clock/$ remaining as live deltas after a priced reserve (INTRO-01, A3: $ is a REAL number)", () => {
+    // aggregateUsd 10, tokens 1000, wallClock 60_000. A priced model so the $
+    // accumulator records a real consumed amount (NOT free/unpriceable).
+    const { budget, clock } = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
+    budget.registerRoot("root-R");
+
+    // Consume 100 tokens + $4 on a priced model.
+    const ok = budget.reserveBudget("root-R", PRICED_PROVIDER, PRICED_MODEL, 4, 100);
+    expect(ok.kind).toBe("ok");
+
+    // Advance 10s into the wall-clock window.
+    clock.advance(10_000);
+
+    const r = budget.remaining("root-R");
+    // Token limb: 1000 - 100 consumed.
+    expect(r.tokensRemaining).toBe(900);
+    // Wall-clock limb: 60_000 - 10_000 elapsed (FakeClock-driven).
+    expect(r.wallClockMsRemaining).toBe(50_000);
+    // $ limb: 10 - 4 consumed — a REAL number from the accumulator snapshot, NOT null (A3).
+    expect(r.usdRemaining).not.toBeNull();
+    expect(r.usdRemaining).toBeCloseTo(6, 10);
+  });
+
+  it("remaining() is a PURE read — it does not mutate the token total or anchor a window (T-215-05)", () => {
+    const wallClockMs = 60_000;
+    const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs });
+    budget.registerRoot("root-PURE");
+
+    // Consume 900 tokens.
+    expect(budget.reserveBudget("root-PURE", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+
+    // Call remaining() MANY times — a read must not advance the token total.
+    for (let i = 0; i < 5; i++) budget.remaining("root-PURE");
+
+    // A subsequent reserve behaves as if remaining() was never called: 900 + 900
+    // > 1000 → exceeded (the read did NOT consume tokens, and did NOT reset the total).
+    expect(budget.reserveBudget("root-PURE", FREE_PROVIDER, FREE_MODEL, 0, 900).kind).toBe("exceeded");
+
+    // The wall-clock anchor is untouched by the reads: advancing past the
+    // deadline still trips (a read must not re-anchor the window forward).
+    clock.advance(wallClockMs + 1);
+    for (let i = 0; i < 5; i++) budget.remaining("root-PURE");
+    expect(budget.reserveBudget("root-PURE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
+  });
+
+  it("remaining() for an UNREGISTERED root returns the full allowance without anchoring a window (T-215-05)", () => {
+    const wallClockMs = 60_000;
+    const { budget, clock } = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs });
+
+    // No registerRoot — the read reports the full token + wall-clock + $ allowance.
+    const r = budget.remaining("root-NEVER");
+    expect(r.tokensRemaining).toBe(1000);
+    expect(r.wallClockMsRemaining).toBe(wallClockMs);
+    expect(r.usdRemaining).not.toBeNull();
+    expect(r.usdRemaining).toBeCloseTo(10, 10); // full aggregateUsd — nothing consumed
+
+    // The read must NOT have anchored a wall-clock window: a FIRST reserve now
+    // anchors at the advanced clock, so the deadline measures from HERE, not the
+    // earlier read. Advance, then a first reserve is still within the window.
+    clock.advance(wallClockMs - 1_000);
+    expect(budget.reserveBudget("root-NEVER", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+  });
 });
