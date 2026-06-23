@@ -503,6 +503,20 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
     ]);
     expect(s.spawnTree).toBeUndefined();
   });
+
+  it("drops a record carrying neither a leaseId nor a rootRunId — no junk empty-key node (WR-01)", () => {
+    const s = toIncidentSignals([
+      capAudited(1, { leaseId: "L-a", rootRunId: "R1", capability: "orch:read", tool: "t1", decision: "allow" }),
+      // corrupted/partial on-disk records: NO leaseId AND NO rootRunId → not a
+      // reconstructable node. They must be dropped, NOT merged into one synthetic
+      // leaseId:"" / rootRunId:"" node accumulating unrelated caps/tools/denials.
+      capAudited(2, { capability: "orch:web", tool: "t2", decision: "allow" }),
+      capAudited(3, { capability: "orch:read", tool: "t3", decision: "deny" }),
+    ]);
+    expect(s.spawnTree).toHaveLength(1);
+    expect(s.spawnTree![0]!.leaseId).toBe("L-a");
+    expect(s.spawnTree!.some((n) => n.leaseId === "")).toBe(false);
+  });
 });
 
 describe("toIncidentSignals — spend.exceeded fold (WEBUI-04, 179-04)", () => {

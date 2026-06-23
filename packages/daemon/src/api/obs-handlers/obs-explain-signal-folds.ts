@@ -319,7 +319,14 @@ export function accumulateCapabilityAuditedRecord(
   recAgentId: unknown,
   accAgentId: string | undefined,
 ): void {
-  const leaseId = asString(data.leaseId) ?? asString(data.rootRunId) ?? "";
+  // WR-01: group by leaseId, falling back to the synthetic rootRunId for the
+  // lease-less in-process leg (G1). A record carrying NEITHER is not a
+  // reconstructable node — drop it rather than folding every such record into one
+  // junk leaseId:"" node (the subagent.budget_exceeded `nodeId === undefined`
+  // guard precedent). In normal operation rootRunId is always present; this
+  // guards a partial/corrupted on-disk trajectory row.
+  const leaseId = asString(data.leaseId) ?? asString(data.rootRunId);
+  if (leaseId === undefined) return;
   const node =
     spawnNodesByLease.get(leaseId) ??
     ({
