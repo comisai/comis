@@ -173,4 +173,34 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
     expect(result.agentId).toBe("default");
     expect(result.caps).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // WR-04: report the AUTHORITATIVE caps the in-process gate injected
+  // (_capabilities — the exact set requireCapability enforces), so introspect can
+  // never diverge from enforcement. The prior re-resolution applied a CROSS-AGENT
+  // default fallback (agents[agentId] ?? agents[defaultAgentId]), so a stale/typo'd
+  // _agentId not in the map was reported with the DEFAULT agent's caps under its
+  // OWN id — a mislabeled (chimeric) posture the project guards against.
+  // -------------------------------------------------------------------------
+  it("reports the injected _capabilities for an _agentId NOT in the map — never the default agent's caps (WR-04)", async () => {
+    const result = (await handlers["capabilities.introspect"]!({
+      _agentId: "ghost-agent", // renamed/removed — NOT in AGENTS
+      _capabilities: ["orch:read", "orch:web"], // the gate's actual enforced set for this run
+    })) as { agentId: string; caps: string[] };
+
+    // The echoed agent and the reported caps describe the SAME scope: the run's
+    // enforced caps, NOT the default agent's ([]) silently substituted.
+    expect(result.agentId).toBe("ghost-agent");
+    expect(result.caps).toEqual(["orch:read", "orch:web"]);
+  });
+
+  it("treats an injected EMPTY _capabilities as authoritative (a genuinely zero-cap run), not a fallback trigger (WR-04)", async () => {
+    const result = (await handlers["capabilities.introspect"]!({
+      _agentId: "agent-a", // agent-a has orch:read/orch:web in the map…
+      _capabilities: [], // …but the gate enforced ZERO this run — report the truth.
+    })) as { agentId: string; caps: string[] };
+
+    expect(result.agentId).toBe("agent-a");
+    expect(result.caps).toEqual([]);
+  });
 });

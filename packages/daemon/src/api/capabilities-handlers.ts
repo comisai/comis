@@ -17,15 +17,18 @@
  * fire for it either (the audit's filter is real-`AgentCapability`-only, and
  * `"ungated"` is excluded).
  *
- * Self-scope mechanics: read `_agentId` BEFORE `stripInternalFields` (the
- * dispatcher-injected `_agentId` is the unforgeable agent-origin signal —
- * inbound `_agentId` is stripped from external callers at the gateway, ORIGIN-02;
- * a forged one would be dropped before it reached here). Resolve the caller's
- * caps from the per-agent `AutonomyConfig` (`PerAgentConfig.autonomy`) with the
- * `defaultAgentId` fallback — the EXACT `resolveAutonomy((agents[agentId] ??
- * agents[defaultAgentId])?.autonomy).capabilities` access `createAgentRpcCall`
- * uses at setup-tools-capabilities.ts:51-53 (the pinned, security-sensitive caps
- * source — the same value the in-process injection feeds the gate). Budget/quota
+ * Self-scope mechanics: read `_agentId` AND `_capabilities` BEFORE
+ * `stripInternalFields` (both are dispatcher-injected, unforgeable agent-origin
+ * signals — inbound copies are stripped from external callers at the gateway,
+ * ORIGIN-02; forged ones are dropped before reaching here). Report the injected
+ * `_capabilities` — the EXACT `heldCapabilities` set `createAgentRpcCall`
+ * resolves once at setup-tools-capabilities.ts:51-53 and `requireCapability`
+ * enforces this run — so the read can NEVER diverge from enforcement (WR-04). An
+ * empty `[]` is authoritative (a genuine zero-cap run), not a fallback trigger.
+ * The operator/CLI origin (no in-process gate, no injected `_capabilities`) falls
+ * back to re-resolving the caller's OWN `PerAgentConfig.autonomy` — with NO
+ * cross-agent `defaultAgentId` fallback, so an unknown `_agentId` is never
+ * reported with the default agent's caps under its own id. Budget/quota
  * come from `BoundedAutonomy.snapshot` ONLY when a live `rootRunId` resolves from
  * the caller session key; in-process pre-spawn (no live root) leaves both ABSENT
  * (optional, honest — never a fabricated zero snapshot, which would be a false
@@ -106,17 +109,28 @@ export function createCapabilitiesHandlers(
       const callerSessionKey =
         typeof rawParams._callerSessionKey === "string" ? rawParams._callerSessionKey : undefined;
 
+      // The AUTHORITATIVE held-cap set the in-process gate injected alongside
+      // `_agentId` (`_capabilities` = `createAgentRpcCall`'s `heldCapabilities`,
+      // the EXACT bare-string set `requireCapability` enforces this run) — read
+      // BEFORE strip, like `_agentId`. Reporting THIS guarantees introspect can
+      // never diverge from enforcement. An empty `[]` is authoritative (a genuine
+      // zero-cap run), NOT a fallback trigger — only a wholly-absent key falls back.
+      const injectedCaps = Array.isArray(rawParams._capabilities)
+        ? (rawParams._capabilities as unknown[]).filter((c): c is string => typeof c === "string")
+        : undefined;
+
       const userParams = stripInternalFields(rawParams);
       CapabilitiesIntrospectContract.request.parse(userParams);
 
-      // PINNED caps source (SECURITY-SENSITIVE): resolve the CALLER's per-agent
-      // `AutonomyConfig` (with the `defaultAgentId` fallback) — the EXACT access
-      // `createAgentRpcCall` uses at setup-tools-capabilities.ts:51-53. Pass the
-      // `AutonomyConfig` (PerAgentConfig.autonomy), NOT a `ResolvedAutonomy`.
-      const caps = [
-        ...resolveAutonomy((deps.agents[agentId] ?? deps.agents[deps.defaultAgentId])?.autonomy)
-          .capabilities,
-      ];
+      // WR-04: report the injected enforced caps when present; otherwise (an
+      // operator/CLI origin with no in-process gate) re-resolve the caller's OWN
+      // per-agent `AutonomyConfig` — NO cross-agent `defaultAgentId` fallback, so
+      // the echoed `agentId` and the reported caps always describe the SAME scope
+      // (an unknown `_agentId` no longer borrows the default agent's caps — the
+      // chimeric-posture class). `agentId` already resolves to `defaultAgentId`
+      // for a no-`_agentId` operator origin (line above), so that path is intact.
+      const caps =
+        injectedCaps ?? [...resolveAutonomy(deps.agents[agentId]?.autonomy).capabilities];
 
       // Budget/outwardQuota ONLY when a live rootRunId resolves (in-flight run).
       // In-process pre-spawn (no caller key, or the resolver mints nothing) ⇒
