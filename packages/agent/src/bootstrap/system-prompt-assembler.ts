@@ -15,6 +15,7 @@ import {
   buildIdentitySection,
   buildSafetySection,
   buildLanguageSection,
+  buildAutonomyDoctrineSection,
   buildToolingSection,
   buildToolCallStyleSection,
   buildSelfUpdateGatingSection,
@@ -287,6 +288,12 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "safety",           includeIn: MODES_ALL_PLUS_COMPACT, build: (p, m) => buildSafetySection(m === "minimal") },
   { id: "language",         includeIn: MODES_ALL_PLUS_COMPACT, build: (p) => buildLanguageSection(p.userLanguage) },
   // --- Semi-stable body: operational-kept sections ---
+  // autonomy-doctrine: the always-on one-paragraph contract + routing rule (SKILL-02).
+  // Registered AFTER `language` (the last attribution section) so computeBlockBoundaries
+  // walks only the contiguous identity/persona -> safety/language run and this lands in
+  // semiStableBody — it does NOT disturb the static-prefix/attribution cache boundaries.
+  // MODES_ALL_PLUS_COMPACT: the security contract must survive sub-agent + lockdown runs.
+  { id: "autonomy-doctrine", includeIn: MODES_ALL_PLUS_COMPACT, build: () => buildAutonomyDoctrineSection() },
   // compact-secure: tooling one-liner included (single line, negligible tokens).
   // compact-secure: tool-call-style excluded (verbose guidance, not security-critical).
   { id: "tooling",          includeIn: MODES_ALL_PLUS_COMPACT, build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" : "large", p.toolSummaries) },
