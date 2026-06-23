@@ -341,12 +341,23 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
     // pinned createAgentRpcCall file.
     expect(injectorFiles.size, `injector sites found:\n${sites.map((s) => `  ${s.file}:${s.line}`).join("\n")}`).toBeGreaterThan(0);
 
-    // createAgentRpcCall (the sole audited injector) was extracted from
-    // setup-tools.ts to setup-tools-capabilities.ts for the file-size cap
-    // (Phase 210-04 follow-up). The injection logic is byte-identical; only its
-    // file moved, so the pinned expectation moves with it.
-    const expectedInjector = resolve(WIRING_DIR, "setup-tools-capabilities.ts");
-    const unexpected = [...injectorFiles].filter((f) => f !== expectedInjector);
+    // The legitimate _agentId injectors (both audited, both routing through the
+    // SAME createRpcDispatch deny-by-origin chokepoint):
+    //   1. createAgentRpcCall (wiring/setup-tools-capabilities.ts) — the in-process
+    //      agent path; extracted from setup-tools.ts for the file-size cap.
+    //   2. createCapabilityEndpoint (wiring/setup-capability-endpoint.ts, Phase 211
+    //      ENDPOINT-01/02) — the loopback capability endpoint. It injects
+    //      `_agentId: lease.agentId` (after a successful lease validate) PRECISELY
+    //      so the shipped assertNotAgentOrigin chokepoint denies admin methods by
+    //      origin (RESEARCH Pitfall 2). internals.ts:27-30 names "the 211 lease
+    //      endpoint" as a legitimate injector. Both inject ONLY after their own
+    //      origin authentication (resolveAutonomy / lease validate), so neither
+    //      creates an un-audited agent-origin path.
+    const expectedInjectors = new Set([
+      resolve(WIRING_DIR, "setup-tools-capabilities.ts"),
+      resolve(WIRING_DIR, "setup-capability-endpoint.ts"),
+    ]);
+    const unexpected = [...injectorFiles].filter((f) => !expectedInjectors.has(f));
     const violations: ViolationCitation[] = unexpected.map((f) => ({
       file: f.replace(REPO_ROOT + "/", ""),
       line: sites.find((s) => resolve(REPO_ROOT, s.file) === f)?.line ?? 0,
@@ -355,16 +366,17 @@ describe("ORIGIN-03 — the sole legitimate _agentId injector reaches no admin h
       violations,
       formatViolations({
         description:
-          "ORIGIN-03: the sole legitimate _agentId injector into an rpcCall(...) is createAgentRpcCall in wiring/setup-tools-capabilities.ts. A new injector site would create an un-audited agent-origin path; route the call through createAgentRpcCall instead.",
+          "ORIGIN-03: the ONLY legitimate _agentId injectors into an rpcCall(...) are createAgentRpcCall (setup-tools-capabilities.ts) and createCapabilityEndpoint (setup-capability-endpoint.ts, Phase 211). A new injector site would create an un-audited agent-origin path; route the call through one of those instead.",
         violations,
         suggestedFix:
-          "Inject _agentId only via createAgentRpcCall (setup-tools-capabilities.ts). Any other in-process rpcCall must not set _agentId.",
-        designRef: "v8 ORIGIN-03 / §3.1",
+          "Inject _agentId only via createAgentRpcCall or createCapabilityEndpoint. Any other in-process rpcCall must not set _agentId.",
+        designRef: "v8 ORIGIN-03 / §3.1 / Phase 211 ENDPOINT-02",
       }),
     ).toEqual([]);
 
-    // Pin the expectation explicitly: exactly the one file.
-    expect([...injectorFiles].map((f) => f.replace(REPO_ROOT + "/", ""))).toEqual([
+    // Pin the expectation explicitly: exactly the two audited injector files.
+    expect([...injectorFiles].map((f) => f.replace(REPO_ROOT + "/", "")).sort()).toEqual([
+      "packages/daemon/src/wiring/setup-capability-endpoint.ts",
       "packages/daemon/src/wiring/setup-tools-capabilities.ts",
     ]);
   });

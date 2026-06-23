@@ -202,6 +202,10 @@ export type { SandboxProvider, SandboxOptions } from "../tools/builtin/sandbox/t
 // Built-in tools -- Exec sandbox detection
 export { detectSandboxProvider } from "../tools/builtin/sandbox/detect-provider.js";
 export type { DetectLogger } from "../tools/builtin/sandbox/detect-provider.js";
+// JAIL-03 namespace preflight (Phase 211) — the boot probe consumed by the
+// daemon (211-06) to feed the shipped degradeAutonomy. See tools/index.ts.
+export { namespacePreflight } from "../tools/builtin/sandbox/detect-provider.js";
+export type { NamespacePreflightResult } from "../tools/builtin/sandbox/detect-provider.js";
 
 // Browser -- service
 export { createBrowserService } from "../tools/browser/index.js";

@@ -191,6 +191,12 @@ export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./built
 // Built-in tools -- Exec sandbox detection
 export { detectSandboxProvider } from "./builtin/sandbox/detect-provider.js";
 export type { DetectLogger } from "./builtin/sandbox/detect-provider.js";
+// JAIL-03 namespace preflight (Phase 211) — the boot probe that PRODUCES
+// `namespacePreflightOk` for the shipped degradeAutonomy downshift. Re-exported
+// on the barrel now that the daemon (211-06) is the out-of-package consumer
+// (mirrors detectSandboxProvider — was deep-path-only in 211-04 to avoid a dead export).
+export { namespacePreflight } from "./builtin/sandbox/detect-provider.js";
+export type { NamespacePreflightResult } from "./builtin/sandbox/detect-provider.js";
 
 // Browser -- service
 export { createBrowserService } from "./browser/index.js";

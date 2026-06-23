@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: fail-closed capability boundary. The deny branches (denylisted
+// tool, invalid/expired/revoked/audience-mismatch lease) THROW as the
+// authentication-boundary contract — the socket server's catch converts the
+// throw to a content-free JSON error to the jailed client (mirrors how the
+// dispatch sink + assertNotAgentOrigin throw their denials). ENDPOINT-02.
 /**
  * `createCapabilityEndpoint` — the loopback capability endpoint that
  * authenticates the jailed script surface (ENDPOINT-01 / ENDPOINT-02; v8 §4.2).
