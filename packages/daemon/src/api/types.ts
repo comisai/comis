@@ -98,14 +98,11 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
-  /** LCD lossless-store write+run surface — the `session.reset_conversation`
-   *  handler (Phase 164-06) calls `deleteConversationLcd` inside
-   *  `runOnConversation` to clear a conversation's lcd_* rows. Optional:
-   *  the handler fails-closed (throws "LCD store not available") when absent,
-   *  never silently returning a 0 count. The same ContextStorePort instance is
-   *  also on MemoryApiDeps; the SessionsApiDeps copy here lets the
-   *  session-archive.ts handler access it without widening the consumption type
-   *  to the full MemoryApiDeps slice. */
+  /** LCD lossless-store write+run surface — `session.reset_conversation` (164-06)
+   *  calls `deleteConversationLcd` in `runOnConversation` to clear lcd_* rows.
+   *  Optional: the handler fails-closed (throws "LCD store not available") when
+   *  absent, never a silent 0 count. Same instance as MemoryApiDeps; the copy here
+   *  lets session-archive.ts access it without widening to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
   /** MemoryPort for session-archive --memory reset (DIST-05). The concrete
    *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
@@ -359,6 +356,7 @@ export interface OrchestratorApiDeps {
   /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers (213-06) reads killByRootRun for run.kill. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
+  /** Phase 216 DUR-03: the durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when Plan 07 wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
   // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   eventBus?: AppContainer["eventBus"];
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;

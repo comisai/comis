@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
+import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, AgentCapability } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
@@ -122,6 +122,19 @@ export function setupCrossSession(deps: {
    * release is inert (matches an absent `checkSpawnCeiling`).
    */
   releaseSpawnCeiling?: (rootRunId: string) => void;
+  /**
+   * Phase 216 (DUR-01 / HB-01): the durable-run store + its keep-alive thresholds
+   * + the leaseId/budget facts resolver, threaded into the sub-agent runner so it
+   * writes a per-root checkpoint at the spawn boundary + a heartbeat on the
+   * injected timer. All optional; absent ⇒ the runner's durable path is inert (the
+   * byte-identical default). The daemon wires them ONLY when durability is enabled.
+   */
+  durableRuns?: DurableRunPort;
+  durability?: { keepAliveMs: number; staleHeartbeatMs: number };
+  durableRunFacts?: (
+    rootRunId: string,
+    agentId: string,
+  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -400,6 +413,12 @@ export function setupCrossSession(deps: {
     ...(deps.checkSpawnCeiling ? { checkSpawnCeiling: deps.checkSpawnCeiling } : {}),
     // Phase 213 CR-02: the symmetric release (boundedAutonomy.releaseSpawn).
     ...(deps.releaseSpawnCeiling ? { releaseSpawnCeiling: deps.releaseSpawnCeiling } : {}),
+    // Phase 216 DUR-01/HB-01: the durable checkpoint store + thresholds + facts
+    // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
+    // absent (the byte-identical default; the daemon wires these only when on).
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.durability ? { durability: deps.durability } : {}),
+    ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
   });
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL

@@ -3,52 +3,21 @@
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
- * The 5 `stages/*-helpers.ts` files plus the `stages/index.ts` barrel
- * were inlined back into this file. 23 helpers either became top-level
- * functions here (the ones called from multiple sites or large enough to
- * warrant naming) or were inlined directly at their single call site
- * (the ones whose only purpose was keeping the old per-stage cap under
- * 200L).
+ * Structure: (1) imports; (2) DEFAULT_CONFIG_PATHS + applyInspectDefaultsForLogging;
+ * (3) hardenDataDirPermissions; (4) runPreflightDoctor; (5) process.env scrub helpers;
+ * (6) agents-stage helpers; (7) channels-stage helpers (buildChannelManagerDeps,
+ * buildGraphCoordinatorDeps, wirePostChannelsLifecycle); (8) gateway-stage helpers
+ * (resolveGatewayTokens, createHotAdd/Remove, buildRpcDispatchDeps,
+ * replayContinuationsIfAny); (9) shutdown-stage helpers; (10) bootFoundation /
+ * bootAgents / bootChannels / bootGateway / bootShutdown; (11) main(); (12) direct-run guard.
  *
- * BootContext lives in `./daemon-types.ts`; the only out-of-file lifted
- * helper is `emitBootstrapConfigObserveRecords` (+ kin) which moved to
- * `./config/bootstrap-observe.ts` because `daemon-config-observe.test.ts`
- * is the sole external test consumer of any former stages/* helper.
- *
- * Structure of this file:
- *   1.  Imports
- *   2.  DEFAULT_CONFIG_PATHS + applyInspectDefaultsForLogging
- *   3.  hardenDataDirPermissions
- *   4.  runPreflightDoctor
- *   5.  process.env scrub helpers (SENSITIVE_PREFIXES, SENSITIVE_EXACT_KEYS,
- *       scrubProcessEnv, buildMergedEnv)
- *   6.  Agents-stage helpers (restoreApprovalState, wirePostAgentsCleanup)
- *   7.  Channels-stage helpers (buildChannelManagerDeps,
- *       buildGraphCoordinatorDeps, wirePostChannelsLifecycle;
- *       setupChannelHealthMonitor lives in wiring/main-helpers.ts)
- *   8.  Gateway-stage helpers (resolveGatewayTokens, createHotAdd,
- *       createHotRemove, buildRpcDispatchDeps, replayContinuationsIfAny)
- *   9.  Shutdown-stage helpers (wireHealthLogging, emitStartupBanner)
- *  10.  bootFoundation / bootAgents / bootChannels / bootGateway /
- *       bootShutdown
- *  11.  main()
- *  12.  Direct-run guard block
- *
- * The 4-handle chain (Foundation → Agents → Channels → Gateway) was collapsed
- * into a single BootContext: each boot* helper takes `boot: BootContext` and
- * mutates it via Object.assign; main() constructs it via createEmptyBootContext()
- * and chains the 5 helpers in order. The 6 true forward-ref slots (channelPluginsRef,
- * bgNotifyRef, cronWakeCallbackRef, gatewaySendRef, shutdownRef, channelAdaptersRef)
- * persist on BootContext; the 3 former bootChannels local-scope deferred refs are gone
- * (setupTools is hoisted before setupChannels; the other two are local `let` slots
- * captured by message-arrival lambdas).
- *
- * The 23 helpers from an earlier stages/* decomposition are back here in two forms:
- * 11 as top-level functions (called once but large enough to name — e.g. buildMergedEnv,
- * buildChannelManagerDeps, createHotAdd, emitStartupBanner; restoreApprovalState went to
- * wiring/main-helpers.ts) and 11 inlined verbatim at their single call site (e.g.
- * setupMcpManager, buildAuditBundle, the buildImageHandlerDeps/buildTokenStoreMutators/
- * buildContextEngineConfig fold into buildRpcDispatchDeps, etc.).
+ * The 4-handle chain (Foundation → Agents → Channels → Gateway) is collapsed into ONE
+ * BootContext (`./daemon-types.ts`): each boot* helper takes `boot: BootContext` and
+ * mutates it via Object.assign; main() chains the 5 helpers. The 6 true forward-ref
+ * slots (channelPluginsRef, bgNotifyRef, cronWakeCallbackRef, gatewaySendRef,
+ * shutdownRef, channelAdaptersRef) persist on BootContext. Larger one-shot helpers are
+ * top-level functions here; trivial ones are inlined at their single call site. Some
+ * helpers live in wiring/main-helpers.ts (image/video bundles, durability, etc.).
  *
  * @module
  */
@@ -110,6 +79,8 @@ import {
   setupRpcBridge,
   setupDeliveryQueue,
   setupDeliveryMirror,
+  buildDurableStores,
+  buildDurableResume,
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
@@ -676,6 +647,8 @@ async function wirePostChannelsLifecycle(deps: {
    *  channelAdaptersRef.set loop below — the channel registry is now populated, so
    *  the poller's announce-on-complete reaches a LIVE adapter outside a turn. */
   startAndResumeVideoPoller?: () => Promise<void>;
+  /** Phase 216: durable boot recovery + watchdog start. Runs AFTER channels (the engine's reconcile/replay need LIVE adapters) — the boot-order constraint, like the video poller. */
+  startAndResumeDurable?: () => Promise<void>;
   startMirrorPrune: BootContext["startMirrorPrune"];
   shutdownMirror: BootContext["shutdownMirror"];
   daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
@@ -684,7 +657,7 @@ async function wirePostChannelsLifecycle(deps: {
   outputRetentionConfig: BootContext["container"]["config"]["outputRetention"];
 }): Promise<{ outputRetentionHandle?: SetupOutputRetentionHandle }> {
   const { adaptersByType, channelAdaptersRef, drainAndStartDeliveryPrune,
-    startAndResumeVideoPoller, startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
+    startAndResumeVideoPoller, startAndResumeDurable, startMirrorPrune, daemonLogger, container, defaultWorkspaceDir,
     outputRetentionConfig } = deps;
   for (const [type, adapter] of adaptersByType) channelAdaptersRef.set(type, adapter);
   await drainAndStartDeliveryPrune();
@@ -693,6 +666,10 @@ async function wirePostChannelsLifecycle(deps: {
   // render's finished clip announces to the recorded channel outside any turn,
   // exactly like the delivery queue's drainAndStart above.
   await startAndResumeVideoPoller?.();
+  // Phase 216: run the durable resume engine AFTER the video poller — i.e. after the
+  // channel registry is populated — so its reconcile (reconcileSend) + replay resolve
+  // a LIVE adapter (a crashed-mid-send row is otherwise mis-resolved). Boot-order.
+  await startAndResumeDurable?.();
   // eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
   // are surfaced through BootContext / wirePostChannelsLifecycle return
@@ -909,6 +886,11 @@ function buildRpcDispatchDeps(deps: {
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
     ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // Phase 213 CR-01: session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
+    // Phase 213-06: the daemon-wide LeaseManager (autonomy-handlers gate lease.revoke/run.kill on it).
+    // Phase 216: DUR-03 durableRuns (revoke ALSO invalidates the persisted record) + ONCE-01/02 outwardLedger (the message.send/reply/react wrap). Absent ⇒ degrade (no revoke RPC / pass-through wrap).
+    ...(c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager ? { leaseManager: c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager } : {}),
+    ...(c.durableRunStore ? { durableRuns: c.durableRunStore } : {}),
+    ...(c.outwardLedger ? { outwardLedger: c.outwardLedger } : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
@@ -2179,25 +2161,34 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const mediaVisionBundle = buildMediaVisionBundle({ container, defaultAgentId, skillsLogger, clock: handle.clock, oauthManager: handle.oauthManagers.get(defaultAgentId) });
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
-  // assembleToolsForAgent is now passed directly into
-  // buildChannelManagerDeps; the tool-assembler indirection is GONE.
-  // Inlined createCapabilityPortResolver — factory: resolve a
-  // ToolCapabilityPort for an agentId; falls back to the default agent's
-  // port. Throws if neither is registered.
+  // getCapabilityPortForAgent: resolve a ToolCapabilityPort, default-agent fallback, throw if neither.
   const getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort = (agentId) => {
     const port = toolCapabilityPorts.get(agentId) ?? toolCapabilityPorts.get(defaultAgentId);
-    if (!port) {
-      throw new Error(
-        `No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`,
-      );
-    }
+    if (!port) throw new Error(`No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`);
     return port;
   };
-  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  // 7.8.9. Phase 216: durable stores built EARLY (before the cap layer — the jail-leg
+  // chokepoint shares the SAME store for the HIGH-1 _outwardStepIndex allocation). See buildDurableStores.
+  const { durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly } = buildDurableStores({ agents, db });
+
+  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler. Phase 216: durableRuns threads into the jail-leg chokepoint for the HIGH-1 _outwardStepIndex allocation.
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
+
+  // 7.9.1. Phase 216: the durable-resume engine built AFTER the cap layer (BoundedAutonomy
+  // reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
+  const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
+    db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
+    boundedAutonomy: capEndpointHandle?.boundedAutonomy, sharedLeaseManager: handle.sharedLeaseManager!,
+    channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
+  });
+  Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
+
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
+    // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
+    ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
     // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
     // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
@@ -2289,6 +2280,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // registry is populated (the local videoPoller from buildVideoGenBundle above;
     // undefined when video is disabled → the optional call no-ops).
     ...(videoPoller ? { startAndResumeVideoPoller: () => videoPoller.startAndResume() } : {}),
+    // Phase 216: run the durable resume engine after channels (boot-order — reconcile/replay need LIVE adapters); inert no-op when durability is off.
+    startAndResumeDurable,
     startMirrorPrune: handle.startMirrorPrune,
     shutdownMirror: handle.shutdownMirror,
     daemonLogger, container, defaultWorkspaceDir,
@@ -2356,6 +2349,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
     ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CEIL-01/CR-02: tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
+    // Phase 216 DUR-01/HB-01: durable store + thresholds + facts → the runner writes a per-root checkpoint + heartbeat (off ⇒ inert).
+    ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
+    ...(durabilityCfg.enabled ? { durability: { keepAliveMs: durabilityCfg.keepAliveMs, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs } } : {}),
+    ...(durableRunFacts ? { durableRunFacts } : {}),
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });
@@ -2780,6 +2777,8 @@ async function bootShutdown(
     // Phase 189: SIGTERM clears the poller's sweeper interval + stops in-flight
     // per-job loops (no-op when video is disabled / poller undefined).
     ...(videoPoller ? { shutdownVideoPoller: () => videoPoller.shutdown() } : {}),
+    // Phase 216: cancel the durable-resume watchdog interval on shutdown (inert no-op when off).
+    ...(boot.durableResumeShutdown ? { durableResumeShutdown: boot.durableResumeShutdown } : {}),
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,

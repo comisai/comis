@@ -33,6 +33,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event (TELEM-01); the small-model pipeline-authoring fleet metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
 | getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
 | leaseManager | optional | the autonomy-handlers (213-06) `lease.revoke` / `run.kill` are not registered in the dispatcher (a partial boot); a stray call hits the dispatcher's unknown-method path. Plan 07 wires the real instance at the composition root, so production always carries it | packages/daemon/src/api/types.ts:362 |
+| durableRuns | optional | Phase 216 DUR-03: the revoke does NOT poison the persisted run record, so a restart could re-mint pre-revoke caps; inert when absent (the in-memory lease revoke alone still stops the live bearer — only matters once durability is enabled, which is when Plan 07 wires this) | packages/daemon/src/api/types.ts:363 |
 
 ## Removed Fields (stale-fallback — deleted)
 

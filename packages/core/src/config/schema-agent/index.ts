@@ -38,4 +38,8 @@ export * from "./schema-agent-autonomy.js";
 // from `*-autonomy` (no cycle — see no-cycles.test.ts).
 export * from "./schema-agent-autonomy-bounds.js";
 export * from "./schema-agent-autonomy-degrade.js";
+// Phase 216: the autonomy.durability sub-block schema (nested into
+// AutonomyConfigSchema). Exported so the daemon reads DurabilityConfigSchema
+// for the boot-time durability resolution.
+export * from "./schema-agent-autonomy-durability.js";
 export * from "./schema-agent-runtime.js";

@@ -137,6 +137,9 @@ export {
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
+  // Phase 216: the autonomy.durability sub-block schema (the daemon reads it for
+  // the boot-time durability resolution).
+  DurabilityConfigSchema,
   // Honest legible degrade (Phase 210 / PROFILE-03)
   degradeAutonomy,
 } from "./schema-agent/index.js";

@@ -44,6 +44,7 @@ import {
   type OutputGuardPort,
   type ComisLogger,
   type SessionKey,
+  type DurableRunPort,
 } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
@@ -174,6 +175,14 @@ export interface CapabilityLayerDeps {
    * the in-process leg's audit at the dispatch closure is unaffected).
    */
   container?: EmitCapabilityAuditDeps["container"];
+  /**
+   * Phase 216 (HIGH-1): the durable-run store — forwarded to the cap endpoint so
+   * the jail leg allocates a monotonic `_outwardStepIndex` for an outward message
+   * method. Optional; absent ⇒ the endpoint injects no index (pass-through). The
+   * daemon builds the store EARLY (before this layer) and threads it here so the
+   * chokepoint shares the SAME store the resume engine + message handlers use.
+   */
+  durableRuns?: DurableRunPort;
 }
 
 /** The constructed capability layer handle (undefined when no autonomy agent). */
@@ -414,6 +423,9 @@ export async function constructCapabilityLayer(
       // AUDIT-01 (215): the socket per-cap audit's bus + tenant scope. Absent in
       // the 211 boot-gate tests ⇒ socket audit is a no-op (honest degrade).
       ...(deps.container ? { container: deps.container } : {}),
+      // Phase 216 (HIGH-1): the durable store — the jail leg allocates a monotonic
+      // _outwardStepIndex for an outward message method. Absent ⇒ pass-through.
+      ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     });
     // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. 211 left this
     // DORMANT (no startSocket; active:false). Now the cap surface is LIVE: a jailed
