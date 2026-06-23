@@ -821,8 +821,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // (the first caller with no rootRunId) mints one; every descendant MUST pass its
     // parent's id down via params.rootRunId. We mint whenever it is absent — regardless
     // of depth — so a missing id never silently splits a tree into per-spawn ids that
-    // each escape the parent's ceiling (RESEARCH Pitfall 1). Uses the injected clock
-    // (never Date.now() — the globals.test.ts arch-gate).
+    // each escape the parent's ceiling (RESEARCH Pitfall 1). Uses the injected
+    // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
     const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
 
     // Depth check (applies to ALL spawns including graph)
@@ -2037,6 +2037,31 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
+   * REVOKE-03: hard-stop a whole spawn tree. Fans the per-run {@link killRun}
+   * (which marks the run failed and aborts its in-flight SDK session) over every
+   * running/queued run sharing `rootRunId`, and returns the count killed.
+   *
+   * Filters STRICTLY on `run.rootRunId === rootRunId` (threat T-213-01-02 — a
+   * different tree must be untouched) and on the same status guard killRun uses,
+   * so already-terminal runs are skipped. An unknown root is a clean no-op
+   * (`{ killed: 0 }`), never a throw — the count return is the contract the
+   * daemon-side `run.kill` RPC handler (the @allow-throw boundary, Plan 06)
+   * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
+   */
+  function killByRootRun(rootRunId: string): { killed: number } {
+    let killed = 0;
+    for (const run of runs.values()) {
+      if (
+        run.rootRunId === rootRunId &&
+        (run.status === "running" || run.status === "queued")
+      ) {
+        if (killRun(run.runId).killed) killed++;
+      }
+    }
+    return { killed };
+  }
+
+  /**
    * STEER-01: inject a steer message into a RUNNING child's live SDK session
    * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
    * helper to keep the mechanism OUT of this (already large) file.
@@ -2122,5 +2147,5 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  return { spawn, getRunStatus, listRuns, killRun, killByRootRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }
