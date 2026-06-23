@@ -83,7 +83,7 @@ import {
 // Runtime adapter factories — constructed at the composition root and
 // threaded through wiring helpers that retarget Date.now / process.env /
 // setTimeout / setInterval. Sanctioned construction site.
-import { createSystemClock, createSystemEnv, createSystemTimers, createLeaseManager, type LeaseManager } from "@comis/infra";
+import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
 import {
   setupSecrets as _setupSecretsImpl,
   createNamedGraphStore,
@@ -141,7 +141,6 @@ import {
   type GeminiCacheManager,
   type ServedWindowComparison,
   type SessionTrackerRegistry,
-  type BoundedAutonomyBudgetHolder,
 } from "@comis/agent";
 // resolveAgentMainProvider is the handler-side accessor that delegates to the
 // EXACT completion-path resolveAgentModel (I4 lockstep / RES-01). Imported
@@ -151,7 +150,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
-import { constructCapabilityLayer, createRootRunIdResolver } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03; Phase 213-08 rootRunId resolver
+import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -197,7 +196,7 @@ import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/se
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
@@ -1863,21 +1862,8 @@ async function bootAgents(
   const servedWindowComparisons = new Map<string, ServedWindowComparison>();
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
-  // Phase 213-08 (BUDGET-01/02): the daemon-wide LATE-BOUND per-root budget holder
-  // + the session→rootRunId index + the resolver. Created HERE — BEFORE setupAgents
-  // AND setupSchedulers (both hold the holder/resolver) — because the cap layer
-  // that POPULATES holder.current is constructed AFTER them (constructCapabilityLayer
-  // at :~2200). The bridge / cron-fire mint read `holder.current` at fire time, by
-  // which point the cap layer has populated it (the onCronWake late-bind precedent).
-  const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
-  const rootRunIdIndex = new Map<string, string>();
-  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
-  // Phase 213-08 (RATE-02): build the daemon-wide LeaseManager HERE — before
-  // setupSchedulers — so the cron-fire mint and the cap layer (constructed later in
-  // bootChannels) share the SAME instance. ONE daemon-wide LeaseManager (an
-  // in-memory Map keyed by leaseId); the cap layer's autonomy gate + the holder's
-  // populated-ness decide whether it is actually exercised.
-  const sharedLeaseManager: LeaseManager = createLeaseManager({ clock });
+  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
+  const { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
 
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
@@ -1900,7 +1886,7 @@ async function bootAgents(
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
-    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08 (BUDGET-01/02): per-root budget holder + rootRunId resolver → each bridge (the per-root reserve sibling)
+    boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08: per-root budget holder + rootRunId resolver → each bridge
     outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
@@ -1952,25 +1938,18 @@ async function bootAgents(
   // Credential-free env for the exec tool (agent-issued shell commands).
   const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
-  // Deferred wake callback ref -- populated by bootChannels once
-  // wakeCoalescer is constructed. Same shape as channelPluginsRef /
-  // bgNotifyRef (cross-stage deferred-ref pattern).
+  // Deferred wake callback ref -- populated by bootChannels once wakeCoalescer is
+  // constructed (the channelPluginsRef / bgNotifyRef cross-stage deferred-ref pattern).
   const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
 
   // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
   const systemEventQueue = createSystemEventQueue({ logger: schedulerLogger });
 
-  // 6.6.5. Schedulers — inline buildDeferredCronWakeCallback for the
-  // onCronWake handler. Reads `cronWakeCallbackRef.ref` at INVOCATION time
-  // (deferred), so the live wakeCoalescer wired up later in bootChannels is
-  // what actually receives the wake. If a cron fires in the gap (typically
-  // milliseconds, but a heavy startup may stretch it to seconds), surface
-  // the drop with a debug log so the silent miss is visible.
-  //
-  // Observability-only: we intentionally do NOT buffer-then-drain (the
-  // precedent set by channelPluginsRef / bgNotifyRef etc.). Cron wakes are
-  // timer-driven; replaying a backlog could cause a wake storm if N timers
-  // fired during a slow startup.
+  // 6.6.5. Schedulers — the onCronWake handler reads `cronWakeCallbackRef.ref` at
+  // INVOCATION time (deferred), so the live wakeCoalescer wired in bootChannels
+  // receives the wake; a cron firing in the handoff gap is DEBUG-logged (the silent
+  // miss is visible). Observability-only: NO buffer-then-drain (channelPluginsRef/
+  // bgNotifyRef precedent) — replaying timer-driven wakes could cause a wake storm.
   const {
     cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
@@ -1991,11 +1970,7 @@ async function bootAgents(
       }
     },
     clock, timers,
-    // Phase 213-08 (RATE-02): the cron-fire fresh-lease mint. The SAME daemon-wide
-    // LeaseManager the cap layer uses + the late-bound budget holder (populated by
-    // the cap layer in bootChannels; the mint reads holder.current at fire time).
-    leaseManager: sharedLeaseManager,
-    boundedAutonomyHolder: boundedAutonomyBudgetHolder,
+    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // Phase 213-08 (RATE-02): the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -2082,10 +2057,7 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
-    // Phase 213-08: the late-bound per-root budget holder + index + resolver +
-    // the shared LeaseManager ride onto boot so bootChannels' constructCapabilityLayer
-    // populates the SAME holder + uses the SAME LeaseManager the cron-fire mint does.
-    boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager,
+    boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,

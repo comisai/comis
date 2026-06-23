@@ -18,6 +18,10 @@ import {
 import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
+import { createLeaseManager, type LeaseManager } from "@comis/infra";
+import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
+import type { SessionKey } from "@comis/core";
+import { createRootRunIdResolver } from "./setup-capability-endpoint-boot.js";
 // Video generation (Phase 188 / Plan 04): the FAL queue factory + per-agent rate
 // limiter, imported from the bare @comis/skills barrel exactly like the image
 // route (the adapter + @fal-ai/client dep stay in @comis/skills — no daemon
@@ -54,6 +58,34 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // VIS-01 (187): the provider-following vision bridge (Plan 01) — the bundle
 // builds its capability by closing over the cred resolvers + resolveAgentModel.
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
+
+/** The Phase 213-08 bounded-autonomy late-bind seam built in `bootAgents`. */
+export interface BoundedAutonomyWiring {
+  /** The LATE-BOUND per-root budget holder — populated by the cap layer (bootChannels). */
+  boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
+  /** The session→rootRunId index shared with the resolver + the cap layer. */
+  rootRunIdIndex: Map<string, string>;
+  /** Resolve a run's tree-stable rootRunId (synthetic root-session-* fallback). */
+  resolveRootRunId: (sessionKey: SessionKey) => string;
+  /** The daemon-wide LeaseManager — shared by the cron-fire mint AND the cap layer. */
+  sharedLeaseManager: LeaseManager;
+}
+
+/**
+ * Build the Phase 213-08 (BUDGET-01/02 + RATE-02) bounded-autonomy late-bind seam:
+ * the per-root budget holder + the session→rootRunId index + the resolver + the
+ * daemon-wide LeaseManager. Created in `bootAgents` BEFORE setupAgents/setupSchedulers
+ * (which hold these) because the cap layer that POPULATES `holder.current` + shares
+ * the LeaseManager is constructed LATER (bootChannels) — the bridge / cron-fire mint
+ * read `holder.current` at fire time (the onCronWake late-bind precedent).
+ */
+export function createBoundedAutonomyWiring(deps: { clock: ClockPort }): BoundedAutonomyWiring {
+  const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
+  const rootRunIdIndex = new Map<string, string>();
+  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
+  const sharedLeaseManager = createLeaseManager({ clock: deps.clock });
+  return { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager };
+}
 
 /**
  * Restore approval pending requests and cache from disk at startup.
