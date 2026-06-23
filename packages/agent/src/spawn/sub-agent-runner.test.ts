@@ -1674,6 +1674,75 @@ describe("createSubAgentRunner", () => {
       );
       expect(rejectionCalls).toHaveLength(0);
     });
+
+    // ---------------------------------------------------------------------
+    // Tree-wide spawn ceiling consult (CEIL-01). The injected
+    // checkSpawnCeiling is the SINGLE seam both session.spawn AND graph.*
+    // (and the in-process agent loop) hit — it bounds a for(;;) spawn() tree-
+    // wide where the per-caller depth/fanout gates cannot.
+    // ---------------------------------------------------------------------
+    it("rejects spawn when the injected checkSpawnCeiling returns ok:false (tree-wide concurrency)", () => {
+      const ceilingDeps = createLimitDeps();
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: false, reason: "concurrency" });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      expect(() =>
+        runner.spawn({
+          task: "fork-bomb child",
+          agentId: "agent-a",
+          callerSessionKey: "default:user1:ch1",
+          depth: 0,
+          maxDepth: 3,
+        }),
+      ).toThrow(/spawn ceiling|concurrency/i);
+
+      // The reject mirrors the depth/children reject: the rejection event fires
+      // and NO run/session is created (the ceiling sits before run creation).
+      expect(ceilingDeps.eventBus.emit).toHaveBeenCalledWith(
+        "session:sub_agent_spawn_rejected",
+        expect.objectContaining({ reason: "concurrency" }),
+      );
+      expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
+    });
+
+    it("proceeds with the spawn when checkSpawnCeiling returns ok:true (or is absent)", () => {
+      const ceilingDeps = createLimitDeps();
+      // never-resolving executeAgent keeps the run "running"
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      const runId = runner.spawn({
+        task: "ordinary child",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      });
+
+      expect(typeof runId).toBe("string");
+      expect(runId.length).toBeGreaterThan(0);
+      expect(checkSpawnCeiling).toHaveBeenCalled();
+    });
+
+    it("passes the run's rootRunId, depth, and active-children fanout to checkSpawnCeiling", () => {
+      const ceilingDeps = createLimitDeps();
+      const checkSpawnCeiling = vi.fn().mockReturnValue({ ok: true });
+      const runner = createSubAgentRunner({ ...ceilingDeps, checkSpawnCeiling });
+
+      runner.spawn({
+        task: "child with a stable root",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 1,
+        maxDepth: 3,
+        rootRunId: "root-stable-xyz",
+      });
+
+      // (rootRunId, depth, fanout): the caller's rootRunId rides through (NOT a
+      // fresh per-spawn id — RESEARCH Pitfall 1), depth is the current depth, and
+      // fanout is the active-children count (0 for the first child).
+      expect(checkSpawnCeiling).toHaveBeenCalledWith("root-stable-xyz", 1, 0);
+    });
   });
 
   // -----------------------------------------------------------------------
