@@ -281,6 +281,14 @@ export { createSqliteDurableRunStore } from "./durable-run-store.js";
 export type { DurableRunStoreOptions } from "./durable-run-store.js";
 export { ensureDurableRunTable } from "./schema-durable-runs.js";
 
+// Outward-send exactly-once ledger (Phase 216, ONCE-01). The SQLite-backed
+// OutwardSendLedgerPort the resume engine reconciles on boot (listUnreconciled)
+// and the send-wrap site (Plan 05) consults for the dedup short-circuit;
+// ensureOutwardLedgerTable is the idempotent DDL initSchema calls — exported for
+// the chaos/offline path.
+export { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
+export { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
+
 // Delivery mirror adapter
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 

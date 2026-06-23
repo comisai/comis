@@ -2558,6 +2558,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSqliteDurableRunStore",
       "DurableRunStoreOptions",
       "ensureDurableRunTable",
+      // Outward-send exactly-once ledger (v2.30, Phase 216 Plan 03, ONCE-01..04).
+      // The SQLite OutwardSendLedgerPort adapter `createSqliteOutwardSendLedger`
+      // and the idempotent DDL `ensureOutwardLedgerTable` are surfaced ahead of
+      // their consumer: the send-wrap site (Plan 05) + the resume reconcile loop
+      // (Plan 04) + the daemon composition root (Plan 07) wire them in later waves.
+      // Interface-first planned orphans that SHRINK OUT once that wiring lands
+      // (mirror the Plan-02 durable-run entries above; allowlist-shrink enforces
+      // shrink-only).
+      "createSqliteOutwardSendLedger",
+      "ensureOutwardLedgerTable",
       // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.

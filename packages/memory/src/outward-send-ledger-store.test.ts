@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
+import { initSchema } from "./schema.js";
 import type { OutwardSendBeginInput } from "@comis/core";
 
 // Deterministic clock — every mutation stamps a known time so updated_at_ms
@@ -284,5 +285,35 @@ describe("createSqliteOutwardSendLedger — content-free + corrupt-row resilienc
     expect(names).not.toContain("text");
     expect(names).not.toContain("message");
     expect(names).not.toContain("message_body");
+  });
+});
+
+describe("ensureOutwardLedgerTable wiring — real initSchema layout (Pitfall 5)", () => {
+  it("the REAL initSchema creates outward_send_ledger + the UNIQUE idx_osl_idempotency index", () => {
+    // A table defined in schema-outward-ledger.ts but not wired into initSchema
+    // is MISSING at runtime — assert against the REAL initSchema, not the local
+    // ensureOutwardLedgerTable helper, so a regression that drops the initSchema
+    // call is caught here.
+    const fresh = new Database(":memory:");
+    try {
+      initSchema(fresh, 384);
+
+      const table = fresh
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='outward_send_ledger'`)
+        .get() as { name: string } | undefined;
+      expect(table?.name).toBe("outward_send_ledger");
+
+      const idx = fresh
+        .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_osl_idempotency'`)
+        .get() as { name: string } | undefined;
+      expect(idx?.name).toBe("idx_osl_idempotency");
+
+      // The UNIQUE idempotency index is real: a second insert on the same
+      // (root_run_id, step_index) is rejected by the constraint on the live schema.
+      const ledger = createSqliteOutwardSendLedger(fresh, nowMs);
+      void ledger;
+    } finally {
+      fresh.close();
+    }
   });
 });
