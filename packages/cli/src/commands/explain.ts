@@ -104,6 +104,22 @@ export function registerExplainCommand(program: Command): void {
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
           );
           info(`Summary:    ${report.summary}`);
+          // TREE-01/02 (215): the root→children spawn tree (present only when the
+          // session emitted per-cap audit records). Each node names its leaseId,
+          // the parent edge (or "(root)"), the attenuated caps it held, the tool
+          // NAMES it invoked, and any CapabilityDeniedError cap (DENIED=[...]) —
+          // "one call to root-cause an unattended run". --format json emits the
+          // whole report (spawnTree included) above.
+          if (report.spawnTree && report.spawnTree.length > 0) {
+            info(`Spawn tree:`);
+            for (const n of report.spawnTree) {
+              const parent = n.parentLeaseId ? ` ←${n.parentLeaseId}` : " (root)";
+              info(
+                `  ${n.leaseId}${parent}  caps=[${n.caps.join(",")}] tools=[${n.toolsInvoked.join(",")}]` +
+                  (n.denials.length > 0 ? ` DENIED=[${n.denials.join(",")}]` : ""),
+              );
+            }
+          }
           if (report.likelyRootCause) {
             info(
               `Root cause [${report.likelyRootCause.code}]: ${report.likelyRootCause.detail}`,
