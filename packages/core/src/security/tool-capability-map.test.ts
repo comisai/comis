@@ -19,6 +19,7 @@ import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
 import {
   TOOL_CAPABILITY_MAP,
   TOOL_ROUTE_MAP,
+  assertToolMapSoundness,
   type ToolName,
 } from "./tool-capability-map.js";
 
@@ -122,9 +123,34 @@ describe("TOOL_ROUTE_MAP", () => {
 
 describe("tool-capability-map module load", () => {
   it("imports without throwing (the soundness assertions pass at load)", async () => {
-    // A clean import is itself the assertion: the module-load `for`-loop throws
-    // if any cap-mapped tool is denylisted or missing a route. Re-importing here
+    // A clean import is itself the assertion: the module-load call throws if any
+    // cap-mapped tool is denylisted or missing a route. Re-importing here
     // exercises that the shipped table satisfies its own invariants.
     await expect(import("./tool-capability-map.js")).resolves.toBeDefined();
+  });
+});
+
+describe("assertToolMapSoundness", () => {
+  it("passes for the real shipped tables (no throw)", () => {
+    expect(() =>
+      assertToolMapSoundness(TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP, SUB_AGENT_TOOL_DENYLIST),
+    ).not.toThrow();
+  });
+
+  it("throws when a cap-mapped tool is in the denylist (DISPATCH-03)", () => {
+    // poison: a denylisted admin tool sneaks onto the curated surface.
+    const poisonedCap = { ...TOOL_CAPABILITY_MAP, gateway: "orch:read" };
+    const poisonedRoute = { ...TOOL_ROUTE_MAP, gateway: { kind: "executor" } };
+    expect(() =>
+      assertToolMapSoundness(poisonedCap, poisonedRoute, SUB_AGENT_TOOL_DENYLIST),
+    ).toThrow(/SUB_AGENT_TOOL_DENYLIST/);
+  });
+
+  it("throws when a cap-mapped tool has no route entry (completeness)", () => {
+    // poison: a cap-mapped tool with no TOOL_ROUTE_MAP route.
+    const poisonedCap = { ...TOOL_CAPABILITY_MAP, orphan_tool: "orch:read" };
+    expect(() =>
+      assertToolMapSoundness(poisonedCap, TOOL_ROUTE_MAP, SUB_AGENT_TOOL_DENYLIST),
+    ).toThrow(/no TOOL_ROUTE_MAP entry/);
   });
 });

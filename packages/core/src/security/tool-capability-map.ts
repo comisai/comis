@@ -113,17 +113,37 @@ export const TOOL_ROUTE_MAP = {
 // assert-at-load so a denylist rename or a missing route fails LOUD at import,
 // not silently at the VPS. The arch-tests pin the same invariants at build time.
 // ---------------------------------------------------------------------------
-for (const tool of Object.keys(TOOL_CAPABILITY_MAP)) {
-  if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
-    throw new Error(
-      `TOOL_CAPABILITY_MAP invariant violated: "${tool}" is in SUB_AGENT_TOOL_DENYLIST — ` +
-        `a denylisted (admin/destructive) tool must never be on the curated tool.invoke surface (DISPATCH-03).`,
-    );
-  }
-  if (!(tool in TOOL_ROUTE_MAP)) {
-    throw new Error(
-      `TOOL_CAPABILITY_MAP invariant violated: "${tool}" has no TOOL_ROUTE_MAP entry — ` +
-        `every capability-mapped tool must declare exactly one dispatch route.`,
-    );
+
+/**
+ * Assert the cap-map ↔ denylist ↔ route-map soundness invariants (DISPATCH-03 +
+ * route completeness). Pure: takes the three tables explicitly so the invariant
+ * is independently unit-testable over a poisoned copy (the throw branches are
+ * the security fail-loud paths — they MUST be covered). Throws a descriptive
+ * `Error` on the first violation.
+ *
+ * @allow-throw: module-load invariant (mirrors handler-capability-map.ts). Called
+ * once at import below with the real tables; the throw aborts module load.
+ */
+export function assertToolMapSoundness(
+  capMap: Readonly<Record<string, unknown>>,
+  routeMap: Readonly<Record<string, unknown>>,
+  denylist: ReadonlySet<string>,
+): void {
+  for (const tool of Object.keys(capMap)) {
+    if (denylist.has(tool)) {
+      throw new Error(
+        `TOOL_CAPABILITY_MAP invariant violated: "${tool}" is in SUB_AGENT_TOOL_DENYLIST — ` +
+          `a denylisted (admin/destructive) tool must never be on the curated tool.invoke surface (DISPATCH-03).`,
+      );
+    }
+    if (!(tool in routeMap)) {
+      throw new Error(
+        `TOOL_CAPABILITY_MAP invariant violated: "${tool}" has no TOOL_ROUTE_MAP entry — ` +
+          `every capability-mapped tool must declare exactly one dispatch route.`,
+      );
+    }
   }
 }
+
+// Run the invariant at module load with the real tables (fail-loud at import).
+assertToolMapSoundness(TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP, SUB_AGENT_TOOL_DENYLIST);
