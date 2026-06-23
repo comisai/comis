@@ -1,8 +1,8 @@
 {
-  "totalMinified": 129215,
-  "totalGzipped": 12864,
+  "totalMinified": 130397,
+  "totalGzipped": 13045,
   "budget": {
-    "minified": 130000,
+    "minified": 131000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -37,6 +37,7 @@
     "browser.status": 448,
     "browser.stop": 302,
     "browser.tabs": 500,
+    "capabilities.introspect": 769,
     "channels.capabilities": 456,
     "channels.disable": 448,
     "channels.enable": 448,
@@ -153,7 +154,7 @@
     "obs.delivery.recent": 462,
     "obs.delivery.stats": 414,
     "obs.diagnostics": 596,
-    "obs.explain": 9072,
+    "obs.explain": 9566,
     "obs.fleet.health": 3502,
     "obs.getCacheStats": 358,
     "obs.reset": 571,

@@ -1412,6 +1412,76 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "capabilities.introspect": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "caps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "tokensRemaining": {
+              "type": "number"
+            },
+            "wallClockMsRemaining": {
+              "type": "number"
+            },
+            "usdRemaining": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tokensRemaining",
+            "wallClockMsRemaining",
+            "usdRemaining"
+          ],
+          "additionalProperties": false
+        },
+        "outwardQuota": {
+          "type": "object",
+          "properties": {
+            "perHourRemaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "perHourRemaining"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "agentId",
+        "caps"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "channels.capabilities": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -7923,6 +7993,56 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "capSource",
               "tokenBudget",
               "tokensUsed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spawnTree": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "leaseId": {
+                "type": "string"
+              },
+              "parentLeaseId": {
+                "type": "string"
+              },
+              "rootRunId": {
+                "type": "string"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "caps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "toolsInvoked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "denials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "budgetTokensUsed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "leaseId",
+              "rootRunId",
+              "agentId",
+              "caps",
+              "toolsInvoked",
+              "denials"
             ],
             "additionalProperties": false
           }

@@ -58,7 +58,16 @@ import { gzipSync } from "node:zlib";
 // 129,000. Bumped to 130,000 with headroom; both are bounded one request/response
 // pairs and gzip-friendly — the gzipped total (12,864) stays far under the 38 KB
 // gzipped wire budget (the real wire cost).
-export const BUDGET_MINIFIED_BYTES = 130_000;
+// 2026-06-23: v2.29 AUDIT/TREE/INTRO (Phase 215) — the obs.explain spawnTree
+// IncidentReport section (Plan 03 — the root→children authorization topology) +
+// the capabilities.introspect contract with its nested budget+outwardQuota
+// response (Plan 04 — the `comis whoami` read) added +1,182 B → total 130,397,
+// overflowing 130,000. Bumped to 131,000 with headroom; both are bounded,
+// additive, content-free (the proven optional-section family + one
+// request/response pair), and the gzipped total (13,045) stays far under the
+// 38 KB gzipped wire budget (12,864 → 13,045 — ample headroom; only the minified
+// cap needs the bump).
+export const BUDGET_MINIFIED_BYTES = 131_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;
