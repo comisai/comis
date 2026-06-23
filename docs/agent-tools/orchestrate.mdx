@@ -1,0 +1,136 @@
+---
+title: "Orchestrate: chain tools in one jailed turn"
+description: "The orchestrate tool runs a model-written script that chains capability-scoped typed tools in a single jailed child — only stdout re-enters context. The autonomy primitive."
+icon: "diagram-project"
+---
+
+`orchestrate` is the **autonomy primitive**: the model writes **one script** that chains
+capability-scoped typed tools inside a jailed child, and only what the script `console.log`s
+(its stdout) re-enters the conversation. A search → fetch → synthesize chain that would take
+many back-and-forth tool calls runs in **one inference turn** — and the intermediate, often
+high-volume (and untrusted) results never enter the transcript.
+
+It is assembled for an [autonomy-bearing agent](/agents/autonomy) (the `standard` profile and
+up — `orch:read` and `orch:web` are on by default) on a host where the bwrap jail is buildable.
+A non-autonomy agent, or a host with no sandbox provider, does not get the tool.
+
+## Parameters
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `script` | string | The script body. It may `import { comis_tools } from "./comis_tools.js"` and chain tools; only its stdout re-enters context. |
+| `language` | `"ts"` \| `"js"` | The script language. |
+| `timeoutMs` | number (optional) | Hard wall-clock timeout for the jailed run. Default 60000. |
+| `captureStdout` | boolean (optional) | Reserved — stdout is always the (only) captured channel. |
+
+## The typed SDK (`comis_tools`)
+
+The script imports a generated, typed SDK — one `async` method per capability-mapped tool.
+The surface uses **progressive disclosure**: `comis_tools.describe()` lists every available tool
+with its capability and a one-line summary (cheap to enumerate), and the full per-tool types
+load on demand. The SDK is **emitted from the same tool→capability map as the dispatch gate**,
+so the SDK and the gate can never drift (an architecture test asserts byte-identity).
+
+```typescript
+import { comis_tools } from "./comis_tools.js";
+
+// Discovery (progressive disclosure): names + capabilities + summaries.
+const tools = comis_tools.describe();
+
+// orch:read — workspace + self-tenant reads, run daemon-side under the jail's workspace.
+await comis_tools.read({ path: "notes.md" });
+await comis_tools.grep({ pattern: "TODO" });
+await comis_tools.memory_search({ query: "deployment runbook" });
+
+// orch:web — daemon-side, DNS-pinned (the jail itself stays --unshare-net).
+await comis_tools.web_search({ query: "comisai release notes" });
+await comis_tools.web_fetch({ url: "https://example.com" });
+```
+
+Each method dials the [`tool.invoke`](/reference/json-rpc#the-agent-cap-socket-surface-tool-invoke)
+surface over the lease-authenticated capability socket. The full curated list of tools and the
+capability each requires is the [tool→capability map](/security/capability-model#the-curated-tool-capability-surface-tool-invoke).
+
+## ResultRef: high-volume returns
+
+A tool return over a per-tool size threshold is **not** inlined into the script's value — it is
+written to the jailed workspace's `results/` directory and the call returns a small `ResultRef`
+handle instead. Only the handle (with a tiny `preview`) would re-enter context; the big payload
+stays on disk as **data**. The script slices it **in-jail** — the same turn — so just the
+relevant rows/lines come back:
+
+```typescript
+const page = await comis_tools.web_fetch({ url: "https://example.com/big" });
+// page is a ResultRef { ref, kind, bytes, preview, expiresAt, ... }
+
+const ids = await page.jq(".[].id");      // run jq over the materialized JSON
+const hits = await page.grep("error");     // grep the materialized file
+const head = await page.read(0, 40);       // read a 40-line/byte slice
+
+console.log(JSON.stringify(ids));          // only this slice re-enters context
+```
+
+A `ResultRef` carries `{ ref, kind, bytes, rows?, schema?, preview, expiresAt }` plus the
+in-jail `.read(offset?, limit?)` / `.grep(pattern)` / `.jq(expr)` extraction methods. The
+`results/` directory is bounded (a per-file cap, a per-run aggregate cap, and a TTL) and
+auto-cleaned when the run ends.
+
+## Worked example — research in one turn
+
+```typescript
+import { comis_tools } from "./comis_tools.js";
+
+// 1. Search (daemon-side, DNS-pinned) → a ResultRef, not a wall of text in context.
+const results = await comis_tools.web_search({ query: "comis autonomy model" });
+// 2. Pull the top URLs out of the handle, in-jail.
+const urls = (await results.jq("[.[].url][0:3]")) as string[];
+// 3. Fetch + extract each (each a ResultRef), slice the readable head in-jail.
+const summaries: string[] = [];
+for (const url of urls) {
+  const page = await comis_tools.web_fetch({ url });
+  summaries.push(await page.read(0, 60));
+}
+// 4. ONLY the final synthesized slice re-enters the conversation.
+console.log(summaries.join("\n---\n"));
+```
+
+The three searches and three fetches — and all their intermediate payloads — happen inside the
+jail in **one** turn. The model's context only ever sees the final `console.log`.
+
+## The containment contract
+
+The jailed child is deliberately constrained — this is what makes letting the model write and
+run arbitrary code safe:
+
+- **Workspace-confined.** It can read and write only the agent's jailed workspace; it cannot read
+  `~/.comis`, the secret store, other agents' workspaces, or the host filesystem.
+- **`--unshare-net`.** The jail has **no** network. The only egress is the `0600` capability
+  socket — so the only outbound calls are `tool.invoke` to capabilities the agent holds. The
+  `web_search`/`web_fetch` tools run **daemon-side** (on the daemon's network, DNS-pinned) and
+  return their results as **data**, never as control.
+- **Cannot mint tokens or change config.** The administrative control plane (`gateway`, the
+  `*_manage` family, `mcp_manage`/`mcp_login`) is unreachable through the cap surface, and
+  deny-by-origin rejects any agent-origin call to it regardless of capability.
+- **Secret-scrubbed env.** The inherited environment is filtered — any `*KEY*` / `*TOKEN*` /
+  `*SECRET*` variable is dropped before the child starts. The only injected runtime vars are the
+  short-lived lease bearer ([`COMIS_CAP_LEASE`](/reference/environment-variables#comis_cap_lease))
+  and the socket path ([`COMIS_ORCH_SOCKET`](/reference/environment-variables#comis_orch_socket)),
+  which the SDK authenticates with; the lease is registered with the OutputGuard at mint so it is
+  never logged.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Capability model" icon="shield-halved" href="/security/capability-model">
+    The closed capability union, the curated tool→capability map, and deny-by-origin.
+  </Card>
+  <Card title="Autonomy" icon="sliders" href="/agents/autonomy">
+    Named profiles, the zero-config default, and the legible degrade that grant and bound capabilities.
+  </Card>
+  <Card title="tool.invoke" icon="plug" href="/reference/json-rpc#the-agent-cap-socket-surface-tool-invoke">
+    The lease-authenticated cap-socket dispatch the SDK speaks.
+  </Card>
+  <Card title="Environment variables" icon="file-code" href="/reference/environment-variables#comis_cap_lease">
+    The lease + socket vars the daemon injects into the jail.
+  </Card>
+</CardGroup>
