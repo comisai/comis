@@ -139,6 +139,62 @@ describe("assembleIncidentReport — nodeBudgetBreaches (ORCH-OBS)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TREE (215-03): the spawn-tree section is surfaced when the signals carry
+// nodes (folded from capability.audited records) and OMITTED when empty
+// (additive; schemaVersion stays 1) — the nodeBudgetBreaches mold.
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — spawnTree (TREE)", () => {
+  it("surfaces spawnTree when the signals carry nodes; schemaVersion stays 1", () => {
+    const report = assembleIncidentReport(
+      makeSignals({
+        spawnTree: [
+          {
+            leaseId: "L-root",
+            rootRunId: "R",
+            agentId: "a1",
+            caps: ["orch:read"],
+            toolsInvoked: ["memory_search"],
+            denials: [],
+          },
+          {
+            leaseId: "L-child",
+            parentLeaseId: "L-root",
+            rootRunId: "R",
+            agentId: "a1",
+            caps: ["orch:web"],
+            toolsInvoked: ["web_fetch"],
+            denials: ["orch:web"],
+          },
+        ],
+      }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+    expect(report.schemaVersion).toBe(1);
+    expect(report.spawnTree).toHaveLength(2);
+    expect(report.spawnTree![1]).toMatchObject({
+      leaseId: "L-child",
+      parentLeaseId: "L-root",
+      denials: ["orch:web"],
+    });
+  });
+
+  it("OMITS spawnTree entirely when there are no nodes (additive — pre-extension report shape preserved)", () => {
+    const report = assembleIncidentReport(makeSignals({ spawnTree: [] }), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.spawnTree).toBeUndefined();
+    expect(report.schemaVersion).toBe(1);
+  });
+
+  it("OMITS spawnTree when the signal field is absent (the common no-spawn case)", () => {
+    const report = assembleIncidentReport(makeSignals(), makeMetadata(), null, SESSION_KEY, READ_COUNT);
+    expect(report.spawnTree).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // cost — the F1-primary fallback chain (the X3 1.320669 invariant).
 // ---------------------------------------------------------------------------
 

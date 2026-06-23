@@ -409,6 +409,102 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (ORCH-OBS)", () =>
   });
 });
 
+// TREE (215-03): the capability.audited fold — the per-node spawn-tree source.
+// Each gated call (allow/deny) emits a content-free capability.audited trajectory
+// record (Plan 01's producer); this fold groups them by leaseId into one spawn-tree
+// node carrying its attenuated caps (deduped), the tool NAMES it invoked, and any
+// CapabilityDeniedError cap (TREE-02). An in-process record (no lease) groups under
+// its synthetic rootRunId (G1 — leaseId is honestly the synthetic-root key, never a
+// fabricated lease-<id>). The producer carries {capability, tool, decision, leaseId,
+// parentLeaseId, rootRunId} on `data` and agentId on the envelope.
+function capAudited(
+  seq: number,
+  data: Record<string, unknown>,
+  agentId?: string,
+): Record<string, unknown> {
+  return {
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    type: "capability.audited",
+    seq,
+    ...(agentId !== undefined ? { agentId } : {}),
+    data,
+  };
+}
+
+describe("toIncidentSignals — capability.audited fold (TREE)", () => {
+  it("folds two same-lease allow records into ONE node with deduped caps + collected tools, denials empty", () => {
+    const s = toIncidentSignals([
+      capAudited(1, {
+        leaseId: "L-root",
+        rootRunId: "R",
+        capability: "orch:read",
+        tool: "memory_search",
+        decision: "allow",
+      }, "agent-a"),
+      capAudited(2, {
+        leaseId: "L-root",
+        rootRunId: "R",
+        capability: "orch:read",
+        tool: "web_fetch",
+        decision: "allow",
+      }, "agent-a"),
+    ]);
+    expect(s.spawnTree).toHaveLength(1);
+    const node = s.spawnTree![0]!;
+    expect(node.leaseId).toBe("L-root");
+    expect(node.rootRunId).toBe("R");
+    expect(node.agentId).toBe("agent-a");
+    // orch:read appears on BOTH records → deduped to one entry.
+    expect(node.caps).toEqual(["orch:read"]);
+    expect(node.toolsInvoked).toEqual(["memory_search", "web_fetch"]);
+    expect(node.denials).toEqual([]);
+    expect(node.parentLeaseId).toBeUndefined();
+  });
+
+  it("pushes a denied cap into the node's denials[] (TREE-02 — CapabilityDeniedError)", () => {
+    const s = toIncidentSignals([
+      capAudited(1, {
+        leaseId: "L-child",
+        rootRunId: "R",
+        parentLeaseId: "L-root",
+        capability: "orch:web",
+        tool: "web_fetch",
+        decision: "deny",
+      }),
+    ]);
+    expect(s.spawnTree).toHaveLength(1);
+    const node = s.spawnTree![0]!;
+    expect(node.denials).toContain("orch:web");
+    expect(node.parentLeaseId).toBe("L-root");
+  });
+
+  it("yields distinct nodes for distinct leaseIds; an in-process record (no leaseId) groups under its rootRunId", () => {
+    const s = toIncidentSignals([
+      capAudited(1, { leaseId: "L-a", rootRunId: "R1", capability: "orch:read", tool: "t1", decision: "allow" }),
+      capAudited(2, { leaseId: "L-b", rootRunId: "R1", capability: "orch:web", tool: "t2", decision: "allow" }),
+      // in-process: no leaseId → groups under the synthetic rootRunId key (G1).
+      capAudited(3, { rootRunId: "root-session-xyz", capability: "orch:read", tool: "t3", decision: "allow" }),
+    ]);
+    expect(s.spawnTree).toHaveLength(3);
+    const byKey = new Map(s.spawnTree!.map((n) => [n.leaseId, n]));
+    expect(byKey.has("L-a")).toBe(true);
+    expect(byKey.has("L-b")).toBe(true);
+    // The in-process node's leaseId is the honest synthetic-root key — NOT a fabricated lease id.
+    const inProc = byKey.get("root-session-xyz");
+    expect(inProc).toBeDefined();
+    expect(inProc!.rootRunId).toBe("root-session-xyz");
+    expect(inProc!.parentLeaseId).toBeUndefined();
+  });
+
+  it("omits spawnTree entirely when the trajectory carries no capability.audited records (additive)", () => {
+    const s = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "tool.result", seq: 1, data: { toolName: "web_fetch", success: true } },
+    ]);
+    expect(s.spawnTree).toBeUndefined();
+  });
+});
+
 describe("toIncidentSignals — spend.exceeded fold (WEBUI-04, 179-04)", () => {
   it("folds a spend.exceeded record into spend {scope, totalUsd, capUsd} (totalUsd <- spentUsd)", () => {
     const s = toIncidentSignals([
