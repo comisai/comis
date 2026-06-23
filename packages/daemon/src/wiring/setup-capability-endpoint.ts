@@ -351,8 +351,12 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // validate binds tool.invoke to TOOL_CAPABILITY_MAP[innerTool]).
     if (method === "tool.invoke") {
       const tool = typeof params.tool === "string" ? params.tool : "";
+      // IN-02: an array passes `typeof === "object"`, so without the
+      // `!Array.isArray` guard `args: [...]` would flow on as an index-keyed
+      // object (`{0:…,1:…}`) the tool sink mis-reads. Treat a non-plain-object
+      // `args` (array / null / scalar) as empty named args.
       const innerArgs =
-        typeof params.args === "object" && params.args !== null
+        typeof params.args === "object" && params.args !== null && !Array.isArray(params.args)
           ? (params.args as Record<string, unknown>)
           : {};
       // 1. Allow-list FIRST (DISPATCH-02 default-deny): an unmapped tool is

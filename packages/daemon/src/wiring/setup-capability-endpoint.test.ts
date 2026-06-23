@@ -509,6 +509,33 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(toolInvokeExecutor).not.toHaveBeenCalled();
   });
 
+  // IN-02 (loose args contract): an ARRAY passed as `args` must NOT slip through
+  // the `typeof === "object"` branch as an index-keyed object (`{0:…,1:…}`) — it
+  // is not a valid named-args object. Tighten the guard so an array degrades to
+  // empty named args (like any other non-object), never index-keyed fields the
+  // sink would mis-read.
+  it("treats an array args as empty named args (does not forward index-keyed fields)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"], "agent-arr");
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "memory_search",
+      args: ["a", "b", "c"],
+    });
+
+    const [, params] = rpcCall.mock.calls[0];
+    // No index-keyed fields from the array leaked into the dispatched params.
+    expect("0" in params).toBe(false);
+    expect("1" in params).toBe(false);
+    expect("2" in params).toBe(false);
+    // The lease-derived identity is still injected (the dispatch path is intact).
+    expect(params._agentId).toBe("agent-arr");
+  });
+
   // DISPATCH (strip-then-inject / S2): forged _agentId/_trustLevel in the inner
   // args are stripped; the rpc route receives the lease's _agentId (NOT the forged
   // "victim") — the self-scoping integrity prerequisite (CR-01 / T-212-06).
