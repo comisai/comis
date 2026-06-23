@@ -40,9 +40,11 @@ import {
   type AgentCapability,
   type ClockPort,
 } from "@comis/core";
+import { resolveAutonomy } from "@comis/core";
 import { assertNotAgentOrigin } from "../api/shared/assert-not-agent-origin.js";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { createCapabilityEndpoint } from "./setup-capability-endpoint.js";
+import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -743,5 +745,169 @@ describe("createCapabilityEndpoint socket server", () => {
     expect(typeof (overflowFields as { hint?: unknown }).hint).toBe("string");
 
     await endpoint.stopSocket();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 213 RATE-01 (per-root + per-socket rate limit) + RATE-02 (cron
+// self-ownership) at the cap ENDPOINT. The lease's agentId is authoritative ONLY
+// here (NOT in the shared cron-handlers.ts — Pitfall 3); the cap socket is the
+// agent's only orchestrate egress, so the rate limit + cron self-ownership belong
+// at handleCapCall.
+// ---------------------------------------------------------------------------
+
+/** A configurable BoundedAutonomy stub for the endpoint's rate-limit + cron-cap
+ *  consults. `tryCall`/`tryChurn` default to allow; `cronCount` is provider-backed
+ *  (so a test can prove the cap reads the NAMED accessor, not a local counter). */
+function makeBoundedAutonomyStub(over: {
+  tryCall?: BoundedAutonomy["tryCall"];
+  tryChurn?: BoundedAutonomy["tryChurn"];
+  cronCount?: (agentId: string) => number;
+} = {}): BoundedAutonomy {
+  return {
+    tryAcquireSpawn: () => ({ ok: true }),
+    releaseSpawn: () => {},
+    tryCall: over.tryCall ?? (() => ({ ok: true })),
+    tryChurn: over.tryChurn ?? (() => ({ ok: true })),
+    reserveBudget: () => ({ kind: "ok" }) as ReturnType<BoundedAutonomy["reserveBudget"]>,
+    tryOutward: () => ({ ok: true }) as ReturnType<BoundedAutonomy["tryOutward"]>,
+    registerRoot: () => {},
+    leaseIdsForRoot: () => new Set<string>(),
+    cronCount: over.cronCount ?? (() => 0),
+    destroy: () => {},
+  };
+}
+
+describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)", () => {
+  // RATE-01: when the bounded-autonomy rate limiter denies (per-root or per-socket
+  // over cap), handleCapCall is DENIED before the dispatch sink is reached.
+  it("denies a cap call when the rate limiter trips, before dispatch (RATE-01)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-rl");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const boundedAutonomy = makeBoundedAutonomyStub({
+      tryCall: () => ({ ok: false, reason: "rate" }),
+    });
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
+    });
+
+    await expect(endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" })).rejects.toThrow();
+    // The rate limit denied BEFORE the dispatch sink ran.
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  it("dispatches normally when under the rate cap (RATE-01)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-ok");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const boundedAutonomy = makeBoundedAutonomyStub(); // tryCall → allow
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+  });
+
+  // RATE-02: a cron mutation forwards with agentId FORCED to the lease's agentId
+  // (the forged "OTHER-AGENT" is overwritten) — on BOTH agentId AND _agentId
+  // (cron-handlers reads both).
+  it("forces agentId := lease.agentId on a cron mutation, overwriting a forged agentId (RATE-02)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const boundedAutonomy = makeBoundedAutonomyStub();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", {
+      agentId: "OTHER-AGENT", payload_kind: "agent_turn", schedule: "* * * * *",
+    });
+
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    const [, params] = rpcCall.mock.calls[0];
+    // The forged agentId is overwritten by the lease identity on BOTH fields.
+    expect(params.agentId).toBe("self-agent");
+    expect(params._agentId).toBe("self-agent");
+  });
+
+  // RATE-02: a system_event cron is REJECTED (only agent_turn is self-ownable).
+  it("rejects a cron mutation with payload_kind:system_event (RATE-02)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const boundedAutonomy = makeBoundedAutonomyStub();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
+    });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "cron.add", { payload_kind: "system_event", schedule: "x" }),
+    ).rejects.toThrow();
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  // RATE-02: agentId:"*" is neutralized to the lease's single agentId (the "*"
+  // never reaches the handler from the endpoint path).
+  it("neutralizes agentId:'*' to the lease's single agentId on a cron mutation (RATE-02)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "self-agent");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const boundedAutonomy = makeBoundedAutonomyStub();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: resolveAutonomy({ profile: "standard" }),
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.list", { agentId: "*" });
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    const [, params] = rpcCall.mock.calls[0];
+    expect(params.agentId).toBe("self-agent");
+    expect(params._agentId).toBe("self-agent");
+  });
+
+  // RATE-02: cronSelfMax is enforced via the NAMED boundedAutonomy.cronCount(agentId)
+  // accessor (provider-backed) — NOT a handleCapCall-local counter. A wrong/missing
+  // production accessor would FAIL this test.
+  it("caps cron mutations at cronSelfMax via boundedAutonomy.cronCount(lease.agentId) (RATE-02)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "busy-agent");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const cfg = resolveAutonomy({ profile: "standard" });
+    // cronCount returns exactly cronSelfMax for THIS lease's agent → at the cap.
+    const cronCount = vi.fn((agentId: string) => (agentId === "busy-agent" ? cfg.cronSelfMax : 0));
+    const boundedAutonomy = makeBoundedAutonomyStub({ cronCount });
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: cfg,
+    });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "cron.add", { payload_kind: "agent_turn", schedule: "x" }),
+    ).rejects.toThrow();
+    expect(rpcCall).not.toHaveBeenCalled();
+    // The deny is driven by the NAMED accessor with the lease's agentId.
+    expect(cronCount).toHaveBeenCalledWith("busy-agent");
+  });
+
+  it("dispatches a cron mutation when under cronSelfMax (cronCount < cap) (RATE-02)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "calm-agent");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const cfg = resolveAutonomy({ profile: "standard" });
+    const boundedAutonomy = makeBoundedAutonomyStub({ cronCount: () => 0 }); // well under cap
+    const endpoint = createCapabilityEndpoint({
+      leaseManager, rpcCall, boundedAutonomy, autonomyConfig: cfg,
+    });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { payload_kind: "agent_turn", schedule: "x" });
+    expect(rpcCall).toHaveBeenCalledTimes(1);
   });
 });
