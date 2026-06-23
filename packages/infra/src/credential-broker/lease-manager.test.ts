@@ -394,6 +394,68 @@ describe("LeaseManager — cascadeRevoke reaches grandchildren via the at-mint a
   });
 });
 
+describe("LeaseManager — revokeByRootRun scans + cascades every lease of a root (REVOKE-01)", () => {
+  // The by-rootRunId fan-out: scan on `rootRunId`, cascadeRevoke each match
+  // through ONE shared visited set (so the count is distinct), leave other roots
+  // untouched. Each lease holds orch:graph / validates at graph.execute, so the
+  // only post-revoke denial reason is `revoked`.
+
+  it("revokes both leases of the target root, returns { revoked: 2 }, and leaves a different root validating", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const parentR = mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-R" });
+    const childR = mgr.mintLease({
+      ...baseInput(["orch:graph"]),
+      rootRunId: "root-R",
+      parentLeaseId: parentR.leaseId,
+    });
+    const other = mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-OTHER" });
+
+    const result = mgr.revokeByRootRun("root-R");
+
+    expect(result).toEqual({ revoked: 2 }); // distinct count, no double-count
+    expect(mgr.validate(parentR.bearer, "graph.execute")).toBeNull();
+    expect(mgr.validate(childR.bearer, "graph.execute")).toBeNull();
+    // a DIFFERENT root is strictly untouched (the scan filters on rootRunId ===)
+    expect(mgr.validate(other.bearer, "graph.execute")).not.toBeNull();
+  });
+
+  it("cascades the root scan to a grandchild — including one whose own rootRunId differs but is reachable via parentLeaseId (defense-in-depth)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const parentR = mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-R" });
+    const childR = mgr.mintLease({
+      ...baseInput(["orch:graph"]),
+      rootRunId: "root-R",
+      parentLeaseId: parentR.leaseId,
+    });
+    // A grandchild whose rootRunId is DIFFERENT but is reachable from childR via
+    // parentLeaseId — the cascade (not the rootRunId scan) is the authority, so it
+    // is still revoked even though the scan would not have matched it directly.
+    const grandchildOdd = mgr.mintLease({
+      ...baseInput(["orch:graph"]),
+      rootRunId: "root-DIFFERENT",
+      parentLeaseId: childR.leaseId,
+    });
+
+    const result = mgr.revokeByRootRun("root-R");
+
+    // parentR + childR matched by scan, grandchildOdd reached by cascade → 3 distinct
+    expect(result).toEqual({ revoked: 3 });
+    expect(mgr.validate(parentR.bearer, "graph.execute")).toBeNull();
+    expect(mgr.validate(childR.bearer, "graph.execute")).toBeNull();
+    expect(mgr.validate(grandchildOdd.bearer, "graph.execute")).toBeNull();
+  });
+
+  it("returns { revoked: 0 } for an unknown root without throwing (clean no-op)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-LIVE" });
+    let result: { revoked: number } | undefined;
+    expect(() => {
+      result = mgr.revokeByRootRun("no-such-root");
+    }).not.toThrow();
+    expect(result).toEqual({ revoked: 0 });
+  });
+});
+
 describe("LeaseManager — expiry, lazy TTL eviction and renew-revival", () => {
   it("denies validate once the lease is past its (soft) expiry", () => {
     const deps = makeDeps({ defaultTtlMs: 1000 });
