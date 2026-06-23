@@ -42,6 +42,7 @@ import {
 } from "../autonomy/durable-resume-engine.js";
 import { detectStaleRuns } from "../autonomy/durable-watchdog.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
+import { isDagSpawnTree } from "../graph/graph-durable-checkpoint.js";
 
 /** The resolved `autonomy.durability` config the wiring reads (Plan 07-Task-1 schema). */
 export interface DurableResumeConfig {
@@ -255,8 +256,8 @@ export interface DurableResumeWiring {
 export function buildDurableResume(deps: {
   db: unknown;
   durabilityCfg: DurableStoresResult["durabilityCfg"];
-  durableRunStore: DurableRunPort | undefined;
-  outwardLedger: OutwardSendLedgerPort | undefined;
+  durableRunStore?: DurableRunPort | undefined;
+  outwardLedger?: OutwardSendLedgerPort | undefined;
   boundedAutonomy: BoundedAutonomy | undefined;
   sharedLeaseManager: LeaseManager;
   channelAdaptersRef: Map<string, DeliveryAdapter> | undefined;
@@ -264,8 +265,19 @@ export function buildDurableResume(deps: {
   logger: ComisLogger;
   clock: ClockPort;
   timers: TimerPort;
+  /**
+   * Phase 216 Plan 12 (DUR-02/LOW-2): the graph coordinator's `resumeGraph(record)`
+   * entry (Plan 11). The resume engine's `resumeRun` dispatch routes a DAG-shaped run
+   * record (spawn_tree entries are OBJECTS with a `status` field — {@link isDagSpawnTree})
+   * to this for node re-entry; a flat run (string[] spawn_tree) takes the flat re-anchor.
+   * Late-bound: the daemon constructs the coordinator AFTER buildDurableResume, so it is
+   * passed as a holder whose `.ref` is populated post-construction (read at resumeAndStart
+   * time — after channels + after the coordinator exists). Absent ⇒ a DAG record degrades
+   * to the flat re-anchor (no crash; node re-entry is simply unavailable).
+   */
+  resumeGraph?: (record: DurableRunRecord) => Promise<Result<void, Error>>;
 }): DurableResumeWiring {
-  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, channelAdaptersRef, eventBus, logger, clock, timers } = deps;
+  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, channelAdaptersRef, eventBus, logger, clock, timers, resumeGraph } = deps;
   const durableResume: DurableResumeResult = setupDurableResume({
     db: deps.db,
     ...(durableRunStore ? { durableRunStore } : {}),
@@ -284,6 +296,20 @@ export function buildDurableResume(deps: {
     // full re-spawnable task spec, so M1 resumes-as-anchored (a richer re-spawn from
     // the checkpoint is a future enhancement — see the SUMMARY known limitation).
     resumeRun: async (record: DurableRunRecord, leaseId: string): Promise<Result<void, Error>> => {
+      // LOW-2 DAG-vs-flat dispatch (Plan 12): a DAG record (spawn_tree entries are
+      // OBJECTS with a `status` field) routes to the graph coordinator's resumeGraph
+      // for node re-entry; a flat sub-agent run (string[] spawn_tree) takes the flat
+      // re-anchor below and can NEVER mis-route. The discriminator is the explicit
+      // entry-has-`status` check (isDagSpawnTree), not a heuristic.
+      if (isDagSpawnTree(record.spawnTree)) {
+        if (resumeGraph) return resumeGraph(record);
+        // resumeGraph not wired (e.g. coordinator absent) ⇒ degrade to the flat
+        // re-anchor so the run is still bounded/killable across restart (no crash).
+        logger.warn(
+          { rootRunId: record.rootRunId, hint: "DAG record but resumeGraph is unwired; falling back to the flat re-anchor (no node re-entry)", errorKind: "internal" as const },
+          "Durable resume: DAG resume unavailable",
+        );
+      }
       try {
         boundedAutonomy?.registerRoot(record.rootRunId, leaseId);
         return ok(undefined);

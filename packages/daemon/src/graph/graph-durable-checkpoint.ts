@@ -87,3 +87,27 @@ export function incompleteNodes(spawnTree: ReadonlyArray<{ nodeId: string; statu
     .filter((entry) => !TERMINAL_NODE_STATES.has(entry.status))
     .map((entry) => entry.nodeId);
 }
+
+/**
+ * The LOW-2 DAG-vs-flat discriminator (the resume engine's dispatch routing,
+ * Plan 12). A DAG/graph run's `spawn_tree` entries are OBJECTS carrying a
+ * `status` field (`{nodeId,status,runId?}` — the {@link snapshotToSpawnTree}
+ * shape); a FLAT sub-agent run's `spawn_tree` is a plain `string[]` of node/lease
+ * ids (Plan 01 `spawnTree: z.array(z.string())`). This is the EXPLICIT
+ * entry-has-`status` check — NOT a length or array-type heuristic — so the resume
+ * engine routes to `coordinator.resumeGraph` IFF this returns true. A flat run
+ * (string entries) can therefore NEVER mis-route to the graph resume, and a DAG
+ * record always re-enters via node re-entry. An empty `spawn_tree` is NOT a DAG
+ * (there is no graph frontier to resume).
+ */
+export function isDagSpawnTree(
+  spawnTree: ReadonlyArray<string | { nodeId: string; status: string; runId?: string }>,
+): spawnTree is ReadonlyArray<{ nodeId: string; status: string; runId?: string }> {
+  return (
+    Array.isArray(spawnTree) &&
+    spawnTree.length > 0 &&
+    typeof spawnTree[0] === "object" &&
+    spawnTree[0] !== null &&
+    "status" in spawnTree[0]
+  );
+}

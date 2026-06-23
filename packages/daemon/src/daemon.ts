@@ -570,6 +570,8 @@ function buildGraphCoordinatorDeps(deps: {
     assembleToolsForAgent: ReturnType<typeof setupTools>["assembleToolsForAgent"];
     nodeTypeRegistry: ReturnType<typeof createNodeTypeRegistry>;
   };
+  // Phase 216 Plan 12 (HIGH-3/DUR-01): Plan 07's durable store → GraphCoordinatorDeps.durableRuns (Plan 11) so the coordinator checkpoints node state at each markNode* boundary (off ⇒ no-op).
+  durableRunStore?: import("@comis/core").DurableRunPort;
 }): Parameters<typeof createGraphCoordinator>[0] {
   const { agents, channels } = deps;
   const { container, defaultAgentId, dataDir, agentLogger, activeRunRegistry, agentsConfig } = agents;
@@ -629,6 +631,7 @@ function buildGraphCoordinatorDeps(deps: {
       ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
       : undefined,
     ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // Phase 213 CR-01: graph nodes share one tree root (killByRootRun reach).
+    ...(deps.durableRunStore ? { durableRuns: deps.durableRunStore } : {}), // Phase 216 HIGH-3/DUR-01: node-boundary DAG checkpointing → the live durable store (off ⇒ no-op).
     preWarm,
   };
 }
@@ -812,16 +815,10 @@ function buildRpcDispatchDeps(deps: {
   defaultConfigPaths: string[];
 }): import("./api/rpc-dispatch.js").ApiDispatchDeps {
   const { channels: c, gateway: g, startupStartMs, defaultConfigPaths } = deps;
-  // RES-01 keystone (I4 lockstep): the agent's main provider via the EXACT
-  // completion-path resolver, falling back to the configurable defaultAgentId
-  // (NOT literal "default"; WR-01 183-REVIEW). See resolveAgentMainProvider in
-  // setup-agents-tooling.ts for the fallback + honest-sentinel semantics.
+  // RES-01 keystone (I4 lockstep): the agent's main provider via the EXACT completion-path resolver, falling back to the configurable defaultAgentId (NOT literal "default"; WR-01 183-REVIEW). See resolveAgentMainProvider (setup-agents-tooling.ts) for the fallback + honest-sentinel semantics.
   const resolveAgentMainProviderFor = (agentId: string): { providerId: string } =>
     resolveAgentMainProvider(c.container.config.agents, c.container.config.models, agentId, c.defaultAgentId);
-  // WR-04 (186-REVIEW): extracted to buildImageHandlerDeps (wiring/main-helpers.ts)
-  // to keep this composition root under its 3000-line architecture cap — the
-  // literal previously crammed six concerns onto one line to fit. Undefined when
-  // image generation is disabled (no provider / rate limiter).
+  // WR-04 (186-REVIEW): extracted to buildImageHandlerDeps (wiring/main-helpers.ts) to keep this composition root under its 3000-line cap. Undefined when image generation is disabled (no provider / rate limiter).
   const imageHandlerDeps = buildImageHandlerDeps(c, resolveAgentMainProviderFor);
   // Phase 188: video.generate handler deps (undefined when disabled). The spread
   // into ApiDispatchDeps below wires the live handler (source guard pins it).
@@ -2167,20 +2164,22 @@ async function bootChannels(boot: BootContext): Promise<void> {
     if (!port) throw new Error(`No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`);
     return port;
   };
-  // 7.8.9. Phase 216: durable stores built EARLY (before the cap layer — the jail-leg
-  // chokepoint shares the SAME store for the HIGH-1 _outwardStepIndex allocation). See buildDurableStores.
+  // 7.8.9. Phase 216: durable stores built EARLY (before the cap layer — the jail-leg chokepoint shares the SAME store for the HIGH-1 _outwardStepIndex allocation). See buildDurableStores.
   const { durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly } = buildDurableStores({ agents, db });
 
   // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler. Phase 216: durableRuns threads into the jail-leg chokepoint for the HIGH-1 _outwardStepIndex allocation.
   const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
-  // 7.9.1. Phase 216: the durable-resume engine built AFTER the cap layer (BoundedAutonomy
-  // reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
+  // 7.9.1. Phase 216: the durable-resume engine built AFTER the cap layer (BoundedAutonomy reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
+  // Plan 12 (DUR-02/LOW-2): late-bound holder for coordinator.resumeGraph — the coordinator is built later (after channels) but resumeRun only fires at resumeAndStart() (also after channels), so it is set by then. A DAG record routes here.
+  const graphResumeHolder: { ref?: (record: import("@comis/core").DurableRunRecord) => Promise<import("@comis/shared").Result<void, Error>> } = {};
   const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
     db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
     boundedAutonomy: capEndpointHandle?.boundedAutonomy, sharedLeaseManager: handle.sharedLeaseManager!,
     channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
+    // DUR-02/LOW-2: route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
+    resumeGraph: (record) => graphResumeHolder.ref ? graphResumeHolder.ref(record) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 
@@ -2189,9 +2188,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
-    // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
-    // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
-    // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
+    // WR-04 (Phase 174-04): the per-provider operator capabilityClass override so ctx_expand's walk depth honors a pinned tier (same providers.entries source as the executor's ModelProfile). Undefined ⇒ provider-family heuristic.
     getProviderCapabilityClass: (provider) =>
       container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
     dataDir: container.config.dataDir || ".",
@@ -2353,8 +2350,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(durabilityCfg.enabled ? { durability: { keepAliveMs: durabilityCfg.keepAliveMs, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs } } : {}),
     ...(durableRunFacts ? { durableRunFacts } : {}),
-    // Phase 216 HIGH-2 (ONCE-01..04): the SAME outward-send ledger (Plan 07) + the rootRunId resolver →
-    // the announce() send + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through). Makes Plan 10 LIVE.
+    // Phase 216 HIGH-2 (ONCE-01..04): the SAME ledger (Plan 07) + rootRunId resolver → announce() + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through). Makes Plan 10 LIVE.
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
   });
@@ -2366,13 +2362,14 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
     channels: { subAgentRunner, sendToChannel, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    // Phase 216 HIGH-3/DUR-01: thread the live durable store so the coordinator checkpoints node state (Plan 11). Makes DAG durability LIVE.
+    ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
   }));
   subAgentRunner.setGraphCoordinator(graphCoordinator);
+  // Phase 216 DUR-02/LOW-2: populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
+  graphResumeHolder.ref = (record) => graphCoordinator.resumeGraph(record);
   const namedGraphStore = createNamedGraphStore(db);
-  // O2 (WR-02): seed the four canonical small-model DAG templates into the
-  // named-graph store. Idempotent via INSERT-OR-IGNORE semantics inside the
-  // seeder, so operator-customized templates are preserved across restarts and
-  // re-running on every boot is safe.
+  // O2 (WR-02): seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
 
   // 6.7. Monitoring + per-agent heartbeat + wake coalescer
@@ -2385,9 +2382,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     runOnce: () => (heartbeatRunner ? heartbeatRunner.runOnce() : Promise.resolve()),
     logger: schedulerLogger,
   });
-  // Cross-stage: populate cronWakeCallbackRef now that wakeCoalescer is
-  // constructed. The setupSchedulers `onCronWake` lambda (wired in
-  // bootAgents) reads `.ref` at call time.
+  // Cross-stage: populate cronWakeCallbackRef now that wakeCoalescer exists. The setupSchedulers `onCronWake` lambda (wired in bootAgents) reads `.ref` at call time.
   cronWakeCallbackRef.ref = (reason) => wakeCoalescer.requestHeartbeatNow(reason as WakeReasonKind);
 
   // 6.7.0.2. Agent management runtime state
