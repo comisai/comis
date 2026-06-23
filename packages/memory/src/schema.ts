@@ -19,9 +19,7 @@ import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
 import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
-// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (lives in a sibling
-// file to keep schema.ts under the 800-line cap) so existing importers of
-// `./schema.js` keep their import site.
+// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (sibling file, keeps schema.ts under the 800-line cap) so existing `./schema.js` importers keep their import site.
 export { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
