@@ -15,6 +15,7 @@ import type {
   NodeTypeDriver,
   NodeDriverContext,
   NormalizedMessage,
+  DurableRunPort,
 } from "@comis/core";
 import type { AnnouncementBatcher } from "@comis/orchestrator";
 
@@ -185,6 +186,19 @@ export interface GraphCoordinatorDeps {
    * still bounded by the graph concurrency gate).
    */
   resolveRootRunId?: (sessionKey: SessionKey) => string;
+  /**
+   * Phase 216 DUR-01/DUR-02 (Plan 11): the durable run-checkpoint store. When
+   * present AND the graph run has a resolved tree-stable `rootRunId`, the
+   * coordinator checkpoints the per-node completion state (the
+   * GraphExecutionSnapshot → `spawn_tree`) at every node transition, so a DAG
+   * interrupted by a restart resumes (or is honestly orphaned) instead of
+   * vanishing. Optional — absent ⇒ no DAG durability (pre-216 behavior; the
+   * graph still runs, it just is not restart-survivable). The daemon.ts store
+   * injection into `buildGraphCoordinatorDeps` is the dedicated wiring Plan 12
+   * (NEW-2: no two same-wave plans edit daemon.ts); this plan defines the dep +
+   * the consumption logic, Plan 12 supplies the instance.
+   */
+  durableRuns?: DurableRunPort;
   eventBus: TypedEventBus;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { extra?: Record<string, unknown> }) => Promise<boolean>;
   announceToParent?: (
