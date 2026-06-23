@@ -2,34 +2,24 @@
 /**
  * `toIncidentSignals` — the X3 dual-shape normalizer.
  *
- * Collapses two on-disk telemetry record shapes into one `IncidentSignals`
- * view that the assembler (Plan 03) and heuristic registry (Plan 05) consume:
+ * Collapses two on-disk telemetry record shapes into one `IncidentSignals` view
+ * the assembler (Plan 03) + heuristic registry (Plan 05) consume: the LOG shape
+ * (raw Pino lines, PRE Phase-150 — no `traceSchema`, keyed on `msg`, detail from
+ * `errorText`/`httpStatus`/`errorKind`) and the EVENT shape (structured
+ * trajectory events, POST Phase-151 — `traceSchema:"comis-trajectory"`, keyed on
+ * `type`, detail from `data`).
  *
- *   - LOG shape (raw Pino lines; PRE Phase-150): no `traceSchema`, no
- *     `classifiedFailureBy`/`transportOk`. Keyed on `msg`
- *     (`"Tool execution failed"` / `"Tool audit: … succeeded"` /
- *     `"Tool result offloaded to disk"`); failure detail read from
- *     `errorText` / `httpStatus` / `errorKind`.
- *   - EVENT shape (structured trajectory events; POST Phase-151):
- *     `traceSchema: "comis-trajectory"`. Keyed on `type` (`"tool.result"` /
- *     `"tool.breaker_opened"` / `"tool.breaker_reset"` /
- *     `"tool.result_offloaded"`); detail read from `data`.
- *
- * SECURITY (depth-independent):
- *   - Raw bodies are NEVER inlined. `errorPreview` = `sanitizeLogString`(the
- *     errorText, pre-bounded against ReDoS) `.slice(0, MAX_ERROR_PREVIEW)`;
- *     the full body is captured only by `resultDigest = fingerprint(errorText)`.
- *   - Offload `diskPath` is relativized: an absolute host path
- *     (`/Users/…/.comis/…`) is collapsed to the workspace-relative tail after
- *     `.comis/`; the absolute host path is never emitted.
- *
- * The 678 misclassification signal derives from LOG EVIDENCE ONLY — it reads
- * ZERO `classifiedFailureBy` fields (the field is absent in that fixture).
+ * SECURITY (depth-independent): raw bodies are NEVER inlined — `errorPreview` is
+ * the ReDoS-pre-bounded `sanitizeLogString(...).slice(0, MAX_ERROR_PREVIEW)` and
+ * the full body is captured only by `resultDigest = fingerprint(...)`; an offload
+ * `diskPath` is relativized (the absolute host path is never emitted). The 678
+ * misclassification signal derives from LOG EVIDENCE ONLY (zero
+ * `classifiedFailureBy` reads — the field is absent in that fixture).
  *
  * @module
  */
 
-import { fingerprint, IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import { fingerprint } from "@comis/core";
 import type { IncidentSignals } from "@comis/core";
 import {
   asString,
@@ -42,7 +32,8 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
   accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
   accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
-  accumulateSpendExceeded,
+  accumulateSpendExceeded, accumulateCapabilityAuditedRecord,
+  parseContextBudgetRecord, parsePromptTimeoutRecord,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 
@@ -234,57 +225,24 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
-    case "capability.audited": {
-      // TREE-01/02 (215): the per-cap audit record Plan 01 emits at the gate
-      // chokepoint — the spawn-tree's per-node source. Group by leaseId into ONE
-      // node per lease; an in-process record (no real lease, G1) keys on its
-      // synthetic rootRunId (NEVER a fabricated lease-<id>). The node collects the
-      // attenuated caps it held (deduped), the tool NAMES it invoked, and any
-      // CapabilityDeniedError cap (a `deny` decision → denials[], TREE-02). The
-      // record is content-free by construction (the translator strips bodies/args);
-      // agentId rides the envelope (acc.agentId, set above). budgetTokensUsed is
-      // honestly omitted unless the record carries it (G3 — the live whoami is the
-      // authoritative remaining-budget surface; this is the post-mortem topology).
-      const leaseId = asString(data.leaseId) ?? asString(data.rootRunId) ?? "";
-      const node = acc.spawnNodesByLease.get(leaseId) ?? {
-        leaseId,
-        ...(asString(data.parentLeaseId) !== undefined
-          ? { parentLeaseId: asString(data.parentLeaseId) }
-          : {}),
-        rootRunId: asString(data.rootRunId) ?? "",
-        agentId: asString(rec.agentId) ?? acc.agentId ?? "",
-        caps: [],
-        toolsInvoked: [],
-        denials: [],
-      };
-      const cap = asString(data.capability);
-      const tool = asString(data.tool);
-      if (cap !== undefined && !node.caps.includes(cap)) node.caps.push(cap);
-      if (tool !== undefined && !node.toolsInvoked.includes(tool)) node.toolsInvoked.push(tool);
-      if (data.decision === "deny" && cap !== undefined && !node.denials.includes(cap)) {
-        node.denials.push(cap);
-      }
-      const budgetTokensUsed = asNumber(data.budgetTokensUsed);
-      if (budgetTokensUsed !== undefined) node.budgetTokensUsed = budgetTokensUsed;
-      acc.spawnNodesByLease.set(leaseId, node);
+    // TREE-01/02 (215): the per-cap audit record (Plan 01) → the spawn-tree's
+    // per-node source. Delegated to a fold helper (the accumulateSpendExceeded
+    // mold) for the obs-handlers/* subdir cap — see its docstring for the full
+    // group-by-leaseId / content-free contract.
+    case "capability.audited":
+      accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);
       return;
-    }
+    // W3 budget equation (LCD pre-flight) + LAT-04 prompt-timeout attribution —
+    // schema-validated LAST-wins folds delegated to helpers (subdir cap). An
+    // undefined parse leaves acc.* unchanged (malformed/partial ignored, fwd-compat).
     case "context.budget": {
-      // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by the
-      // LCD pre-flight (W2). LAST record wins — the terminal fit check explains
-      // the end state. Validated wholesale; malformed/partial ignored (fwd-compat).
-      const parsed = IncidentContextBudgetSchema.safeParse(data);
-      if (parsed.success) acc.contextBudget = parsed.data;
+      const b = parseContextBudgetRecord(data);
+      if (b !== undefined) acc.contextBudget = b;
       return;
     }
     case "execution.prompt_timeout": {
-      // LAT-04 (177): the terminal prompt-timeout attribution record (stall /
-      // makespan / whole-turn — 177-03 emit sites). LAST record wins. Validated
-      // wholesale (the context.budget discipline, T-177-17); a malformed/partial
-      // record is ignored (forward-compatible — pre-extension timeoutMs-only rows
-      // still parse, every other field optional).
-      const parsed = IncidentPromptTimeoutSchema.safeParse(data);
-      if (parsed.success) acc.promptTimeout = parsed.data;
+      const t = parsePromptTimeoutRecord(data);
+      if (t !== undefined) acc.promptTimeout = t;
       return;
     }
     case "tool.result_offloaded": {
@@ -481,10 +439,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
     nodeBudgetBreaches: acc.nodeBudgetBreaches,
-    // TREE (215-03): materialize the lease-keyed spawn nodes → an array (insertion
-    // order = first-seen-lease order). Present ONLY when the session carried ≥1
-    // capability.audited record (undefined, never [], so the assembler omits the
-    // section — the nodeBudgetBreaches/recall presence-conditional mold).
+    // TREE (215-03): materialize the lease-keyed spawn nodes → array (first-seen
+    // order); present ONLY when ≥1 capability.audited record (the presence-conditional mold).
     ...(acc.spawnNodesByLease.size > 0
       ? { spawnTree: [...acc.spawnNodesByLease.values()] }
       : {}),

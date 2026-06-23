@@ -19,7 +19,8 @@
  * @module
  */
 
-import type { IncidentSignals } from "@comis/core";
+import { IncidentContextBudgetSchema, IncidentPromptTimeoutSchema } from "@comis/core";
+import type { IncidentSignals, IncidentContextBudget, IncidentPromptTimeout } from "@comis/core";
 // The content-free readers live in the sibling fields helper (one source of truth);
 // imported here so the GBNF fold reuses them rather than re-deriving (no cycle —
 // the fields helper does not import this module).
@@ -283,4 +284,93 @@ export function accumulateSpendExceeded(
     totalUsd: asNumber(data.spentUsd) ?? 0,
     capUsd: asNumber(data.capUsd) ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// TREE-01/02 (Phase 215): the capability.audited spawn-tree fold.
+// ---------------------------------------------------------------------------
+
+/** The reconstructed spawn-tree node (the non-optional element shape). Re-derived
+ *  from IncidentSignals (already imported) so this fold does NOT import the
+ *  internal Acc / SpawnNode from obs-explain-signals-acc.ts — that file imports
+ *  LearningFoldState from HERE, so the reverse import would be a cycle. */
+type SpawnNodeFold = NonNullable<IncidentSignals["spawnTree"]>[number];
+
+/**
+ * Fold one `capability.audited` trajectory record (the per-cap audit Plan 01
+ * emits at the gate chokepoint — the spawn-tree's per-node source) into the
+ * lease-keyed `spawnNodesByLease` working map. Group by leaseId into ONE node per
+ * lease; an in-process record (no real lease, G1) keys on its synthetic rootRunId
+ * (NEVER a fabricated lease-<id>). The node collects the attenuated caps it held
+ * (deduped), the tool NAMES it invoked, and any CapabilityDeniedError cap (a
+ * `deny` decision → denials[], TREE-02). The record is content-free by
+ * construction (the translator strips bodies/args); agentId rides the envelope
+ * (`rec.agentId`, with the first-seen `accAgentId` fallback). budgetTokensUsed is
+ * honestly omitted unless the record carries it (G3 — the live whoami is the
+ * authoritative remaining-budget surface; this is the post-mortem topology).
+ *
+ * Mutates the passed map (the learning-fold delegation mold); typed structurally
+ * (a `Map<string, SpawnNodeFold>` + the `accAgentId` fallback) to avoid importing
+ * the internal Acc (no cycle).
+ */
+export function accumulateCapabilityAuditedRecord(
+  spawnNodesByLease: Map<string, SpawnNodeFold>,
+  data: Record<string, unknown>,
+  recAgentId: unknown,
+  accAgentId: string | undefined,
+): void {
+  const leaseId = asString(data.leaseId) ?? asString(data.rootRunId) ?? "";
+  const node =
+    spawnNodesByLease.get(leaseId) ??
+    ({
+      leaseId,
+      ...(asString(data.parentLeaseId) !== undefined
+        ? { parentLeaseId: asString(data.parentLeaseId) }
+        : {}),
+      rootRunId: asString(data.rootRunId) ?? "",
+      agentId: asString(recAgentId) ?? accAgentId ?? "",
+      caps: [],
+      toolsInvoked: [],
+      denials: [],
+    } satisfies SpawnNodeFold);
+  const cap = asString(data.capability);
+  const tool = asString(data.tool);
+  if (cap !== undefined && !node.caps.includes(cap)) node.caps.push(cap);
+  if (tool !== undefined && !node.toolsInvoked.includes(tool)) node.toolsInvoked.push(tool);
+  if (data.decision === "deny" && cap !== undefined && !node.denials.includes(cap)) {
+    node.denials.push(cap);
+  }
+  const budgetTokensUsed = asNumber(data.budgetTokensUsed);
+  if (budgetTokensUsed !== undefined) node.budgetTokensUsed = budgetTokensUsed;
+  spawnNodesByLease.set(leaseId, node);
+}
+
+// ---------------------------------------------------------------------------
+// Schema-validated LAST-wins folds (W3 context.budget / LAT-04 prompt_timeout).
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate one `context.budget` record (W3 — the per-call budget equation from
+ * the LCD pre-flight) wholesale; return the parsed value or `undefined` (a
+ * malformed/partial record is ignored — forward-compatible). The caller keeps
+ * the LAST successful parse (the terminal fit check explains the end state).
+ */
+export function parseContextBudgetRecord(
+  data: Record<string, unknown>,
+): IncidentContextBudget | undefined {
+  const parsed = IncidentContextBudgetSchema.safeParse(data);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * Validate one `execution.prompt_timeout` record (LAT-04 — the terminal
+ * prompt-timeout attribution) wholesale; return the parsed value or `undefined`
+ * (the context.budget discipline, T-177-17 — pre-extension timeoutMs-only rows
+ * still parse, every other field optional). The caller keeps the LAST parse.
+ */
+export function parsePromptTimeoutRecord(
+  data: Record<string, unknown>,
+): IncidentPromptTimeout | undefined {
+  const parsed = IncidentPromptTimeoutSchema.safeParse(data);
+  return parsed.success ? parsed.data : undefined;
 }
