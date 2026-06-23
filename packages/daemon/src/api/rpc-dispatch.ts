@@ -64,6 +64,11 @@ import { createSubagentHandlers } from "./subagent-handlers.js";
 // in the handler). They drive the LeaseManager revoke fan-outs + the runner's
 // killByRootRun.
 import { createAutonomyHandlers } from "./autonomy-handlers.js";
+// INTRO-01/02 (Phase 215-04): capabilities.introspect — the read-only,
+// agent-reachable `comis whoami` surface. scopes:["rpc"] + "ungated" (NO
+// requireCapability, NOT in ADMIN_METHODS), self-scoped to the caller's
+// _agentId. Gated on deps.boundedAutonomy being wired (the snapshot source).
+import { createCapabilitiesHandlers } from "./capabilities-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
@@ -251,6 +256,24 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ? createAutonomyHandlers({
           ...deps,
           leaseManager: deps.leaseManager,
+        })
+      : {}),
+    // INTRO-01/02 (Phase 215-04): capabilities.introspect (the `comis whoami`
+    // read). Gated on deps.boundedAutonomy (the remaining-budget snapshot
+    // source, Plan 02). The handler resolves the CALLER's per-agent
+    // AutonomyConfig itself from deps.agents (caps are per-caller; the handler is
+    // built once) — do NOT pre-resolve a single config at wiring time. It is
+    // scopes:["rpc"] + "ungated" (no requireCapability, NOT in ADMIN_METHODS) so
+    // the agent reaches it; the spread closes the contract↔handler parity gate
+    // via [CapabilitiesIntrospectContract.method] in the SAME wave the handler +
+    // codegen land (the 188 BLOCKER-1 same-wave rule).
+    ...(deps.boundedAutonomy
+      ? createCapabilitiesHandlers({
+          boundedAutonomy: deps.boundedAutonomy,
+          resolveRootRunId: deps.resolveRootRunId,
+          agents: deps.agents,
+          defaultAgentId: deps.defaultAgentId,
+          logger: deps.logger,
         })
       : {}),
     ...((deps.graphCoordinator || deps.namedGraphStore) ? createGraphHandlers({

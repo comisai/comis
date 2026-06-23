@@ -1118,3 +1118,76 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01
     expect(typeof factoryDeps!.repairMatch).toBe("function");
   });
 });
+
+// ---------------------------------------------------------------------------
+// INTRO-01/02 (Phase 215-04): capabilities.introspect dispatch wiring. The
+// capabilities-handlers module is NOT mocked, so the REAL createCapabilitiesHandlers
+// runs — this asserts the dispatch-level contract: gated on boundedAutonomy,
+// agent-reachable (NOT denied by origin — it is scopes:["rpc"]/"ungated", not in
+// ADMIN_METHODS), and self-scoped to the caller's _agentId.
+// ---------------------------------------------------------------------------
+
+describe("createRpcDispatch — capabilities.introspect wiring (INTRO-01/02)", () => {
+  const mockLogger = {
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Deps WITH boundedAutonomy + an agents map so the real capabilities handler
+   *  is spread into the dispatch. */
+  function depsWithAutonomy() {
+    return {
+      logger: mockLogger,
+      container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+      defaultAgentId: "default",
+      agents: {
+        "agent-a": { autonomy: { profile: "standard", capabilities: ["orch:read", "orch:web"] } },
+        default: { autonomy: { profile: "assistant", capabilities: [] } },
+      },
+      // No resolveRootRunId → no live root → budget omitted (honest).
+      boundedAutonomy: {
+        snapshot: vi.fn().mockReturnValue({
+          budget: { tokensRemaining: 1, wallClockMsRemaining: 1, usdRemaining: 0 },
+          outwardQuota: { perHourRemaining: 1 },
+          leaseIds: [],
+        }),
+      },
+    } as never;
+  }
+
+  it("an _agentId-bearing capabilities.introspect is NOT denied by origin and returns the caller's self-scoped caps", async () => {
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(depsWithAutonomy());
+
+    // Agent-origin call (carries _agentId) — must REACH the handler (not denied;
+    // the method is scopes:["rpc"]/"ungated", not in ADMIN_METHODS) and be
+    // self-scoped to agent-a (NOT the smuggled agentId param).
+    const result = (await dispatch("capabilities.introspect", {
+      _agentId: "agent-a",
+      agentId: "default", // an arbitrary cross-agent param — MUST be ignored
+    })) as { agentId: string; caps: string[] };
+
+    expect(result.agentId).toBe("agent-a");
+    expect(result.caps).toContain("orch:web");
+    // The caller is the assistant `default` would have ZERO caps — proving the
+    // self-scope read the unforgeable _agentId, not the smuggled agentId param.
+    expect(result.caps).not.toEqual([]);
+  });
+
+  it("capabilities.introspect is NOT registered when boundedAutonomy is absent (gated spread)", async () => {
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    // Minimal deps WITHOUT boundedAutonomy — the spread is {} → unknown method.
+    const dispatch = createRpcDispatch({
+      logger: mockLogger,
+      container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+    } as never);
+
+    await expect(dispatch("capabilities.introspect", {})).rejects.toThrow(
+      "Unknown RPC method: capabilities.introspect",
+    );
+  });
+});

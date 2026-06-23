@@ -104,7 +104,9 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
 
     const result = (await handlers["capabilities.introspect"]!({
       _agentId: "agent-a",
-      _callerSessionKey: "agent-a:user:peer:1717000000",
+      // A valid formatted session key (tenant:user:channel) so
+      // parseFormattedSessionKey resolves it → resolveRootRunId is consulted.
+      _callerSessionKey: "default:user:peer123",
     })) as { budget?: unknown; outwardQuota?: unknown };
 
     expect(resolveRootRunId).toHaveBeenCalled();
