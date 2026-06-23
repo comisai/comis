@@ -354,10 +354,16 @@ export function createResultRefStore(deps: ResultRefStoreDeps): ResultRefStore {
     //    materialize time, off the injected clock) is past `nowMs`. We read the
     //    authoritative `expiresAtMs` from the name rather than the OS mtime so a
     //    synthetic/replayed clock stays consistent (the runner injects nowMs).
+    //    A non-finite expiry (a foreign file with no parseable stamp →
+    //    +Infinity) is NEVER TTL-expired — and we must NOT route it through
+    //    computeExpiresAt, whose `.toISOString()` throws on an invalid Date; the
+    //    aggregate cap still bounds such a file.
     const survivors: RunResultEntry[] = [];
     for (const entry of entries) {
-      const expiresAt = computeExpiresAt(entry.expiresAtMs, 0);
-      if (isExpired(expiresAt, ctx.nowMs)) {
+      const expired =
+        Number.isFinite(entry.expiresAtMs) &&
+        isExpired(computeExpiresAt(entry.expiresAtMs, 0), ctx.nowMs);
+      if (expired) {
         bestEffortUnlink(entry.path, "ttl-expired");
       } else {
         survivors.push(entry);

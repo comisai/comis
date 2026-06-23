@@ -16,14 +16,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PER_FILE_CAP_BYTES } from "@comis/core";
-import { createResultRefStore } from "./result-ref-store.js";
+import { buildPreview, createResultRefStore, inferKind } from "./result-ref-store.js";
 
 // A silent logger stub (the store instruments via deps.logger; we don't assert
 // on log output here — the gates do — so a no-op child-able logger suffices).
@@ -323,5 +325,125 @@ describe("result-ref-store", () => {
     await expect(
       store.gcRun({ workspacePath, runId, aggregateCapBytes: 10, nowMs }),
     ).resolves.toBeUndefined();
+  });
+
+  it("cleanupRun is a no-op (no throw) when the run has no results dir", async () => {
+    const store = makeStore();
+    await expect(
+      store.cleanupRun({ workspacePath, runId }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns undefined (honest-degrade) when the contained write fails", async () => {
+    const store = makeStore();
+
+    // Make the write fail deterministically: pre-create `<workspace>/results`
+    // as a FILE, so `ensureContainedDir` cannot mkdir the dir there. The store
+    // must honest-degrade (undefined), never throw, and write nothing.
+    const resultsAsFile = join(workspacePath, "results");
+    writeFileSync(resultsAsFile, "I am a file, not a directory");
+
+    const out = await store.materialize("payload", "read", {
+      workspacePath,
+      runId,
+      nowMs,
+    });
+
+    expect(out).toBeUndefined();
+    // The pre-existing file is untouched (no clobber); no dir was created.
+    expect(readFileSync(resultsAsFile, "utf8")).toBe("I am a file, not a directory");
+  });
+
+  it("gcRun leaves a foreign (non-scheme) file unless the aggregate cap forces it out", async () => {
+    const store = makeStore();
+
+    // A file in results/ that does NOT match the store's `<c36>-<s36>-<e36>`
+    // basename scheme → parseStamps falls back (never TTL-expired). With a huge
+    // aggregate cap, a TTL sweep must NOT evict it.
+    const resultsDir = join(workspacePath, "results");
+    mkdirSync(resultsDir, { recursive: true });
+    const foreign = join(resultsDir, "not-a-store-file.txt");
+    writeFileSync(foreign, "hand-placed");
+
+    await store.gcRun({
+      workspacePath,
+      runId,
+      aggregateCapBytes: 1024 * 1024, // far above the file size → no cap eviction
+      nowMs: nowMs + 10_000_000, // far in the "future" → would TTL-evict a scheme file
+    });
+
+    // Survives: the foreign file has no parseable expiry, so TTL never fires.
+    expect(existsSync(foreign)).toBe(true);
+
+    // But the aggregate cap still bounds it: a zero-ish cap evicts it.
+    await store.gcRun({
+      workspacePath,
+      runId,
+      aggregateCapBytes: 1,
+      nowMs: nowMs + 10_000_000,
+    });
+    expect(existsSync(foreign)).toBe(false);
+  });
+});
+
+describe("result-ref-store pure helpers", () => {
+  describe("inferKind", () => {
+    it("returns binary for a Buffer payload", () => {
+      expect(inferKind(Buffer.from([1, 2, 3]))).toBe("binary");
+    });
+
+    it("returns text for an empty/whitespace-only string", () => {
+      expect(inferKind("")).toBe("text");
+      expect(inferKind("   \n  \t ")).toBe("text");
+    });
+
+    it("returns html for a doctype or <html> root", () => {
+      expect(inferKind("<!DOCTYPE html><html></html>")).toBe("html");
+      expect(inferKind("<html lang=\"en\"></html>")).toBe("html");
+    });
+
+    it("returns json for a single JSON object or array", () => {
+      expect(inferKind('{"k":1}')).toBe("json");
+      expect(inferKind("[1, 2, 3]")).toBe("json");
+    });
+
+    it("returns jsonl for multi-line newline-delimited JSON", () => {
+      expect(inferKind('{"a":1}\n{"b":2}')).toBe("jsonl");
+    });
+
+    it("returns text for a single JSON-bracketed-looking but INVALID payload", () => {
+      // Looks like an object (starts `{`, ends `}`) but does not parse → text,
+      // never a mis-labelled `json` (covers the invalid-JSON false branch).
+      expect(inferKind("{not valid json}")).toBe("text");
+      expect(inferKind("[1, 2,]extra")).toBe("text");
+    });
+
+    it("returns text for ordinary prose", () => {
+      expect(inferKind("just some words")).toBe("text");
+    });
+  });
+
+  describe("buildPreview", () => {
+    it("returns a content-free descriptor for a binary payload", () => {
+      const buf = Buffer.from([0, 1, 2, 3, 4]);
+      expect(buildPreview(buf, "binary")).toBe("[binary 5 bytes]");
+    });
+
+    it("returns a descriptor for a string payload tagged binary", () => {
+      // kind=binary with a string payload (defensive branch) → descriptor by
+      // the string's byte length, never the raw content.
+      expect(buildPreview("abc", "binary")).toBe("[binary 3 bytes]");
+    });
+
+    it("passes a short text payload through unchanged", () => {
+      expect(buildPreview("hello", "text")).toBe("hello");
+    });
+
+    it("truncates a long text payload to the bounded cap", () => {
+      const long = "Y".repeat(10_000);
+      const preview = buildPreview(long, "text");
+      expect(preview.length).toBeLessThanOrEqual(2048);
+      expect(preview.length).toBeGreaterThan(0);
+    });
   });
 });
