@@ -554,7 +554,9 @@ describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", (
   });
 
   it("content-free: only a sha256 digest reaches the ledger; the announcement text is never passed to a ledger method", async () => {
-    const { ledger, beginInput } = makeStubLedger();
+    // NB: keep the stub object — `beginInput` is a getter (live), so destructuring
+    // it here would freeze it to its pre-send `undefined` value.
+    const stub = makeStubLedger();
     const { durableRuns } = makeStubDurableRuns(7);
     vi.mocked(deps.executeInSession).mockResolvedValue({
       response: "SECRET-ANNOUNCEMENT-BODY",
@@ -563,7 +565,7 @@ describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", (
     });
     const sender = createCrossSessionSender({
       ...deps,
-      outwardLedger: ledger,
+      outwardLedger: stub.ledger,
       durableRuns,
       resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
     });
@@ -571,9 +573,9 @@ describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", (
     await sender.send(ledgeredParams);
 
     // The digest is a 16-hex-char sha256 slice, not the body.
-    expect(beginInput?.contentDigest).toMatch(/^[0-9a-f]{16}$/);
+    expect(stub.beginInput?.contentDigest).toMatch(/^[0-9a-f]{16}$/);
     // The raw text never appears in ANY argument passed to a ledger method.
-    expect(JSON.stringify(beginInput)).not.toContain("SECRET-ANNOUNCEMENT-BODY");
+    expect(JSON.stringify(stub.beginInput)).not.toContain("SECRET-ANNOUNCEMENT-BODY");
     // The real body still reached the (single) sendToChannel.
     expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "SECRET-ANNOUNCEMENT-BODY");
   });
