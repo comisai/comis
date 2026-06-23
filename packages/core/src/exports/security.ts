@@ -13,8 +13,9 @@ export { classifyAction, requiresConfirmation } from "../security/index.js";
 export type { ActionClassification } from "../security/index.js";
 export { AuditEventSchema, createAuditEvent, AUDIT_KINDS, kindIsSecuritySignal } from "../security/index.js";
 export type { AuditEvent, AuditKind, CreateAuditEventParams } from "../security/index.js";
-// Agent orchestration capabilities (Phase 210)
-export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError } from "../security/index.js";
+// Agent orchestration capabilities (Phase 210) + the Phase 211 mint-attenuation
+// trust boundary (attenuateCaps — consumed by the 211-06 broker lease mint).
+export { AGENT_CAPABILITIES, checkCapability, requireCapability, CapabilityDeniedError, attenuateCaps } from "../security/index.js";
 export type { AgentCapability } from "../security/index.js";
 // HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
 export { HANDLER_CAPABILITY_MAP } from "../security/index.js";

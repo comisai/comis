@@ -175,6 +175,7 @@ export interface ShutdownDeps {
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
   /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
   brokerStop?: () => Promise<void>;
+  capEndpointStop?: () => Promise<void>; // Phase 211 — present only with an autonomy agent.
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -247,6 +248,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     stopChannelHealthMonitor,
     unsubscribeHealthAggregator,
     brokerStop,
+    capEndpointStop,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -566,13 +568,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "gemini-cache", daemonLogger);
       }
       await stopSync(mediaTempManager ? () => mediaTempManager.stopCleanupInterval() : undefined, "media-temp-manager");
-      // Drain per-agent background-process registries BEFORE stopping the broker.
-      // Background exec processes use the broker as their egress proxy (HTTPS_PROXY
-      // → broker TCP port). Stopping the broker first would cut their outbound
-      // connections mid-execution. Drain first, then close the broker once no live
-      // clients remain. Background processes go before obs-persistence because
-      // subprocess cleanup may emit observability events into the still-running
-      // write buffer.
+      // Drain per-agent background-process registries BEFORE stopping the broker:
+      // background exec procs use the broker as egress proxy (HTTPS_PROXY → broker
+      // TCP), so closing it first cuts live outbound connections. Before
+      // obs-persistence too — subprocess cleanup may emit events into the buffer.
       if (shutdownBackgroundProcesses) {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
@@ -580,15 +579,20 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "background-processes", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "background-processes", daemonLogger);
       }
-      // Stop credential broker (TCP + unix socket). Runs AFTER
-      // shutdownBackgroundProcesses so no live exec processes are proxied through
-      // the broker when its sockets are closed.
+      // Stop credential broker (TCP + unix socket) AFTER background processes (no live exec proxied when sockets close).
       if (brokerStop) {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await brokerStop();
           daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "broker", daemonLogger);
+      }
+      if (capEndpointStop) { // Phase 211 — AFTER background processes (no jailed exec dialing cap.sock).
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await capEndpointStop();
+          daemonLogger.info({ component: "capability-endpoint", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "capability-endpoint", daemonLogger);
       }
       if (mcpClientManagerDisconnectAll) {
         const stopMs = systemNowMs();
@@ -668,12 +672,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "secret-store", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "secret-store", daemonLogger);
       }
-      // Context pipeline collector dispose (already disposed above via observability block;
-      // kept as explicit step for documentation; the ?. guard makes double-call safe)
-
-      // Release data-dir singleton lock (D14) — after stores close, before
-      // db. At the BOOT dataDir (lockDataDir) where acquire happened, NOT the
-      // config-resolved dataDir, which diverges under COMIS_DATA_DIR.
+      // Context pipeline collector dispose (already disposed above via observability; ?. guard makes double-call safe).
+      // Release data-dir singleton lock (D14) — after stores close, before db. At
+      // the BOOT dataDir (lockDataDir) where acquire happened, NOT the config-resolved one (diverges under COMIS_DATA_DIR).
       const lockDir = lockDataDir ?? dataDir;
       if (lockDir) { releaseDataDirLock(lockDir); }
 
@@ -685,7 +686,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         daemonLogger.info({ component: "memory-database", durationMs: systemNowMs() - stopMs, shutdownOrder: shutdownOrder + 1 }, "Component stopped");
       }
   };
-
   // shutdown(signal): re-entry guard, hard-timeout, ordered cleanup, flush, exit dispatch.
   // exitCode set EARLY so a graceful SIGUSR2 restart still exits 42 even if the loop drains during the awaited flush before exitFnLocal() runs (drain bug 2026-06-14; full incident in setup-shutdown.test.ts). SIGUSR2 ⇒ 42; else 0; error/timeout still exitFnLocal(1), which overrides exitCode.
   async function shutdown(signal: string): Promise<void> {

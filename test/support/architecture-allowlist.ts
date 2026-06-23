@@ -1490,8 +1490,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   {
     file: "packages/daemon/src/wiring/setup-shutdown.ts",
     typeName: "ShutdownDeps",
-    optionalCount: 22,
-    reason: "(a) Shutdown handle aggregator; every `?` field is a subsystem that MAY not be running at shutdown time (graphCoordinator absent in single-agent deployments, channelManager absent if no channels configured, heartbeatRunner absent if heartbeats disabled, mediaTempManager absent if media features off, etc). Marking required would force composition-root to fabricate no-op stubs; instead shutdown.ts:withStepTimeout skips absent subsystems..",
+    optionalCount: 23,
+    reason: "(a) Shutdown handle aggregator; every `?` field is a subsystem that MAY not be running at shutdown time (graphCoordinator absent in single-agent deployments, channelManager absent if no channels configured, heartbeatRunner absent if heartbeats disabled, mediaTempManager absent if media features off, capEndpointStop absent without an autonomy-bearing agent — Phase 211, etc). Marking required would force composition-root to fabricate no-op stubs; instead shutdown.ts:withStepTimeout skips absent subsystems..",
     removedIn: "phase-D",
   },
   {

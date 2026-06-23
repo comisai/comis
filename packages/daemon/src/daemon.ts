@@ -149,10 +149,8 @@ import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-too
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
-import {
-  createFileStateTracker,
-  detectSandboxProvider,
-} from "@comis/skills";
+import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -2741,10 +2739,10 @@ async function bootShutdown(
   // assigned after emitStartupInvariants. Ref-object pattern mirrors
   // shutdownRef.value — setupShutdown reads .fn at teardown time.
   const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
+  // 7.9. Capability-lease layer + JAIL-03 host preflight (Phase 211; see helper doc).
+  const { capEndpointStop, namespacePreflightOk } = constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, dataDir, daemonLogger });
 
-  // 8. Graceful shutdown: signal-handler registration + teardown ordering
-  //    both owned by setupShutdown; the previous
-  //    `_registerGracefulShutdown` factory seam is gone.
+  // 8. Graceful shutdown: signal-handler registration + teardown ordering (setupShutdown).
   const { shutdownHandle } = setupShutdown({
     logger, daemonLogger, processMonitor, container, exitFn,
     tokenTracker, startupTimestamp: startupStartMs,
@@ -2789,6 +2787,7 @@ async function bootShutdown(
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
+    capEndpointStop, // Phase 211 — stops + unlinks cap.sock (undefined when no autonomy agent).
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
@@ -2809,6 +2808,7 @@ async function bootShutdown(
     container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
     db, secretStore, cachedPort, ttsAdapter, visionRegistry,
     startupStartMs, instanceId,
+    namespacePreflightOk, // Phase 211: the real probe result → emitAutonomyBootLog.
   });
 
   // 9.1. Boot invariant record + duplicate-wiring WARN.
