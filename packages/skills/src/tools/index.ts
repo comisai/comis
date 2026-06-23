@@ -292,3 +292,24 @@ export {
   createFalVideoAdapter,
 } from "./integrations/video-gen/index.js";
 export type { VideoGenRateLimiter } from "./integrations/video-gen/index.js";
+
+// Orchestrate — the Surface-2 autonomy runner (Phase 212, ORCH-01/02). The
+// runner + its ResultRef store; consumed by Phase 212 Plan 05's daemon wiring
+// (the dormancy activation threads capSocketPath + the store into the runner and
+// adds `orchestrate` to the autonomy tool set). The cap-socket runtime shim
+// (invoke/wrapResultRef) is NOT surfaced here — the generated comis_tools.js
+// imports it by a relative in-jail path, never through this barrel.
+export {
+  createOrchestrateTool,
+  scrubSecretEnv,
+  createResultRefStore,
+} from "./builtin/orchestrate/index.js";
+export type {
+  OrchestrateToolDeps,
+  OrchestrateResultStore,
+  ResultRefStore,
+  ResultRefStoreDeps,
+  MaterializeContext,
+  GcRunContext,
+  CleanupRunContext,
+} from "./builtin/orchestrate/index.js";
