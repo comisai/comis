@@ -53,6 +53,10 @@ import {
   type AutonomySpawnConfig,
   type AutonomyOutwardConfig,
 } from "./schema-agent-autonomy-bounds.js";
+// Phase 216 (DUR-01..04 / HB-01): the durable-run + resume-engine gate. Default-
+// off; nested into AutonomyConfigSchema below. Sibling leaf to keep this file
+// under the schema-agent file-size cap; re-exported via the schema-agent barrel.
+import { DurabilityConfigSchema } from "./schema-agent-autonomy-durability.js";
 
 /**
  * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
@@ -191,6 +195,13 @@ export const AutonomyConfigSchema = z.strictObject({
   rate: AutonomyRateConfigSchema.default(() => AutonomyRateConfigSchema.parse({})), // per-root/socket/churn (RATE-01)
   spawn: AutonomySpawnConfigSchema.default(() => AutonomySpawnConfigSchema.parse({})), // concurrent/depth/fanout (CEIL-01)
   outward: AutonomyOutwardConfigSchema.default(() => AutonomyOutwardConfigSchema.parse({})), // origin/grants/volume (QUOTA-01/02)
+  // Phase 216 DURABILITY sub-block (DUR-01..04 / HB-01). Default-off
+  // (`{ enabled:false, ... }` on a fully-omitted block) — a default install
+  // constructs no durable stores / boot recovery / watchdog (byte-identical).
+  // `.parse({})` materializes the per-field defaults (mirrors the sibling
+  // budget/rate/spawn/outward blocks above; a bare `.default({})` does not
+  // typecheck because every nested field is itself `.default()`-ed).
+  durability: DurabilityConfigSchema.default(() => DurabilityConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap (§3.3 "one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
   web: z.boolean().optional(),
