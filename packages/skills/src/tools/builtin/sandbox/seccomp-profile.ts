@@ -18,6 +18,30 @@
  *    The `.linux.test.ts` "blocked syscall" assertion is the proof gate that the
  *    blob actually denies the dangerous surface on the VPS.
  *
+ * REQUIRED fd LIFECYCLE (WR-04 — read this before wiring `seccompFd` in 212):
+ *
+ *   Because the fd is opened WITHOUT `O_CLOEXEC` (so the bwrap child inherits
+ *   it), the PARENT (daemon) process keeps its OWN copy of the descriptor open
+ *   after fork. That parent copy MUST be closed once the child has been spawned,
+ *   or every jailed spawn leaks one descriptor in the daemon — over a
+ *   long-running daemon driving many spawns this exhausts the fd table. The
+ *   ONLY correct shape at the (future, 212) call site is open → buildArgs →
+ *   spawn → close-in-`finally`:
+ *
+ *     const fd = loadSeccompProfileFd();
+ *     try {
+ *       const args = provider.buildArgs({ ...opts, seccompFd: fd ?? undefined });
+ *       child = spawn(args[0], args.slice(1), { stdio: [...] });
+ *       // (the child has inherited fd by the time spawn() returns)
+ *     } finally {
+ *       closeSeccompProfileFd(fd); // null-safe; closes the PARENT's copy
+ *     }
+ *
+ *   `closeSeccompProfileFd` is null-safe and double-close-safe by design so this
+ *   `finally` is unconditional. Do NOT close before `spawn()` returns (the child
+ *   must inherit the open fd first) and do NOT skip the `finally` on the spawn
+ *   error path (a spawn that throws still opened the parent's fd).
+ *
  * @module
  */
 

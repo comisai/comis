@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { openSync, writeSync, mkdtempSync, rmSync } from "node:fs";
+import { openSync, writeSync, fstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,6 +53,35 @@ describe("loadSeccompProfileFd (JAIL-01)", () => {
       expect(() => closeSeccompProfileFd(fd)).not.toThrow();
       // A second close of the same (now-closed) fd must be swallowed, not throw.
       expect(() => closeSeccompProfileFd(fd)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("closeSeccompProfileFd actually releases the descriptor (no fd leak)", () => {
+    // WR-04: the parent keeps its OWN copy of the (non-O_CLOEXEC) fd after the
+    // bwrap child forks, so the required `finally { closeSeccompProfileFd(fd) }`
+    // discipline depends on close ACTUALLY releasing the descriptor — not merely
+    // not-throwing. Prove the fd is genuinely closed: fstatSync on it after the
+    // close must fail with EBADF (a leaked fd would still fstat cleanly). This is
+    // the property every 212 jailed spawn relies on to avoid exhausting the fd
+    // table over a long-running daemon.
+    const dir = mkdtempSync(join(tmpdir(), "comis-seccomp-leak-"));
+    try {
+      const fd = openSync(join(dir, "blob"), "w");
+      writeSync(fd, Buffer.from([0]));
+      // Open → still valid (the parent's copy).
+      expect(() => fstatSync(fd)).not.toThrow();
+      closeSeccompProfileFd(fd);
+      // Closed → the descriptor is released; operating on it now is EBADF.
+      let err: NodeJS.ErrnoException | undefined;
+      try {
+        fstatSync(fd);
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      }
+      expect(err).toBeDefined();
+      expect(err?.code).toBe("EBADF");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
