@@ -658,6 +658,10 @@ function buildGraphCoordinatorDeps(deps: {
     touchParentSession: channels.commandQueue
       ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
       : undefined,
+    // Phase 213 CR-01: the session→rootRunId resolver so every node of a graph
+    // run shares one tree-stable root (killByRootRun reaches all nodes). Absent
+    // ⇒ each node mints its own (pre-213; graph fan-out still gate-bounded).
+    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}),
     preWarm,
   };
 }
@@ -909,6 +913,11 @@ function buildRpcDispatchDeps(deps: {
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
     crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
+    // Phase 213 CR-01: the session→rootRunId resolver (created EARLY in boot,
+    // shared with the per-root budget bridge) so the session.spawn handler
+    // propagates one tree-stable root per spawn tree — the spawn ceiling / kill
+    // / budget all key on it. Absent ⇒ the runner mints (pre-213 behavior).
+    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
@@ -2356,6 +2365,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
     ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout) } : {}), // Phase 213 CEIL-01: tree-wide spawn ceiling at the runner convergence point (session.spawn + graph.* + in-process loop)
+    ...(capEndpointHandle ? { releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CR-02: symmetric release on run completion so the per-root active count does not monotonically leak (paired 1:1 with the acquire above)
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });

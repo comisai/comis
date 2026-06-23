@@ -304,6 +304,9 @@ export function spawnNode(
       callerSessionKey: gs.callerSessionKey,
       callerAgentId: gs.callerAgentId,
       callerType: "graph",
+      // Phase 213 CR-01: every node of this graph run shares the graph's tree
+      // root so killByRootRun reaches all nodes (omit ⇒ runner mints per node).
+      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
       graphSharedDir: gs.sharedDir,
       graphTraceId: gs.graphTraceId,
       graphId: gs.graphId,

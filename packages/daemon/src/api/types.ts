@@ -81,6 +81,19 @@ export interface SessionsApiDeps {
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>;
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  /**
+   * Phase 213 CR-01: resolve a caller session's tree-stable `rootRunId` (the
+   * SAME id the per-root budget meter keys on). The `session.spawn` handler uses
+   * it for a TOP-LEVEL (operator) spawn so the spawn ceiling and budget meter
+   * agree on one tree id; a DESCENDANT spawn (a sub-agent calling
+   * `sessions_spawn`) instead inherits its parent run's root via
+   * `subAgentRunner.getRunBySessionKey`. Without this, every spawn minted a fresh
+   * root → the tree-wide concurrency ceiling (CEIL-01) never bound a
+   * `for(;;) spawn()` fork-bomb and `killByRootRun` never reached descendants.
+   * Optional — absent ⇒ the handler falls back to the runner's last-resort mint
+   * (byte-identical to the pre-213 unbounded behavior); the daemon wires it.
+   */
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps

@@ -114,6 +114,14 @@ export function setupCrossSession(deps: {
     depth: number,
     fanout: number,
   ) => { ok: true } | { ok: false; reason: string };
+  /**
+   * Phase 213 (CR-02): the symmetric release of a slot reserved by
+   * {@link checkSpawnCeiling}, threaded into the runner's `releaseSpawnCeiling`
+   * so a completed run frees its tree-wide slot (paired 1:1 with the acquire).
+   * Bound to `boundedAutonomy.releaseSpawn` by the daemon; absent ⇒ the runner's
+   * release is inert (matches an absent `checkSpawnCeiling`).
+   */
+  releaseSpawnCeiling?: (rootRunId: string) => void;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -390,6 +398,8 @@ export function setupCrossSession(deps: {
     // Phase 213 CEIL-01: the tree-wide spawn ceiling (bound to
     // boundedAutonomy.tryAcquireSpawn by the daemon). Inert when absent.
     ...(deps.checkSpawnCeiling ? { checkSpawnCeiling: deps.checkSpawnCeiling } : {}),
+    // Phase 213 CR-02: the symmetric release (boundedAutonomy.releaseSpawn).
+    ...(deps.releaseSpawnCeiling ? { releaseSpawnCeiling: deps.releaseSpawnCeiling } : {}),
   });
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL

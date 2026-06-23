@@ -45,6 +45,14 @@ export interface GraphRunState {
   runningCount: number;
   callerSessionKey?: string;
   callerAgentId?: string;
+  /** Phase 213 CR-01: the tree-stable rootRunId shared by EVERY node spawn in
+   *  this graph run, resolved ONCE at submission (inherit the driving sub-agent's
+   *  root, else the caller session's stable root). Threaded into each
+   *  `subAgentRunner.spawn` so the tree-wide ceiling (CEIL-01) and
+   *  `killByRootRun` see one tree per graph run instead of a fresh root per node
+   *  (which made a `run.kill {rootRunId}` miss graph children). Undefined ⇒ no
+   *  resolver wired (the runner mints per node — pre-213 behavior). */
+  rootRunId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
   nodeProgress: boolean;
@@ -146,6 +154,10 @@ export interface GraphCoordinatorDeps {
       graphTraceId?: string;
       graphId?: string;
       nodeId?: string;
+      /** Phase 213 CR-01: the graph run's tree-stable root, shared by all nodes. */
+      rootRunId?: string;
+      /** Phase 213 REVOKE-02: the lease that authorized the graph run (cascade correlation). */
+      parentLeaseId?: string;
       /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
       graphToolNames?: string[];
       /** Reuse an existing session key for multi-round driver spawns. */
@@ -160,7 +172,19 @@ export interface GraphCoordinatorDeps {
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
     getRunStatus(runId: string): { status: string; result?: { response: string }; error?: string; sessionKey?: string } | undefined;
+    /** Phase 213 CR-01: resolve a driving sub-agent's run by its session key so a
+     *  graph submitted BY a sub-agent inherits that run's tree root. Optional
+     *  (older narrowed wiring); absent ⇒ the resolver/mint fallback applies. */
+    getRunBySessionKey?(sessionKey: string): { rootRunId: string; parentLeaseId?: string } | undefined;
   };
+  /**
+   * Phase 213 CR-01: resolve the caller session's tree-stable rootRunId for a
+   * TOP-LEVEL graph submission (no driving sub-agent). Bound by the daemon to the
+   * same resolver the session.spawn handler + per-root budget use. Optional —
+   * absent ⇒ each node mints its own root (pre-213 behavior, graph fan-out is
+   * still bounded by the graph concurrency gate).
+   */
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   eventBus: TypedEventBus;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { extra?: Record<string, unknown> }) => Promise<boolean>;
   announceToParent?: (
