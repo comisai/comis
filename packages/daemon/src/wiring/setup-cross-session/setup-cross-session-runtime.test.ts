@@ -3126,14 +3126,18 @@ describe("setupCrossSession durable-store injection (Phase 216 Plan 12, HIGH-2)"
     const setupCrossSession = await getSetupCrossSession();
     // A ledger whose lookup reports the announce already committed (delivered) —
     // the DLQ must consult it BEFORE re-delivering and skip the send. If the DLQ
-    // never received the ledger (dead-code wiring), it would re-send.
+    // never received the ledger (dead-code wiring), it would re-send. lookup
+    // returns Result<OutwardSendRecord|undefined, Error> (the port contract).
     const outwardLedger = {
       lookup: vi.fn(async () => ({
-        rootRunId: "root-dlq",
-        stepIndex: 3,
-        state: "committed" as const,
-        contentDigest: "abc",
-        platformMessageId: "delivered",
+        ok: true as const,
+        value: {
+          rootRunId: "root-dlq",
+          stepIndex: 3,
+          state: "committed" as const,
+          contentDigest: "abc",
+          platformMessageId: "delivered",
+        },
       })),
       begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
       markUnknown: vi.fn(async () => {}),
@@ -3167,7 +3171,15 @@ describe("setupCrossSession durable-store injection (Phase 216 Plan 12, HIGH-2)"
       stepIndex: 3,
     });
 
-    await dlq!.drain(sendSpy as any);
+    // The entry's lastAttemptAt is set to now by enqueue; the daemon DLQ uses a
+    // 60s retryIntervalMs gate before re-delivery. Advance real time past it so
+    // the entry is retry-eligible and the committed-skip lookup actually fires.
+    vi.useFakeTimers({ now: Date.now() + 61_000 });
+    try {
+      await dlq!.drain(sendSpy as any);
+    } finally {
+      vi.useRealTimers();
+    }
 
     // The ledger was consulted and reported committed ⇒ the re-send was skipped.
     expect(outwardLedger.lookup).toHaveBeenCalledWith("root-dlq", 3);

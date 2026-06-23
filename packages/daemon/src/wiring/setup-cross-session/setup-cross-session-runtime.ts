@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, AgentCapability } from "@comis/core";
+import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability } from "@comis/core";
 import { tryGetContext, safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
@@ -135,6 +135,18 @@ export function setupCrossSession(deps: {
     rootRunId: string,
     agentId: string,
   ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  /**
+   * Phase 216 (HIGH-2 / ONCE-01..04): the three-state outward-send ledger + the
+   * announce-origin rootRunId resolver, threaded into BOTH `createCrossSessionSender`
+   * (the announce() ledger wrap, Plan 10 Task 1) AND the announcement dead-letter
+   * queue (the drain committed-skip, Plan 10 Task 2) so the completion-announcement
+   * outward path is ledgered exactly-once (no restart double-notify). All optional;
+   * absent ⇒ both paths are pure pass-throughs (the byte-identical default). The
+   * daemon (Plan 12, the sole daemon.ts editor) wires them ONLY when durability is on,
+   * reusing the SAME store instances Plan 07 built (one ledger, one durable store).
+   */
+  outwardLedger?: OutwardSendLedgerPort;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -217,6 +229,13 @@ export function setupCrossSession(deps: {
     sendToChannel,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
+    // Phase 216 HIGH-2 (ONCE-01/02): the announce() send is routed through the
+    // SAME three-state exactly-once ledger as message.send when the durable
+    // store + a resolvable rootRunId are wired — a restart-driven re-announce of
+    // an already-committed announcement is then a no-op. Absent ⇒ pass-through.
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
   });
 
   // Announce to parent session by injecting [System Message] and executing parent agent.
@@ -288,6 +307,11 @@ export function setupCrossSession(deps: {
     maxEntries: 100,
     eventBus: container.eventBus,
     logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
+    // Phase 216 HIGH-2 (ONCE-03/04): the SAME ledger instance — drain consults it
+    // BEFORE re-delivering, so a committed announcement is SKIPPED across a restart
+    // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
+    // is the authoritative no-double-notify signal). Absent ⇒ legacy at-least-once.
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
   });
 
   // WR-02/WR-03: ONE bounded delivered-key store shared across every

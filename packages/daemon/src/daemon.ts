@@ -2353,6 +2353,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(durabilityCfg.enabled ? { durability: { keepAliveMs: durabilityCfg.keepAliveMs, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs } } : {}),
     ...(durableRunFacts ? { durableRunFacts } : {}),
+    // Phase 216 HIGH-2 (ONCE-01..04): the SAME outward-send ledger (Plan 07) + the rootRunId resolver →
+    // the announce() send + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through). Makes Plan 10 LIVE.
+    ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
+    ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });
