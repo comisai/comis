@@ -2546,6 +2546,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
+      // Durable run checkpoint store (v2.30, Phase 216 Plan 02, DUR-01). The
+      // SQLite DurableRunPort adapter `createSqliteDurableRunStore`, its options
+      // type `DurableRunStoreOptions`, and the idempotent DDL `ensureDurableRunTable`
+      // are surfaced ahead of their consumer: the daemon composition root wires the
+      // store (and the chaos test calls ensureDurableRunTable) in Plan 07. These are
+      // interface-first planned orphans that SHRINK OUT once that wiring lands
+      // (mirror the createSqliteOutcomeStore / lifecycle / tuned-alpha factory-orphan
+      // dance below + the Phase 216 Plan 01 @comis/core interface-first entries;
+      // allowlist-shrink.test.ts enforces shrink-only).
+      "createSqliteDurableRunStore",
+      "DurableRunStoreOptions",
+      "ensureDurableRunTable",
       // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.
