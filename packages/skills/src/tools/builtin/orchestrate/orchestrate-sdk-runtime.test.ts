@@ -117,6 +117,28 @@ describe("orchestrate-sdk-runtime", () => {
     await expect(invoke("grep", { pattern: "x" })).rejects.toThrow(/malformed/i);
   });
 
+  it("rejects with the socket error when the cap socket connection fails (no listener)", async () => {
+    // The env is present (set in beforeEach) so the precondition passes and the
+    // runtime reaches `net.connect`. But NO server is started on socketPath, so
+    // the connect fails — Node emits the socket `error` event (ENOENT for a
+    // missing unix socket), and the runtime's `socket.on("error")` handler must
+    // reject with that transport error (a closed/unreachable cap socket is a
+    // containment fault — surfaced, never hung).
+    let rejected: Error | undefined;
+    try {
+      await invoke("read", { path: "x" });
+    } catch (err) {
+      rejected = err as Error;
+    }
+    expect(rejected).toBeInstanceOf(Error);
+    // The rejection is the underlying connect error (ENOENT), NOT the
+    // precondition message — proving the `error` handler (not the env guard)
+    // produced it.
+    const code = (rejected as NodeJS.ErrnoException).code;
+    expect(code === "ENOENT" || /ENOENT|connect/i.test(rejected!.message)).toBe(true);
+    expect(rejected!.message).not.toMatch(/COMIS_ORCH_SOCKET|orchestrate jail/);
+  });
+
   it("throws a clear precondition error when COMIS_ORCH_SOCKET is absent (only valid in-jail)", async () => {
     delete process.env.COMIS_ORCH_SOCKET;
 
