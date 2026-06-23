@@ -551,18 +551,19 @@ export interface IncidentFailure {
  * misclassification signal + offending tool/token). Derived from the heuristic
  * predicates in 153-PATTERNS.md ("678 / 503 heuristic derivation").
  */
-// @optional-field-count: 17 — this is the obs.explain signal accumulator, the
-// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198)
+// @optional-field-count: 18 — this is the obs.explain signal accumulator, the
+// single shared contract every Glass-Box heuristic (Phase 153/175/177/179/180/186/187/192/198/215)
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
-// videoGenerated / voice / learning / channel / agentId / …) — absent when that
-// record class did not occur. Clustering them would couple unrelated heuristics;
-// the read sites already key on each independently. Grows by one per Glass-Box
-// signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
+// videoGenerated / voice / learning / channel / agentId / spawnTree / …) — absent
+// when that record class did not occur. Clustering them would couple unrelated
+// heuristics; the read sites already key on each independently. Grows by one per
+// Glass-Box signal class (image added in 186 — OBS-03/OBS-04; vision added in 187 — VIS-04;
 // videoGenerated added in 192 — OBS-03/OBS-04 video; learning added in 198 —
 // OBS-02, the Verified-Learning outcome-signal shadow; spend added in 179 —
-// WEBUI-04, the spend-kill breach numbers for the Incident view).
+// WEBUI-04, the spend-kill breach numbers for the Incident view; spawnTree added
+// in 215 — TREE-01/02, the per-cap spawn-tree topology for an autonomous run).
 export interface IncidentSignals {
   sessionKey: string;
   /** W8: agentId from the trajectory record envelopes (first seen). Fallback for
