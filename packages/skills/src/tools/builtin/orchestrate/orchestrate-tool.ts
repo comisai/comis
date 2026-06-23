@@ -50,8 +50,11 @@ import { dirname } from "node:path";
 import {
   registerActivityLabelSpec,
   safePath,
+  systemClearTimeout,
   systemNowMs,
+  systemSetTimeout,
   type ComisLogger,
+  type SystemTimeoutHandle,
 } from "@comis/core";
 import { createToolResultSizeGuard } from "@comis/agent";
 
@@ -161,8 +164,13 @@ export interface OrchestrateToolDeps {
   readonly loadSeccompFdFn?: () => number | null;
   /** Injected wall clock (default `systemNowMs`). */
   readonly now?: () => number;
-  /** The base/inherited env to scrub (default the ambient process env). */
-  readonly baseEnv?: Record<string, string | undefined>;
+  /**
+   * The base/inherited env to scrub (ORCH-02). REQUIRED — the daemon wiring
+   * (Plan 05) supplies the inherited env explicitly, so the runner never reads
+   * an ambient global (AGENTS.md §2.2). The lease vars are added separately via
+   * {@link brokerSpawnEnv}, merged AFTER the scrub.
+   */
+  readonly baseEnv: Record<string, string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +281,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         const jailNode = resolveNode();
         if (jailNode.mode === "unavailable") {
           log.warn(
-            { runId, errorKind: "precondition", hint: jailNode.hint },
+            { runId, errorKind: "precondition" as const, hint: jailNode.hint },
             "orchestrate jail unavailable — refusing to run",
           );
           throwToolError(
@@ -310,8 +318,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
 
         // 6. Env: the ORCH-02 scrub over the BASE env, THEN the lease placeholders
         //    merged LAST (Pitfall 4 — they survive the scrub by construction).
-        const base = deps.baseEnv ?? readAmbientEnv();
-        const childEnv: Record<string, string | undefined> = scrubSecretEnv(base);
+        const childEnv: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv);
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
         }
@@ -345,7 +352,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           });
         } catch (gcErr) {
           log.warn(
-            { runId, errorKind: "io", err: gcErr instanceof Error ? gcErr : undefined },
+            { runId, errorKind: "resource" as const, err: gcErr instanceof Error ? gcErr : undefined },
             "orchestrate gcRun failed (non-fatal)",
           );
         }
@@ -383,7 +390,7 @@ function runJailedChild(
 
     let stdout = "";
     let settled = false;
-    const timer = setTimeout(() => {
+    const timer: SystemTimeoutHandle = systemSetTimeout(() => {
       if (settled) return;
       settled = true;
       try {
@@ -404,16 +411,16 @@ function runJailedChild(
     child.on("error", (err: Error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       reject(err);
     });
     child.on("close", (code: number | null) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       if (code !== 0 && code !== null) {
         ctx.log.warn(
-          { runId: ctx.runId, errorKind: "process", exitCode: code },
+          { runId: ctx.runId, errorKind: "internal" as const, exitCode: code },
           "orchestrate jailed child exited non-zero",
         );
         reject(new Error(`orchestrate jailed child exited with code ${code}`));
@@ -458,9 +465,4 @@ function defaultResolveJailNode(): JailNodeResolution {
 /** Read `process.execPath` through a narrow boundary (the daemon's own node). */
 function readExecPath(): string {
   return process.execPath;
-}
-
-/** Read the ambient process env (the base to scrub) through a narrow boundary. */
-function readAmbientEnv(): Record<string, string | undefined> {
-  return { ...process.env };
 }
