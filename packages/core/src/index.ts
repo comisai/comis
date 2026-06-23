@@ -21,3 +21,10 @@ export * from "./exports/workspace.js";
 export * from "./exports/media.js";
 export * from "./exports/text.js";
 export * from "./api-contracts/index.js";
+
+// Phase 216 durability-resume engine — the durable-run + outward-send-ledger
+// ports and the DurableRunRecord domain type. Re-exported here so Wave 2/3
+// packages (@comis/memory adapters, @comis/daemon wiring) can import them.
+export * from "./ports/durable-run.js";
+export * from "./ports/outward-send-ledger.js";
+export * from "./domain/durable-run.js";
