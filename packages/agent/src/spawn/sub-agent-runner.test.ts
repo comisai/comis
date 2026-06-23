@@ -4277,3 +4277,163 @@ describe("sandbox no-downgrade gate", () => {
     expect(runner.getRunStatus(runId)?.status).toBe("running");
   });
 });
+
+// ---------------------------------------------------------------------------
+// rootRunId / parentLeaseId plumbing (CEIL-01 / REVOKE-03 foundation).
+// A tree-stable rootRunId is the key the unified semaphore (Plan 04) and the
+// kill-by-root primitive (Plan 06/07) consult. A child that mints a fresh id
+// escapes its parent's ceiling (RESEARCH Pitfall 1 — the silent under-count),
+// so the inheritance invariant (Test 3) is load-bearing.
+// ---------------------------------------------------------------------------
+describe("createSubAgentRunner rootRunId/parentLeaseId tree plumbing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("records the rootRunId passed in SpawnParams onto the SubAgentRun", () => {
+    const deps = createMockDeps();
+    // Never-resolving execute keeps the run in `running` so getRunStatus reads it.
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "research topic",
+      agentId: "researcher",
+      rootRunId: "root-X",
+    });
+
+    expect(runner.getRunStatus(runId)?.rootRunId).toBe("root-X");
+  });
+
+  it("mints a non-empty rootRunId for a depth-0 root spawn that omits one", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const runId = runner.spawn({
+      task: "summarize document",
+      agentId: "default",
+      depth: 0,
+      // rootRunId intentionally omitted — this IS the root, it must mint one.
+    });
+
+    const minted = runner.getRunStatus(runId)?.rootRunId;
+    expect(typeof minted).toBe("string");
+    expect((minted ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("a child spawn inherits the parent rootRunId rather than minting a fresh one", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    // The root mints its id...
+    const parentRunId = runner.spawn({
+      task: "parent task",
+      agentId: "parent",
+      depth: 0,
+    });
+    const parentRootId = runner.getRunStatus(parentRunId)?.rootRunId;
+    expect(typeof parentRootId).toBe("string");
+
+    // ...and a child passing that id down must carry the SAME id (one tree → one id).
+    const childRunId = runner.spawn({
+      task: "child task",
+      agentId: "child",
+      depth: 1,
+      rootRunId: parentRootId,
+    });
+
+    expect(runner.getRunStatus(childRunId)?.rootRunId).toBe(parentRootId);
+  });
+
+  it("records parentLeaseId on the run when provided and leaves it undefined when omitted", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const withLease = runner.spawn({
+      task: "child with lease",
+      agentId: "child",
+      depth: 1,
+      rootRunId: "root-X",
+      parentLeaseId: "lease-parent-1",
+    });
+    expect(runner.getRunStatus(withLease)?.parentLeaseId).toBe("lease-parent-1");
+
+    const withoutLease = runner.spawn({
+      task: "root no lease",
+      agentId: "root",
+      depth: 0,
+    });
+    expect(runner.getRunStatus(withoutLease)?.parentLeaseId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// killByRootRun fans killRun over every run of a tree (REVOKE-03 foundation).
+// The per-run killRun aborts each SDK session; killByRootRun applies it to
+// every running/queued run sharing a rootRunId, filtering strictly so a
+// different tree is untouched (threat T-213-01-02).
+// ---------------------------------------------------------------------------
+describe("createSubAgentRunner killByRootRun tree fan-out", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("kills every running/queued run of a rootRunId and leaves other trees untouched", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const a = runner.spawn({ task: "a", agentId: "x", depth: 1, rootRunId: "root-K" });
+    const b = runner.spawn({ task: "b", agentId: "y", depth: 1, rootRunId: "root-K" });
+    const c = runner.spawn({ task: "c", agentId: "z", depth: 1, rootRunId: "root-K" });
+    const other = runner.spawn({ task: "o", agentId: "w", depth: 1, rootRunId: "root-OTHER" });
+
+    const result = runner.killByRootRun("root-K");
+
+    expect(result.killed).toBe(3);
+    expect(runner.getRunStatus(a)?.status).toBe("failed");
+    expect(runner.getRunStatus(b)?.status).toBe("failed");
+    expect(runner.getRunStatus(c)?.status).toBe("failed");
+    // The other tree is verifiably untouched.
+    expect(runner.getRunStatus(other)?.status).toBe("running");
+  });
+
+  it("skips runs already terminal and counts only the still-killable ones of the tree", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    const stillRunning = runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
+    const toComplete = runner.spawn({ task: "done", agentId: "y", depth: 1, rootRunId: "root-K" });
+
+    // Drive `toComplete` to a terminal state via a per-run kill first.
+    expect(runner.killRun(toComplete).killed).toBe(true);
+    expect(runner.getRunStatus(toComplete)?.status).toBe("failed");
+
+    // killByRootRun must skip the already-failed run and only count the live one.
+    const result = runner.killByRootRun("root-K");
+    expect(result.killed).toBe(1);
+    expect(runner.getRunStatus(stillRunning)?.status).toBe("failed");
+  });
+
+  it("returns a zero count for an unknown rootRunId without throwing", () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
+
+    expect(runner.killByRootRun("no-such-root")).toEqual({ killed: 0 });
+  });
+});

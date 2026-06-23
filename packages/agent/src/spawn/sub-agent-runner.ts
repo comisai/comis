@@ -126,6 +126,12 @@ export interface SubAgentRun {
   requesterOrigin?: DeliveryOrigin;
   /** Spawn depth in the chain (0 = first child, 1 = grandchild, etc.). */
   depth: number;
+  /** Tree-stable run identity (CEIL-01/REVOKE-03). Every run belongs to exactly one
+   *  spawn tree; the root mints this id and descendants inherit it. The unified
+   *  semaphore keys on it and killByRootRun enumerates a whole tree by it. */
+  rootRunId: string;
+  /** Lease that authorized this spawn (REVOKE-02 cascade correlation); undefined for the root. */
+  parentLeaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
@@ -350,6 +356,15 @@ export interface SpawnParams {
   depth?: number;
   /** Maximum allowed spawn depth from config. */
   maxDepth?: number;
+  /** Tree-stable run identity (CEIL-01/REVOKE-03). Established ONCE at the root spawn
+   *  (depth 0) and propagated to every descendant so the tree-wide semaphore (Plan 04)
+   *  and kill-by-root primitive see one id per spawn tree. When absent, spawn() mints
+   *  one (the root); a child MUST pass its parent's id down — a fresh id per child would
+   *  escape the parent's ceiling (RESEARCH Pitfall 1 — the silent under-count). */
+  rootRunId?: string;
+  /** Lease that authorized this spawn (REVOKE-02 cascade correlation). Recorded on the
+   *  run so a future revoke-by-root can map runs to leases; omitted for the root. */
+  parentLeaseId?: string;
   /** Caller type for GraphCoordinator bypass of children limit. */
   callerType?: "agent" | "graph";
   /** File paths for the sub-agent to reference. */
@@ -802,6 +817,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
     const isGraphSpawn = params.callerType === "graph";
 
+    // Establish the tree-stable rootRunId (CEIL-01/REVOKE-03 foundation). The root
+    // (the first caller with no rootRunId) mints one; every descendant MUST pass its
+    // parent's id down via params.rootRunId. We mint whenever it is absent — regardless
+    // of depth — so a missing id never silently splits a tree into per-spawn ids that
+    // each escape the parent's ceiling (RESEARCH Pitfall 1). Uses the injected
+    // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
+    const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
+
     // Depth check (applies to ALL spawns including graph)
     if (currentDepth >= maxDepth) {
       deps.eventBus.emit("session:sub_agent_spawn_rejected", {
@@ -1040,6 +1063,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           queuedAt: now,
           requesterOrigin: params.requesterOrigin,
           depth: currentDepth,
+          rootRunId,
+          ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
@@ -1110,6 +1135,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       task: params.task, sessionKey: "", startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
+      rootRunId,
+      ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
@@ -2010,6 +2037,31 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
+   * REVOKE-03: hard-stop a whole spawn tree. Fans the per-run {@link killRun}
+   * (which marks the run failed and aborts its in-flight SDK session) over every
+   * running/queued run sharing `rootRunId`, and returns the count killed.
+   *
+   * Filters STRICTLY on `run.rootRunId === rootRunId` (threat T-213-01-02 — a
+   * different tree must be untouched) and on the same status guard killRun uses,
+   * so already-terminal runs are skipped. An unknown root is a clean no-op
+   * (`{ killed: 0 }`), never a throw — the count return is the contract the
+   * daemon-side `run.kill` RPC handler (the @allow-throw boundary, Plan 06)
+   * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
+   */
+  function killByRootRun(rootRunId: string): { killed: number } {
+    let killed = 0;
+    for (const run of runs.values()) {
+      if (
+        run.rootRunId === rootRunId &&
+        (run.status === "running" || run.status === "queued")
+      ) {
+        if (killRun(run.runId).killed) killed++;
+      }
+    }
+    return { killed };
+  }
+
+  /**
    * STEER-01: inject a steer message into a RUNNING child's live SDK session
    * (mid-flight steering), distinct from killRun. Delegates to the steer-run.ts
    * helper to keep the mechanism OUT of this (already large) file.
@@ -2095,5 +2147,5 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return { deduped: true, existingRunId: lastDedupHit.existingRunId, ageMs: lastDedupHit.ageMs };
   }
 
-  return { spawn, getRunStatus, listRuns, killRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
+  return { spawn, getRunStatus, listRuns, killRun, killByRootRun, steerRun, shutdown, setGraphCoordinator, lastSpawnDedupInfo };
 }
