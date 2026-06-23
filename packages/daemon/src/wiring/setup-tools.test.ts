@@ -253,6 +253,17 @@ vi.mock("@comis/core", () => ({
     cronSelfMax: 8,
     message: { channels: ["origin"], maxPerHour: 20 },
   })),
+  // PROFILE-05/JAIL-03: buildAutonomyToolWiring degrades the resolved posture via
+  // degradeAutonomy(resolved, {namespacePreflightOk}) before gating the orchestrate
+  // surface. These tests don't pass namespacePreflightOk (→ defaults to true →
+  // preflight OK), so the faithful mock is a no-op pass-through here; it still
+  // downshifts to assistant on an explicit false (mirroring the real shipped fn,
+  // unit-tested in schema-agent-autonomy.test.ts).
+  degradeAutonomy: vi.fn((resolved: { profile?: string }, preflight?: { namespacePreflightOk?: boolean }) =>
+    preflight?.namespacePreflightOk === false && resolved?.profile !== "assistant"
+      ? { resolved: { ...resolved, profile: "assistant", enabled: false, capabilities: [] }, downshift: { downshiftedFrom: resolved?.profile, downshiftedTo: "assistant", reason: "namespace_preflight_failed" } }
+      : { resolved },
+  ),
   // Consumed by the agents_manage onAgentCreated callback for seed-tracker
   // registration of newly-created agents. Not exercised by these tests but
   // imported at module load, so they must exist on the mock.

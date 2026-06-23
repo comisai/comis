@@ -2197,7 +2197,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint; Phase 215 (AUDIT-01): pass the container so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
-    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
+    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // Phase 211 JAIL-03 → PROFILE-05: degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
     // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
     // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
