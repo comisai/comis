@@ -13,14 +13,13 @@ import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
+import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
 import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
-// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (lives in a sibling
-// file to keep schema.ts under the 800-line cap) so existing importers of
-// `./schema.js` keep their import site.
+// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (sibling file, keeps schema.ts under the 800-line cap) so existing `./schema.js` importers keep their import site.
 export { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
@@ -589,6 +588,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)
+  ensureDurableRunTable(db); // durable run checkpoint store (Phase 216, DUR-01)
   ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
   ensureLearnedSkillsTable(db, embeddingDimensions, localVecAvailable); // learned_skills procedural store + FTS/vec/trigram twins (v2.26 WS2, SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped
 
