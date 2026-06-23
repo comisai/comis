@@ -347,6 +347,10 @@ export function accumulateCapabilityAuditedRecord(
   if (data.decision === "deny" && cap !== undefined && !node.denials.includes(cap)) {
     node.denials.push(cap);
   }
+  // IN-02: intentional forward-scaffolding — no producer emits budgetTokensUsed on
+  // a capability.audited record today (the live `whoami` owns remaining budget, G3;
+  // this fold is post-mortem topology). The optional read stays so a future
+  // per-node budget producer needs no fold change; it is `undefined` until then.
   const budgetTokensUsed = asNumber(data.budgetTokensUsed);
   if (budgetTokensUsed !== undefined) node.budgetTokensUsed = budgetTokensUsed;
   spawnNodesByLease.set(leaseId, node);

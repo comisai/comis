@@ -112,11 +112,19 @@ export function registerExplainCommand(program: Command): void {
           // whole report (spawnTree included) above.
           if (report.spawnTree && report.spawnTree.length > 0) {
             info(`Spawn tree:`);
+            // WR-03: bound each per-node list in the table view so a hot root
+            // (many distinct tools/caps) cannot print one unbounded line. The
+            // full lists always ride `--format json` (json(report) above).
+            const MAX_LIST = 12;
+            const cappedList = (xs: readonly string[]): string => {
+              const head = xs.slice(0, MAX_LIST).join(",");
+              return xs.length > MAX_LIST ? `${head},+${xs.length - MAX_LIST} more` : head;
+            };
             for (const n of report.spawnTree) {
               const parent = n.parentLeaseId ? ` ←${n.parentLeaseId}` : " (root)";
               info(
-                `  ${n.leaseId}${parent}  caps=[${n.caps.join(",")}] tools=[${n.toolsInvoked.join(",")}]` +
-                  (n.denials.length > 0 ? ` DENIED=[${n.denials.join(",")}]` : ""),
+                `  ${n.leaseId}${parent}  caps=[${cappedList(n.caps)}] tools=[${cappedList(n.toolsInvoked)}]` +
+                  (n.denials.length > 0 ? ` DENIED=[${cappedList(n.denials)}]` : ""),
               );
             }
           }

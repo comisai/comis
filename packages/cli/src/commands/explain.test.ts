@@ -364,6 +364,43 @@ describe("comis explain renders the spawn-tree (TREE)", () => {
     expect(() => JSON.parse(output)).toThrow();
   });
 
+  it("bounds a hot node's tools render with a (+N more) suffix — no unbounded table line (WR-03)", async () => {
+    const HOT_REPORT = {
+      ...FAKE_REPORT,
+      summary: "busy root",
+      likelyRootCause: null,
+      suggestedNextSteps: [],
+      spawnTree: [
+        {
+          leaseId: "L-root",
+          rootRunId: "R",
+          agentId: "default",
+          caps: ["orch:read"],
+          toolsInvoked: Array.from({ length: 30 }, (_, i) => `tool_${String(i).padStart(2, "0")}`),
+          denials: [],
+        },
+      ],
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(HOT_REPORT),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // The head of the list is shown…
+    expect(output).toContain("tool_00");
+    // …but the table does NOT inline all 30 tools — the tail is summarized.
+    expect(output).not.toContain("tool_29");
+    expect(output).toMatch(/\+\d+ more/);
+    // --format json still carries the full list (asserted in the json test).
+  });
+
   it("--format json emits report.spawnTree", async () => {
     const client: RpcClient = {
       call: () => Promise.resolve(SPAWN_REPORT),
