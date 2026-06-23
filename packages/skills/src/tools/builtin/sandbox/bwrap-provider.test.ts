@@ -249,6 +249,46 @@ describe("BwrapProvider", () => {
       expect(args).toContain("/home/testuser/.gitconfig");
     });
 
+    // WR-05: the JAIL-03 credential-denylist base is the EXPLICIT `opts.home`,
+    // not the ambient `os.homedir()`. A caller-supplied shared path that is a
+    // credential dir under the INJECTED home (~/.ssh) must be screened and
+    // rejected — proving buildArgs screens against opts.home. The ambient
+    // os.homedir() is mocked to a DIFFERENT path (/home/testuser), so if
+    // buildArgs still read the ambient home (pre-fix) the bind would NOT match
+    // the denylist and would be wrongly emitted instead of throwing.
+    it("screens caller binds against the injected opts.home, not the ambient homedir", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser"); // ambient (must be ignored)
+      vi.mocked(existsSync).mockReturnValue(true);
+
+      const provider = createAvailableProvider();
+      // A shared path under the INJECTED home that is a credential dir (~/.ssh).
+      const opts = makeOpts({
+        home: "/home/injected",
+        sharedPaths: ["/home/injected/.ssh"],
+      });
+
+      expect(() => provider.buildArgs(opts)).toThrow(/refusing unsafe jail bind/);
+    });
+
+    // WR-05: with opts.home supplied the generator does NOT consult the ambient
+    // homedir at all — the screen-vs-bind interaction is deterministic without
+    // mocking process env. A safe bind under the injected home is emitted, and a
+    // credential dir under the AMBIENT home (which buildArgs must ignore) is NOT
+    // treated as denylisted (it is just an unrelated, non-existent path here).
+    it("uses opts.home for the user RO binds when supplied (ambient homedir not consulted)", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/ambient");
+      vi.mocked(existsSync).mockImplementation((p) => String(p) === "/home/injected/.gitconfig");
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts({ home: "/home/injected" }));
+
+      // The RO user-config bind resolves against the INJECTED home.
+      expect(args).toContain("/home/injected/.gitconfig");
+      // The ambient home's config is never bound (existsSync false for it anyway,
+      // but more importantly buildArgs derived its paths from opts.home).
+      expect(args).not.toContain("/home/ambient/.gitconfig");
+    });
+
     it("omits hardcoded claude CLI credential paths even when they exist on disk", () => {
       // Worst case: all three claude credential paths exist on disk. The
       // hardcoded claude binds were removed from the provider, so none may

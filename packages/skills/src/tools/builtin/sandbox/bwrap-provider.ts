@@ -216,7 +216,17 @@ export class BwrapProvider implements SandboxProvider {
 
   buildArgs(opts: SandboxOptions): string[] {
     const args: string[] = [this.bwrapPath!];
-    const home = os.homedir();
+    // WR-05: the credential-denylist base (`validateBindMount(hostPath, home)`)
+    // must be an EXPLICIT trusted value, not a hidden ambient read inside this
+    // pure arg generator. Prefer the caller-supplied `opts.home` (resolved once
+    // from trusted config); fall back to `os.homedir()` only when omitted, so
+    // existing callers are unaffected and the ambient read is a documented
+    // default rather than an implicit coupling. With `opts.home` supplied the
+    // generator is deterministic (the screen-vs-bind interaction is unit-testable
+    // without mocking process env), matching the purity discipline the rest of
+    // the JAIL-03 surface (getUserRoPaths(home), validateBindMount(_, home))
+    // already follows.
+    const home = opts.home ?? os.homedir();
 
     // -- System paths (read-only, cached at first call) --
     // CURATED allow-list — the vetted boundary itself; NOT screened by the

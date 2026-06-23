@@ -62,6 +62,20 @@ export interface SandboxOptions {
    */
   seccompFd?: number | null;
   /**
+   * The user HOME against which the JAIL-03 credential-denylist backstop
+   * screens caller-supplied binds (WR-05). `validateBindMount(hostPath, home)`
+   * treats `home` as the trusted base for the `~/.ssh`/`~/.config`/… denylist —
+   * so it MUST be an explicit, trusted value, not an ambient read buried inside
+   * the otherwise-pure `buildArgs` generator. Resolve it once from trusted
+   * config at the provider's call site and pass it in. When OMITTED, buildArgs
+   * falls back to `os.homedir()` (the production daemon's HOME) so existing
+   * callers are unaffected — but the fallback is now an EXPLICIT, documented
+   * default rather than a hidden ambient dependency, and tests inject a fixed
+   * `home` to make the screen-vs-bind interaction deterministic.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  home?: string;
+  /**
    * Resolved Node-runtime placement for the jail (JAIL-04 / v8 §4.6).
    * The provider resolves this via resolveJailNode() (probe node on the jail
    * PATH → bind process.execPath → mark unavailable) and passes the result in,
