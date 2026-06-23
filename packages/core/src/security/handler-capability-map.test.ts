@@ -92,6 +92,14 @@ describe("HANDLER_CAPABILITY_MAP", () => {
     expect(HANDLER_CAPABILITY_MAP["skills.list"]).toBe("ungated");
   });
 
+  it("INTRO-02 (Phase 215): capabilities.introspect is ungated — read-only, agent-reachable, NO cap", () => {
+    // The agent can query its OWN caps + remaining budget with no cap required
+    // (the read-only "ungated" class, beside session.status). The contract is
+    // scopes:["rpc"]; the handler (Plan 04) enforces _agentId self-scope, NOT a
+    // requireCapability gate.
+    expect(HANDLER_CAPABILITY_MAP["capabilities.introspect"]).toBe("ungated");
+  });
+
   it("210-GAP / §3.5: classifies the admin-only / deny-by-origin methods (proves the deny-by-origin class is populated)", () => {
     // The deny-by-origin class is now non-empty (210-GAP): the message subset
     // §3.5 keeps admin-only + the arbitrary-session lifecycle ops.
