@@ -407,6 +407,52 @@ describe("orchestrate-tool", () => {
     expect(cleanupRun).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects (and surfaces the error) when the spawned child emits an 'error' event", async () => {
+    // A child that successfully SPAWNS but then emits a runtime `error` event
+    // (e.g. the bwrap exec itself fails post-fork) — distinct from a synchronous
+    // spawn throw. The runner's `child.on("error")` handler must clear the
+    // timeout and reject with that error (NEVER a silent success), and the
+    // finally must still run cleanupRun.
+    const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+    (child as { stdout: EventEmitter }).stdout = new EventEmitter();
+    (child as { stderr: EventEmitter }).stderr = new EventEmitter();
+    (child as { kill: () => void }).kill = () => {};
+    setImmediate(() => child.emit("error", new Error("spawn ENOEXEC bwrap")));
+    const spawnFn: OrchestrateSpawnFn = () => child;
+    const { deps, cleanupRun } = makeDeps({ spawnFn });
+    const tool = createOrchestrateTool(deps);
+
+    await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(
+      /ENOEXEC|spawn|bwrap/i,
+    );
+    expect(cleanupRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the DEFAULT jail-node resolver when none is injected (resolves the daemon node, runs)", async () => {
+    // Every other test injects resolveJailNodeFn; this one OMITS it so the real
+    // defaultResolveJailNode runs — it probes SYSTEM_RO_PATHS for a node binary
+    // and falls back to binding process.execPath (the node running vitest), which
+    // exists on disk → a non-"unavailable" resolution. The run then proceeds with
+    // the injected fake spawn, proving the default resolver returned a usable mode
+    // (and exercising readExecPath). On a host genuinely missing node this would
+    // honest-degrade instead; that path is covered by the explicit-unavailable test.
+    let spawned = false;
+    const spawnFn: OrchestrateSpawnFn = () => {
+      spawned = true;
+      return makeFakeChild("default-resolver-ok\n");
+    };
+    const { deps } = makeDeps({ spawnFn });
+    // Drop the injected resolver so the production default is used.
+    delete (deps as { resolveJailNodeFn?: unknown }).resolveJailNodeFn;
+    const tool = createOrchestrateTool(deps);
+
+    const result = await tool.execute("c", { script: "console.log(1)", language: "ts" });
+
+    expect(spawned).toBe(true);
+    const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+    expect(text).toContain("default-resolver-ok");
+  });
+
   // -------------------------------------------------------------------------
   // CR-01: the parent's seccomp fd MUST be closed once the child has been
   // spawned. The fd is opened WITHOUT O_CLOEXEC (so the bwrap child inherits
