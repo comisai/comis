@@ -51,6 +51,14 @@ import type { ComisLogger } from "@comis/infra";
 export interface ToolInvokeLease {
   agentId: string;
   caps: readonly string[];
+  /**
+   * The tree-stable run identity (CEIL-01/BUDGET). Threaded so the Phase-213
+   * `budgetHook` can charge the cost-bearing web call against the right root-run
+   * meter (`boundedAutonomy.reserveBudget(rootRunId, …)`). Optional so the
+   * deny-matrix / executor unit tests can construct a lease without it (the
+   * budgetHook is then a no-op for that call).
+   */
+  rootRunId?: string;
 }
 
 /** Context handed to an injected file-builtin core — the agent's workspace dir. */
@@ -72,10 +80,17 @@ export type WebSearchExecutor = (
 ) => Promise<unknown>;
 
 /**
- * A budget seam called before a cost-bearing tool runs (WEB-01/A7). Phase 213's
- * meter consumes it; in M1 it is a no-op callback. NOT a meter — do not build one.
+ * A budget seam called before a cost-bearing tool runs (WEB-01/A7). Phase 213
+ * wires it to the real per-root meter for the FLAT web $ charge: it carries the
+ * `lease` (Pitfall 2 — the bare `{tool, bytes?}` has no run identity) so the boot
+ * hook can charge against `lease.rootRunId` via `boundedAutonomy.reserveBudget`.
+ * SCOPE: this hook owns ONLY the flat web limb; the LLM token/wall-clock limbs of
+ * a self-spawning loop ride the bridge's per-LLM-call reserve (Plan 08), NOT here.
  */
-export type BudgetHook = (estimate: { tool: string; bytes?: number }) => void;
+export type BudgetHook = (
+  estimate: { tool: string; bytes?: number },
+  lease: ToolInvokeLease,
+) => void;
 
 /**
  * The injected ResultRef writer (Plan 03's `result-ref-store`). Called when a
@@ -171,8 +186,9 @@ export function createToolInvokeExecutor(
       return errorResult(`SSRF blocked: ${validated.error.message}`);
     }
 
-    // WEB-01/A7: budget seam BEFORE the cost-bearing fetch (Phase 213 meters it).
-    deps.budgetHook?.({ tool: "web_fetch" });
+    // WEB-01/A7: budget seam BEFORE the cost-bearing fetch (Phase 213 meters the
+    // flat web charge against lease.rootRunId).
+    deps.budgetHook?.({ tool: "web_fetch" }, lease);
 
     // step 2: PIN the connection to the pre-validated IP (closes the rebind window;
     // TLS SNI preserved because the original hostname stays in the URL).
@@ -266,8 +282,9 @@ export function createToolInvokeExecutor(
       case "web_search": {
         const started = systemNowMs();
         // The daemon-side search core is injected and pinned the same way as
-        // web_fetch (Plan 05 wires it). Budget seam before the cost-bearing call.
-        deps.budgetHook?.({ tool: "web_search" });
+        // web_fetch (Plan 05 wires it). Budget seam before the cost-bearing call
+        // (the flat web charge against lease.rootRunId — Phase 213).
+        deps.budgetHook?.({ tool: "web_search" }, lease);
         log?.debug({ step: "web-search", toolName: "web_search" }, "tool.invoke web_search dispatching");
         const result = await deps.webSearch(args, { agentId: lease.agentId });
 

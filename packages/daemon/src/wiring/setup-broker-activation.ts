@@ -83,6 +83,14 @@ export interface CapabilityMintDeps {
   requestedCaps?: readonly AgentCapability[];
   /** The parent lease id, recorded for the Phase 213 revoke cascade. */
   parentLeaseId?: string;
+  /**
+   * Phase 213: anchor the tree root in the bounded-autonomy service right after
+   * the mint. Called with the SAME tree-stable `rootRunId` the lease is minted
+   * with + the freshly-minted `leaseId` (+ parentLeaseId) so the per-root budget
+   * wall-clock deadline anchors and the rootRunId↔leaseId correlation builds (the
+   * audit/kill fan-out). Optional — absent ⇒ no anchor (older/non-autonomy wiring).
+   */
+  registerRoot?: (rootRunId: string, leaseId: string, parentLeaseId?: string) => void;
 }
 
 /** The env object {@link buildBrokerSpawnEnv} returns (broker fields optional). */
@@ -162,6 +170,11 @@ export function buildBrokerSpawnEnv(
     // Register the bearer BEFORE it leaves this function so any later log/model
     // output that echoes it is redacted (Pitfall 1 — never logged).
     capMint.outputGuard.registerSecret(bearer);
+    // Phase 213: anchor the tree root in the bounded-autonomy service with the
+    // SAME rootRunId the lease was minted with + the freshly-minted leaseId (so
+    // the per-root budget wall-clock anchors and the rootRunId↔leaseId index is
+    // built for the audit/kill fan-out).
+    capMint.registerRoot?.(capMint.rootRunId, issued.leaseId, capMint.parentLeaseId);
     placeholders.COMIS_CAP_LEASE = bearer;
     placeholders.COMIS_ORCH_SOCKET = capMint.capSocketPath;
   }

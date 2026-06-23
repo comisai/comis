@@ -102,6 +102,18 @@ export function setupCrossSession(deps: {
   clock: ClockPort;
   /** Timer scheduling. */
   timers: TimerPort;
+  /**
+   * Phase 213 (CEIL-01): the tree-wide spawn ceiling consult, threaded into the
+   * sub-agent runner's `checkSpawnCeiling` so every spawn (session.spawn AND
+   * graph.* AND the in-process loop) is bounded at the convergence point. Bound
+   * to `boundedAutonomy.tryAcquireSpawn` by the daemon; absent when no agent is
+   * autonomy-bearing (the runner's consult is then inert — no regression).
+   */
+  checkSpawnCeiling?: (
+    rootRunId: string,
+    depth: number,
+    fanout: number,
+  ) => { ok: true } | { ok: false; reason: string };
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -375,6 +387,9 @@ export function setupCrossSession(deps: {
     deliveryDedup,
     clock: deps.clock,
     timers: deps.timers,
+    // Phase 213 CEIL-01: the tree-wide spawn ceiling (bound to
+    // boundedAutonomy.tryAcquireSpawn by the daemon). Inert when absent.
+    ...(deps.checkSpawnCeiling ? { checkSpawnCeiling: deps.checkSpawnCeiling } : {}),
   });
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL

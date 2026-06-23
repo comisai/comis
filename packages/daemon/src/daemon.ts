@@ -2120,7 +2120,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
     | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
     | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
-    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices"
+    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices" | "getAgentCronScheduler"
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
@@ -2192,10 +2192,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     }
     return port;
   };
-  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed
-  // BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into
-  // tool assembly; stored on `boot` so bootShutdown reads capEndpointStop/namespacePreflightOk.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager });
+  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager });
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
@@ -2356,6 +2354,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
+    // Phase 213 CEIL-01: bind the tree-wide spawn ceiling at the convergence point (the runner) — session.spawn + graph.* + in-process loop all bounded.
+    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout) } : {}),
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });

@@ -36,10 +36,13 @@ function createDeps(
   opts: { dataDir?: string; cronJobCount?: (agentId: string) => number } = {},
 ) {
   const clock: ClockPort = { now: () => 1_700_000_000_000 };
-  // The boot helper threads daemonLogger into createCapabilityEndpoint, which
-  // binds a `submodule` child for the socket boundary (WR-02) — so the mock must
-  // carry a `child` that returns a logger with the level methods.
-  const childLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  // The boot helper threads daemonLogger into createCapabilityEndpoint (a
+  // `submodule` child for the socket boundary, WR-02) AND into createBoundedAutonomy,
+  // whose sub-modules bind a SECOND-level `submodule` child — so the child logger
+  // must itself carry `child` (returns itself). A self-referential child handles
+  // arbitrary nesting depth.
+  const childLogger: Record<string, unknown> = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  childLogger.child = vi.fn(() => childLogger);
   const daemonLogger = {
     info: vi.fn(),
     warn: vi.fn(),

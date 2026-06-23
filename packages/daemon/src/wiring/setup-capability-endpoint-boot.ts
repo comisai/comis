@@ -38,11 +38,13 @@ import {
   createOutputGuard,
   type PerAgentConfig,
   type ClockPort,
+  type TimerPort,
   type ResultRef,
   type OutputGuardPort,
   type ComisLogger,
 } from "@comis/core";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
+import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 import { namespacePreflight, type NamespacePreflightResult } from "@comis/skills";
 import {
   createOrchestrateExecutorCores,
@@ -65,8 +67,20 @@ export interface CapabilityLayerDeps {
   agents: Record<string, PerAgentConfig>;
   /** The deferred RPC dispatch sink the endpoint routes through. */
   rpcCall: RpcCall;
-  /** Wall-clock for lease TTLs (the daemon's system clock). */
+  /** Wall-clock for lease TTLs + the bounded-autonomy budget/rate windows. */
   clock: ClockPort;
+  /**
+   * Timer port for the bounded-autonomy call-rate limiter's TTL-evict timers
+   * (Phase 213 RATE-01). The daemon's TimerPort (`handle.timers`).
+   */
+  timers: TimerPort;
+  /**
+   * The per-agent live cron-job count provider (Phase 213 RATE-02 count source).
+   * Bound by daemon.ts to `getAgentCronScheduler(agentId).getJobs().length`. The
+   * cap endpoint reads it THROUGH `boundedAutonomy.cronCount` for the `cronSelfMax`
+   * cap. Optional — absent ⇒ `cronCount` returns 0 (fail-open on that one limb).
+   */
+  cronJobCount?: (agentId: string) => number;
   /** Absolute data dir — the cap socket path lives under it (cap.sock). */
   dataDir: string;
   /** The module-bound daemon logger for the construction INFO line. */
@@ -97,6 +111,14 @@ export interface CapabilityLayerDeps {
 export interface CapabilityLayerHandle {
   leaseManager: LeaseManager;
   endpoint: CapabilityEndpoint;
+  /**
+   * The daemon-wide bounded-autonomy service (Phase 213) — the single chokepoint
+   * the spawn ceiling (CEIL-01), cap-endpoint rate limit + cron self-ownership
+   * (RATE-01/02), outward quota (QUOTA-01/02), and per-root budget meter
+   * (BUDGET-03) consult. Constructed alongside the LeaseManager; `destroy()` tears
+   * down its rate-limiter timers (threaded into setupShutdown).
+   */
+  boundedAutonomy: BoundedAutonomy;
   /** The cap socket path (under the data dir) — bound per jail by the orchestrate runner. */
   capSocketPath: string;
   /**
@@ -164,6 +186,7 @@ function buildWebSearchConfig(
 function buildToolInvokeExecutor(
   deps: CapabilityLayerDeps,
   resultRefStore: ResultRefStore,
+  boundedAutonomy: BoundedAutonomy,
 ): ExecuteToolInvoke | undefined {
   const { skillsLogger, workspaceDirs, defaultWorkspaceDir, daemonLogger } = deps;
   if (!skillsLogger || !workspaceDirs || defaultWorkspaceDir === undefined) return undefined;
@@ -180,8 +203,16 @@ function buildToolInvokeExecutor(
     resolveWorkspace,
     fileExecutors: cores.fileExecutors,
     webSearch: cores.webSearch,
-    // Phase 213 meters the cost-bearing web pair; in M1 it is a no-op seam.
-    budgetHook: () => {},
+    // Phase 213 (BUDGET-03): the real per-root meter for the FLAT web $ charge.
+    // The cost-bearing web pair (web_fetch/web_search) charges against the tree
+    // root's budget — estUsd:0 here (the executor does not price the fetch; the
+    // limb that bites is the bridge's per-LLM-call reserve in Plan 08), but the
+    // call IS metered (the meter increments / the wall-clock + token limbs still
+    // gate it). A lease with no rootRunId (older/test wiring) skips the charge.
+    budgetHook: (_estimate, lease) => {
+      if (lease.rootRunId === undefined) return;
+      boundedAutonomy.reserveBudget(lease.rootRunId, "_web", "_web", 0, 0);
+    },
     // Over-threshold returns offload to the OFFLOADING agent's workspace
     // results/ (REF-01) — the lease (threaded by the executor) gives the agentId.
     materialize: async (payload, toolName, lease): Promise<ResultRef | undefined> => {
@@ -219,15 +250,31 @@ export async function constructCapabilityLayer(
   const preflight: NamespacePreflightResult = namespacePreflight();
   const { namespacePreflightOk } = preflight;
 
-  const anyAutonomyBearing = Object.values(agents).some(
-    (a) => resolveAutonomy(a.autonomy).enabled,
-  );
-  if (!anyAutonomyBearing) {
+  // The first autonomy-bearing agent's resolved posture is the daemon-wide
+  // bounded-autonomy config source (the bound mechanisms are a single daemon-wide
+  // service keyed on rootRunId, mirroring the single daemon-wide LeaseManager —
+  // not per-agent). `standard`'s nested bounds are the zero-config default.
+  const autonomyBearingConfig = Object.values(agents)
+    .map((a) => resolveAutonomy(a.autonomy))
+    .find((r) => r.enabled);
+  if (!autonomyBearingConfig) {
     return { capEndpointHandle: undefined, capEndpointStop: undefined, namespacePreflightOk };
   }
 
   const leaseManagerDeps: LeaseManagerDeps = { clock };
   const leaseManager = createLeaseManager(leaseManagerDeps);
+  // Phase 213: construct the daemon-wide BoundedAutonomy service alongside the
+  // LeaseManager (the construct-and-inject precedent). The cronJobCount provider
+  // (daemon.ts binds it to the per-agent CronScheduler.getJobs().length) is the
+  // RATE-02 count source the cap endpoint reaches through `cronCount`.
+  const boundedAutonomy = createBoundedAutonomy({
+    clock,
+    timers: deps.timers,
+    leaseManager,
+    config: autonomyBearingConfig,
+    ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
+    logger: daemonLogger,
+  });
   // The daemon-wide OutputGuard the mint registers each bearer in (Pitfall 1 —
   // ENDPOINT-03). setup-tools reads it off the handle for the CapabilityMintDeps.
   const outputGuard = createOutputGuard();
@@ -245,12 +292,22 @@ export async function constructCapabilityLayer(
     const capSocketPath = safePath(dataDir, "cap.sock");
     // Step 1: construct the daemon-side tool.invoke executor and inject it into the
     // endpoint — mirroring how the LeaseManager is constructed-and-injected here
-    // (NOT a mutable setter on a security boundary).
-    const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore);
+    // (NOT a mutable setter on a security boundary). The bounded-autonomy service
+    // backs the executor's real budgetHook (the flat web charge).
+    const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore, boundedAutonomy);
     // Thread the daemon logger so the socket boundary is observable (WR-02): a
     // post-listen server error and per-connection errors are logged with the
-    // canonical err/errorKind/hint rather than silently swallowed.
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, logger: daemonLogger, toolInvokeExecutor });
+    // canonical err/errorKind/hint rather than silently swallowed. The
+    // boundedAutonomy service drives the endpoint's rate-limit + cron self-ownership
+    // (RATE-01/02) and the resolved autonomy config supplies cronSelfMax.
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      logger: daemonLogger,
+      toolInvokeExecutor,
+      boundedAutonomy,
+      autonomyConfig: autonomyBearingConfig,
+    });
     // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. 211 left this
     // DORMANT (no startSocket; active:false). Now the cap surface is LIVE: a jailed
     // orchestrate child reaches the endpoint over the bound socket.
@@ -260,11 +317,19 @@ export async function constructCapabilityLayer(
       "Capability lease layer ACTIVE (0600 socket listening; executor wired; lease minted per spawn)",
     );
     return {
-      capEndpointHandle: { leaseManager, endpoint, capSocketPath, outputGuard },
-      capEndpointStop: () => endpoint.stopSocket(),
+      capEndpointHandle: { leaseManager, endpoint, boundedAutonomy, capSocketPath, outputGuard },
+      // The cap-socket teardown ALSO tears down the bounded-autonomy rate-limiter
+      // timers (clean shutdown — RATE-01's TTL-evict timers).
+      capEndpointStop: async () => {
+        await endpoint.stopSocket();
+        boundedAutonomy.destroy();
+      },
       namespacePreflightOk,
     };
   } catch (err) {
+    // The socket failed to bind — tear down the bounded-autonomy timers we just
+    // constructed so the degrade path leaks no scheduled timer.
+    boundedAutonomy.destroy();
     daemonLogger.warn(
       {
         submodule: "capability-endpoint",

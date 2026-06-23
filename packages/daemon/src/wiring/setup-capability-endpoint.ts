@@ -70,10 +70,12 @@ import {
   TOOL_ROUTE_MAP,
   requireCapability,
   CapabilityDeniedError,
+  type ResolvedAutonomy,
 } from "@comis/core";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
+import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request
@@ -234,6 +236,19 @@ export interface CapabilityEndpointDeps {
    * no-op, since that would drop a legitimately-authorized call).
    */
   toolInvokeExecutor?: ExecuteToolInvoke;
+  /**
+   * The daemon-wide bounded-autonomy service (Phase 213). `handleCapCall`
+   * consults it for the per-root + per-socket rate limit (RATE-01) and the cron
+   * self-ownership cap via `cronCount` (RATE-02). Optional so the deny-matrix unit
+   * tests can construct the endpoint without it (the rate-limit + cron-cap limbs
+   * are then inert — the endpoint still validates + strips + dispatches).
+   */
+  boundedAutonomy?: BoundedAutonomy;
+  /**
+   * The resolved autonomy posture (Phase 213) — the `cronSelfMax` source the cron
+   * self-ownership cap reads. Optional alongside {@link boundedAutonomy}.
+   */
+  autonomyConfig?: ResolvedAutonomy;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -330,7 +345,13 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         `tool.invoke executor route for "${tool}" requires a toolInvokeExecutor (not wired)`,
       );
     }
-    return deps.toolInvokeExecutor(tool, args, { agentId: lease.agentId, caps: lease.caps });
+    return deps.toolInvokeExecutor(tool, args, {
+      agentId: lease.agentId,
+      caps: lease.caps,
+      // Thread the tree-stable rootRunId so the budgetHook charges the flat web
+      // call against the right per-root meter (Phase 213 BUDGET-03).
+      rootRunId: lease.rootRunId,
+    });
   }
 
   async function handleCapCall(
