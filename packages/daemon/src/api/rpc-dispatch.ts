@@ -47,6 +47,12 @@ import { createSecretsHandlers } from "./secrets-handlers.js";
 import { createAuthHandlers } from "./auth-handlers.js";
 import { createBrowserHandlers } from "./browser-handlers.js";
 import { createSubagentHandlers } from "./subagent-handlers.js";
+// Phase 213-06 (REVOKE-01/03): the operator-facing live-control RPC handlers.
+// lease.revoke / run.kill are scopes:["admin"] (Plan 03) → ADMIN_METHODS →
+// deny-by-origin is automatic via the chokepoint below (no manual _agentId check
+// in the handler). They drive the LeaseManager revoke fan-outs + the runner's
+// killByRootRun.
+import { createAutonomyHandlers } from "./autonomy-handlers.js";
 import { createApprovalHandlers } from "./approval-handlers.js";
 import { createAgentHandlers } from "./agent-handlers.js";
 import { createObsHandlers } from "./obs-handlers/index.js";
@@ -224,6 +230,18 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     }),
     ...createBrowserHandlers(deps),
     ...createSubagentHandlers(deps),
+    // Phase 213-06: lease.revoke + run.kill. Gated on deps.leaseManager being
+    // wired (Plan 07 constructs it at the composition root); subAgentRunner +
+    // logger ride the OrchestratorApiDeps slice. Deny-by-origin fires in the
+    // dispatch chokepoint below for these admin-scoped methods (no manual check).
+    // When leaseManager is absent (a partial boot) the methods are simply not
+    // registered — the dispatcher's unknown-method path handles a stray call.
+    ...(deps.leaseManager
+      ? createAutonomyHandlers({
+          ...deps,
+          leaseManager: deps.leaseManager,
+        })
+      : {}),
     ...((deps.graphCoordinator || deps.namedGraphStore) ? createGraphHandlers({
       // Handler factory consumes OrchestratorApiDeps (narrowed to require
       // graphCoordinator). Spread `...deps` so broader slice fields

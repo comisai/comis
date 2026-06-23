@@ -356,8 +356,9 @@ export interface OrchestratorApiDeps {
   logger: ComisLogger;
   /** graph-handlers reads deps.dataDir for graph-runs output. */
   dataDir?: string;
-  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer. */
+  /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers (213-06) reads killByRootRun for run.kill. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
+  /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
   // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   eventBus?: AppContainer["eventBus"];
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
