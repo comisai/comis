@@ -43,7 +43,7 @@
  * @module
  */
 
-import { validateUrl, shouldMaterialize, type ResultRef } from "@comis/core";
+import { validateUrl, shouldMaterialize, systemNowMs, type ResultRef } from "@comis/core";
 import { fetchPinned, extractReadableContent } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 
@@ -144,7 +144,7 @@ export function createToolInvokeExecutor(
     args: Record<string, unknown>,
     lease: ToolInvokeLease,
   ): Promise<unknown> {
-    const started = Date.now();
+    const started = systemNowMs();
     const url = typeof args.url === "string" ? args.url : "";
     if (url === "") {
       log?.warn(
@@ -221,7 +221,7 @@ export function createToolInvokeExecutor(
       const ref = await deps.materialize(text, "web_fetch");
       if (ref) {
         log?.info(
-          { toolName: "web_fetch", durationMs: Date.now() - started, bytes: byteCount, materialized: true },
+          { toolName: "web_fetch", durationMs: systemNowMs() - started, bytes: byteCount, materialized: true },
           "tool.invoke web_fetch complete (ResultRef)",
         );
         return ref;
@@ -229,7 +229,7 @@ export function createToolInvokeExecutor(
     }
 
     log?.info(
-      { toolName: "web_fetch", durationMs: Date.now() - started, bytes: byteCount, materialized: false },
+      { toolName: "web_fetch", durationMs: systemNowMs() - started, bytes: byteCount, materialized: false },
       "tool.invoke web_fetch complete (inline)",
     );
     return { url, text, ...(title !== undefined ? { title } : {}), status: res.status };
@@ -241,11 +241,11 @@ export function createToolInvokeExecutor(
     args: Record<string, unknown>,
     lease: ToolInvokeLease,
   ): Promise<unknown> {
-    const started = Date.now();
+    const started = systemNowMs();
     const workspaceDir = deps.resolveWorkspace(lease.agentId);
     log?.debug({ step: "file-builtin", toolName: tool, workspaceDir }, "tool.invoke file builtin dispatching");
     const result = await deps.fileExecutors[tool](args, { workspaceDir });
-    log?.info({ toolName: tool, durationMs: Date.now() - started }, "tool.invoke file builtin complete");
+    log?.info({ toolName: tool, durationMs: systemNowMs() - started }, "tool.invoke file builtin complete");
     return result;
   }
 
@@ -258,13 +258,13 @@ export function createToolInvokeExecutor(
       case "web_fetch":
         return executeWebFetch(args, lease);
       case "web_search": {
-        const started = Date.now();
+        const started = systemNowMs();
         // The daemon-side search core is injected and pinned the same way as
         // web_fetch (Plan 05 wires it). Budget seam before the cost-bearing call.
         deps.budgetHook?.({ tool: "web_search" });
         log?.debug({ step: "web-search", toolName: "web_search" }, "tool.invoke web_search dispatching");
         const result = await deps.webSearch(args, { agentId: lease.agentId });
-        log?.info({ toolName: "web_search", durationMs: Date.now() - started }, "tool.invoke web_search complete");
+        log?.info({ toolName: "web_search", durationMs: systemNowMs() - started }, "tool.invoke web_search complete");
         return result;
       }
       case "read":
