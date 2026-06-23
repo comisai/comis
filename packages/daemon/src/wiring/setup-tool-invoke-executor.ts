@@ -270,7 +270,35 @@ export function createToolInvokeExecutor(
         deps.budgetHook?.({ tool: "web_search" });
         log?.debug({ step: "web-search", toolName: "web_search" }, "tool.invoke web_search dispatching");
         const result = await deps.webSearch(args, { agentId: lease.agentId });
-        log?.info({ toolName: "web_search", durationMs: systemNowMs() - started }, "tool.invoke web_search complete");
+
+        // WR-04: symmetric with web_fetch — offload an over-threshold result to
+        // a ResultRef so the generated SDK's `wrapResultRef(web_search)` decorates
+        // a REAL ref (its `.grep/.jq/.read` helpers resolve `path: ref.ref`) and a
+        // large search result never re-enters context inline.
+        // `RESULT_REF_THRESHOLDS.web_search` (15 KB) gates it. Stringify the
+        // structured result so the on-disk artifact is queryable in-jail (`jq`).
+        const serialized =
+          typeof result === "string" ? result : JSON.stringify(result);
+        const byteCount = Buffer.byteLength(serialized, "utf8");
+        if (deps.materialize && shouldMaterialize("web_search", byteCount)) {
+          log?.debug(
+            { step: "materialize", toolName: "web_search", bytes: byteCount },
+            "tool.invoke web_search over threshold — materializing to ResultRef",
+          );
+          const ref = await deps.materialize(serialized, "web_search", lease);
+          if (ref) {
+            log?.info(
+              { toolName: "web_search", durationMs: systemNowMs() - started, bytes: byteCount, materialized: true },
+              "tool.invoke web_search complete (ResultRef)",
+            );
+            return ref;
+          }
+        }
+
+        log?.info(
+          { toolName: "web_search", durationMs: systemNowMs() - started, bytes: byteCount, materialized: false },
+          "tool.invoke web_search complete (inline)",
+        );
         return result;
       }
       case "read":

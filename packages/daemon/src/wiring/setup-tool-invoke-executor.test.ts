@@ -189,6 +189,53 @@ describe("createToolInvokeExecutor — ResultRef materialize (REF-01)", () => {
     expect(materialize).not.toHaveBeenCalled(); // under threshold → never materialized
     expect(result.text).toBe("small body"); // inline
   });
+
+  // WR-04: web_search must be SYMMETRIC with web_fetch — an over-threshold
+  // search result has to be offloaded to a ResultRef, otherwise the generated
+  // SDK's `wrapResultRef(await invoke("web_search", …))` decorates a NON-ref
+  // (no `.ref` field) and the in-jail `.grep/.jq/.read` helpers call
+  // `invoke("grep", { path: undefined })` → a missing-path error, AND a large
+  // search result re-enters context inline. `RESULT_REF_THRESHOLDS.web_search`
+  // (15 KB) already exists for exactly this.
+  it("materializes an OVER-threshold web_search return to a ResultRef (WR-04 — symmetric with web_fetch)", async () => {
+    const ref = {
+      ref: "results/ws-search.json",
+      kind: "json" as const,
+      bytes: 20_000,
+      preview: "[…]",
+      expiresAt: "2030-01-01T00:00:00.000Z",
+    };
+    const materialize = vi.fn(async () => ref);
+    // A >15 KB stringified search result → over the web_search threshold.
+    const bigResults = { kind: "search", results: Array.from({ length: 400 }, (_v, i) => ({
+      title: `result ${i}`,
+      url: `https://example.com/${i}`,
+      snippet: "x".repeat(40),
+    })) };
+    const webSearch = vi.fn(async () => bigResults);
+
+    const exec = createToolInvokeExecutor(makeDeps({ materialize, webSearch }));
+    const result = await exec("web_search", { query: "comis" }, LEASE);
+
+    expect(materialize).toHaveBeenCalledTimes(1);
+    // The materialized payload is the stringified search result, tagged web_search.
+    expect(materialize.mock.calls[0][1]).toBe("web_search");
+    // The handle (the ResultRef) is what re-enters context — not the big body.
+    expect(result).toEqual(ref);
+  });
+
+  it("returns an UNDER-threshold web_search return INLINE (no ResultRef)", async () => {
+    const materialize = vi.fn(async () => undefined);
+    const webSearch = vi.fn(async () => ({ kind: "search", results: [{ title: "one" }] }));
+
+    const exec = createToolInvokeExecutor(makeDeps({ materialize, webSearch }));
+    const result = (await exec("web_search", { query: "comis" }, LEASE)) as {
+      kind?: string;
+    };
+
+    expect(materialize).not.toHaveBeenCalled(); // under threshold → inline
+    expect(result.kind).toBe("search");
+  });
 });
 
 describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-02)", () => {
