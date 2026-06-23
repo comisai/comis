@@ -29,8 +29,9 @@ import type {
   DurableRunPort,
 } from "@comis/core";
 import { ok } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
-import { setupDurableResume, type SetupDurableResumeDeps } from "./setup-durable-resume.js";
+import type { ComisLogger, LeaseManager } from "@comis/infra";
+import { setupDurableResume, buildDurableResume, type SetupDurableResumeDeps } from "./setup-durable-resume.js";
+import type { DurableRunRecord as DRR } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Port wrappers + handle registry so the test can assert interval
@@ -191,5 +192,110 @@ describe("setupDurableResume (Phase 216 — stores + resume engine + watchdog)",
     const before = (deps.resumeRun as ReturnType<typeof vi.fn>).mock.calls.length;
     await vi.advanceTimersByTimeAsync(5_000);
     expect((deps.resumeRun as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 216 Plan 12 (DUR-01/DUR-02, LOW-2): buildDurableResume wires the
+// resumeGraph closure into the resume engine's resumeRun dispatch. A DAG-shaped
+// run record (spawn_tree entries are OBJECTS with a `status` field) must route to
+// coordinator.resumeGraph (node re-entry); a FLAT run record (string[] spawn_tree)
+// must take the existing flat re-anchor (BoundedAutonomy.registerRoot) and can
+// NEVER mis-route to resumeGraph. These cases fail on the pre-patch wiring
+// (buildDurableResume has no resumeGraph dep + resumeRun always re-anchors flat).
+// ---------------------------------------------------------------------------
+
+describe("buildDurableResume resumeGraph dispatch (Phase 216 Plan 12, DUR-02/LOW-2)", () => {
+  beforeEach(() => { vi.useRealTimers(); });
+
+  /** Seed a resumable `running` checkpoint with the given spawnTree shape. */
+  async function seed(store: DurableRunPort, rootRunId: string, spawnTree: DRR["spawnTree"]): Promise<void> {
+    const r = await store.upsertCheckpoint({
+      rootRunId,
+      spawnTree,
+      caps: ["orch:read"],
+      leaseIds: [`lease-${rootRunId}`],
+      budgetConsumed: 0,
+      cronOrigin: null,
+      stepIndex: -1,
+      status: "running",
+      lastHeartbeatAt: testClock.now(),
+    });
+    if (!r.ok) throw r.error;
+  }
+
+  function makeBoundedAutonomy() {
+    return {
+      registerRoot: vi.fn(),
+      leaseIdsForRoot: vi.fn(() => new Set<string>()),
+    };
+  }
+
+  function makeLeaseManager(): LeaseManager {
+    return {
+      mintLease: vi.fn(() => ({ leaseId: "lease-x", bearer: "bearer-x" })),
+    } as unknown as LeaseManager;
+  }
+
+  it("routes a DAG record (spawn_tree objects with `status`) to resumeGraph, NOT the flat re-anchor", async () => {
+    const db = await makeDb();
+    const boundedAutonomy = makeBoundedAutonomy();
+    const resumeGraph = vi.fn(async (_record: DRR) => ok(undefined));
+    const wiring = buildDurableResume({
+      db,
+      durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
+      boundedAutonomy: boundedAutonomy as never,
+      sharedLeaseManager: makeLeaseManager(),
+      channelAdaptersRef: new Map(),
+      eventBus: { emit: vi.fn() } as never,
+      logger: silentLogger,
+      clock: testClock,
+      timers: testTimers,
+      resumeGraph,
+    });
+
+    // A DAG record: spawn_tree entries are {nodeId,status} objects with one
+    // incomplete (running) node ⇒ the LOW-2 DAG discriminator is true.
+    await seed(wiring.durableResume.durableRunStore!, "root-dag", [
+      { nodeId: "A", status: "completed" },
+      { nodeId: "B", status: "running", runId: "rb" },
+    ]);
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    // The DAG record routed to resumeGraph; the flat re-anchor was NOT used for it.
+    expect(resumeGraph).toHaveBeenCalledTimes(1);
+    expect(resumeGraph.mock.calls[0]![0].rootRunId).toBe("root-dag");
+    expect(boundedAutonomy.registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("routes a FLAT record (string[] spawn_tree) to the flat re-anchor, NEVER to resumeGraph (LOW-2: no mis-route)", async () => {
+    const db = await makeDb();
+    const boundedAutonomy = makeBoundedAutonomy();
+    const resumeGraph = vi.fn(async (_record: DRR) => ok(undefined));
+    const wiring = buildDurableResume({
+      db,
+      durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
+      boundedAutonomy: boundedAutonomy as never,
+      sharedLeaseManager: makeLeaseManager(),
+      channelAdaptersRef: new Map(),
+      eventBus: { emit: vi.fn() } as never,
+      logger: silentLogger,
+      clock: testClock,
+      timers: testTimers,
+      resumeGraph,
+    });
+
+    // A FLAT record: spawn_tree is a plain string[] of node/lease ids.
+    await seed(wiring.durableResume.durableRunStore!, "root-flat", ["lease-a", "lease-b"]);
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    // The flat record took the flat re-anchor; resumeGraph was NEVER consulted.
+    expect(boundedAutonomy.registerRoot).toHaveBeenCalledTimes(1);
+    expect(boundedAutonomy.registerRoot.mock.calls[0]![0]).toBe("root-flat");
+    expect(resumeGraph).not.toHaveBeenCalled();
   });
 });
