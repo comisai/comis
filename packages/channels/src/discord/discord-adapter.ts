@@ -23,11 +23,14 @@ import type {
   MessageHandler,
   NormalizedMessage,
   ReactionHandler,
+  ReconcileSendQuery,
+  ReconcileSendOutcome,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { createHash } from "node:crypto";
 import {
   Client,
   Events,
@@ -102,6 +105,9 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
   // discord-reaction-binder.ts to hold the 800-line cap).
   const reactionHandlers: ReactionHandler[] = [];
   let _channelId = "discord-pending";
+  // The bot's own user id, captured at start() from validateDiscordToken. Used
+  // by reconcileSend to match author=bot (Spoofing T-216-25); empty until start.
+  let _botUserId = "";
   let reconnectAttempt = 0;
 
   // Health tracking
@@ -138,6 +144,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
       const botInfo = tokenResult.value;
       _channelId = `discord-${botInfo.id}`;
+      _botUserId = botInfo.id;
 
       // TODO: Wire poll result normalization when Discord poll events are implemented.
       // Use normalizeDiscordPollResult() from ../shared/poll-normalizer.js
@@ -665,6 +672,68 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
     onReaction(handler: ReactionHandler): void {
       reactionHandlers.push(handler);
+    },
+
+    async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
+      // We can only prove a bot send if we know who the bot is. If start() has
+      // not captured the bot user id, we cannot tell -> unresolved (never a
+      // guess, ONCE-03).
+      if (!_botUserId) {
+        deps.logger.debug(
+          { channelType: "discord", hint: "reconcileSend called before start(): bot id unknown" },
+          "reconcileSend unresolved",
+        );
+        return ok({ kind: "unresolved" });
+      }
+
+      let tc: ReturnType<typeof asTextLike>;
+      try {
+        const channel = await client.channels.fetch(query.channelId);
+        tc = asTextLike(channel);
+      } catch {
+        // A failed channel resolution cannot prove absence -> unresolved.
+        return ok({ kind: "unresolved" });
+      }
+      if (!tc) {
+        // Not a text-like channel: we cannot read history -> unresolved.
+        return ok({ kind: "unresolved" });
+      }
+
+      // discord.js throws on fetch failure / rate-limit. A failed or partial
+      // fetch can NEVER prove the message is absent (Pitfall 2 / T-216-22) —
+      // any throw is `unresolved`, never `not_sent`.
+      let fetched: Awaited<ReturnType<typeof tc.messages.fetch>>;
+      try {
+        fetched = await tc.messages.fetch({ limit: 50 });
+      } catch (error) {
+        deps.logger.warn(
+          {
+            channelType: "discord",
+            chatId: query.channelId,
+            err: error instanceof Error ? error : new Error(String(error)),
+            hint: "messages.fetch failed; reconcile cannot prove absence",
+            errorKind: "platform" as const,
+          },
+          "reconcileSend unresolved",
+        );
+        return ok({ kind: "unresolved" });
+      }
+
+      // fetch({limit}) returns a Collection<Snowflake, Message> (Map-iterable).
+      for (const [, m] of fetched) {
+        if (m.author?.id !== _botUserId) continue; // author=bot required (T-216-25)
+        if (m.createdTimestamp < query.sentAfterMs || m.createdTimestamp > query.sentBeforeMs) {
+          continue;
+        }
+        const digest = createHash("sha256").update(m.content ?? "").digest("hex").slice(0, 16);
+        if (digest === query.contentDigest) {
+          return ok({ kind: "sent", platformMessageId: m.id });
+        }
+      }
+
+      // Full successful fetch, no bot-authored digest match in the window:
+      // definitively absent from the queried window.
+      return ok({ kind: "not_sent" });
     },
 
     getStatus(): ChannelStatus {
