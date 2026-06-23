@@ -277,3 +277,148 @@ describe("AutonomyConfigSchema (LEASE-02 — the nested lease sub-block is posit
     expect(AutonomyConfigSchema.safeParse({ lease: { leaseMaxTtlMin: 1.5 } }).success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUDGET-01/02 + RATE-01 + CEIL-01 + QUOTA-01/02 (Phase 213): the NET-NEW
+// nested autonomy sub-blocks the daemon-side BoundedAutonomy service (Plans
+// 04/05/06/07) reads. The shipped 210 schema has FLAT $-budget /
+// concurrent-spawn / spawn-rate / cron fields + nested message/lease blocks,
+// but the TOKEN + WALL-CLOCK budget limbs (BUDGET-01/02), the per-root /
+// per-socket / connection-churn RATE limbs (RATE-01), the spawn DEPTH/FANOUT
+// shape surfaced into ResolvedAutonomy (CEIL-01), and the outward
+// per-target-grant / volume-cap (QUOTA-01/02) do NOT exist yet. Per
+// REQUIREMENTS.md §Config surface + the message/lease nested precedent
+// (RESEARCH §D — A2), these are NESTED `z.strictObject` sub-blocks with
+// safe-floor defaults, the resolver merging the nested + legacy-flat per-field
+// (the `cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin` model).
+//
+// These cases are RED until the four sub-blocks + STANDARD_GUARDS defaults +
+// ProfileEntry/ResolvedAutonomy fields + the resolver expansion land: the
+// `resolved.budget`/`rate`/`spawn`/`outward` fields are absent from the
+// resolved type and `undefined` at runtime.
+// ---------------------------------------------------------------------------
+describe("resolveAutonomy (BUDGET-01/02 — the nested budget sub-block: $/token/wall-clock limbs)", () => {
+  it("BUDGET-01-S1: zero-config (→ standard) resolves all three budget limbs to safe non-zero defaults", () => {
+    // BUDGET-01/02 need the token + wall-clock limbs ON TOP of the existing $
+    // limb so an unknown-priced ($0) self-spawn loop still trips a bound.
+    const r = resolveAutonomy(undefined);
+    expect(r.budget.aggregateUsd).toBe(2.0); // mirrors the existing flat standard $ default
+    expect(r.budget.tokens).toBeGreaterThan(0);
+    expect(r.budget.wallClockMs).toBeGreaterThan(0);
+  });
+
+  it("BUDGET-01-S2: an explicit budget.tokens overrides ONLY tokens — the other limbs keep their defaults (per-field merge)", () => {
+    const r = resolveAutonomy({ profile: "standard", budget: { tokens: 999 } });
+    expect(r.budget.tokens).toBe(999);
+    expect(r.budget.aggregateUsd).toBe(2.0);
+    expect(r.budget.wallClockMs).toBeGreaterThan(0);
+  });
+
+  it("BUDGET-01-S3: the legacy flat aggregateBudgetUsd still feeds budget.aggregateUsd (resolved-output surfacing, not a compat shim)", () => {
+    const r = resolveAutonomy({ profile: "standard", aggregateBudgetUsd: 7 });
+    expect(r.budget.aggregateUsd).toBe(7);
+    // the flat field is also still surfaced for the existing consumers.
+    expect(r.aggregateBudgetUsd).toBe(7);
+  });
+});
+
+describe("resolveAutonomy (RATE-01 — the nested rate sub-block: per-root/per-socket/churn)", () => {
+  it("RATE-01-S1: zero-config (→ standard) resolves all three rate limbs to safe non-zero defaults", () => {
+    const r = resolveAutonomy(undefined);
+    expect(r.rate.perRootCallsPerSec).toBeGreaterThan(0);
+    expect(r.rate.perSocketCallsPerSec).toBeGreaterThan(0);
+    expect(r.rate.connectionChurnPerMin).toBeGreaterThan(0);
+  });
+
+  it("RATE-01-S2: an explicit rate.perRootCallsPerSec overrides ONLY that limb (per-field merge)", () => {
+    const r = resolveAutonomy({ profile: "standard", rate: { perRootCallsPerSec: 3 } });
+    expect(r.rate.perRootCallsPerSec).toBe(3);
+    expect(r.rate.perSocketCallsPerSec).toBeGreaterThan(0);
+    expect(r.rate.connectionChurnPerMin).toBeGreaterThan(0);
+  });
+});
+
+describe("resolveAutonomy (CEIL-01 — the spawn sub-block surfaces depth/fanout into ResolvedAutonomy)", () => {
+  it("CEIL-01-S1: zero-config (→ standard) resolves the v8 CEIL-01 spawn shape (concurrent 4 / depth 3 / children 5)", () => {
+    const r = resolveAutonomy(undefined);
+    expect(r.spawn.maxConcurrentSelfAgents).toBe(4);
+    expect(r.spawn.maxSpawnDepth).toBe(3);
+    expect(r.spawn.maxChildrenPerAgent).toBe(5);
+  });
+
+  it("CEIL-01-S2: the legacy flat maxConcurrentSelfAgents still feeds spawn.maxConcurrentSelfAgents (one resolved source)", () => {
+    const r = resolveAutonomy({ profile: "standard", maxConcurrentSelfAgents: 9 });
+    expect(r.spawn.maxConcurrentSelfAgents).toBe(9);
+    expect(r.maxConcurrentSelfAgents).toBe(9);
+  });
+});
+
+describe("resolveAutonomy (QUOTA-01/02 — the outward sub-block: origin-only/grants/volume)", () => {
+  it("QUOTA-01-S1: zero-config (→ standard) resolves origin-only true, an EMPTY grant list, and a positive volume cap", () => {
+    const r = resolveAutonomy(undefined);
+    expect(r.outward.originOnly).toBe(true);
+    expect(r.outward.perTargetGrants).toEqual([]);
+    expect(r.outward.volumeCap).toBeGreaterThan(0);
+  });
+
+  it("QUOTA-01-S2: an explicit outward.perTargetGrants overrides the empty default (the §8.4 per-target grant seam)", () => {
+    const r = resolveAutonomy({ profile: "standard", outward: { perTargetGrants: ["telegram:c1"] } });
+    expect(r.outward.perTargetGrants).toEqual(["telegram:c1"]);
+    expect(r.outward.originOnly).toBe(true);
+  });
+});
+
+describe("AutonomyConfigSchema (BUDGET/RATE/SPAWN/OUTWARD — every new sub-block is strictObject typo-guarded)", () => {
+  it("213-S1: strictObject rejects a typo'd budget key (budget.tokenz — fails-closed, not a silent disabled limb)", () => {
+    expect(AutonomyConfigSchema.safeParse({ budget: { tokenz: 1 } }).success).toBe(false);
+  });
+
+  it("213-S2: strictObject rejects a typo'd rate key (rate.perRootCallsPerSecond)", () => {
+    expect(
+      AutonomyConfigSchema.safeParse({ rate: { perRootCallsPerSecond: 1 } }).success,
+    ).toBe(false);
+  });
+
+  it("213-S3: strictObject rejects a typo'd spawn key (spawn.maxSpawnDepthh)", () => {
+    expect(AutonomyConfigSchema.safeParse({ spawn: { maxSpawnDepthh: 1 } }).success).toBe(false);
+  });
+
+  it("213-S4: strictObject rejects a typo'd outward key (outward.volumeCapp)", () => {
+    expect(AutonomyConfigSchema.safeParse({ outward: { volumeCapp: 1 } }).success).toBe(false);
+  });
+
+  it("213-S5: rejects a non-positive budget.tokens (must bound, never zero)", () => {
+    expect(AutonomyConfigSchema.safeParse({ budget: { tokens: 0 } }).success).toBe(false);
+  });
+
+  it("213-S6: rejects a non-positive rate.perSocketCallsPerSec", () => {
+    expect(AutonomyConfigSchema.safeParse({ rate: { perSocketCallsPerSec: 0 } }).success).toBe(
+      false,
+    );
+  });
+
+  it("213-S7: accepts a fully-specified budget/rate/spawn/outward config (the explicit-override surface)", () => {
+    expect(
+      AutonomyConfigSchema.safeParse({
+        budget: { aggregateUsd: 1, tokens: 100, wallClockMs: 1000 },
+        rate: { perRootCallsPerSec: 5, perSocketCallsPerSec: 5, connectionChurnPerMin: 10 },
+        spawn: { maxConcurrentSelfAgents: 2, maxSpawnDepth: 2, maxChildrenPerAgent: 2 },
+        outward: { originOnly: false, perTargetGrants: ["x"], volumeCap: 10 },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("resolveAutonomy (213 — every profile surfaces a TOTAL resolved budget/rate/spawn/outward)", () => {
+  it("213-S8: each of the four profiles resolves total (non-undefined) budget/rate/spawn/outward limbs", () => {
+    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+      const r = resolveAutonomy({ profile });
+      expect(typeof r.budget.tokens, `${profile} budget.tokens`).toBe("number");
+      expect(typeof r.budget.wallClockMs, `${profile} budget.wallClockMs`).toBe("number");
+      expect(typeof r.rate.perRootCallsPerSec, `${profile} rate.perRootCallsPerSec`).toBe("number");
+      expect(typeof r.spawn.maxSpawnDepth, `${profile} spawn.maxSpawnDepth`).toBe("number");
+      expect(typeof r.outward.volumeCap, `${profile} outward.volumeCap`).toBe("number");
+      expect(r.outward.originOnly, `${profile} outward.originOnly`).toBe(true);
+    }
+  });
+});
