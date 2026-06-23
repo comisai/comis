@@ -112,6 +112,25 @@ export interface LeaseManager {
   renew(leaseId: string): { expiresAtMs: number } | null;
   /** Mark the lease revoked — denies the next validate AND renew. */
   revoke(leaseId: string): void;
+  /**
+   * Cascade-revoke a lease and every descendant reachable via `parentLeaseId`
+   * (REVOKE-02). Reaches grandchildren: revoking a parent revokes its children
+   * AND their children. Built on the at-mint `parentLeaseId`→children adjacency
+   * (the reverse of `parentLeaseId` does not exist otherwise — Pitfall 5). A
+   * `visited` set guards re-entry; leaseIds never re-mint, so the tree is
+   * acyclic and the guard is cheap insurance. The control-plane authority the
+   * admin `lease.revoke`/`run.kill` RPC (Phase 213) drives.
+   */
+  cascadeRevoke(leaseId: string, visited?: Set<string>): void;
+  /**
+   * Revoke EVERY lease of a root-run (REVOKE-01), cascading each to its
+   * descendants. Scans on `rootRunId` and `cascadeRevoke`s each match through
+   * ONE shared `visited` set, so the returned `revoked` is the distinct number
+   * of leases flipped (a parent + its already-cascaded child are not
+   * double-counted). An unknown root is a clean `{ revoked: 0 }` no-op — the
+   * daemon RPC handler is the throw boundary, not this fan-out.
+   */
+  revokeByRootRun(rootRunId: string): { revoked: number };
 }
 
 export interface LeaseManagerDeps {
@@ -134,6 +153,37 @@ function tokenEquals(candidate: Buffer, stored: Buffer): boolean {
 export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
   const { clock, defaultTtlMs = 15 * 60 * 1000 } = deps;
   const leases = new Map<string, LeaseEntry>();
+  // parentLeaseId → child leaseIds, built at MINT (Pitfall 5). cascadeRevoke
+  // reads this reverse index to reach a lease's children/grandchildren; deriving
+  // it at revoke time is impossible because parentLeaseId has no reverse index.
+  const childrenByParent = new Map<string, Set<string>>();
+
+  /**
+   * Cascade-revoke `leaseId` and every descendant via the at-mint adjacency.
+   * Recursion base case is the existing per-lease `revoke`; the `visited` set
+   * guards re-entry so a double-call (or a contrived cycle) terminates.
+   */
+  function cascadeRevoke(leaseId: string, visited = new Set<string>()): void {
+    if (visited.has(leaseId)) {
+      return;
+    }
+    visited.add(leaseId);
+    revokeLease(leaseId); // existing per-lease revoke (base case)
+    for (const childId of childrenByParent.get(leaseId) ?? []) {
+      cascadeRevoke(childId, visited); // recurse → reaches grandchildren
+    }
+  }
+
+  /** Per-lease revoke: flag the entry (do NOT delete) so validate denies it. */
+  function revokeLease(leaseId: string): void {
+    // Keep the entry (do NOT delete) so validate's `revoked` check denies it;
+    // the lazy-TTL reaper removes it once past maxExpiresAt, by which point
+    // the bearer is dead anyway. A randomUUID() id is never reused.
+    const entry = leases.get(leaseId);
+    if (entry) {
+      entry.revoked = true;
+    }
+  }
 
   return {
     mintLease(input: MintLeaseInput): IssuedLease {
@@ -157,6 +207,14 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         maxExpiresAtMs,
         revoked: false,
       });
+      // Build the parent→children adjacency at MINT (Pitfall 5) so a later
+      // cascadeRevoke can reach this lease from its parent. Deriving the reverse
+      // of parentLeaseId at revoke time is impossible.
+      if (input.parentLeaseId !== undefined) {
+        const siblings = childrenByParent.get(input.parentLeaseId) ?? new Set<string>();
+        siblings.add(leaseId);
+        childrenByParent.set(input.parentLeaseId, siblings);
+      }
       return { leaseId, bearer };
     },
 
@@ -237,13 +295,25 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
     },
 
     revoke(leaseId: string): void {
-      // Keep the entry (do NOT delete) so validate's `revoked` check denies it;
-      // the lazy-TTL reaper removes it once past maxExpiresAt, by which point
-      // the bearer is dead anyway. A randomUUID() id is never reused.
-      const entry = leases.get(leaseId);
-      if (entry) {
-        entry.revoked = true;
+      revokeLease(leaseId);
+    },
+
+    cascadeRevoke(leaseId: string, visited = new Set<string>()): void {
+      cascadeRevoke(leaseId, visited);
+    },
+
+    revokeByRootRun(rootRunId: string): { revoked: number } {
+      // ONE shared `visited` set dedupes across the scan so the count is the
+      // distinct number of leases revoked (a parent + its already-cascaded child
+      // are not double-counted). An unknown root is a clean 0-revoke no-op — the
+      // daemon RPC handler (Phase 213, Plan 06) is the throw boundary.
+      const visited = new Set<string>();
+      for (const [id, entry] of leases) {
+        if (entry.rootRunId === rootRunId) {
+          cascadeRevoke(id, visited);
+        }
       }
+      return { revoked: visited.size };
     },
   };
 }
