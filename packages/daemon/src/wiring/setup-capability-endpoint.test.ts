@@ -424,4 +424,126 @@ describe("createCapabilityEndpoint socket server", () => {
     // The socket file is unlinked on stop.
     expect(existsSync(socketPath)).toBe(false);
   });
+
+  // WR-01: a client that connects and pushes > MAX_LINE_BYTES without ever
+  // sending a newline must have its connection destroyed (bounded receive
+  // buffer) — otherwise `buf` grows without bound (OOM vector from a jailed
+  // client). Assert the socket is closed by the server after oversize input.
+  it("destroys a connection that overflows the receive buffer without a newline", async () => {
+    const net = await import("node:net");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    const dir = mkdtempSync(join(tmpdir(), "cap-sock-ovf-"));
+    const socketPath = join(dir, "cap.sock");
+    await endpoint.startSocket(socketPath);
+
+    const client = net.connect(socketPath);
+    // Swallow the client-side EPIPE/ECONNRESET that the server's destroy() races
+    // against the client's in-flight write — that's the expected outcome here,
+    // not a test failure (an unhandled "error" would surface as an uncaught).
+    client.on("error", () => {});
+    await new Promise<void>((res) => client.on("connect", () => res()));
+
+    const closed = new Promise<void>((res) => client.on("close", () => res()));
+    // Push 128 KiB with NO newline — over the 64 KiB cap. The server must
+    // destroy the connection (the client observes "close").
+    client.write("x".repeat(128 * 1024));
+
+    await closed; // resolves only because the server destroyed the connection.
+    // rpcCall was never reached (no complete line was ever parsed).
+    expect(rpcCall).not.toHaveBeenCalled();
+
+    await endpoint.stopSocket();
+  });
+
+  // WR-01: stopSocket() must not hang on a non-terminating client. A bare
+  // net.Server.close() waits for live connections to drain, so a connection
+  // that never sends a newline (and never closes) would wedge shutdown forever.
+  // The endpoint destroys tracked sockets before close — assert stop resolves.
+  it("stops cleanly even with a connected client that never sends a newline", async () => {
+    const net = await import("node:net");
+    const { mkdtempSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    const dir = mkdtempSync(join(tmpdir(), "cap-sock-hang-"));
+    const socketPath = join(dir, "cap.sock");
+    await endpoint.startSocket(socketPath);
+
+    const client = net.connect(socketPath);
+    await new Promise<void>((res) => client.on("connect", () => res()));
+    // Send a partial line (no newline) and then just sit there — the connection
+    // stays open and idle. Without socket tracking + destroy, stopSocket hangs.
+    client.write('{"bearer":"x","method":"cron.add"');
+
+    // If stopSocket hangs, this race rejects and the test fails (vs a silent
+    // timeout); on the fix it resolves well under the budget.
+    await Promise.race([
+      endpoint.stopSocket(),
+      new Promise<never>((_res, rej) =>
+        setTimeout(() => rej(new Error("stopSocket did not resolve — stuck connection wedged shutdown")), 2000),
+      ),
+    ]);
+    expect(existsSync(socketPath)).toBe(false);
+    client.destroy();
+  });
+
+  // WR-02 (§2.7): the socket boundary is observable through the injected logger
+  // — the bind emits an INFO and a receive-buffer overflow emits a WARN carrying
+  // the canonical errorKind/hint (not an empty catch). This proves the logger is
+  // threaded and that a boundary event is reconstructable from logs.
+  it("logs the socket bind and a receive-buffer overflow with canonical errorKind and hint", async () => {
+    const net = await import("node:net");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+
+    const info = vi.fn();
+    const warn = vi.fn();
+    // A minimal logger whose child() returns a logger carrying the spies (the
+    // endpoint binds a `submodule` child, mirroring the production logger).
+    const childLogger = { debug: vi.fn(), info, warn, error: vi.fn() };
+    const logger = { child: vi.fn(() => childLogger) } as unknown as Parameters<
+      typeof createCapabilityEndpoint
+    >[0]["logger"];
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, logger });
+
+    const dir = mkdtempSync(join(tmpdir(), "cap-sock-log-"));
+    const socketPath = join(dir, "cap.sock");
+    await endpoint.startSocket(socketPath);
+
+    // The bind is logged once at INFO.
+    expect(info).toHaveBeenCalledTimes(1);
+
+    const client = net.connect(socketPath);
+    client.on("error", () => {}); // expected EPIPE when the server destroys mid-write
+    await new Promise<void>((res) => client.on("connect", () => res()));
+    const closed = new Promise<void>((res) => client.on("close", () => res()));
+    client.write("x".repeat(128 * 1024)); // > 64 KiB cap, no newline → overflow
+    await closed;
+
+    // The overflow is logged at WARN with the canonical fields.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [overflowFields] = warn.mock.calls[0];
+    expect((overflowFields as { errorKind?: unknown }).errorKind).toBe("validation");
+    expect(typeof (overflowFields as { hint?: unknown }).hint).toBe("string");
+
+    await endpoint.stopSocket();
+  });
 });

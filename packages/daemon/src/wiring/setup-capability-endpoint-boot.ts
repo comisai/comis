@@ -92,10 +92,19 @@ export function constructCapabilityLayer(deps: CapabilityLayerDeps): CapabilityL
   // ephemeral lifecycle. Phase 212 binds it per jail; the daemon-wide endpoint
   // exists so the lease layer is constructed once at boot.
   const capSocketPath = safePath(dataDir, "cap.sock");
-  const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+  // Thread the daemon logger so the socket boundary is observable (WR-02): a
+  // post-listen server error and per-connection errors are logged with the
+  // canonical err/errorKind/hint rather than silently swallowed.
+  const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, logger: daemonLogger });
+  // WR-03: be HONEST that the layer is DORMANT in 211. The endpoint object +
+  // the LeaseManager are constructed, but `endpoint.startSocket()` is NOT called
+  // here and no lease is minted yet (Phase 212 binds the 0600 socket per jail
+  // and mints the lease). An INFO that says "endpoint constructed" without that
+  // qualifier reads as "the cap surface is live", misleading an operator. State
+  // the dormant-until-212 status explicitly so the log does not over-claim.
   daemonLogger.info(
-    { submodule: "capability-endpoint", capSocketPath },
-    "Capability endpoint constructed (autonomy-bearing profile present)",
+    { submodule: "capability-endpoint", capSocketPath, active: false },
+    "Capability lease layer constructed (dormant — endpoint bound per-jail by Phase 212; no socket listening yet)",
   );
   return {
     capEndpointHandle: { leaseManager, endpoint, capSocketPath },

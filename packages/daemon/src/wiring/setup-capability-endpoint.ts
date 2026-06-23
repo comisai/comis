@@ -52,8 +52,19 @@
 import net from "node:net";
 import { chmodSync, unlinkSync } from "node:fs";
 import { SUB_AGENT_TOOL_DENYLIST, stripInternalFields } from "@comis/core";
-import type { LeaseManager, LeaseInfo } from "@comis/infra";
+import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
+
+/**
+ * Max bytes a single connection may buffer before a newline-terminated request
+ * is seen (WR-01). The wire is one `{ bearer, method, params }` JSON line per
+ * connection; a well-behaved client sends well under this. A client that
+ * connects and never sends a `\n` would otherwise grow `buf` without bound
+ * (memory pressure / OOM vector from a jailed client). On overflow the socket
+ * is destroyed (fail-closed). 64 KiB is generous for the bearer + a small
+ * params object yet bounds the per-connection footprint.
+ */
+const MAX_LINE_BYTES = 64 * 1024;
 
 /**
  * The EXACT RPC methods dispatched by the 10 `SUB_AGENT_TOOL_DENYLIST`
@@ -185,6 +196,15 @@ export interface CapabilityEndpointDeps {
    * injecting `_capabilities` makes each handler's `requireCapability` fire.
    */
   rpcCall: RpcCall;
+  /**
+   * The daemon logger for socket-boundary observability (WR-02 / §2.7). A cap
+   * socket is a boundary crossing, so a post-listen server error and a
+   * per-connection error must be reconstructable from logs (with `err` +
+   * `errorKind` + `hint`) rather than silently swallowed. Optional so the
+   * deny-matrix unit tests can construct the endpoint without a logger; when
+   * absent the handlers degrade to a no-op (the pre-WR-02 behavior).
+   */
+  logger?: ComisLogger;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -217,6 +237,10 @@ export interface CapabilityEndpoint {
  */
 export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): CapabilityEndpoint {
   const { leaseManager, rpcCall } = deps;
+  // Scope a submodule logger for the socket boundary (WR-02). `child` is
+  // undefined-safe via the optional chain — the deny-matrix unit tests omit the
+  // logger, so the socket handlers degrade to no-ops there.
+  const log = deps.logger?.child({ submodule: "capability-endpoint" });
 
   async function handleCapCall(
     bearer: string,
@@ -269,10 +293,19 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   // --- 0600 unix socket server (mirrors mitm-broker.startUnixSocket lifecycle) ---
   let server: net.Server | null = null;
   let boundSocketPath: string | null = null;
+  // Track live connections so stopSocket can destroy them (WR-01): net.Server
+  // .close() only stops accepting NEW connections and waits for existing ones to
+  // drain — a single stuck client (connected, never sends a `\n`) would wedge
+  // shutdown forever. Mirrors mitm-broker's `openSockets` set.
+  const openSockets = new Set<net.Socket>();
 
   function startSocket(socketPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const srv = net.createServer((socket) => {
+        openSockets.add(socket);
+        socket.on("close", () => {
+          openSockets.delete(socket);
+        });
         // Minimal newline-delimited JSON wire: one `{ bearer, method, params }`
         // request per connection → one JSON `{ result }` / `{ error }` reply.
         // Phase 212 (the jailed SDK client) finalizes the wire format; for 211
@@ -281,6 +314,17 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         socket.setEncoding("utf8");
         socket.on("data", (chunk: string) => {
           buf += chunk;
+          // WR-01: bound the per-connection receive buffer. A client that never
+          // sends a newline would otherwise grow `buf` without bound (OOM vector
+          // from a jailed client). Fail closed — destroy the socket on overflow.
+          if (buf.length > MAX_LINE_BYTES) {
+            log?.warn(
+              { submodule: "capability-endpoint", errorKind: "validation" as const, hint: "cap socket request exceeded the max line size before a newline — connection destroyed", maxLineBytes: MAX_LINE_BYTES },
+              "Capability socket receive buffer overflow",
+            );
+            socket.destroy();
+            return;
+          }
           const nl = buf.indexOf("\n");
           if (nl === -1) return;
           const line = buf.slice(0, nl);
@@ -304,11 +348,30 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
               socket.end(JSON.stringify({ error: message }) + "\n");
             });
         });
-        socket.on("error", () => {
-          // A jailed client that disconnects mid-write must not crash the daemon.
+        socket.on("error", (err: Error) => {
+          // A jailed client that disconnects mid-write must not crash the daemon —
+          // but the error must not vanish either (WR-02 / §2.7). Log at debug
+          // (a client-side disconnect is routine, not a daemon fault) with the
+          // canonical err/errorKind/hint so a boundary failure is reconstructable.
+          log?.debug(
+            { submodule: "capability-endpoint", err, errorKind: "network" as const, hint: "cap socket connection error (typically a jailed client disconnecting mid-write)" },
+            "Capability socket connection error",
+          );
         });
       });
       server = srv;
+      // WR-02: a PERSISTENT server-error logger. `srv.on("error", reject)` below
+      // is only meaningful until `listen` resolves (after that `reject` is a
+      // settled no-op); a post-listen server error would otherwise be wholly
+      // unobserved. Node fans an "error" event to BOTH listeners, so the
+      // logging handler survives after the reject handler is spent. Mirrors
+      // mitm-broker's attachServerHandlers error log.
+      srv.on("error", (err: Error) => {
+        log?.error(
+          { submodule: "capability-endpoint", err, errorKind: "network" as const, hint: "cap socket server error" },
+          "Capability socket server error",
+        );
+      });
       srv.on("error", reject);
       // Unlink stale socket before binding (prevents EADDRINUSE).
       try {
@@ -326,6 +389,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
           /* non-POSIX FS — ok */
         }
         boundSocketPath = socketPath;
+        log?.info({ submodule: "capability-endpoint", socketPath }, "Capability socket bound (0600 owner-only)");
         resolve();
       });
     });
@@ -339,6 +403,14 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         return;
       }
       server = null;
+      // WR-01: destroy every tracked connection FIRST so a stuck client (one
+      // that connected but never sent a `\n`) cannot wedge `srv.close()` — which
+      // otherwise waits for all open connections to drain. Mirrors mitm-broker's
+      // stop(): destroy-then-close.
+      for (const socket of openSockets) {
+        socket.destroy();
+      }
+      openSockets.clear();
       srv.close(() => {
         if (boundSocketPath) {
           try {

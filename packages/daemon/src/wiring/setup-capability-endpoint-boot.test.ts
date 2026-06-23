@@ -13,7 +13,14 @@ import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 function createDeps(agents: Record<string, PerAgentConfig>) {
   const clock: ClockPort = { now: () => 1_700_000_000_000 };
-  const daemonLogger = { info: vi.fn() } as unknown as Parameters<typeof constructCapabilityLayer>[0]["daemonLogger"];
+  // The boot helper threads daemonLogger into createCapabilityEndpoint, which
+  // binds a `submodule` child for the socket boundary (WR-02) — so the mock must
+  // carry a `child` that returns a logger with the level methods.
+  const childLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const daemonLogger = {
+    info: vi.fn(),
+    child: vi.fn(() => childLogger),
+  } as unknown as Parameters<typeof constructCapabilityLayer>[0]["daemonLogger"];
   return {
     agents,
     rpcCall: vi.fn(async () => ({})),
