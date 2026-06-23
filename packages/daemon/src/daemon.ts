@@ -642,8 +642,7 @@ function buildGraphCoordinatorDeps(deps: {
     sendToChannel: channels.sendToChannel, announceToParent: channels.announceToParent,
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
-    maxResultLength: a2aSec.graphMaxResultLength as number | undefined,
-    maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
+    maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
     // BUDGET-02/03 (D3): operator default per-node token-budget inherit-share source.
     subAgentTokenBudget: (a2aSec.tokenBudget as number | null | undefined) ?? null,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
@@ -658,10 +657,7 @@ function buildGraphCoordinatorDeps(deps: {
     touchParentSession: channels.commandQueue
       ? (sessionKey: string) => channels.commandQueue!.touchLane(sessionKey)
       : undefined,
-    // Phase 213 CR-01: the session→rootRunId resolver so every node of a graph
-    // run shares one tree-stable root (killByRootRun reaches all nodes). Absent
-    // ⇒ each node mints its own (pre-213; graph fan-out still gate-bounded).
-    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}),
+    ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // Phase 213 CR-01: graph nodes share one tree root (killByRootRun reach).
     preWarm,
   };
 }
@@ -911,13 +907,8 @@ function buildRpcDispatchDeps(deps: {
     recallTraceEnabled: c.container.config.diagnostics?.recallTrace?.enabled ?? false, // memory.recall_trace honest-empty gate
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
-    sessionStore: g.sessionStoreBridge,
-    crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
-    // Phase 213 CR-01: the session→rootRunId resolver (created EARLY in boot,
-    // shared with the per-root budget bridge) so the session.spawn handler
-    // propagates one tree-stable root per spawn tree — the spawn ceiling / kill
-    // / budget all key on it. Absent ⇒ the runner mints (pre-213 behavior).
-    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}),
+    sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
+    ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // Phase 213 CR-01: session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
@@ -2364,8 +2355,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
-    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout) } : {}), // Phase 213 CEIL-01: tree-wide spawn ceiling at the runner convergence point (session.spawn + graph.* + in-process loop)
-    ...(capEndpointHandle ? { releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CR-02: symmetric release on run completion so the per-root active count does not monotonically leak (paired 1:1 with the acquire above)
+    ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CEIL-01/CR-02: tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });
