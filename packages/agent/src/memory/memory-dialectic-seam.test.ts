@@ -100,6 +100,25 @@ describe("createDialecticSeam", () => {
     expect(out).toMatchObject({ abstain: false });
   });
 
+  it("FLAG-3: when resolveCredential is set, completeSimple receives the RESOLVED (OAuth) key, not the static apiKey", async () => {
+    // Live VPS 2026-06-22: an openai-codex (OAuth) agent has no API key, so the daemon resolved apiKey=""
+    // and memory.ask abstained ("synthesis_abstained") on EVERY query despite valid grounding (5049 chars).
+    // The fix threads a per-call resolveCredential (the OAuth bearer via the boot oauthManagers map).
+    // Pre-fix: the seam used the static apiKey ("") → completeSimple got the wrong/empty key.
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText('{"answer":"Moshe","citedIds":["id-1"]}'),
+    );
+    const synthesize = createDialecticSeam(
+      makeDeps({ apiKey: "", resolveCredential: async () => "oauth-bearer-xyz" }) as never,
+    );
+    const out = await synthesize("what is the user name?", "[id-1] The user's name is Moshe.");
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    // completeSimple's 3rd arg is the call opts { apiKey, temperature, maxTokens, signal }.
+    const opts = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[0]![2] as { apiKey: string };
+    expect(opts.apiKey).toBe("oauth-bearer-xyz"); // resolved OAuth bearer, NOT the static ""
+    expect(out).toMatchObject({ abstain: false });
+  });
+
   it("issues EXACTLY ONE bounded completeSimple call (temperature 0, maxTokens, signal) and returns the grounded parse", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       llmText('{"answer":"UTC","citedIds":["id-a"]}'),
@@ -124,6 +143,29 @@ describe("createDialecticSeam", () => {
     expect(opts.signal).toBeInstanceOf(AbortSignal);
 
     expect(out).toEqual({ abstain: false, answer: "UTC", citedIds: ["id-a"] });
+  });
+
+  it("FLAG-3: OMITS temperature for REASONING models (gpt-5.x/o-series/Opus reject it — Codex 400 'Unsupported parameter: temperature')", async () => {
+    // Live VPS 2026-06-22: completeSimple({temperature:0}) on a reasoning model (gpt-5.4 via openai-codex)
+    // → Codex 400 "Unsupported parameter: temperature" → empty response → memory.ask abstained on EVERY
+    // query. The seam gates on the SDK's per-model `reasoning` flag (broad across ALL providers — pi's
+    // openai/codex providers forward temperature unconditionally), omitting it when reasoning===true.
+    (getModel as ReturnType<typeof vi.fn>).mockReturnValue({ id: "gpt-5.4", reasoning: true });
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText('{"answer":"Moshe","citedIds":["id-1"]}'),
+    );
+    const synthesize = createDialecticSeam(
+      makeDeps({ provider: "openai-codex", modelId: "gpt-5.4" }) as never,
+    );
+    const out = await synthesize("what is the user name?", "[id-1] The user's name is Moshe.");
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    const opts = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[0]![2] as Record<string, unknown>;
+    // RED (pre-fix): temperature:0 present → Codex 400 → empty. GREEN: temperature key absent for reasoning models.
+    expect(opts).not.toHaveProperty("temperature");
+    // The maxTokens cap + abort signal still ride (only temperature is dropped).
+    expect(opts.maxTokens).toBe(1024);
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
+    expect(out).toMatchObject({ abstain: false, answer: "Moshe" });
   });
 
   it("is NON-FATAL: a thrown completeSimple call degrades to { abstain:true } and WARNs counts-only (no bodies)", async () => {

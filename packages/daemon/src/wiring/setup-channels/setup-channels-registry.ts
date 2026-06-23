@@ -266,6 +266,21 @@ export interface ChannelsDeps {
   queueConfig?: QueueConfig;
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /**
+   * REACT-04 (Verified Learning, Phase 206-04): the SAME outbound → trajectory
+   * binding threaded into the delivery-queue drain (setup-delivery.ts). Wired
+   * into createDeliveryService so the PRIMARY inbound-reply path (which sends via
+   * the direct ack, not the drain) also binds the minted reply id → trajectory —
+   * else a reaction on a normal agent reply map-misses (the 206-03 live finding).
+   * `undefined` when learning-outcome is off for all agents (byte-identity).
+   * `participantId` (FLAG-2) carries the conversation participant (the inbound
+   * sender) so a reaction from an unmapped group bystander resolves to "external"
+   * (inert) and cannot spoof reaction-learning.
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
+  ) => void;
   /** Optional active run registry for SDK-native steer+followup inbound routing */
   activeRunRegistry?: ActiveRunRegistry;
   /**
@@ -356,6 +371,11 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
     eventBus: container.eventBus,
+    // REACT-04 (206-04): bind the minted reply id → trajectory on the DIRECT ack
+    // path too (the primary inbound-reply path sends here, not via the drain).
+    // Same callback instance the drain receives (foundation.recordOutboundMessage);
+    // undefined when learning-outcome is off for all agents (byte-identity).
+    recordOutboundMessage: deps.recordOutboundMessage,
   });
 
   // Bootstrap enabled channel adapters from config

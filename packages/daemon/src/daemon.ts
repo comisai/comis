@@ -466,7 +466,7 @@ function buildChannelManagerDeps(deps: {
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
-    piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
+    piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers, mergedEnv,
   } = agents;
@@ -579,6 +579,10 @@ function buildChannelManagerDeps(deps: {
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     piSessionAdapters, costTrackers, deliveryQueue,
+    // REACT-04 (206-04): the outbound → trajectory binding (same callback the
+    // delivery-queue drain receives) so the DIRECT ack path in createDeliveryService
+    // binds the primary inbound-reply id → trajectory (the 206-03 live-finding fix).
+    recordOutboundMessage,
     destroyConversation: channelConversationReset.destroyConversationCompletely,
     lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse, // review session source (DAG transcripts)
     cronExecutionTrackers: executionTrackers,
@@ -1888,8 +1892,8 @@ async function bootAgents(
     toolCapabilityPorts, trajectoryRegistry,
     // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
-    // from the SAME object SEP publishes into.
-    executionPlanPorts, oauthManagers, // oauthManagers: DEFAULT agent's → buildImageGenBundle
+    // from the SAME object SEP publishes into (Pitfall 1).
+    executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, userRepresentationStore, relationshipStore, tunedAlphaStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -2079,7 +2083,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor, voiceSelection,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, servedWindowComparisons, agentBootWindowInfo,
+    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts, oauthManagers, authStorages, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 

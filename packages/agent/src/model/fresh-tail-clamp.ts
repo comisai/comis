@@ -28,6 +28,13 @@
  * @param avgTokensPerStep - Optional estimated tokens per conversation step.
  *   If omitted, estimated as `max(1, floor(effectiveWindow / 20))` (5% floor).
  * @returns The clamped turn count — always ≥ 1, always ≤ configuredTurns.
+ *
+ * NB (ISSUE #1, 2026-06-22): this turn-count clamp is the COARSE upper bound only.
+ * The PRECISE residual enforcement for the protected fresh tail (so it always fits a
+ * small window where the system prompt dominates) lives in the lcd-assembler as a
+ * post-B-8 TOTAL token bound (boundFreshTailTotalToResidual) — a turn-count clamp is
+ * unreliable there because one oversized message (which B-8 bounds anyway) skews the
+ * per-step estimate.
  */
 export function resolveClampedFreshTailTurns(
   effectiveWindow: number,

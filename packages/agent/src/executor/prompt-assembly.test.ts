@@ -314,6 +314,81 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // 3b. Degenerate-window compact-prompt fallback (2026-06-22)
+  //
+  // The user's hard requirement: the agent must NEVER context-exhaust, even when
+  // the effective window is SMALLER than the system prompt itself (e.g. an 8K
+  // window mid-class model whose ~10K full prompt overflows even after every tool
+  // is deferred). When windowFitBudget shows the resolved-mode prompt cannot fit
+  // (systemPromptOnlyTokens + outputHeadroom + messageFloorTokens > effectiveWindow),
+  // assembleExecutionPrompt falls back to the existing compact-secure mode
+  // (~700 tok, security floor intact) so the agent still runs — instead of
+  // throwing fixed_overhead_exceeds_window downstream.
+  // -----------------------------------------------------------------
+  it("falls back to compact-secure when the full prompt cannot fit the effective window", async () => {
+    // Mock returns "assembled-prompt" (~5 tok). A tiny window (budget 4 tok) makes
+    // even that degenerate, forcing the fallback. Default modelProfile → full mode
+    // (the mid/frontier-class small-window case that compact-secure never covered).
+    mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40)); // ~12 tok
+    const logger = createMockLogger();
+    const params = makeParams({
+      logger,
+      windowFitBudget: { effectiveWindow: 10, outputHeadroom: 4, messageFloorTokens: 2 },
+    });
+    await assembleExecutionPrompt(params);
+
+    // assembleRichSystemPrompt called TWICE: once for the resolved (full) mode,
+    // once for the compact-secure re-assembly.
+    expect(mockAssembleRichSystemPrompt.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const firstMode = mockAssembleRichSystemPrompt.mock.calls[0][0].promptMode;
+    const lastMode = mockAssembleRichSystemPrompt.mock.calls.at(-1)![0].promptMode;
+    expect(firstMode).toBe("full");
+    expect(lastMode).toBe("compact-secure");
+    // A WARN names the degenerate fallback so an operator sees why the prompt shrank.
+    const fbCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).toLowerCase().includes("compact"),
+    );
+    expect(fbCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does NOT shrink the prompt when the full prompt fits the effective window (no regression)", async () => {
+    mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40)); // ~12 tok
+    const params = makeParams({
+      // Big window — the full prompt fits comfortably, so no fallback.
+      windowFitBudget: { effectiveWindow: 200_000, outputHeadroom: 768, messageFloorTokens: 2_048 },
+    });
+    await assembleExecutionPrompt(params);
+
+    // Exactly one assembly, in the resolved (full) mode — no compact re-assembly.
+    expect(mockAssembleRichSystemPrompt).toHaveBeenCalledTimes(1);
+    expect(mockAssembleRichSystemPrompt.mock.calls[0][0].promptMode).toBe("full");
+  });
+
+  it("does not re-assemble when no windowFitBudget is supplied (byte-identical to pre-fix)", async () => {
+    mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40));
+    const params = makeParams(); // no windowFitBudget
+    await assembleExecutionPrompt(params);
+    expect(mockAssembleRichSystemPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double-shrink a prompt already resolved to compact-secure (small-class, tiny window)", async () => {
+    // small class → compact-secure already. Even a tiny window must not trigger a
+    // SECOND compact-secure re-assembly (it's already the floor). Distinct agentId
+    // so this case's compact-secure WR-02 dedup never collides with other tests'
+    // shared wr02SenderTrustWarned state (the failing-otherwise interaction).
+    mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40));
+    const params = makeParams({
+      agentId: "double-shrink-agent",
+      modelProfile: { capabilityClass: "small" } as any,
+      windowFitBudget: { effectiveWindow: 10, outputHeadroom: 4, messageFloorTokens: 2 },
+    });
+    await assembleExecutionPrompt(params);
+    // Resolved mode is already compact-secure → assembled once, no re-assembly.
+    expect(mockAssembleRichSystemPrompt).toHaveBeenCalledTimes(1);
+    expect(mockAssembleRichSystemPrompt.mock.calls[0][0].promptMode).toBe("compact-secure");
+  });
+
+  // -----------------------------------------------------------------
   // 4. RAG retrieval via hybrid memory injector (Task 229)
   // -----------------------------------------------------------------
   it("routes recall output to the hybrid memory injector when memoryPort and rag.enabled are set", async () => {

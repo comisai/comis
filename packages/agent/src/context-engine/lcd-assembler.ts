@@ -73,10 +73,15 @@ import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
 import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
+import { computeOutputHeadroom } from "./output-headroom.js";
 import { summaryRefToMessage } from "./lcd-summary-render.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
-import { computeFreshTailCapChars, boundFreshTailMessages } from "./lcd-fresh-tail-bound.js";
+import {
+  computeFreshTailCapChars,
+  boundFreshTailMessages,
+  boundProtectedFreshTail,
+} from "./lcd-fresh-tail-bound.js";
 import type { ContextEngine, ContextEngineDeps } from "./types.js";
 
 /**
@@ -248,6 +253,15 @@ export function createLcdContextEngine(
       // EFF-02: clamp freshTailTurns to what the effective window can afford.
       // deps.modelProfile?.contextWindow is Infinity for frontier/mid — clamp never fires.
       const effectiveWindow = deps.modelProfile?.contextWindow ?? Infinity;
+      // ISSUE #1/#3b: the PROTECTED fresh tail ships UNCONDITIONALLY (the eviction cannot
+      // trim it), so on a tight window it is bounded to the RESIDUAL room
+      // (boundFreshTailTotalToResidual, below). The residual (= window − S − floor headroom
+      // − preamble) is computed JUST BEFORE the bound — AFTER `profile` is resolved — so it
+      // reads `profile.reasoningStyle`, the EXACT value the pre-flight uses (ISSUE #3b: a
+      // pre-resolution `deps.modelProfile` read could diverge from the pre-flight's `profile`
+      // and under-count the native reasoning reserve → overflow). The clamp here keeps only
+      // its original 30%-of-window upper bound (no residual input — a turn-count estimate is
+      // skewed by a single oversized message, which B-8 bounds anyway).
       const clampedFreshTailTurns = resolveClampedFreshTailTurns(
         effectiveWindow,
         config.freshTailTurns,
@@ -408,8 +422,9 @@ export function createLcdContextEngine(
       //       - Role-untrusted handling (T-129-14) is untouched: roles are never
       //         changed; only text inside an existing message shrinks.
       const freshTailCapChars = computeFreshTailCapChars(budget.availableHistoryTokens);
-      const { freshTail, boundedResults, boundedMessages, charsRemoved } =
-        boundFreshTailMessages(rawFreshTail, freshTailCapChars);
+      const bounded = boundFreshTailMessages(rawFreshTail, freshTailCapChars);
+      let freshTail = bounded.freshTail;
+      const { boundedResults, boundedMessages, charsRemoved } = bounded;
       if (boundedResults > 0 || boundedMessages > 0) {
         // Content-free DEBUG (AGENTS.md §2.2 / the lossless-store content-free rule):
         // counts only — NEVER the message text. Closes the B-13-class silent-path gap
@@ -429,19 +444,83 @@ export function createLcdContextEngine(
         );
       }
 
+      // ISSUE #1/#3/#3b/#3c: bound the PROTECTED fresh tail's TOTAL tokens to the residual
+      // (window − S − floor headroom − preamble). B-8 above bounds each oversized MESSAGE
+      // but not the SUM across turns; the protected tail ships UNCONDITIONALLY, so on a
+      // tight window it must be trimmed to fit or the pre-flight throws. boundProtectedFreshTail
+      // (lcd-fresh-tail-bound.ts) owns the residual math + the trim + the diagnostic — it
+      // reads the SAME `profile.reasoningStyle` the pre-flight uses (#3b: identical floor
+      // headroom, incl. the native reasoning reserve) and measures with the SAME factored
+      // estimator (#3: no fudge).
+      //
+      // ISSUE #3c (2026-06-22): pass budget.windowTokens — the CAPPED effective window the
+      // pre-flight throws against (computeTokenBudgetForProfile applies
+      // effectiveContextCap{Nano,Small}: min(rawContextWindow, cap)) — NOT the raw
+      // profile.contextWindow. The capabilityClass=nano pin gives gpt-5-nano a raw window of
+      // 16000, capped to 8192 ONLY on the pre-flight path; Fix C read the pre-cap 16000 →
+      // residual ~12865 (huge) → never trimmed the 5407 tail → the pre-flight (effective
+      // 8192) exhausted (live, the lcd-freshtail-bound DEBUG showed window=16000). Using
+      // budget.windowTokens makes Fix C's window IDENTICAL to the pre-flight's. (codex didn't
+      // hit this: its raw window IS 8192 == the cap → the two were already equal.) Frontier/mid:
+      // budget.windowTokens is the wide window → huge residual → no trim (practical no-op).
+      freshTail = boundProtectedFreshTail(freshTail, {
+        effectiveWindow: budget.windowTokens,
+        systemTokens: S,
+        reasoningStyle: (profile.reasoningStyle ?? "none") as "none" | "native",
+        minVisibleOutputTokens: deps.minVisibleOutputTokens,
+        freshTailPreambleTokens,
+        logger: deps.logger,
+        agentId: deps.agentId,
+        sessionKey: deps.sessionKey,
+      });
+
       // RETR-02/03/05 eviction seam (step 4 above). Frontier/mid (relevanceFirst falsy) take
       // the EXISTING recency call VERBATIM — same call, same args → referentially the
       // pre-patch AgentMessage[], BYTE-IDENTICAL (LOCKED #2; the arbiter does NOT run for
       // them). Relevance-first → the margin arbiter over the SAME availableHistoryTokens.
+      // ISSUE #1 (multi-turn nano, 2026-06-22): the history actually SHIPPED must be
+      // evicted against the SAME bound the pre-flight (below) throws on — not just
+      // the looser token-budget H. On a small window where S dominates, the budget's
+      // H = W−S−O−M−R−P plus the 8K-starvation add-back (≈4096 on an 8192 nano
+      // window) is LARGER than the pre-flight residual (window − outputHeadroom − S −
+      // freshTailPreamble ≈ 1900), so `budgeted` kept ~4096 of history while the
+      // pre-flight bound only tolerated ~1900 → the assembled prompt that SHIPS
+      // overflowed (and, before the rung-(a) fix, threw). Evicting under the TIGHTER
+      // of the two makes the shipped history and the pre-flight check agree, and caps
+      // accumulated multi-turn history to the residual room (the sliding window) —
+      // down to near-zero if S leaves no room, never an overflow. Frontier/mid: the
+      // wide window makes the pre-flight residual ≥ H, so min() picks H → byte-
+      // identical (LOCKED #2). Headroom is computed exactly as the pre-flight does
+      // (same reasoningStyle / thinkingLevel / minVisibleFloor) so the two cannot drift.
+      const evictThinkingLevel = deps.getThinkingLevel?.() ?? "medium";
+      const evictReasoningStyle = (profile.reasoningStyle ?? "none") as "none" | "native";
+      const evictOutputHeadroom = computeOutputHeadroom(
+        evictReasoningStyle,
+        (["off", "minimal", "low", "medium", "high", "xhigh"] as readonly string[]).includes(evictThinkingLevel)
+          ? (evictThinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh")
+          : "medium",
+        deps.minVisibleOutputTokens,
+      );
+      const preflightHistoryResidual = Math.max(
+        0,
+        budget.windowTokens - evictOutputHeadroom - S - freshTailPreambleTokens,
+      );
+      const shipHistoryBudget = Math.min(budget.availableHistoryTokens, preflightHistoryResidual);
       const budgeted: AgentMessage[] =
         deps.relevanceFirst === true
-          ? evictUnderArbiter(deps, evictable, budget.availableHistoryTokens, liveMessages, startMs).budgeted
-          : evictHistoryUnderBudget(evictable, budget.availableHistoryTokens);
+          ? evictUnderArbiter(deps, evictable, shipHistoryBudget, liveMessages, startMs).budgeted
+          : evictHistoryUnderBudget(evictable, shipHistoryBudget);
       const droppedCount = evictable.length - budgeted.length;
       deps.logger.debug(
         {
           step: "lcd-evict",
-          budgetTokens: budget.availableHistoryTokens,
+          // ISSUE #1 observability fix (2026-06-22): log the ACTUAL eviction budget
+          // (shipHistoryBudget = min(H, pre-flight residual)) the eviction ran under —
+          // NOT budget.availableHistoryTokens, which over-reports it on a small window
+          // (the loose H) and misled the live diagnosis. availableHistoryTokens is kept
+          // as a separate field so both are visible.
+          shipHistoryBudget,
+          availableHistoryTokens: budget.availableHistoryTokens,
           windowTokens: budget.windowTokens,
           systemTokens: S,
           freshTailPreambleTokens,

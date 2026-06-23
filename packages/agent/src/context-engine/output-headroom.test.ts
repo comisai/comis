@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeOutputHeadroom,
+  computeFloorOutputHeadroom,
   downshiftThinkingLevel,
 } from "./output-headroom.js";
 import { computeTokenBudgetForProfile } from "./budget-capacity-cap.js";
@@ -132,5 +133,34 @@ describe("computeTokenBudgetForProfile — frontier byte-identity characterizati
     };
     const budget = computeTokenBudgetForProfile(frontierProfile, 5_000);
     expect(budget.availableHistoryTokens).toBe(126_808);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISSUE #3b (2026-06-22): computeFloorOutputHeadroom — the SINGLE floor-headroom
+// source shared by the pre-flight bound and the fresh-tail residual. A native
+// model reserves the native "low" floor; under-counting it as the none floor is
+// the ~1024 gap that exhausted gpt-5-nano (live t6). The governor bottoms at "low"
+// for native / "off" for none (downshiftThinkingLevel), so the floor == those levels.
+// ---------------------------------------------------------------------------
+describe("computeFloorOutputHeadroom — the shared governor-floor reserve", () => {
+  it("native floor = native 'low' reserve (1024) + visible floor (768) = 1792", () => {
+    expect(computeFloorOutputHeadroom("native")).toBe(1_024 + 768);
+    // Identity with the explicit "low" call the governor bottoms out at.
+    expect(computeFloorOutputHeadroom("native")).toBe(computeOutputHeadroom("native", "low"));
+  });
+
+  it("none floor = 0 reserve + visible floor (768) = 768", () => {
+    expect(computeFloorOutputHeadroom("none")).toBe(768);
+    expect(computeFloorOutputHeadroom("none")).toBe(computeOutputHeadroom("none", "off"));
+  });
+
+  it("native reserves ~1024 MORE than none at the floor (the gap that under-counted the gpt-5-nano residual)", () => {
+    expect(computeFloorOutputHeadroom("native") - computeFloorOutputHeadroom("none")).toBe(1_024);
+  });
+
+  it("honors a custom visible-output floor for both styles", () => {
+    expect(computeFloorOutputHeadroom("native", 1_000)).toBe(1_024 + 1_000);
+    expect(computeFloorOutputHeadroom("none", 1_000)).toBe(1_000);
   });
 });

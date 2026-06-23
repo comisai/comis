@@ -350,6 +350,21 @@ Paired-device records, written when another Comis installation pairs with this o
 
 ---
 
+### `~/.comis-chanlive/<channel>.json` _(test-harness only, outside `~/.comis/`)_
+
+A **per-channel handle file** written by the [channel-emulation harness](/developer-guide/channel-emulation-harness) — the contributor test framework that drives Comis through the real channel adapter against an isolated, throwaway daemon. It lives in its **own** directory, `~/.comis-chanlive/` (a sibling of `~/.comis/`, **not** inside it), and is created the first time you run the harness rig (`tg up` or a `startRig` scenario). It is **not** part of a normal install — a daemon you run for real never writes it. The directory can be relocated with the `COMIS_CHANLIVE_DIR` env var (the harness points cross-process `tg` invocations at one throwaway dir this way).
+
+The handle records the rig's three endpoints (the emulator `/control/*` base, the rig-control base, and the gateway `/rpc` + `/health` URL), the **admin-scoped gateway token**, the fixed test chat id (`424242`), and the rig's throwaway `COMIS_DATA_DIR` / `memory.db` path — so the `chan`/`tg` CLI can discover-or-spawn a running rig. For a **detached** rig (`tg up --detached`, the cold-shell path) it also records the rig subprocess's **`pid`** and a real rig-control HTTP endpoint, so a separate-shell `tg down` / `tg restart` can drive (or reap) the surviving rig.
+
+<Warning>
+Because it carries the gateway token, the handle is written with mode `0o600` (owner-only) so the admin token cannot leak off-box. The token is a real admin-scoped credential for the throwaway rig's loopback gateway — treat the file like any other secret-bearing file. If you see a stale `~/.comis-chanlive/` after a harness run, it is safe to delete when no rig is running.
+</Warning>
+
+**Written by:** the channel-emulation harness rig (`test/live/`), on `tg up` / `startRig`.
+**Safe to delete?** Yes, when no harness rig is running. The next `tg up` re-creates it.
+
+---
+
 ### `dead-letters.jsonl`
 
 Append-only JSONL of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.). The delivery system replays these on provider recovery and expires entries after one hour. Only created when at least one announcement has been dead-lettered.

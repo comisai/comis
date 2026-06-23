@@ -641,6 +641,85 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.resolveSenderTrust("a1", "stranger")).toBe("external"); // default
   });
 
+  // -------------------------------------------------------------------------
+  // FLAG-2 (group reaction-spoof): defaultTrustLevel is the CONVERSATION
+  // PARTICIPANT's privilege, NOT a blanket grant to every unmapped group member.
+  // The participant is the inbound sender (RequestContext.userId, threaded onto
+  // OutboundTrajectoryEntry.participantId). An unmapped NON-participant group
+  // member must resolve to "external" (inert) so a bystander cannot spoof the
+  // reaction-learning signal by reacting to the bot's reply.
+  // -------------------------------------------------------------------------
+
+  it("FLAG-2: an unmapped reactor that IS the conversation participant inherits defaultTrustLevel", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    // reactor === participantId, unmapped → defaultTrustLevel ("known"), NOT external.
+    expect(built.deps.resolveSenderTrust("a1", "participant-u1", "participant-u1")).toBe("known");
+  });
+
+  it("FLAG-2: an unmapped reactor that is NOT the participant resolves to external (a group bystander cannot inherit defaultTrustLevel)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    // reactor !== participantId, unmapped → external (NOT the participant's defaultTrustLevel).
+    expect(built.deps.resolveSenderTrust("a1", "bystander-u2", "participant-u1")).toBe("external");
+  });
+
+  it("FLAG-2: an EXPLICITLY-mapped reactor keeps its mapped trust even when it is NOT the participant (the map is an intentional grant)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: { boss: "admin" }, defaultTrustLevel: "known" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    // A mapped reactor is an operator-intended grant — the participant gate never
+    // demotes it (it short-circuits before the participant comparison).
+    expect(built.deps.resolveSenderTrust("a1", "boss", "participant-u1")).toBe("admin");
+  });
+
+  it("FLAG-2 fail-safe: participantId undefined falls back to defaultTrustLevel for an unmapped reactor (legacy/unthreaded path keeps reaction-learning alive)", () => {
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    // No participant known (pre-threading / legacy capture) → preserve the CURRENT
+    // behavior (defaultTrustLevel), never silently demote everyone to external.
+    expect(built.deps.resolveSenderTrust("a1", "anyone", undefined)).toBe("known");
+  });
+
   it("the correction detector is UNDEFINED when no agent has correction.enabled (no LLM construction)", () => {
     const built = buildReactionWiringDeps(
       makeContainer({ agents: { a1: { learningOutcome: { enabled: true, correction: { enabled: false } } } } }),
@@ -742,5 +821,58 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     // 9-through-then-skip. Asserts the dedicated limiter's auditThreshold was lowered.
     expect(observe.mock.calls.length).toBeLessThanOrEqual(4);
     expect(observe.mock.calls.length).toBeGreaterThan(0); // the first few still land (the signal is real)
+  });
+
+  it("FLAG-2 end-to-end: a group BYSTANDER (unmapped, NOT the participant) reacting on the bot reply drives ZERO learning, while the PARTICIPANT's identical reaction IS observed", async () => {
+    // Drive the REAL resolveSenderTrust closure (built inside buildReactionWiringDeps
+    // off the agent's elevatedReply config) through the wired reaction handler. The
+    // outbound trajectory carries participantId = the inbound sender (RequestContext.
+    // userId). A bystander group member who is unmapped must NOT inherit
+    // defaultTrustLevel — they resolve to "external" → near-zero confidence → below
+    // the write floor → no observe, no ledger row (the spoof is inert). The genuine
+    // conversation participant, identically unmapped, keeps defaultTrustLevel.
+    const observe = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
+    const bus = new TypedEventBus();
+    const container = {
+      config: {
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            // No explicit map entry for either reactor — both are "unmapped".
+            // defaultTrustLevel is the PARTICIPANT's privilege, not a blanket grant.
+            elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
+          },
+        },
+        memory: { costFeatures: { enabled: true } },
+        providers: { entries: {} },
+      },
+      secretManager: { get: (): string | undefined => undefined },
+      eventBus: bus,
+      outcomeStore: { observe, resolve: vi.fn(), prune: vi.fn() },
+      logger: createMockLogger(),
+    } as never;
+    const built = buildReactionWiringDeps(container, createFakeClock(NOW), createFakeTimers(NOW));
+    // Bind the agent reply to its trajectory WITH the conversation participant
+    // (the inbound sender) recorded — exactly what the delivery binding now threads.
+    built.recordOutboundMessage!("msg-out-1", {
+      traceId: TRACE,
+      tenantId: TENANT,
+      agentId: "a1",
+      sessionId: "sess-1",
+      participantId: "participant-u1",
+    });
+    wireLearningReactions(built.deps);
+
+    // 1. A BYSTANDER (not the participant), unmapped → external → inert (no row).
+    bus.emit("channel:reaction_received", reactionPayload({ messageId: "msg-out-1", reactorId: "bystander-u2", emoji: "👍" }));
+    await flush();
+    expect(observe).not.toHaveBeenCalled();
+
+    // 2. The genuine PARTICIPANT, identically unmapped → defaultTrustLevel ("known")
+    //    → above the floor → observed. The legit signal still flows.
+    bus.emit("channel:reaction_received", reactionPayload({ messageId: "msg-out-1", reactorId: "participant-u1", emoji: "👍" }));
+    await flush();
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(observe.mock.calls[0]![0].senderTrust).toBe("known");
   });
 });

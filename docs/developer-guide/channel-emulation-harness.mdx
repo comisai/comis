@@ -1,0 +1,251 @@
+---
+title: "Channel-Emulation Harness"
+description: "Drive Comis end-to-end through the real channel adapter against an isolated, offline daemon — the test/live framework, the chan/tg CLI, and the dual-oracle workflow."
+icon: "flask-vial"
+---
+
+The **channel-emulation harness** (under `test/live/`) drives Comis end-to-end through the
+**real channel adapter** — the production Telegram adapter, unmodified — against an isolated,
+`$0`, fully offline daemon. It exists to exercise the surfaces the chat-API test path cannot
+reach: the delivery layer, inbound media routing, callbacks and edits, the adapter resilience
+fallbacks, group/forum addressing, and reactions as the Verified-Learning outcome signal.
+
+The integration relies on a single seam already present in the product — the channel adapter's
+`apiRoot` / `baseUrl` redirect — so the harness points the real adapter at an in-process
+emulator instead of the live Bot API. **No production code changes** are needed to run it; the
+framework, the emulator, the rig, and the `chan`/`tg` CLI all live under the test tree.
+
+<Note>
+This is a **developer / contributor** tool, not an operator feature. Nothing here ships in the
+published `comisai` package — the harness is forbidden from `bundledDependencies` and is never a
+`comis` CLI subcommand (see [SEC-02, below](#sec-02-the-harness-never-ships)). Everything it
+touches in `@comis/*` is consumed from each package's built `dist/`, so **run `pnpm build`
+first** — a stale `dist/` silently masks `src/` changes.
+</Note>
+
+## Anatomy
+
+```
+test/live/
+├── emulators/telegram/    # the Bot-API + control-API emulator (grammy-typed Update builders)
+├── harness/               # rig.ts (boot emulator + isolated daemon), rig-control.ts, chanlive-handle.ts
+├── bin/chan.ts            # the `chan` / `tg` standalone CLI (a thin tsx client)
+├── scenarios/channels/    # the end-to-end scenario suites (Stage-B + Stage-C)
+├── assert/                # the dual-oracle helpers (channel-trace, db-oracle, log-oracle)
+└── readiness.ts           # the per-category READINESS verdict generator (Cat K = Channels)
+```
+
+There are **two ways to drive the rig**: the in-process `startRig` / `buildRig` path (a `vitest`
+scenario boots the emulator and daemon inside the test process — the certified default), and the
+`chan`/`tg` CLI (a thin client that talks to a running rig over its recorded endpoints). The CLI
+also drives a **detached** rig **shell-only and unattended across separate processes** — see
+[Driving from a cold shell](#driving-from-a-cold-shell-shell-only-unattended).
+
+## The in-process path: `startRig` / `buildRig`
+
+The strongest, most deterministic path. A scenario boots the emulator + an isolated daemon
+in-process, drives it, and asserts against ground truth — no separate shell, no human step.
+
+```typescript
+import { buildRig } from "../../harness/rig.js";
+
+// Boots an in-process emulator + an isolated, throwaway daemon (its own COMIS_DATA_DIR).
+const rig = await buildRig({ channel: "telegram", model: "keyless" });
+// drive: inject an inbound message, wait for the reply, assert the dual oracle …
+await rig.cleanup(); // wipes the throwaway data dir
+```
+
+<Warning>
+**Always run `test/live/` suites with the live config.** A bare `pnpm vitest run test/live/...`
+resolves the **root** `vitest.config.ts`, whose `projects` exclude `test/live/` — so it collects
+**0 files and exits 0**, a silent false green. Every run (and every TDD RED) MUST pass
+`-c test/live/vitest.config.ts` and confirm the file actually RAN (`N passed` / `N failed`,
+never `0 files`):
+
+```bash
+pnpm vitest run -c test/live/vitest.config.ts test/live/scenarios/channels/telegram-groups.test.ts
+```
+</Warning>
+
+### Stage-B vs Stage-C
+
+Every scenario splits on `const isLive = !!process.env["COMIS_LIVE"]`:
+
+- **Stage-B** (always runs, in-process, **no model**) — the deterministic wiring proof. Drives
+  the real exported product function or the bare adapter against the emulator-built shape:
+  group/forum mapping, the General-Topic thread asymmetry, the four outbound fallbacks under
+  fault injection, error classification, Tier-3 platform actions, the forum-service negative.
+  CI-able, offline, needs no provider keys.
+- **Stage-C** (`describe.skipIf(!isLive)`, operator-gated) — the agent-content legs against a
+  **real keyless model** on `localhost:11434` (ollama). A full-daemon reply, the
+  Verified-Learning A-then-B reaction loop, a DAG pipeline, the injection-gauntlet sweep. An
+  operator runs these with `COMIS_LIVE=1`; offline they **skip, never fail**.
+
+```bash
+# Stage-C — operator only (needs a keyless model on localhost:11434):
+COMIS_LIVE=1 pnpm vitest run -c test/live/vitest.config.ts \
+  test/live/scenarios/channels/telegram-acceptance.test.ts
+```
+
+## The `chan` / `tg` CLI
+
+`chan` is the standalone shell/agent driver for the channel surface; **`tg` is the alias for
+`chan --channel telegram`**. It is a **thin tsx client** over the three surfaces a running rig
+records in its handle file: the emulator `/control/*` API (the drive verbs), the gateway
+`/rpc` over WebSocket (RPC passthrough + the curated `explain` / `fleet` + `trigger`), and the
+rig lifecycle. Invoke it through `tsx` (it is not a `comis` subcommand):
+
+```bash
+pnpm tsx test/live/bin/chan.ts --channel telegram status
+# or the alias form documented below as `tg <verb>`
+```
+
+The **load-bearing property is the no-false-success honest-exit contract**: every verb accepts
+`--json` and exits **non-zero, reason-coded** on a no-reply timeout, an RPC error, a dead
+handle, or malformed JSON. A no-reply is an honest empty body, **never a fabricated success**.
+
+### Verbs
+
+| Verb | What it does |
+|------|--------------|
+| `tg up` | Discover-or-spawn the rig; prints the handle (never the token). |
+| `tg down` | Tear down the rig (in-process scope — see the boundary below). |
+| `tg status` | Print the resolved endpoints + the fixed test chat id (no token). |
+| `tg restart` / `tg reset --deep` | Restart / clean-slate the rig (in-process scope). |
+| `tg reconfigure --set k=v [--restart]` | Rewrite the throwaway config (the model sweep) + restart (in-process scope). |
+| `tg send "<text>"` | Inject an inbound message to the fixed test chat. |
+| `tg react <emoji>` | Inject a reaction on the last bot reply (the learning signal). |
+| `tg tap` | Tap an inline-keyboard button (a callback query). |
+| `tg edit "<text>"` | Inject a message edit. |
+| `tg send-photo` / `tg send-voice` | Inject a media inbound. |
+| `tg last` / `tg history` | Read the emulator's outbound oracle (the wire bytes). |
+| `tg rpc <method> [json]` | A verbatim gateway JSON-RPC passthrough (over WS). |
+| `tg trigger cron <id>` / `heartbeat` / `wake` | Fire a scheduler RPC now (`cron.run` / `heartbeat.trigger` / `scheduler.wake`). |
+| `tg wait --event <type>` / `--tool <name>` | Block until a trajectory signal (bounded; never hangs). |
+| `tg explain` / `tg fleet` | The curated observability lenses for the rig's session. |
+| `tg mirror` / `tg traj` / `tg db` | The Comis-oracle reads: `delivery_mirror`, the trajectory, and `memory.db`. |
+
+Pass `--agent <id>` to target a non-default agent (for `tg trigger`), `--endpoint <url>` to
+target a specific rig, and `--json` for a machine-readable body.
+
+## The dual-oracle workflow
+
+The harness corroborates **every** assertion against **two independent oracles**, so a passing
+test cannot be a false green:
+
+1. **The channel oracle** — the emulator's recorded **wire bytes** (what the adapter actually
+   sent: `tg last` / `emu.outbound(chat)`).
+2. **The Comis oracle** — the daemon's own record of what it delivered: the `delivery_mirror`
+   row, the session **trajectory**, and the isolated `memory.db` (`tg mirror` / `tg traj` /
+   `tg db`).
+
+After the reply sync point (`waitForReply` in-process, or `tg wait` from the shell), the HARD
+cross-check asserts the channel oracle's text **equals** `delivery_mirror.text`
+(`assertChannelTrace`). A disagreement is a real bug, not flake.
+
+<Warning>
+Assert on **structure and state** (a reply arrived, a row exists, the reaction landed), never on
+exact model wording — content-sensitive checks use pass-at-k with N at least 3. Read
+`delivery_mirror` **only after** the reply sync point with a bounded poll: the after-delivery
+hook is fire-and-forget, so a synchronous read right after send races it.
+</Warning>
+
+## The webhook flag (AUTO-05)
+
+The emulator supports a **webhook-POST mode**: instead of queuing an inbound `Update` for the
+adapter's `getUpdates` long-poll, it POSTs the grammy `Update` to a configured `webhookUrl`
+carrying the `X-Telegram-Bot-Api-Secret-Token` header. The scenario asserts the harness-side
+secret-token gate (a wrong or absent token is rejected) plus the product's boot-time secret
+**format** validator and the polling-off switch (`shouldUseRunner` returns false when a
+`webhookUrl` is set).
+
+<Warning>
+**Honest gap — webhook ingestion is not wired in the product at HEAD.** Comis validates the
+webhook secret's *format* at boot and skips the polling runner when `webhookUrl` is set, but
+**no daemon route ingests a POSTed `Update` or checks `X-Telegram-Bot-Api-Secret-Token`** — the
+host process is expected to drive `bot.handleUpdate` externally, and nothing does. So at HEAD
+Comis is effectively **polling-only**: a webhook update does **not** reach the agent. The
+harness can POST the update and assert its own gate, but there is no product endpoint to
+receive it. Closing this is a deliberate, test-first product change (mount grammy's
+`webhookCallback` with the secret token) — until that ships, this doc makes **no** claim that a
+webhook update reaches the agent.
+</Warning>
+
+## Driving from a cold shell (shell-only, unattended)
+
+Two autonomy paths, both certified:
+
+The **in-process (`vitest`) path** is the certified default — a scenario boots, drives, and
+tears down the rig with zero human steps, exactly as the acceptance suites run. The `chan`/`tg`
+CLI's **drive** verbs (`send`, `react`, `rpc`, `trigger`, `wait`, `last`, `db`, …) work against
+a running rig from any shell.
+
+The **cold-shell (detached) path** drives the rig **shell-only, unattended, across separate
+processes** — start it with `tg up --detached`:
+
+```bash
+# Process 1 — spawn a DETACHED rig that OUTLIVES this command, then exit.
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram up --detached --json
+# Process 2 — a FRESH shell reaches the surviving rig.
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram send "hi" --json
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.fleet.health '{"since":1}' --json
+# Process 3 — tear it down (SIGTERMs the rig's process group; no leaked daemon).
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram down --json
+```
+
+`tg up --detached` spawns a **detached-subprocess rig** (`harness/rig-daemon.ts`) that survives
+the launching process. It runs its own emulator + a real Comis daemon (booted as a grandchild
+from `packages/daemon/dist/daemon.js`, the production entrypoint) + a loopback-only,
+token-owner-checked **rig-control HTTP surface**, and records a handle carrying a real **`pid`**
+and a dedicated `rigControlEndpoint` (≠ the gateway). A separate-shell `tg send` / `tg rpc`
+reaches the surviving rig via that handle. The cold-shell lifecycle verbs drive it for real:
+`tg down` SIGTERMs the rig's process group (the rig-daemon **and** its daemon grandchild) and
+confirms the process is gone before returning; `tg restart` / `tg reset --deep` /
+`tg reconfigure` POST the owner-checked rig-control endpoint. **Orphan reaping**: the rig
+self-terminates (reaping its daemon) when its handle file disappears, so a `tg down` or a
+stray `rm` of the handle never leaves a zombie daemon.
+
+<Note>
+**The "shell-only, unattended" claim is backed by a green cross-process acceptance test**
+(`scenarios/channels/telegram-cold-shell.test.ts`, Stage-C): a real `tg up --detached` (process 1)
+→ `tg status` / `tg rpc` / `tg send` (process 2) → `tg down` (process 3) sequence runs across
+**separate OS processes**, asserting the rig OUTLIVES `tg up`, a fresh process reaches it, and
+`tg down` leaves **no leaked daemon/port** (the pid is gone, the gateway port is free). A false
+success is a hard fail. Without `--detached`, `tg up` boots an in-process rig (the certified
+default) that the lifecycle verbs honestly reason-code as `lifecycle_in_process_only` /
+`down_not_owned_in_process` from a cold shell — never a faked cross-process success.
+</Note>
+
+## SEC-02: the harness never ships
+
+The harness is a contributor tool and is **forbidden from the published package**:
+
+- It must **never** enter `bundledDependencies`, and adds **no** `@comis/*` dependency edge.
+- `chan` / `tg` is a standalone `tsx` entry under `test/live/bin/`, **never** a `comis` CLI
+  subcommand — there is no `.command("chan")` / `.command("tg")` registration to forward-protect
+  those names.
+- There is no `package.json` under `test/live/**`.
+
+These invariants are re-verified by the architecture test suite on every run.
+
+## Related
+
+<CardGroup cols={2}>
+
+<Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
+  Build a channel adapter from the ChannelPort interface
+</Card>
+
+<Card title="Data Directory" icon="folder" href="/operations/data-directory">
+  The `~/.comis-chanlive/<channel>.json` handle file the rig writes
+</Card>
+
+<Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+  Port interfaces and the hexagonal pattern
+</Card>
+
+<Card title="CLI Reference" icon="terminal" href="/reference/cli">
+  The operator `comis` CLI (distinct from the harness `chan`/`tg`)
+</Card>
+
+</CardGroup>

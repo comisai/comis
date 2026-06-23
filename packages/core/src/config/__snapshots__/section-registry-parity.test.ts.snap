@@ -198,6 +198,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
+    "immutable": true,
+    "path": "agents.capabilityClass",
+    "type": "string"
+  },
+  {
     "default": {
       "failureThreshold": 5,
       "halfOpenTimeoutMs": 30000,
@@ -16187,6 +16192,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       },
       "type": "object"
     },
+    "capabilityClass": {
+      "enum": [
+        "frontier",
+        "mid",
+        "small",
+        "nano"
+      ],
+      "type": "string"
+    },
     "circuitBreaker": {
       "additionalProperties": false,
       "default": {
@@ -27258,6 +27272,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "string"
             },
             "type": "object"
+          },
+          "capabilityClass": {
+            "enum": [
+              "frontier",
+              "mid",
+              "small",
+              "nano"
+            ],
+            "type": "string"
           },
           "circuitBreaker": {
             "additionalProperties": false,

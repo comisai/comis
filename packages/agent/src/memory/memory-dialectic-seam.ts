@@ -36,7 +36,7 @@
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { buildDialecticPrompt, parseDialecticOutput, type DialecticParsed } from "./memory-dialectic-prompt.js";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
@@ -52,6 +52,12 @@ export interface DialecticSeamDeps {
   modelId: string;
   /** The API key VALUE (resolved by NAME at the daemon; never logged here). */
   apiKey: string;
+  /** FLAG-3 fix: optional async credential resolver. When set, `callModel` awaits it before
+   *  `completeSimple` and uses its return as the key. This routes OAuth providers (openai-codex)
+   *  through `resolveProviderApiKey` (which sets pi's runtime-override token) instead of the static
+   *  empty `apiKey` that made `memory.ask` abstain for OAuth deployments. Absent ⇒ the static `apiKey`
+   *  (keyless / built-in / test paths byte-identical). */
+  resolveCredential?: () => Promise<string>;
   /** Per-call LLM output bound (the cost axis; from `dialectic.maxOutputTokens`). */
   maxOutputTokens: number;
   /** Wall-clock reads — the per-message timestamp. NEVER a wall-clock global. */
@@ -162,6 +168,14 @@ export function createDialecticSeam(
     const controller = new AbortController();
     const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
     try {
+      // FLAG-3: resolve the credential per-call so OAuth providers (openai-codex) get their bearer
+      // (via resolveProviderApiKey's runtime-override) instead of the static empty apiKey that made
+      // memory.ask abstain. Falls back to the static apiKey (keyless / built-in / test).
+      const resolvedApiKey = deps.resolveCredential ? await deps.resolveCredential() : apiKey;
+      // FLAG-3 (verified live 2026-06-22): `temperatureOption` gates the deterministic temperature:0 on
+      // `model.reasoning` — reasoning models (gpt-5.x, o-series, Claude Opus 4.7+) reject `temperature`
+      // (HTTP 400 "Unsupported parameter: temperature" → empty response → abstain). Paired with
+      // resolveCredential (the OAuth bearer); BOTH are required — the temperature 400 fired before auth.
       const response = await completeSimple(
         model,
         {
@@ -169,8 +183,8 @@ export function createDialecticSeam(
           messages: [{ role: "user" as const, content: userText, timestamp: clock.now() }],
         },
         {
-          apiKey,
-          temperature: 0,
+          apiKey: resolvedApiKey,
+          ...temperatureOption(model, 0),
           maxTokens: maxOutputTokens,
           signal: controller.signal,
         },

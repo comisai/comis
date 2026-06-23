@@ -371,10 +371,12 @@ describe("WR-01: errorKind is 'resource' in WARN calls (not the invalid 'capacit
       eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
     });
 
-    // effectiveWindow=2000, assembledInputTokens=4000 > headroomBound at any level
-    // "low" headroom=1792, bound=2000-1792=208; 4000 > 208 → exhaustion
-    const evictable = makeBudgetItems(4, 1_000); // 4000 tokens total
-    expect(() => runPreflightFitCheck(deps, 2_000, evictable, 4, [], "native")).toThrow(ContextExhaustionError);
+    // effectiveWindow=2000. After the ISSUE #1 fix, EVICTABLE history is always
+    // trimmed (never throws), so exhaustion must come from the NON-evictable fresh
+    // tail: an oversized current user message (~4000 tok) that ships unconditionally
+    // and cannot be evicted. "low" headroom=1792, bound=208; 4000 > 208 → exhaustion.
+    const freshTail = [{ role: "user", content: "X".repeat(14_000) }]; // ~4000 tokens
+    expect(() => runPreflightFitCheck(deps, 2_000, [], 0, freshTail as never, "native")).toThrow(ContextExhaustionError);
 
     // The exhaustion WARN must have been called with errorKind "resource"
     const warnCalls = logger.warn.mock.calls;
@@ -577,12 +579,15 @@ describe("WR-02: minVisibleOutputTokens config value threads into headroom compu
       minVisibleOutputTokens: 1_200,
     } as Partial<ContextEngineDeps>);
 
-    // With custom 1200 floor: headroomBound = 5000 - 1200 = 3800
-    // assembledInputTokens = 4000 > 3800 → step (a) or governor or exhaustion fires
-    // For reasoningStyle="none": no down-shift, no security pins → exhaustion thrown
-    const evictable = makeBudgetItems(8, 500); // 4000 tokens
+    // With custom 1200 floor: headroomBound = 5000 - 1200 = 3800.
+    // The pressure is in the NON-evictable fresh tail (ISSUE #1: evictable history is
+    // always trimmed, so it can't discriminate the floor) — a ~4000-token current
+    // message. 4000 > 3800 (custom floor) → exhaustion; with the default 768 floor the
+    // bound would be 4232 and 4000 < 4232 → no throw. So a throw proves the 1200
+    // threaded into the headroom.
+    const freshTail = [{ role: "user", content: "X".repeat(14_000) }]; // ~4000 tokens
     try {
-      runPreflightFitCheck(deps, 5_000, evictable, 8, [], "none");
+      runPreflightFitCheck(deps, 5_000, [], 0, freshTail as never, "none");
     } catch (e) {
       onThrowCapture(e);
     }
@@ -638,17 +643,84 @@ describe("runPreflightFitCheck escalation ladder", () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
-  it("exhaustion throw for none style with extreme pressure", () => {
+  it("exhaustion throw for none style when the NON-evictable fresh tail exceeds the bound", () => {
     const deps = makeDeps({
       getThinkingLevel: () => "off",
       onAssembledInputTokens: vi.fn(),
       onEffectiveWindow: vi.fn(),
       logger: makeLogger() as unknown as ContextEngineDeps["logger"],
     });
-    // 4000 tokens, effectiveWindow=2000: headroomBound = 2000-768=1232
-    // no governor (style=none) → exhaustion
-    const evictable = makeBudgetItems(4, 1_000);
-    expect(() => runPreflightFitCheck(deps, 2_000, evictable, 4, [], "none")).toThrow(ContextExhaustionError);
+    // effectiveWindow=2000: headroomBound = 2000-768=1232. After the ISSUE #1 fix,
+    // evictable history is always trimmed to fit, so exhaustion requires NON-evictable
+    // pressure: a ~4000-token current user message in the fresh tail (ships
+    // unconditionally) → 4000 > 1232, no governor (none) → exhaustion.
+    const freshTail = [{ role: "user", content: "X".repeat(14_000) }];
+    expect(() => runPreflightFitCheck(deps, 2_000, [], 0, freshTail as never, "none")).toThrow(ContextExhaustionError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ISSUE #1 (multi-turn nano, 2026-06-22): the harder-eviction rung (a) was gated
+// on `if (deps.securityPinMarkers)`. On a fresh session with NO canary (markers
+// undefined — the common case), the block was SKIPPED, so accumulated EVICTABLE
+// history was never re-evicted against the real residual room (window − S −
+// headroom) and the turn threw ContextExhaustionError on history that COULD have
+// been evicted. Live repro: 4 tiny Q&As on nano 8192, systemTokens 5210; turns 3-4
+// exhausted (assembled 7980/8911 > bound 7424) because budgetedHistory grew past
+// the ~1900 room and the tighter re-eviction never ran without markers.
+//
+// The fix: the harder-eviction rung runs UNCONDITIONALLY. With no markers, EVERY
+// evictable item is non-pinned → evict ALL history under
+// `headroomBound − systemTokens − freshTailTokens`. Accumulated evictable history
+// must NEVER cause exhaustion — it evicts down to whatever fits (even near-zero →
+// a degraded-but-running stateless turn). Only the non-evictable fixed overhead
+// (S) or a single oversized step can still throw.
+// ---------------------------------------------------------------------------
+describe("ISSUE #1: harder-eviction runs WITHOUT securityPinMarkers (no exhaustion on evictable history)", () => {
+  it("nano 8192, S dominates, many small history items, NO markers → evicts history to fit, does NOT throw", () => {
+    const logger = makeLogger();
+    const onAssembled: number[] = [];
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      getSystemTokensEstimate: () => 5_210, // the live VPS nano systemTokens
+      onAssembledInputTokens: (t) => onAssembled.push(t),
+      onEffectiveWindow: vi.fn(),
+      eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+      logger: logger as unknown as ContextEngineDeps["logger"],
+      // securityPinMarkers DELIBERATELY undefined (fresh session, no canary).
+    });
+    // ~2700 tokens of accumulated history (9 turns × 300) — well past the residual
+    // room (8192 − 5210 − 768 headroom − 0 freshTail ≈ 2214). Each item is its own
+    // small step, so eviction CAN trim it to fit. A tiny current message in the tail.
+    const evictable = makeBudgetItems(9, 300);
+    const freshTail = [{ role: "user", content: "capital of France?" }];
+    // Pre-fix: harder-eviction skipped (no markers) → assembled 5210+2700 = 7910 >
+    // bound 7424 → throws. Post-fix: evicts history to ≤2214 → fits → no throw.
+    expect(() =>
+      runPreflightFitCheck(deps, 8_192, evictable, 9, freshTail as never, "none"),
+    ).not.toThrow();
+  });
+
+  it("nano 8192, S dominates, accumulated history GROWS across turns, NO markers → never throws (sliding window)", () => {
+    // Simulate turns 1..6 each adding ~900 tokens of history; assert NONE throw —
+    // the harder-eviction caps history to the residual room every turn.
+    const freshTail = [{ role: "user", content: "next question?" }];
+    for (let turn = 1; turn <= 6; turn++) {
+      const deps = makeDeps({
+        getThinkingLevel: () => "off",
+        getSystemTokensEstimate: () => 5_210,
+        onAssembledInputTokens: vi.fn(),
+        onEffectiveWindow: vi.fn(),
+        eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
+        logger: makeLogger() as unknown as ContextEngineDeps["logger"],
+      });
+      // Turn N has N×3 small history items (~900/turn) — unbounded growth.
+      const evictable = makeBudgetItems(turn * 3, 300);
+      expect(
+        () => runPreflightFitCheck(deps, 8_192, evictable, turn * 3, freshTail as never, "none"),
+        `turn ${turn} must not exhaust on evictable history`,
+      ).not.toThrow();
+    }
   });
 });
 
@@ -709,13 +781,51 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     expect(err.message).toContain("[cause: oversized_input]");
   });
 
-  it("a single oversized EARLIER message (kept history item) → cause oversized_history_message", () => {
-    // One kept history BudgetItem of 40000 tokens; the current input is tiny.
+  it("an EVICTABLE oversized EARLIER message is DROPPED, NOT thrown (ISSUE #1: evictable history never exhausts)", () => {
+    // One oversized history BudgetItem of 40000 tokens; the current input is tiny.
+    // PRE-ISSUE#1 this threw oversized_history_message. Now the item is evictable
+    // (no security pin) → the harder-eviction drops it → the tiny current message
+    // fits → NO throw. Accumulated evictable history must never cause exhaustion.
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 0,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
     const evictable: BudgetItem[] = [
       { msg: { role: "user" as const, content: "old oversized paste" }, tokens: 40_000 },
     ];
     const freshTail = [{ role: "user", content: "what is 2 + 2?" }];
-    const err = throwFrom(evictable, 1, freshTail);
+    expect(() =>
+      runPreflightFitCheck(deps, 32_000, evictable, 1, freshTail as never, "none"),
+    ).not.toThrow();
+  });
+
+  it("classifies a SECURITY-PINNED oversized EARLIER message (un-evictable) as cause oversized_history_message", () => {
+    // When the oversized history item is security-pinned (T-S4), it is EXCLUDED from
+    // the harder-eviction and cannot be dropped → it still overflows → throws with the
+    // oversized_history_message cause (the only path that reaches it post-ISSUE#1).
+    const canaryToken = "canary-xyz-pin";
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 0,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      securityPinMarkers: { canaryToken, contentDelimiter: "" },
+    });
+    const evictable: BudgetItem[] = [
+      // Content carries the canary → isSecurityRelevantMessage pins it → un-evictable.
+      { msg: { role: "user" as const, content: `pinned ${canaryToken} oversized` }, tokens: 40_000 },
+    ];
+    const freshTail = [{ role: "user", content: "what is 2 + 2?" }];
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, evictable, 1, freshTail as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
     expect(err.exhaustionCause).toBe("oversized_history_message");
     expect(err.message).toContain("[cause: oversized_history_message]");
   });
@@ -729,6 +839,136 @@ describe("Issue-6: exhaustion cause classification at the throw", () => {
     const err = throwFrom([], 0, freshTail);
     expect(err.exhaustionCause).toBe("aggregate");
     expect(err.message).not.toContain("[cause:");
+  });
+
+  it("ISSUE #2b: history fully evicted + the current user message DOMINATES the fresh-tail overflow → cause oversized_input (not aggregate)", () => {
+    // Live turn-14 residual shape (nano 8192, S=5210): history is fully evicted
+    // (keptCount=0, evictable=[]), and the protected fresh tail is the sole overflow —
+    // a large current user message (just UNDER the single-item bound 2214 so the
+    // existing oversized_input rule does NOT fire) plus a tiny prior assistant turn.
+    // Pre-fix this fell to "aggregate" (no single message > bound), giving the generic
+    // aggregate advice. But with finalHist=0 and the user's message being the dominant
+    // term, the remedy is "your message is too large for this model's window — reduce
+    // the prompt footprint" → oversized_input.
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      getSystemTokensEstimate: () => 5210,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      modelProfile: {
+        capabilityClass: "nano",
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        reasoningStyle: "none",
+      } as never,
+    });
+    // bound = 8192 − 768 = 7424; singleItemBound = 7424 − 5210 = 2214.
+    // user ~2000 tok (7000 chars / 3.5; < 2214 → NOT individually oversized) +
+    // assistant ~300 tok → sum ~2300 > 2214, yet no single message exceeds the bound.
+    const freshTail = [
+      { role: "assistant", content: "answer ".repeat(150) }, // ~300 tok
+      { role: "user", content: "word ".repeat(1400) }, // ~2000 tok, under the 2214 single bound
+    ];
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 8192, [], 0, freshTail as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("oversized_input");
+    expect(err.message).toContain("[cause: oversized_input]");
+  });
+
+  // ROOT-CAUSE fix (2026-06-22): when the NON-EVICTABLE fixed overhead (S =
+  // system prompt + tool schemas) ALONE exceeds the bound, the failure is the
+  // overhead, NOT the message. Pre-patch this mis-classified as `oversized_input`
+  // (singleItemBound = finalBound − systemTokens goes NEGATIVE, so any message
+  // token count > negative → "oversized_input"), producing the misleading "your
+  // message alone is larger than this model's context window" reply for a
+  // 10-token "What is the capital of France?". It must classify as the new
+  // `fixed_overhead_exceeds_window`.
+  it("systemTokens ALONE exceeds the bound with a tiny message → cause fixed_overhead_exceeds_window (not oversized_input)", () => {
+    // S = 31000 on a 32000 window, "none" → bound = 32000 − 768 = 31232. S(31000)
+    // already leaves room < the tiny message but the OVERFLOW is S, not the input.
+    // Pre-patch: singleItemBound = 31232 − 31000 = 232; the 4-token message
+    // (~16 chars → ceil(16/3.5)=5 tokens) is NOT > 232, so pre-patch would land on
+    // "aggregate"… so push S above the bound itself to force the misread:
+    // S = 31500 > bound 31232 → infeasible with ZERO message tokens.
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 31_500,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 32_000, [], 0, [{ role: "user", content: "hi" }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("fixed_overhead_exceeds_window");
+    expect(err.message).toContain("[cause: fixed_overhead_exceeds_window]");
+  });
+
+  it("a genuinely oversized CURRENT message (S fits, message does not) still classifies as oversized_input", () => {
+    // Guard against over-correction: when S is small and the message itself blows
+    // the bound, the cause must remain oversized_input (the message IS the problem).
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 1_000, // S fits comfortably
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      // 140K chars → 40000 tokens, the LAST user message; bound 31232; S only 1000.
+      runPreflightFitCheck(deps, 32_000, [], 0, [{ role: "user", content: "X".repeat(140_000) }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("oversized_input");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 2 (2026-06-22) — degenerate window (window < system prompt). The
+// window-aware tool-budget fit pass (enforceToolBudgetFit) defers ALL tools when
+// the residual budget is negative, but the FIXED S term (system prompt) is
+// non-evictable, so a window smaller than S itself is genuinely infeasible. The
+// failure must be HONEST: it throws fixed_overhead_exceeds_window (not
+// oversized_input), with ZERO history and ZERO tools, even for an empty/tiny
+// message. A minimal-system-prompt fallback was considered and DEFERRED (it would
+// be deeply invasive in the 1954-line prompt-assembly.ts with its session
+// snapshot + once-per-session systemPromptOverride); the honest throw + truthful
+// degraded reply is the chosen Part-2 behavior. See the dated TODO in
+// lcd-preflight.ts.
+// ---------------------------------------------------------------------------
+describe("Part 2: degenerate window smaller than the system prompt throws honestly", () => {
+  it("throws fixed_overhead_exceeds_window with zero tools, zero history, and an empty message", () => {
+    // 4K window, S = 5000 (system prompt alone > the whole window). "none" → bound
+    // = 4000 − 768 = 3232 < S. No history, freshTail is a single empty user msg.
+    const deps = makeDeps({
+      getThinkingLevel: () => "off",
+      getSystemTokensEstimate: () => 5_000,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+    });
+    let caught: unknown;
+    try {
+      runPreflightFitCheck(deps, 4_000, [], 0, [{ role: "user", content: "" }] as never, "none");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ContextExhaustionError);
+    const err = caught as ContextExhaustionError;
+    expect(err.exhaustionCause).toBe("fixed_overhead_exceeds_window");
+    // The honest message names the overhead, never the message.
+    expect(err.message).toContain("[cause: fixed_overhead_exceeds_window]");
   });
 });
 
@@ -846,22 +1086,26 @@ describe("contract: flat stored counts slip under the small cap where the SAME i
     expect(payload.verdict).toBe("fits");
   });
 
-  it("the SAME items lifted to factored counts cross headroomBound and the ladder engages (ContextExhaustionError)", () => {
-    // The same 25 stored rows, now carrying what the assembler max() would
-    // construct for Hebrew text whose flat count was 1000: ceil(1000 / factor)
-    // ≈ 1.8x. The factored sum (~45K) + the factored freshTail crosses the
-    // 31232 bound; with "none" style the ladder is the loud throw.
+  it("a Hebrew fresh-tail message whose FACTORED count crosses the bound engages the ladder (ContextExhaustionError) where its FLAT count would not (TOK-01)", () => {
+    // The fresh tail is NON-evictable, so it isolates the TOK-01 factoring contract
+    // from the ISSUE #1 history-eviction (evictable history is always trimmed). A big
+    // pure-Hebrew current message: flat chars/3.5 stays under the 31232 bound, but the
+    // FACTORED count (chars / (3.5 × scriptTokenFactor) ≈ 1.8×) crosses it → with
+    // "none" style the ladder is the loud throw. Proves the freshTail is factored.
+    const bigHe = "שלום עולם זה מבחן ארוך מאוד לבדיקת חלוקה ".repeat(1_500); // ~61.5K chars
+    const flat = Math.ceil(bigHe.length / CHARS_PER_TOKEN_RATIO); // ~17.6K — under 31232
+    const factored = Math.ceil(bigHe.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(bigHe)));
+    expect(flat).toBeLessThan(31_232); // flat would NOT exhaust
+    expect(factored).toBeGreaterThan(31_232); // factored DOES — the discriminating signal
     const deps = makeDeps({
       getThinkingLevel: () => "medium",
       onEffectiveWindow: vi.fn(),
       onAssembledInputTokens: vi.fn(),
       eventBus: { emit: vi.fn() } as unknown as ContextEngineDeps["eventBus"],
     });
-    const liftedTokens = Math.ceil(1_000 / scriptTokenFactor(HE)); // factored-live for a 1000-flat Hebrew row
-    const factoredItems = makeBudgetItems(25, liftedTokens);
-    const freshTail = [{ role: "user", content: HE }];
+    const freshTail = [{ role: "user", content: bigHe }];
     expect(() =>
-      runPreflightFitCheck(deps, 32_000, factoredItems, 25, freshTail as never, "none"),
+      runPreflightFitCheck(deps, 32_000, [], 0, freshTail as never, "none"),
     ).toThrow(ContextExhaustionError);
   });
 });

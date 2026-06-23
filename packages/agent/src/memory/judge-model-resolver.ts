@@ -74,3 +74,20 @@ export function resolveJudgeModel(
   };
   return model as Model<Api>;
 }
+
+/**
+ * Build the `temperature` slice of a `completeSimple` options object, honoring the model's capability.
+ *
+ * Reasoning models (gpt-5.x, o-series, Claude Opus 4.7+ — `model.reasoning === true`) REJECT the
+ * `temperature` request field. pi's openai/codex providers forward it unconditionally, so the upstream
+ * returns HTTP 400 "Unsupported parameter: temperature" → an EMPTY response → the seam silently degrades
+ * (memory.ask abstained on EVERY query for an openai-codex gpt-5.4 agent until this gate — verified live
+ * 2026-06-22). The daemon's executor path already gates on `!model.reasoning` (stream-wrappers/
+ * config-resolver); the memory/judge seams call `completeSimple` directly and must do the SAME. Spread it:
+ *   `{ apiKey, ...temperatureOption(model, 0.2), maxTokens, signal }`
+ * Non-reasoning models keep their deterministic temperature; reasoning models omit it (they ignore it
+ * upstream anyway). One source of truth so every seam stays correct across pi's broad provider/model set.
+ */
+export function temperatureOption(model: Model<Api>, value: number): { temperature?: number } {
+  return model.reasoning ? {} : { temperature: value };
+}

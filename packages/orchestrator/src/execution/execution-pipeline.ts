@@ -324,6 +324,11 @@ export async function executeAndDeliver(
         traceId: tryGetContext()?.traceId ?? randomUUID(),
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
+        // REACT-04 (206-04): stamp the resolved agentId onto the ALS for
+        // context-consistency with the main execute path (execution-execute.ts).
+        // This branch skips the SEND, but keeping agentId on the context avoids a
+        // divergent ALS shape between the two executor entry points.
+        agentId,
         sessionKey: formatSessionKey(sessionKey),
         startedAt: systemNowMs(),
         trustLevel,
@@ -488,10 +493,42 @@ export async function executeAndDeliver(
 
     // Stage 4: Chunking, coalescing, block pacing, delivery.
     // deliverExecutionResponse now returns a delivery receipt.
-    const deliveryReceipt = await deliverExecutionResponse(
-      deps, adapter, effectiveMsg, filterResult.text,
-      blockStreamCfg, activePacers, replyTo,
-      execResult.deliverySignal, typingLifecycle,
+    //
+    // REACT-04 (206-04): the delivery runs OUTSIDE the executor's
+    // runWithContext (executeLlm returns the text; delivery happens here), so it
+    // would otherwise inherit the channel-ingress ALS — which carries NO agentId
+    // (context.ts:38: "NOT known at channel ingress"). deliverToChannel reads
+    // ctx.agentId to (a) persist the REAL agent into the queue optionsJson and
+    // (b) bind the minted reply id → trajectory (the reaction-attribution
+    // keystone). Without agentId on THIS context, ctx.agentId is undefined → the
+    // reply's agentId is never recorded and both binding paths fail-closed → a
+    // reaction on the reply map-misses (the 206-03 Stage-C live finding). Wrap
+    // the delivery in a context that inherits the ingress traceId/tenant/session
+    // and ADDS the resolved agentId so the binding fires on the primary path.
+    const deliveryReceipt = await runWithContext(
+      {
+        traceId: tryGetContext()?.traceId ?? randomUUID(),
+        tenantId: sessionKey.tenantId,
+        userId: sessionKey.userId,
+        agentId,
+        sessionKey: formatSessionKey(sessionKey),
+        startedAt: systemNowMs(),
+        trustLevel,
+        channelType: adapter.channelType,
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: adapter.channelType,
+          channelId: effectiveMsg.channelId,
+          userId: sessionKey.userId,
+          threadId: effectiveMsg.metadata?.threadId as string | undefined,
+          tenantId: sessionKey.tenantId,
+        }),
+      },
+      () =>
+        deliverExecutionResponse(
+          deps, adapter, effectiveMsg, filterResult.text,
+          blockStreamCfg, activePacers, replyTo,
+          execResult.deliverySignal, typingLifecycle,
+        ),
     );
 
     // Emit message:sent with the REAL last-chunk message id from the receipt

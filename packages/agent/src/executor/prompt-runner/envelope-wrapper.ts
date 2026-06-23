@@ -26,6 +26,7 @@ import {
 } from "../../budget/turn-budget-tracker.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
+import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 import { buildGoalAnchorBlock } from "./goal-anchor.js";
 import { resolveScaffoldDefaults } from "../scaffold-defaults.js";
 
@@ -88,7 +89,23 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   // all-zero counts) yields text === "" which .filter(Boolean) drops
   // automatically.
   const capabilityIndexContext = capabilityIndexResult.text;
-  const fullDynamicPreamble = [dynamicPreamble, capabilityIndexContext, deferredContext]
+  // ISSUE #2 (2026-06-22): on a tight window where the system prompt dominates, the
+  // capability-index + deferred-tools context (tool-DISCOVERY scaffolding, NOT needed
+  // to answer the current message) can be the marginal overflow: the protected fresh
+  // tail = preamble + message ships UNCONDITIONALLY, so when S + (preamble + message) +
+  // floorHeadroom > window the pre-flight throws (live turn-14: 5210 + (888 + 1744) +
+  // 768 = 8610 > 8192; WITHOUT the preamble 5210 + 1744 + 768 = 7722 < 8192). Drop the
+  // heavy components FIRST — keep the tiny `dynamicPreamble` (date/channel/metadata) and
+  // the user's message — so the turn answers instead of exhausting. Only if the message
+  // ALONE still exceeds the residual is it a genuine oversized_input (the pre-flight then
+  // honest-degrades). Uses the CANONICAL S (deps.getSystemTokensEstimate — the same value
+  // the pre-flight throws on) so this decision can't drift from the assembler's.
+  const { capabilityIndexContext: keptCapabilityIndex, deferredContext: keptDeferred } =
+    dropHeavyPreambleIfTight(
+      { capabilityIndexContext, deferredContext, dynamicPreamble, messageText },
+      { modelProfile, config, getSystemTokensEstimate: deps.getSystemTokensEstimate, logger: deps.logger },
+    );
+  const fullDynamicPreamble = [dynamicPreamble, keptCapabilityIndex, keptDeferred]
     .filter(Boolean)
     .join("\n\n");
 
@@ -96,7 +113,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     messageText = `[System context]\n${fullDynamicPreamble}\n[End system context]\n\n${messageText}`;
   }
 
-  emitPreambleDebug(deps.logger, capabilityIndexResult, fullDynamicPreamble, deferredContext);
+  emitPreambleDebug(deps.logger, capabilityIndexResult, fullDynamicPreamble, keptDeferred);
 
   // Inject top-1 RAG memory inline, adjacent to user message
   // for maximum LLM attention. Placed AFTER [End system context] and
@@ -273,4 +290,96 @@ function emitPreambleDebug(
     },
     "Dynamic preamble assembled",
   );
+}
+
+/** Factored token estimate (TOK-01) matching the pre-flight's chars/(3.5×scriptFactor). */
+function factoredTokens(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(text)));
+}
+
+/**
+ * ISSUE #2 (2026-06-22): when the protected fresh tail (the dynamic preamble + the
+ * current message, which the assembler ships UNCONDITIONALLY) would not fit the
+ * window's residual room, DROP the heavy tool-DISCOVERY context — the capability index
+ * + the `<deferred-tools>` block — keeping only the tiny `dynamicPreamble`
+ * (date/channel/inbound metadata). That scaffolding helps the model FIND tools to call;
+ * it is not needed to ANSWER the current message, and on a tight window (system prompt
+ * dominating) it is the marginal overflow that exhausts an otherwise-fittable turn.
+ *
+ * Residual = window − S − floorHeadroom, where S is the CANONICAL system-tokens estimate
+ * the pre-flight throws on (passed via getSystemTokensEstimate) and floorHeadroom is the
+ * minimum output reserve after the thinking governor down-shifts all the way (native →
+ * "low", none → visible floor) — matching the assembler's fresh-tail residual so the two
+ * cannot disagree. The protected-tail footprint is the factored token estimate of
+ * `dynamicPreamble + capability/deferred + the envelope-wrapped message`.
+ *
+ * Conservative + bounded: only drops when over the residual, only the two heavy
+ * components, never the user's message or the date preamble. When even the message alone
+ * still exceeds the residual, dropping is still correct (it minimizes the overflow) and
+ * the pre-flight then honest-degrades as oversized_input. No S (frontier/mid wide window,
+ * or getSystemTokensEstimate absent) ⇒ skip entirely → byte-identical to pre-ISSUE#2.
+ */
+function dropHeavyPreambleIfTight(
+  parts: {
+    capabilityIndexContext: string;
+    deferredContext: string | undefined;
+    dynamicPreamble: string | undefined;
+    messageText: string;
+  },
+  ctx: {
+    modelProfile: RunPromptParams["modelProfile"];
+    config: RunPromptParams["config"];
+    getSystemTokensEstimate: (() => number) | undefined;
+    logger: ComisLogger;
+  },
+): { capabilityIndexContext: string; deferredContext: string | undefined } {
+  const kept = {
+    capabilityIndexContext: parts.capabilityIndexContext,
+    deferredContext: parts.deferredContext,
+  };
+  const window = ctx.modelProfile?.contextWindow;
+  const systemTokens = ctx.getSystemTokensEstimate?.();
+  // Need a finite window + a canonical S to size the residual; else leave untouched.
+  if (window === undefined || !isFinite(window) || systemTokens === undefined) return kept;
+
+  const reasoningStyle = (ctx.modelProfile?.reasoningStyle ?? "none") as "none" | "native";
+  const minVisibleFloor = (ctx.config as { contextEngine?: { budget?: { minVisibleOutputTokens?: number } } })
+    .contextEngine?.budget?.minVisibleOutputTokens;
+  const floorHeadroom = computeOutputHeadroom(
+    reasoningStyle,
+    reasoningStyle === "native" ? "low" : "off",
+    minVisibleFloor,
+  );
+  const residual = window - systemTokens - floorHeadroom;
+
+  // Footprint of the protected fresh tail with the FULL preamble baked in (matches what
+  // wrapEnvelope is about to compose + what the pre-flight will measure).
+  const heavy = [parts.capabilityIndexContext, parts.deferredContext].filter(Boolean).join("\n\n");
+  const fullPreamble = [parts.dynamicPreamble, parts.capabilityIndexContext, parts.deferredContext]
+    .filter(Boolean)
+    .join("\n\n");
+  const wrapped = fullPreamble
+    ? `[System context]\n${fullPreamble}\n[End system context]\n\n${parts.messageText}`
+    : parts.messageText;
+  const fullFootprint = factoredTokens(wrapped);
+  if (!heavy || fullFootprint <= residual) return kept; // fits (or nothing heavy) — no-op.
+
+  // Drop the heavy components; keep only the tiny dynamicPreamble + the message.
+  const droppedTokens = factoredTokens(heavy);
+  ctx.logger.warn(
+    {
+      step: "preamble-drop",
+      errorKind: "resource" as ErrorKind,
+      hint: "tight window: dropped capability-index + deferred-tools context so the message fits; reduce the system/tool footprint or use a larger-window model",
+      windowTokens: window,
+      systemTokens,
+      floorHeadroom,
+      residualTokens: residual,
+      fullFootprintTokens: fullFootprint,
+      droppedPreambleTokens: droppedTokens,
+    },
+    "dropped heavy preamble to fit a tight window",
+  );
+  return { capabilityIndexContext: "", deferredContext: undefined };
 }

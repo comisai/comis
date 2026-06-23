@@ -34,7 +34,7 @@ import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { resolveJudgeModel, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { parseLenientJson } from "./llm-json.js";
 
 /** Hard abort ceiling per LLM call (mirrors the userrep/reasoning seam LLM timeout). */
@@ -211,7 +211,7 @@ export function createUsefulnessJudgeSeam(
         },
         {
           apiKey,
-          temperature: 0.2,
+          ...temperatureOption(model, 0.2),
           maxTokens: maxOutputTokens,
           signal: controller.signal,
         },

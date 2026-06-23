@@ -22,7 +22,7 @@ import {
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
 import { formatSessionKey, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, applyToolBudgetFit, computeWindowFitBudget, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
@@ -256,6 +256,25 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     "Settings manager initialized",
   );
 
+  // 3b. Degenerate-window compact-prompt budget (2026-06-22 root-cause fix). The
+  // system prompt is NON-EVICTABLE; on a window smaller than the full prompt (an
+  // ~8K mid-class model whose ~10K prompt overflows even after every tool defers —
+  // compact-secure never fires for mid/frontier), the pre-flight would throw
+  // fixed_overhead_exceeds_window. The user's requirement is the agent NEVER
+  // context-exhausts, so assembleExecutionPrompt gets this budget and falls back to
+  // compact-secure when the full prompt can't fit. computeWindowFitBudget is the
+  // SINGLE source the prompt-fit fallback AND the tool-budget fit pass (below)
+  // share, so they can't diverge — its window is input-independent of systemTokens
+  // (== the step-7 budget window).
+  const fitWindowBudget = computeWindowFitBudget({
+    profile: modelProfileParam ?? FAIL_CLOSED_PROFILE,
+    thinkingLevel: _directives?.thinkingLevel ?? config.thinkingLevel,
+    minVisibleOutputTokens: config.contextEngine?.budget?.minVisibleOutputTokens,
+    effectiveContextCapSmall: config.contextEngine?.budget?.effectiveContextCapSmall,
+    effectiveContextCapNano: config.contextEngine?.budget?.effectiveContextCapNano,
+    windowProvenance,
+  });
+
   // -------------------------------------------------------------------
   // 4. Prompt assembly (extracted to prompt-assembly.ts)
   // -------------------------------------------------------------------
@@ -354,6 +373,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     // modelProfileParam is the validated ModelProfile resolved at pi-executor.ts:323;
     // it is undefined when the executor has no profile resolution (rare legacy path).
     modelProfile: modelProfileParam,
+    // Degenerate-window compact-prompt fallback budget (2026-06-22): when the full
+    // prompt can't fit this window, assembleExecutionPrompt falls back to
+    // compact-secure so the agent still runs instead of context-exhausting on its
+    // fixed overhead. Only engages in the genuinely-degenerate case (normal windows
+    // are byte-identical).
+    windowFitBudget: fitWindowBudget,
   });
 
   // -------------------------------------------------------------------
@@ -451,10 +476,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     }, "C3: preamble size exceeds profile cap");
   }
 
-  // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap for small/nano.
-  // B-1 deliberate: cachedSystemTokensEstimate and cachedFreshTailPreambleTokens were computed at ÷3.5
-  // in step 5 above ("System token estimate") — this is the intended over-reservation (conservative
-  // direction). DO NOT change.
+  // C1 (Phase 152): profile-aware budget — 8K-starvation fix + 256K-overfill cap +
+  // KNOB-02 provenance. windowTokens is input-independent of the systemTokens args.
   const profileBudget = computeTokenBudgetForProfile(
     modelProfile,
     cachedSystemTokensEstimate,
@@ -462,13 +485,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     -1,
     config.contextEngine?.budget?.effectiveContextCapSmall,
     config.contextEngine?.budget?.effectiveContextCapNano,
-    // KNOB-02: executor-reconcile provenance — when the Ollama-served window
-    // bound upstream, the budget reports the TRUE configured window as raw with
-    // windowCapSource "served". Absent ⇒ pre-KNOB-02 byte-identical.
     windowProvenance,
   );
-  // contextWindow: use profile-aware effective window (capped for small/nano) for BM25 re-rank budget
-  // control. For frontier/mid this is byte-identical to resolvedModel.contextWindow.
+  // contextWindow: the per-turn effective window the tool-budget fit pass uses.
+  // profileBudget.windowTokens === fitWindowBudget.effectiveWindow (step 3b) by
+  // construction — both are min(modelProfile.contextWindow, classCap) from the same
+  // profile, the SAME value the pre-flight throws on. (Window source was never the
+  // bug — the VPS under-defer was the auto-discovery stubs inflating the systemTokens
+  // estimate; fixed in toolDefOverheadChars. Window parity holds regardless.)
   const contextWindow = profileBudget.windowTokens;
 
   // Tool lifecycle management
@@ -604,6 +628,37 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     );
   }
 
+  // ROOT-CAUSE context-exhaustion guard (2026-06-22): applyToolDeferral defers
+  // by COUNT (activeToolCeiling / CORE_TOOLS heuristic) and never against a token
+  // budget — its `_contextWindow` arg is ignored. So on a small window a large
+  // system prompt + even a CORE_TOOLS-only active set can exceed effectiveWindow −
+  // headroom, making the pre-flight fit check (lcd-preflight.ts) throw
+  // ContextExhaustionError on EVERY turn — even a 10-token "What is the capital of
+  // France?". The codex `nano` classes (~16K effective window) hit this on every
+  // message. applyToolBudgetFit defers MORE active tools (lowest-priority first;
+  // CORE_TOOLS preferentially kept; discover_tools dropped only when nothing
+  // remains to discover) until the SHIPPING active-tool overhead fits the residual
+  // budget, refining deferralResult in place (incl. rebuilding discover_tools over
+  // the new deferred set). Dropped tools stay reachable via discover_tools (no
+  // capability loss for adequate windows). The fixed S term is non-evictable, so
+  // the degenerate window<S case still throws — but Part 2/3 make THAT honest
+  // (cause: fixed_overhead_exceeds_window), never "your message is too big". The
+  // headroom mirrors lcd-preflight.ts exactly (same reasoningStyle / thinkingLevel
+  // / minVisibleFloor) so the two passes agree. The headroom + floor + window are
+  // the SAME values computed once in step 3b (fitWindowBudget) — reused here so the
+  // prompt-fit and tool-fit passes can never diverge. contextWindow === the budget's
+  // effectiveWindow (windowTokens is input-independent of the systemTokens args).
+  applyToolBudgetFit(deferralResult, {
+    systemPromptText: promptResult.systemPrompt,
+    contextWindow,
+    outputHeadroom: fitWindowBudget.outputHeadroom,
+    messageFloorTokens: fitWindowBudget.messageFloorTokens,
+    recentlyUsedToolNames: recentlyUsedTools,
+    logger: deps.logger,
+    embeddingPort: deps.embeddingPort,
+    scoreConfig: config.skills?.toolDiscovery,
+  });
+
   mergedCustomTools = [...deferralResult.activeTools, ...deferralResult.discoveredTools];
   if (deferralResult.discoverTool) {
     mergedCustomTools.push(deferralResult.discoverTool);
@@ -726,9 +781,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deliveredGuides,
     capabilityClass,
     // SUMW-02: the per-turn budget window (min(reconciled contextWindow, class
-    // cap)) — windowTokens is input-independent of the systemTokens args, so
-    // this carries the same value every budget computation this turn reports.
-    budgetWindowTokens: profileBudget.windowTokens,
+    // cap)) — the single-sourced contextWindow (== fitWindowBudget.effectiveWindow),
+    // the same value the pre-flight throws on and every budget computation reports.
+    budgetWindowTokens: contextWindow,
     discoveryTracker,
     currentDiscoveryTracker,
     lifecycleDemotedNames,

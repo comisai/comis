@@ -88,6 +88,21 @@ export { validateSignalConnection } from "./signal/credential-validator.js";
 export type { SignalBotInfo } from "./signal/credential-validator.js";
 export { convertIrToSignalTextStyles } from "./signal/signal-format.js";
 export type { SignalTextStyle } from "./signal/signal-format.js";
+// Signal wire types — the adapter's OWN signal-cli envelope/attachment interface
+// (defined in ./signal/signal-client.ts). Surfaced on the public barrel TYPE-ONLY
+// for the v2.28 channel-emulation harness's CHAN2-01 I4 discipline: the Signal
+// emulator's payload builders (test/live/emulators/signal/signal-payloads.ts) must
+// import the adapter's OWN wire interface so an envelope shape drift is a COMPILE
+// error — and the test/live vitest alias maps `@comis/channels` to dist/index.js
+// (the barrel only), so the type is unreachable without this re-export. `export
+// type` is ERASED at build (it adds NO runtime export → SEC-02's no-`@comis/*`-
+// runtime-edge holds; the harness imports it type-only). The only consumers are
+// test/live/** + the channels index.test.ts barrel check — both excluded by the
+// public-export-consumers AST walker (it scans packages/*/src/** and skips
+// *.test.ts), so the matching PUBLIC_API_POLICY entry tracks them as documented
+// baseline orphans. Mirrors the TELEGRAM thread-context / classifyTelegramError
+// precedents. Shrink if a cross-package production consumer lands.
+export type { SignalEnvelope, SignalAttachment } from "./signal/signal-client.js";
 
 // LINE adapter
 export { createLineAdapter } from "./line/line-adapter.js";
@@ -307,6 +322,18 @@ export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
 // execution-pipeline.test.ts for cross-set equivalence assertion)
 export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 
+// Telegram thread-context builders — the General-Topic id=1 asymmetry. SEND
+// OMITS message_thread_id when the topic is the General topic (id=1, forum)
+// while TYPING INCLUDES it; a non-forum group ignores reply-chain thread ids.
+// Surfaced on the public barrel so this info-disclosure-relevant routing (never
+// leak the General topic id onto a reply) is assertable from the public API.
+export {
+  buildSendThreadParams,
+  buildTypingThreadParams,
+  resolveTelegramThreadContext,
+} from "./telegram/thread-context.js";
+export type { TelegramThreadScope, TelegramThreadContext } from "./telegram/thread-context.js";
+
 // Activity rendering strategies (§7.2). The daemon composition root
 // (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
 // `selectStrategy(caps, channelType)` from @comis/core, then constructs the
@@ -325,7 +352,7 @@ export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 export { createTestSink } from "./shared/strategies/test-sink.js";
 export { createEditPlaceRenderer } from "./shared/strategies/edit-place.js";
 export type { EditPlaceDeps } from "./shared/strategies/edit-place.js";
-export { createTelegramActivityRenderer } from "./telegram/telegram-activity.js";
+export { createTelegramActivityRenderer, classifyTelegramError } from "./telegram/telegram-activity.js";
 export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
 export { createSlackActivityRenderer } from "./slack/slack-activity.js";
 export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";

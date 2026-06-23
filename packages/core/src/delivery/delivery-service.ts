@@ -109,6 +109,30 @@ export interface DeliveryServiceDeps {
 
   /** Reply mode for this delivery (off/first/all). OPTIONAL — default: "first". */
   replyMode?: "off" | "first" | "all";
+
+  /**
+   * REACT-04 (Verified Learning, Phase 206-04): OPTIONAL outbound-message →
+   * trajectory binding for the DIRECT ack path. The recurring delivery-queue
+   * DRAIN (setup-delivery.ts:drainDeliveryQueue) already binds; but the PRIMARY
+   * inbound-reply path (setup-and-route → executeAndDeliver → execution-deliver
+   * → this `deliverToChannel`) sends via the direct ack (enqueue in_flight →
+   * adapter.sendMessage → ack) and previously NEVER bound the minted reply id →
+   * trajectory, so a reaction on a normal agent reply map-missed and never drove
+   * learning (the 206-03 Stage-C live finding). Threaded here so the direct ack
+   * binds the SAME (messageId → scope) the drain does. `undefined` when learning-
+   * outcome is disabled for every agent → the direct ack does ZERO extra work
+   * (byte-identity). The same callback instance feeds BOTH the drain and this
+   * path, and `ReactionTrajectoryMap.record` is idempotent by messageId, so a
+   * reply that traverses both (transient-nack → drain retry) cannot double-bind.
+   * Invoked ONLY on a successful ack with a non-null traceId AND a non-null
+   * agentId (the request ALS) — a null traceId/agentId (a pre-executor / non-
+   * agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the tenantId
+   * would corrupt cross-agent isolation (T-198-16), so we record nothing.
+   */
+  recordOutboundMessage?: (
+    messageId: string,
+    scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
+  ) => void;
 }
 
 /**
@@ -309,6 +333,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // to the REAL agent. `null` when absent (pre-executor paths) → the drain
         // fails closed and does not map the message.
         const agentId = ctx?.agentId ?? null;
+        // FLAG-2 (group reaction-spoof): the conversation PARTICIPANT — the inbound
+        // sender whose message triggered this reply — rides on the request ALS as
+        // ctx.userId (the inbound pipeline sets userId = sessionKey.userId =
+        // msg.senderId). It is threaded onto the reaction trajectory binding so an
+        // unmapped group BYSTANDER cannot inherit defaultTrustLevel and spoof
+        // reaction-learning; only the participant (or an explicitly-mapped reactor)
+        // drives it. `undefined` on pre-resolution paths → the trust resolution fails
+        // safe to the prior defaultTrustLevel-for-unmapped behavior.
+        const participantId = ctx?.userId;
 
         // Resolve delivery strategy
         const strategy: DeliveryStrategy = options?.strategy ?? "all-or-abort";
@@ -397,8 +430,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // never rides into the platform `adapter.sendMessage` call. Omitted
             // entirely when absent (pre-executor paths), keeping the drain
             // fail-closed rather than mis-attributing to the tenantId.
-            const persistedOptions: Record<string, unknown> =
-              agentId !== null ? { ...sendOpts, agentId } : { ...sendOpts };
+            //
+            // FLAG-2: likewise persist the conversation participant (ctx.userId) so
+            // a reaction resolved via the DRAIN path (not the direct ack) is also
+            // participant-aware — an unmapped group bystander stays inert. Omitted
+            // when absent; the drain then threads `undefined` → fail-safe.
+            const persistedOptions: Record<string, unknown> = { ...sendOpts };
+            if (agentId !== null) persistedOptions.agentId = agentId;
+            if (participantId !== undefined) persistedOptions.participantId = participantId;
             const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
               text: chunk,
               channelType: adapter.channelType,
@@ -476,6 +515,52 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 channelType: adapter.channelType,
                 messageId: result.value,
                 durationMs: systemNowMs() - chunkSendStart,
+                timestamp: systemNowMs(),
+              });
+            }
+
+            // --- REACT-04 (206-04): bind the minted reply id → trajectory on the
+            // DIRECT ack path (the primary inbound-reply path sends HERE, not via
+            // the drain). Mirrors the drain's binding (setup-delivery.ts:287) so a
+            // reaction on this outbound reply resolves its trajectory. Fail-closed:
+            // a null traceId OR a null agentId (a pre-executor / non-agent send) is
+            // a SKIP — mis-attributing a reaction to the tenantId would corrupt
+            // cross-agent isolation (T-198-16). The callback is undefined when
+            // learning-outcome is disabled for all agents → zero extra work
+            // (byte-identity). ReactionTrajectoryMap.record is idempotent by
+            // messageId, so a reply that ALSO traverses the drain (transient-nack →
+            // retry) cannot double-bind. Diagnosability (§2.7): the bind shares the
+            // SAME messageId as the delivery:acked event just emitted (so the
+            // attribution is reconstructable from the event trail), and the
+            // downstream observeReactionNonFatal INFO line is the proof it resolved
+            // — no raw daemon.log join needed.
+            if (deps.recordOutboundMessage !== undefined && traceId !== null && agentId !== null) {
+              deps.recordOutboundMessage(result.value, {
+                traceId,
+                tenantId,
+                agentId,
+                sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
+                // FLAG-2: bind the conversation participant (the inbound sender) so a
+                // reaction from an unmapped group bystander is inert (resolves to
+                // "external"); only the participant inherits defaultTrustLevel.
+                participantId,
+              });
+              // WR-01 (206-05): the bind above is otherwise SILENT. Emit a
+              // positive, counts-only `delivery:reply_bound` so the primary-path
+              // attribution is observable — a later reaction map-miss can then be
+              // told apart ("bind fired → entry evicted" vs "bind never fired")
+              // from the event trail in one obs call, with no daemon.log grep.
+              // Same fail-closed branch as the bind; shares `messageId` with the
+              // `delivery:acked` event just emitted. IDS/closed-scalars ONLY —
+              // never a body or a secret (§2.7 / SEC-01); `agentId` is the REAL
+              // agent (never the tenantId). Only on the learning-enabled path
+              // (recordOutboundMessage defined) → byte-identity when disabled.
+              deps.eventBus?.emit("delivery:reply_bound", {
+                messageId: result.value,
+                channelId,
+                channelType: adapter.channelType,
+                traceId,
+                agentId,
                 timestamp: systemNowMs(),
               });
             }

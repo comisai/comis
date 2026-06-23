@@ -56,8 +56,12 @@ export function buildCtxConfig(opts: {
     );
   }
 
-  // Patch contextThreshold under agents.default (NOT contextWindow — that is
-  // a provider-model-level key and will fail schema validation if placed here).
+  // Patch contextThreshold UNDER contextEngine — it is a ContextEngineConfigSchema key
+  // (schema-agent-context.ts:255, attached at schema-agent-runtime.ts:371
+  // `contextEngine: ContextEngineConfigSchema`), NOT a top-level agents.default key. The prior
+  // version injected it at agents.default top-level → CTX-02/05 Stage-C "Bootstrap failed: Config
+  // validation failed: agents.default: Unrecognized key contextThreshold" (rig-test path bug found
+  // 2026-06-22). It must nest alongside contextEngine.version (6-space indent).
   if (opts.contextThreshold !== undefined) {
     if (/contextThreshold:\s*[\d.]+/.test(content)) {
       content = content.replace(
@@ -65,9 +69,10 @@ export function buildCtxConfig(opts: {
         `contextThreshold: ${opts.contextThreshold}`,
       );
     } else {
+      // Inject directly under the contextEngine version line (6-space, inside contextEngine).
       content = content.replace(
-        /(agents:\s*\n\s*default:[\s\S]*?)(\n[^\s])/,
-        `$1\n    contextThreshold: ${opts.contextThreshold}$2`,
+        /(\n\s*contextEngine:\s*\n\s*version:\s*\S+)/,
+        `$1\n      contextThreshold: ${opts.contextThreshold}`,
       );
     }
   }

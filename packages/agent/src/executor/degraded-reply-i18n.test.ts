@@ -69,6 +69,11 @@ const EN_MATRIX: ReadonlyArray<{
   // extra coverage: no-cause + frontier (no knob), traceId only
   { cause: undefined, capabilityClass: "frontier", traceId: "tid-3" },
   { cause: "oversized_history_message", capabilityClass: undefined, traceId: undefined },
+  // 2026-06-22 root-cause fix: fixed_overhead_exceeds_window, both with a cap
+  // knob (small) and without (frontier — no class cap), so the snapshots pin the
+  // fixed-overhead advice in every language.
+  { cause: "fixed_overhead_exceeds_window", capabilityClass: "small", traceId: "tid-4" },
+  { cause: "fixed_overhead_exceeds_window", capabilityClass: undefined, traceId: undefined },
 ];
 
 describe("degraded-reply-i18n — en selectors are byte-identical to the live builders (I1)", () => {
@@ -205,15 +210,42 @@ describe("degraded-reply-i18n — cap-knob x cause variants mirror the live nest
       expect(history).not.toBe(dflt);
     });
 
-    it(`${lang}: the three causes produce three DISTINCT replies`, () => {
+    it(`${lang}: the four causes produce four DISTINCT replies`, () => {
       const replies = new Set([
         selectContextExhaustedReply(lang, { cause: "oversized_input" }),
         selectContextExhaustedReply(lang, { cause: "oversized_history_message" }),
+        selectContextExhaustedReply(lang, { cause: "fixed_overhead_exceeds_window" }),
         selectContextExhaustedReply(lang, { cause: "aggregate" }),
       ]);
-      expect(replies.size).toBe(3);
+      expect(replies.size).toBe(4);
     });
   }
+
+  // 2026-06-22 root-cause fix: the fixed-overhead reply must NOT tell the user to
+  // shorten/split their message — message size is irrelevant when the system
+  // prompt + tools alone overflow. It must point at the window / tools / a larger
+  // model. en assertions (the single source; other languages snapshot-pinned).
+  it("en: the fixed_overhead reply blames the overhead, never the message, and advises the window/tools/larger model", () => {
+    const withKnob = selectContextExhaustedReply("en", {
+      capabilityClass: "small",
+      cause: "fixed_overhead_exceeds_window",
+    });
+    const noKnob = selectContextExhaustedReply("en", {
+      cause: "fixed_overhead_exceeds_window",
+    });
+    // The lead names the fixed overhead and explicitly says message size is moot.
+    expect(withKnob).toContain("fixed overhead");
+    expect(withKnob).toContain("system prompt");
+    // It must NOT carry the oversized-message advice.
+    expect(withKnob).not.toContain("shorter message");
+    expect(withKnob).not.toContain("split it");
+    expect(withKnob).not.toContain("narrowing the ask");
+    expect(noKnob).not.toContain("narrowing the ask");
+    // The remedy points at the model's context window / tools / a larger model.
+    expect(withKnob).toContain("context window");
+    expect(withKnob).toContain("contextEngine.budget.effectiveContextCapSmall");
+    expect(noKnob).toContain("larger context window");
+  });
 });
 
 describe("degraded-reply-i18n — fallback contract (unknown language maps to English, never throws)", () => {

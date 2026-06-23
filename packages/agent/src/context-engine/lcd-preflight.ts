@@ -13,10 +13,26 @@
  *
  * Separated from lcd-assembler.ts to keep that file ≤ 820 lines.
  *
+ * Root-cause context-exhaustion guard (2026-06-22): the NON-EVICTABLE fixed
+ * overhead S (system prompt + tool schemas) is the dominant term on small
+ * windows. The window-aware tool-budget fit pass (executor-tool-assembly.ts
+ * `enforceToolBudgetFit`) defers tools so S fits BEFORE this pre-flight runs,
+ * which keeps a `nano`-class model (~16K window) from throwing on every turn. The
+ * only residual infeasible case is window < system-prompt-alone — genuinely
+ * unusable. This pass throws `fixed_overhead_exceeds_window` there (honest), and
+ * the degraded reply names the window / tool footprint / a larger model — never
+ * the misleading "your message is too big".
+ *
+ * TODO(2026-Q3): a minimal-system-prompt fallback (drop verbose bootstrap/tooling
+ * guidance, keep identity + essential behavior) would let the agent still reply
+ * on a window < full-prompt. Deferred: it is deeply invasive in the 1954-line
+ * prompt-assembly.ts (per-session bootstrap snapshot + once-per-session
+ * systemPromptOverride). Tracked against the codex nano-window context-exhaustion
+ * incident. Until then the degenerate case fails honestly (above).
+ *
  * @module
  */
 
-import { scriptTokenFactor } from "@comis/core";
 import { computeOutputHeadroom, downshiftThinkingLevel } from "./output-headroom.js";
 import {
   ContextExhaustionError,
@@ -25,7 +41,7 @@ import {
 } from "./errors.js";
 import { isSecurityRelevantMessage } from "./security-context-pinner.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
-import { CHARS_PER_TOKEN_RATIO } from "./constants.js";
+import { factoredMessageTokens } from "./factored-message-tokens.js";
 import type { ContextEngineDeps, ContextWindowCapInfo } from "./types.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
@@ -87,17 +103,16 @@ export function runPreflightFitCheck(
   const keptStart = Math.max(0, evictable.length - keptCount);
   const budgetedTokens = evictable.slice(keptStart).reduce((s, b) => s + b.tokens, 0);
 
-  // Estimate fresh tail token count from char lengths (CHARS_PER_TOKEN_RATIO heuristic).
-  // IN-01 fix: count chars from both string and array (multi-part/tool-result) content.
-  // TOK-01 (Phase 179): the divisor is modulated by scriptTokenFactor over the
-  // message's OWN extracted text (dense scripts carry ~2-3× tokens per char; ASCII
-  // factor 1.0 → byte-identical). messageTextChars delegates to messageText, so the
-  // counted length and the factor input can never diverge.
-  // Per-message counts are kept (not just the sum) so the Issue-6 cause classifier
-  // below can tell a single-oversized-message failure from an aggregate overflow.
-  const freshTailMsgTokens = freshTail.map((m) =>
-    Math.ceil(messageTextChars(m) / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(messageText(m)))),
-  );
+  // Estimate fresh tail token count via the shared factored per-message estimator
+  // (factored-message-tokens.ts): ceil(chars / (CHARS_PER_TOKEN_RATIO × scriptTokenFactor))
+  // over each message's OWN extracted text (string + array multi-part/tool-result content,
+  // IN-01; dense scripts carry ~2-3× tokens/char, ASCII factor 1.0 → the bare 3.5:1 form, TOK-01).
+  // Per-message counts are kept (not just the sum) so the Issue-6 cause classifier below
+  // can tell a single-oversized-message failure from an aggregate overflow.
+  // ISSUE #3: factoredMessageTokens is the SINGLE shared estimator — boundFreshTailTotalToResidual
+  // uses the SAME function, so the fresh-tail BOUND and this MEASURE can never diverge
+  // (no estimator gap → no fudge factor needed in the bound).
+  const freshTailMsgTokens = freshTail.map((m) => factoredMessageTokens(m));
   const freshTailTokens = freshTailMsgTokens.reduce((s, t) => s + t, 0);
   // OF-01 (v2.19): count the FULL SDK prompt, not just history+freshTail. The
   // dominant term is the system prompt + tool schemas (S = getSystemTokensEstimate)
@@ -142,27 +157,43 @@ export function runPreflightFitCheck(
   };
 
   if (assembledInputTokens > headroomBound) {
-    // (a) Evict harder with security-pinned messages excluded (T-S4).
+    // (a) Evict harder against the room that ACTUALLY remains after the
+    // non-evictable S (system+tools) and the unconditionally-shipped fresh tail.
+    //
+    // ISSUE #1 (multi-turn nano, 2026-06-22): this rung MUST run UNCONDITIONALLY.
+    // It was previously gated on `if (deps.securityPinMarkers)`, so on a fresh
+    // session with no canary (markers undefined — the common case) the harder
+    // eviction was SKIPPED entirely: the looser history-budget eviction from the
+    // assembler (H = W−S−O−M−R−P + the 8K-starvation add-back ≈ 4096 on an 8192
+    // nano window) leaked through, assembled stayed > the bound, and the turn threw
+    // on EVICTABLE history that could have been trimmed. Accumulated evictable
+    // history must NEVER cause exhaustion — it evicts down to whatever fits (even
+    // to near-zero → a degraded-but-running stateless turn). Security-pinned
+    // messages (T-S4) are still excluded from the harder pass when markers exist;
+    // with no markers, NO item is pinned (pinnedItems = [], pinnedTokens = 0) and
+    // ALL evictable history is trimmed under the tighter budget.
     const markers = deps.securityPinMarkers;
-    if (markers) {
-      const pinnedItems = evictable.filter((item) =>
-        isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
-      );
-      const nonPinnedItems = evictable.filter((item) =>
-        !isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
-      );
-      const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
-      // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
-      // budget so history is evicted against the room that ACTUALLY remains.
-      const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
-      const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
-      // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
-      // were kept (newest keptNonPinned items from nonPinnedItems).
-      const keptNonPinned = hardEvictedMsgs.length;
-      const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
-      const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
-      assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
-    }
+    const pinnedItems = markers
+      ? evictable.filter((item) =>
+          isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
+        )
+      : [];
+    const nonPinnedItems = markers
+      ? evictable.filter((item) =>
+          !isSecurityRelevantMessage(item.msg as { content?: unknown; role?: string }, markers),
+        )
+      : evictable;
+    const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
+    // OF-01: S (system+tools) is non-evictable — reserve it in the harder-eviction
+    // budget so history is evicted against the room that ACTUALLY remains.
+    const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
+    const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
+    // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
+    // were kept (newest keptNonPinned items from nonPinnedItems).
+    const keptNonPinned = hardEvictedMsgs.length;
+    const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
+    const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
+    assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
 
     // (c) Down-shift thinking level if reasoningStyle === "native" and still over headroomBound.
     if (assembledInputTokens > headroomBound && reasoningStyle === "native") {
@@ -210,15 +241,42 @@ export function runPreflightFitCheck(
       // (the LAST user message in the fresh tail — "shorten your message" is
       // actionable) from an earlier message (only a session reset helps).
       // Everything else is the historical aggregate overflow.
+      //
+      // ROOT-CAUSE fix (2026-06-22): the FIXED overhead S (system prompt + tool
+      // schemas) is NON-EVICTABLE. When S alone exceeds the bound, the turn is
+      // infeasible regardless of history/thinking/message — so this must be
+      // classified FIRST, before the message/history branches. Pre-fix this fell
+      // through to oversized_input because `singleItemBound = finalBound − S`
+      // goes NEGATIVE (any message token count > a negative number), producing
+      // the misleading "your message alone is larger than this model's context
+      // window" reply for a 10-token "What is the capital of France?". The remedy
+      // is the WINDOW or the agent's tool/prompt footprint — never the message.
       const singleItemBound = finalBound - systemTokens;
       const lastUserIdx = findLastUserIndex(freshTail);
+      // ISSUE #2b (2026-06-22): when history is FULLY evicted (keptCount==0 and nothing
+      // evictable remains — Fix C did its job) and the protected fresh tail is the SOLE
+      // overflow, "aggregate" misleads: the remedy is to shrink the user's input, not to
+      // reset a (now-empty) conversation. Reclassify as oversized_input when the LAST
+      // user message DOMINATES the fresh-tail tokens (> half) — distinguishing "one large
+      // current message (+ a tiny recent turn)" from a genuine many-comparable-messages
+      // aggregate (the live turn-14 residual after the preamble drop: a ~2000-tok message
+      // just under the single-item bound + a small prior turn). The dominance test keeps
+      // the existing aggregate case (5 comparable messages, each ~20% of the sum) intact.
+      const lastUserTokens = lastUserIdx >= 0 ? (freshTailMsgTokens[lastUserIdx] ?? 0) : 0;
+      const historyFullyGone = keptCount === 0 && evictable.length === 0;
+      const freshTailDominatedByInput =
+        historyFullyGone && freshTailTokens > 0 && lastUserTokens * 2 > freshTailTokens;
       const cause: ContextExhaustionCause =
-        lastUserIdx >= 0 && (freshTailMsgTokens[lastUserIdx] ?? 0) > singleItemBound
-          ? "oversized_input"
-          : freshTailMsgTokens.some((t) => t > singleItemBound) ||
-              evictable.some((b) => b.tokens > singleItemBound)
-            ? "oversized_history_message"
-            : "aggregate";
+        systemTokens > finalBound
+          ? "fixed_overhead_exceeds_window"
+          : lastUserIdx >= 0 && lastUserTokens > singleItemBound
+            ? "oversized_input"
+            : freshTailMsgTokens.some((t) => t > singleItemBound) ||
+                evictable.some((b) => b.tokens > singleItemBound)
+              ? "oversized_history_message"
+              : freshTailDominatedByInput
+                ? "oversized_input"
+                : "aggregate";
       deps.logger.warn(
         {
           step: "lcd-pre-flight",
@@ -229,6 +287,11 @@ export function runPreflightFitCheck(
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
           assembledInputTokens,
+          systemTokens,
+          freshTailTokens,
+          budgetedHistoryTokens: budgetedTokens,
+          finalHistoryTokens: assembledInputTokens - systemTokens - freshTailTokens,
+          evictableCount: evictable.length,
           effectiveWindow,
           exhaustionCause: cause,
           ...(capInfo !== undefined && {
@@ -256,35 +319,6 @@ export function runPreflightFitCheck(
   emitBudgetComputed(governorFired ? "downshifted" : "fits", originalAssembledInputTokens, outputHeadroom);
 
   return originalAssembledInputTokens;
-}
-
-/** The exact text of one message that the fresh-tail estimate counts: string
- *  content, or the text/content fields of array blocks (the IN-01 multi-part/
- *  tool-result shape). Per object block the fallback chain is `text ?? content`
- *  — mirroring the historical `b.text?.length ?? b.content?.length ?? 0`
- *  exactly (NOT text+content summed). TOK-01: this concatenation feeds
- *  scriptTokenFactor so the factor is computed over precisely the chars whose
- *  length is divided. */
-function messageText(m: AgentMessage): string {
-  const content = (m as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  let out = "";
-  for (const block of content) {
-    if (typeof block === "string") {
-      out += block;
-    } else if (block !== null && typeof block === "object") {
-      const b = block as { text?: string; content?: string };
-      out += b.text ?? b.content ?? "";
-    }
-  }
-  return out;
-}
-
-/** Total text chars of one message — delegates to messageText so the counted
- *  length and the TOK-01 factor input can NEVER diverge (identity by construction). */
-function messageTextChars(m: AgentMessage): number {
-  return messageText(m).length;
 }
 
 /** Index of the LAST user-role message in the fresh tail (the current input), or -1. */
