@@ -584,8 +584,14 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
       const rootRunId =
         parsedKey !== undefined ? deps.resolveRootRunId?.(parsedKey) : undefined;
-      // Emit only with a real agent origin, a real cap, AND a resolvable root.
-      const shouldAudit = isCapGated && agentOrigin !== undefined && rootRunId !== undefined;
+      // WR-02: gate the durable AUDIT-02 trail on a real cap + agent origin ONLY —
+      // a gated decision is a security fact regardless of tree-root resolution.
+      // emitCapabilityAudit emits `audit:event` unconditionally and SUPPRESSES the
+      // `capability:audited` tree producer when rootRunId is absent (an unplaceable
+      // node), so a missing _callerSessionKey no longer silently drops the security
+      // row — only the tree node. rootRunId is honestly absent in-process when
+      // unresolvable (never fabricated, G1).
+      const shouldAudit = isCapGated && agentOrigin !== undefined;
 
       try {
         const result = await handler(params);
@@ -595,7 +601,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             capability: classification,
             method,
             ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
-            rootRunId,
+            ...(rootRunId !== undefined ? { rootRunId } : {}),
             // leaseId honestly ABSENT in-process (G1) — never fabricated.
             decision: "allow",
           });
@@ -610,7 +616,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             capability: classification,
             method,
             ...(callerSessionKey !== undefined ? { runId: callerSessionKey } : {}),
-            rootRunId,
+            ...(rootRunId !== undefined ? { rootRunId } : {}),
             decision: "deny",
           });
         }

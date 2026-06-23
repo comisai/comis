@@ -962,6 +962,34 @@ describe("createRpcDispatch", () => {
     expect(treeDeny).toHaveLength(1);
   });
 
+  it("AUDIT-02 (WR-02): a gated in-process call with NO resolvable root still emits the durable audit:event security row — only the capability:audited tree producer needs a root", async () => {
+    const { deps, auditEvents, capAudited } = makeAuditDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // Agent-origin + cap-gated, but NO _callerSessionKey → no resolvable rootRunId
+    // (the tree-correlation path has a gap). The durable AUDIT-02 trail must NOT
+    // be coupled to that gap — a gated decision is a security fact regardless.
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:message"],
+      }),
+    ).resolves.toBeDefined();
+
+    // The durable security trail STILL fires (a gated decision was made).
+    const audits = auditEvents();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.kind).toBe("audit");
+    const md = audits[0]!.metadata as Record<string, unknown>;
+    expect(md.decision).toBe("allow");
+    expect(md.capability).toBe("orch:message");
+    // rootRunId honestly ABSENT on the row (no resolvable root) — never fabricated.
+    expect("rootRunId" in md).toBe(false);
+    // The tree producer is correctly SUPPRESSED — a node with no root is unplaceable.
+    expect(capAudited()).toHaveLength(0);
+  });
+
   it("AUDIT-01 (content-hygiene): the in-process audit metadata carries NO args/params/body/path/secret — only {capability, method, runId, rootRunId, decision}", async () => {
     const { deps, auditEvents, capAudited } = makeAuditDeps();
     const { createRpcDispatch } = await import("./rpc-dispatch.js");

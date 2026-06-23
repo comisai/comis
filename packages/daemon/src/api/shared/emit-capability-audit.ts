@@ -63,8 +63,13 @@ export interface CapabilityAuditRecord {
   readonly method: string;
   /** ≈ the sessionKey/traceId of the call. Absent when neither is available. */
   readonly runId?: string;
-  /** The tree-stable root (the real lease's rootRunId, or the synthetic in-process root). */
-  readonly rootRunId: string;
+  /**
+   * The tree-stable root (the real lease's rootRunId, or the synthetic in-process
+   * root). Optional (WR-02): a gated decision with no resolvable root is still a
+   * durable security fact and emits `audit:event`; only the `capability:audited`
+   * TREE producer (which needs a placeable root) is suppressed when this is absent.
+   */
+  readonly rootRunId?: string;
   /** The real lease id (socket). ABSENT in-process — NEVER fabricated (G1). */
   readonly leaseId?: string;
   /** The parent lease id (socket, when present) — the spawn-tree parent edge. */
@@ -91,8 +96,10 @@ export function emitCapabilityAudit(
   const timestamp = systemNowMs();
   const tenantId = deps.container.config.tenantId ?? "default";
 
-  // 1. The durable AUDIT-02 trail. The per-cap tuple rides the content-free
-  //    `metadata` free-map (NO leaseId in-process — present only when known).
+  // 1. The durable AUDIT-02 trail — ALWAYS emitted for a gated decision (WR-02:
+  //    the security trail is NOT coupled to tree-root resolution). The per-cap
+  //    tuple rides the content-free `metadata` free-map; optional ids (incl.
+  //    rootRunId) are present only when known (honest absence in-process).
   deps.container.eventBus.emit("audit:event", {
     timestamp,
     agentId: record.agentId,
@@ -107,26 +114,30 @@ export function emitCapabilityAudit(
       // Optional ids — included only when present (honest absence in-process).
       ...(record.tool !== undefined ? { tool: record.tool } : {}),
       ...(record.runId !== undefined ? { runId: record.runId } : {}),
-      rootRunId: record.rootRunId,
+      ...(record.rootRunId !== undefined ? { rootRunId: record.rootRunId } : {}),
       ...(record.leaseId !== undefined ? { leaseId: record.leaseId } : {}),
       ...(record.parentLeaseId !== undefined ? { parentLeaseId: record.parentLeaseId } : {}),
       decision: record.decision,
     },
   });
 
-  // 2. The TREE record (the spawn-tree's per-node producer). The translator
-  //    (translate-orchestration-payload.ts) strips the envelope; this carries
-  //    the typed content-free tuple.
-  deps.container.eventBus.emit("capability:audited", {
-    timestamp,
-    agentId: record.agentId,
-    capability: record.capability,
-    ...(record.tool !== undefined ? { tool: record.tool } : {}),
-    method: record.method,
-    decision: record.decision,
-    ...(record.runId !== undefined ? { runId: record.runId } : {}),
-    rootRunId: record.rootRunId,
-    ...(record.leaseId !== undefined ? { leaseId: record.leaseId } : {}),
-    ...(record.parentLeaseId !== undefined ? { parentLeaseId: record.parentLeaseId } : {}),
-  });
+  // 2. The TREE record (the spawn-tree's per-node producer) — emitted ONLY with a
+  //    resolvable root (WR-02): a node with no root is unplaceable in the tree,
+  //    and `capability:audited.rootRunId` is a required string. The translator
+  //    (translate-orchestration-payload.ts) strips the envelope; this carries the
+  //    typed content-free tuple.
+  if (record.rootRunId !== undefined) {
+    deps.container.eventBus.emit("capability:audited", {
+      timestamp,
+      agentId: record.agentId,
+      capability: record.capability,
+      ...(record.tool !== undefined ? { tool: record.tool } : {}),
+      method: record.method,
+      decision: record.decision,
+      ...(record.runId !== undefined ? { runId: record.runId } : {}),
+      rootRunId: record.rootRunId,
+      ...(record.leaseId !== undefined ? { leaseId: record.leaseId } : {}),
+      ...(record.parentLeaseId !== undefined ? { parentLeaseId: record.parentLeaseId } : {}),
+    });
+  }
 }
