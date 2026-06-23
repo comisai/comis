@@ -195,3 +195,195 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint (A
     }
   });
 });
+
+describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD path (CR-01)", () => {
+  // CR-01 (BLOCKER): a validated cap-socket lease dispatching a DIRECT cap-gated
+  // method (NOT tool.invoke — e.g. message.send/session.spawn/graph.execute) was
+  // structurally UNAUDITED: handleCapCall's direct branch injected _agentId but
+  // no _callerSessionKey, so the dispatch-closure audit was unreachable and
+  // handleCapCall emitted nothing. A sub-agent spawning a grandchild / authoring
+  // a graph/cron / sending an outward message over the socket produced NEITHER
+  // the durable audit:event NOR the capability:audited tree record — breaking
+  // AUDIT-01 + TREE-01/02 for exactly the case that matters most. These assert
+  // the direct branch now emits BOTH events with the FULL lease tuple, allow AND
+  // deny, content-free.
+  it("an ALLOWED direct message.send emits audit:event + capability:audited with the FULL lease tuple (decision=allow, leaseId/rootRunId/parentLeaseId, method=message.send, cap=orch:message)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const { bearer, leaseId } = leaseManager.mintLease({
+      agentId: "agent-sock",
+      caps: ["orch:message"], // in-audience for message.send (orch:message)
+      budgetRef: "budget-1",
+      sessionKey: "tenant-sock:user-1:chan-1",
+      rootRunId: "run-root-1",
+      parentLeaseId: "lease-parent-9",
+    });
+
+    const rpcCall = vi.fn(async () => ({ delivered: true }));
+    const cap = makeAuditCapture();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      container: cap.container,
+    } as never);
+
+    await endpoint.handleCapCall(bearer, "message.send", {
+      channelId: "chan-1",
+      text: "hi",
+    });
+
+    // The call dispatched through the sink (the audit does not block dispatch).
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+
+    // audit:event — durable trail, full metadata tuple INCLUDING leaseId.
+    const audits = cap.audit();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.kind).toBe("audit");
+    expect(audits[0]!.outcome).toBe("success");
+    const md = audits[0]!.metadata as Record<string, unknown>;
+    expect(md.decision).toBe("allow");
+    expect(md.capability).toBe("orch:message");
+    expect(md.method).toBe("message.send");
+    expect(md.leaseId).toBe(leaseId);
+    expect(md.rootRunId).toBe("run-root-1");
+    // A direct method has no inner tool — `tool` is honestly ABSENT.
+    expect(md.tool).toBeUndefined();
+
+    // capability:audited — the trajectory record, carrying the parent edge.
+    const tree = cap.tree();
+    expect(tree).toHaveLength(1);
+    expect(tree[0]!.decision).toBe("allow");
+    expect(tree[0]!.capability).toBe("orch:message");
+    expect(tree[0]!.method).toBe("message.send");
+    expect(tree[0]!.leaseId).toBe(leaseId);
+    expect(tree[0]!.parentLeaseId).toBe("lease-parent-9");
+    expect(tree[0]!.rootRunId).toBe("run-root-1");
+    expect(tree[0]!.agentId).toBe("agent-sock");
+    expect(tree[0]!.tool).toBeUndefined();
+  });
+
+  it("a DENIED direct session.spawn (the per-handler requireCapability throws CapabilityDeniedError downstream of the sink) emits decision=deny / kind=capability_denied with the lease tuple", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const { bearer, leaseId } = leaseManager.mintLease({
+      agentId: "agent-sock",
+      caps: ["orch:spawn"], // in-audience for session.spawn → validate passes
+      budgetRef: "budget-1",
+      sessionKey: "tenant-sock:user-1:chan-1",
+      rootRunId: "run-root-1",
+    });
+
+    // The sink's per-handler requireCapability denies (a cap-not-held downstream
+    // of the lease audience) — the realistic direct-method cap-deny WITH a real
+    // lease in scope. The endpoint must record it as an audited deny.
+    const { CapabilityDeniedError } = await import("@comis/core");
+    const rpcCall = vi.fn(async () => {
+      throw new CapabilityDeniedError("orch:spawn");
+    });
+    const cap = makeAuditCapture();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      container: cap.container,
+    } as never);
+
+    await expect(
+      endpoint.handleCapCall(bearer, "session.spawn", { agentId: "child" }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+
+    const denyAudits = cap
+      .audit()
+      .filter((a) => (a.metadata as Record<string, unknown>)?.decision === "deny");
+    expect(denyAudits).toHaveLength(1);
+    expect(denyAudits[0]!.kind).toBe("capability_denied");
+    expect(denyAudits[0]!.outcome).toBe("denied");
+    const md = denyAudits[0]!.metadata as Record<string, unknown>;
+    expect(md.capability).toBe("orch:spawn");
+    expect(md.method).toBe("session.spawn");
+    expect(md.leaseId).toBe(leaseId);
+    expect(md.rootRunId).toBe("run-root-1");
+
+    const treeDeny = cap.tree().filter((a) => a.decision === "deny");
+    expect(treeDeny).toHaveLength(1);
+    expect(treeDeny[0]!.leaseId).toBe(leaseId);
+    expect(treeDeny[0]!.method).toBe("session.spawn");
+  });
+
+  it("an ALLOWED direct cron.add (the cron branch) emits audit:event + capability:audited with the lease tuple (decision=allow, method=cron.add, cap=orch:cron)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const { bearer, leaseId } = leaseManager.mintLease({
+      agentId: "agent-sock",
+      caps: ["orch:cron"], // in-audience for cron.add (orch:cron)
+      budgetRef: "budget-1",
+      sessionKey: "tenant-sock:user-1:chan-1",
+      rootRunId: "run-root-1",
+    });
+
+    const rpcCall = vi.fn(async () => ({ jobId: "job-1" }));
+    const cap = makeAuditCapture();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      container: cap.container,
+    } as never);
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "* * * * *" });
+
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+
+    const audits = cap.audit();
+    expect(audits).toHaveLength(1);
+    const md = audits[0]!.metadata as Record<string, unknown>;
+    expect(md.decision).toBe("allow");
+    expect(md.capability).toBe("orch:cron");
+    expect(md.method).toBe("cron.add");
+    expect(md.leaseId).toBe(leaseId);
+    expect(md.rootRunId).toBe("run-root-1");
+
+    const tree = cap.tree();
+    expect(tree).toHaveLength(1);
+    expect(tree[0]!.decision).toBe("allow");
+    expect(tree[0]!.capability).toBe("orch:cron");
+    expect(tree[0]!.method).toBe("cron.add");
+    expect(tree[0]!.leaseId).toBe(leaseId);
+  });
+
+  it("content-hygiene: the direct-method socket emit carries the method NAME only — never the params", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const { bearer } = leaseManager.mintLease({
+      agentId: "agent-sock",
+      caps: ["orch:message"],
+      budgetRef: "budget-1",
+      sessionKey: "tenant-sock:user-1:chan-1",
+      rootRunId: "run-root-1",
+    });
+
+    const rpcCall = vi.fn(async () => ({ delivered: true }));
+    const cap = makeAuditCapture();
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      container: cap.container,
+    } as never);
+
+    await endpoint.handleCapCall(bearer, "message.send", {
+      channelId: "chan-1",
+      text: "PLANTED-MESSAGE-BODY",
+      bearer: "should-never-be-here",
+      apiKey: "sk-PLANTED-SECRET",
+    });
+
+    const auditJson = JSON.stringify(cap.audit()[0]);
+    const treeJson = JSON.stringify(cap.tree()[0]);
+    for (const blob of [auditJson, treeJson]) {
+      expect(blob).not.toContain("PLANTED-MESSAGE-BODY");
+      expect(blob).not.toContain("sk-PLANTED-SECRET");
+      // The method NAME is present; no param values are.
+      expect(blob).toContain("message.send");
+      expect(blob).not.toContain("channelId");
+      expect(blob).not.toContain("\"text\"");
+    }
+  });
+});

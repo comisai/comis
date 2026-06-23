@@ -68,6 +68,7 @@ import {
   stripInternalFields,
   TOOL_CAPABILITY_MAP,
   TOOL_ROUTE_MAP,
+  HANDLER_CAPABILITY_MAP,
   requireCapability,
   CapabilityDeniedError,
   type ResolvedAutonomy,
@@ -78,8 +79,9 @@ import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 // AUDIT-01 (Phase 215): the per-cap audit emitter — the socket chokepoint has
 // the REAL lease, so it emits the FULL tuple (leaseId + parentLeaseId present)
-// for an allowed AND a denied tool.invoke. Reuses the shared helper (no
-// asymmetry vs the in-process leg, which omits leaseId — G1).
+// for an allowed AND a denied tool.invoke (handleToolInvoke) + direct cap-gated
+// method (dispatchAudited, CR-01). Reuses the shared helper (no asymmetry vs the
+// in-process leg, which omits leaseId — G1).
 import { emitCapabilityAudit, type EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 
 /**
@@ -446,6 +448,59 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     return result;
   }
 
+  /**
+   * AUDIT-01 (215, CR-01): dispatch a DIRECT cap-gated method (the cron + final
+   * direct branches of `handleCapCall`) THROUGH the sink while emitting the
+   * per-cap audit at THIS socket chokepoint, mirroring `handleToolInvoke`. These
+   * branches previously injected `_agentId` but no `_callerSessionKey`, so the
+   * in-process dispatch-closure audit was structurally unreachable and a socket
+   * session.spawn / graph.execute / cron mutation / message.send / skills mutation
+   * produced NEITHER the durable `audit:event` NOR the `capability:audited` tree
+   * record — the spawn-tree silently missed its key edges. The socket path has the
+   * real lease, so it emits the FULL tuple (leaseId + parentLeaseId). Allow AND deny: a
+   * `CapabilityDeniedError` from the per-handler `requireCapability` (downstream
+   * of the sink) is recorded as a `deny` then rethrown unchanged (fail-closed);
+   * other errors rethrow unaudited (no authorization decision reached). Content-
+   * free: ids/caps/method/decision ONLY (a direct method has no inner tool, so
+   * `tool` is absent). `capability` is `HANDLER_CAPABILITY_MAP[method]` — a non-
+   * undefined `orch:*` cap here because the lease `validate` already required it
+   * (RFC 8707); when absent it dispatches unaudited (the admin deny-by-origin
+   * audit, when applicable, fires at the sink's `assertNotAgentOrigin`).
+   */
+  async function dispatchAudited(
+    method: string,
+    callParams: Record<string, unknown>,
+    lease: LeaseInfo,
+  ): Promise<unknown> {
+    const capability = HANDLER_CAPABILITY_MAP[method as keyof typeof HANDLER_CAPABILITY_MAP];
+    const isCapGated =
+      typeof capability === "string" && capability !== "ungated" && capability !== "deny-by-origin";
+    // No real capability decision to audit (or no container wired) → plain dispatch.
+    if (!isCapGated || deps.container === undefined) {
+      return rpcCall(method, callParams);
+    }
+    const auditDeps = { container: deps.container };
+    const tuple = {
+      agentId: lease.agentId,
+      capability,
+      method,
+      runId: lease.sessionKey,
+      rootRunId: lease.rootRunId,
+      leaseId: lease.leaseId,
+      ...(lease.parentLeaseId !== undefined ? { parentLeaseId: lease.parentLeaseId } : {}),
+    } as const;
+    try {
+      const result = await rpcCall(method, callParams);
+      emitCapabilityAudit(auditDeps, { ...tuple, decision: "allow" });
+      return result;
+    } catch (err) {
+      // A cap-not-held denial (per-handler requireCapability, downstream) is an audited
+      // deny with the FULL lease tuple; non-cap errors rethrow unaudited (fail-closed).
+      if (err instanceof CapabilityDeniedError) emitCapabilityAudit(auditDeps, { ...tuple, decision: "deny" });
+      throw err;
+    }
+  }
+
   async function handleCapCall(
     bearer: string,
     method: string,
@@ -553,13 +608,18 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         );
         throw new CapabilityDeniedError("orch:cron");
       }
-      return rpcCall(method, {
-        ...stripInternalFields(params),
-        // FORCE the lease's identity on BOTH fields (cron-handlers.ts reads both).
-        agentId: lease.agentId,
-        _agentId: lease.agentId,
-        _capabilities: lease.caps,
-      });
+      // AUDIT-01 (CR-01): via dispatchAudited so the socket cron mutation emits the per-cap audit (previously unaudited — no _callerSessionKey).
+      return dispatchAudited(
+        method,
+        {
+          ...stripInternalFields(params),
+          // FORCE the lease's identity on BOTH fields (cron-handlers.ts reads both).
+          agentId: lease.agentId,
+          _agentId: lease.agentId,
+          _capabilities: lease.caps,
+        },
+        lease,
+      );
     }
 
     // ORIGIN-02 at the socket boundary (CR-01): the wire `params` are FULLY
@@ -580,12 +640,20 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // _agentId (Pitfall 2): makes assertNotAgentOrigin fire for admin methods.
     // _capabilities: makes each handler's requireCapability fire (no second gate
     // here — the endpoint passes the lease caps through verbatim and lets the
-    // shipped per-handler gate decide).
-    return rpcCall(method, {
-      ...stripInternalFields(params),
-      _agentId: lease.agentId,
-      _capabilities: lease.caps,
-    });
+    // shipped per-handler gate decide). AUDIT-01 (CR-01): via dispatchAudited so a
+    // direct cap-gated method (session.spawn/graph.execute/message.send/skills.*)
+    // emits the per-cap audit (allow + a downstream cap-deny) with the real lease
+    // tuple — previously unaudited (no _callerSessionKey → dispatch-closure audit
+    // unreachable), silently dropping the spawn-tree's most important edges.
+    return dispatchAudited(
+      method,
+      {
+        ...stripInternalFields(params),
+        _agentId: lease.agentId,
+        _capabilities: lease.caps,
+      },
+      lease,
+    );
   }
 
   // --- 0600 unix socket server (mirrors mitm-broker.startUnixSocket lifecycle) ---
