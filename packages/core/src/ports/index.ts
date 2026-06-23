@@ -13,6 +13,8 @@ export type {
   FetchMessagesOptions,
   FetchedMessage,
   AttachmentPayload,
+  ReconcileSendQuery,
+  ReconcileSendOutcome,
 } from "./channel.js";
 export type {
   MemoryPort,

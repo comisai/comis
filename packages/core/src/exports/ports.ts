@@ -17,6 +17,8 @@ export type {
   FetchMessagesOptions,
   FetchedMessage,
   AttachmentPayload,
+  ReconcileSendQuery,
+  ReconcileSendOutcome,
   ChannelPluginPort,
   ChannelCapability,
   ChannelStatus,
