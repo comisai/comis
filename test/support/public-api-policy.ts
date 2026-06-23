@@ -2448,6 +2448,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // only sqlite + the session-index JSONL (never daemon.log).
       // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts (Plan 162-01)
       "assembleFleetHealthReport",
+      // Outward-send crash-injection seam (Phase 216 Plan 08, MED-6) — re-exported
+      // from the daemon barrel so the exactly-once chaos test can arm/disarm a
+      // REAL mid-send crash (BETWEEN markUnknown and commit) and assert the
+      // sentinel propagates. INERT in production (__crashHook is never armed; the
+      // setter is the only writer). Same rationale as the _resetSigusr1Timer /
+      // _resetMutationFence process-state seams above: the consumers import these
+      // statically from @comis/daemon under test/** (the in-process chaos test),
+      // which the public-export-consumers AST walker excludes, so this orphan list
+      // is the canonical place to record the test-only public export.
+      // OutwardSendCrashHookMode is the setter's argument type (the two crash
+      // variants); the walker classifies the re-export as a value, so it is tracked
+      // here alongside the value exports.
+      // Consumer: test/integration/durable-resume-e2e.test.ts:66 (static import)
+      "__setOutwardSendCrashHookForTest",
+      "OUTWARD_SEND_CRASH_SENTINEL",
+      "OutwardSendCrashHookMode",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
