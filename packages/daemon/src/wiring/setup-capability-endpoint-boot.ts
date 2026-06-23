@@ -55,6 +55,7 @@ import {
   type ResultRefStore,
 } from "@comis/skills/tools";
 import { createCapabilityEndpoint, type CapabilityEndpoint } from "./setup-capability-endpoint.js";
+import type { EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 import { createToolInvokeExecutor, type ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { LoggingResult } from "./setup-logging.js";
@@ -164,6 +165,15 @@ export interface CapabilityLayerDeps {
    * path / older callers).
    */
   leaseManager?: LeaseManager;
+  /**
+   * AUDIT-01 (Phase 215): the structural deps the socket per-cap audit reads —
+   * `eventBus` (for the audit:event + capability:audited emits) + `config.tenantId`.
+   * daemon.ts passes the same `AppContainer` the dispatch sink holds (it is
+   * structurally assignable). Optional — the 211 boot-gate unit tests omit it, and
+   * the socket then emits NO per-cap audit (the endpoint still validates/dispatches;
+   * the in-process leg's audit at the dispatch closure is unaffected).
+   */
+  container?: EmitCapabilityAuditDeps["container"];
 }
 
 /** The constructed capability layer handle (undefined when no autonomy agent). */
@@ -401,6 +411,9 @@ export async function constructCapabilityLayer(
       toolInvokeExecutor,
       boundedAutonomy,
       autonomyConfig: autonomyBearingConfig,
+      // AUDIT-01 (215): the socket per-cap audit's bus + tenant scope. Absent in
+      // the 211 boot-gate tests ⇒ socket audit is a no-op (honest degrade).
+      ...(deps.container ? { container: deps.container } : {}),
     });
     // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. 211 left this
     // DORMANT (no startSocket; active:false). Now the cap surface is LIVE: a jailed

@@ -76,6 +76,11 @@ import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
+// AUDIT-01 (Phase 215): the per-cap audit emitter — the socket chokepoint has
+// the REAL lease, so it emits the FULL tuple (leaseId + parentLeaseId present)
+// for an allowed AND a denied tool.invoke. Reuses the shared helper (no
+// asymmetry vs the in-process leg, which omits leaseId — G1).
+import { emitCapabilityAudit, type EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request
@@ -267,6 +272,18 @@ export interface CapabilityEndpointDeps {
    * self-ownership cap reads. Optional alongside {@link boundedAutonomy}.
    */
   autonomyConfig?: ResolvedAutonomy;
+  /**
+   * AUDIT-01 (Phase 215): the structural deps the per-cap audit emitter reads —
+   * `container.eventBus` (for the audit:event + capability:audited emits) +
+   * `container.config.tenantId` (the audit tenant scope). The daemon passes the
+   * same `AppContainer` the dispatch sink already holds (the endpoint dispatches
+   * THROUGH createRpcDispatch, so the bus is in scope). Optional so the
+   * deny-matrix unit tests construct the endpoint without it — when absent the
+   * per-cap audit is simply not emitted (the endpoint still validates +
+   * strips + dispatches; the in-process leg's audit at the dispatch closure is
+   * unaffected). NEVER fabricate when absent — degrade to no-audit, not a fake.
+   */
+  container?: EmitCapabilityAuditDeps["container"];
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -360,35 +377,73 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   ): Promise<unknown> {
     // 4. requireCapability (3 deny-by-origin is automatic on the rpc route): the
     //    plain membership gate — no wildcard, least-privilege by construction.
-    requireCapability(lease.caps, cap);
+    //    AUDIT-01 (215): a CapabilityDeniedError here is a first-class audited
+    //    deny carrying the FULL lease tuple (the socket path has the real lease).
+    try {
+      requireCapability(lease.caps, cap);
+    } catch (denyErr) {
+      if (deps.container !== undefined && denyErr instanceof CapabilityDeniedError) {
+        emitCapabilityAudit({ container: deps.container }, {
+          agentId: lease.agentId,
+          capability: cap,
+          tool,
+          method: "tool.invoke",
+          runId: lease.sessionKey,
+          rootRunId: lease.rootRunId,
+          leaseId: lease.leaseId,
+          ...(lease.parentLeaseId !== undefined ? { parentLeaseId: lease.parentLeaseId } : {}),
+          decision: "deny",
+        });
+      }
+      throw denyErr;
+    }
     // 5. Route.
     const route = TOOL_ROUTE_MAP[tool as keyof typeof TOOL_ROUTE_MAP];
-    if (route.kind === "rpc") {
-      // S2 strip-then-inject (CR-01): the inner args are FULLY attacker-controlled
-      // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
-      // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
-      // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
-      return rpcCall(route.method, {
-        ...stripInternalFields(args),
-        _agentId: lease.agentId,
-        _capabilities: lease.caps,
+    const result =
+      route.kind === "rpc"
+        ? // S2 strip-then-inject (CR-01): the inner args are FULLY attacker-controlled
+          // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
+          // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
+          // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
+          await rpcCall(route.method, {
+            ...stripInternalFields(args),
+            _agentId: lease.agentId,
+            _capabilities: lease.caps,
+          })
+        : // Executor route (Gap 1): the in-process builtins + the daemon-side web pair.
+          // The executor is injected (Plan 05 wires it); a legitimately-authorized call
+          // must NOT silently no-op if it is absent — throw a clear wiring error.
+          await (async () => {
+            if (deps.toolInvokeExecutor === undefined) {
+              throw new Error(
+                `tool.invoke executor route for "${tool}" requires a toolInvokeExecutor (not wired)`,
+              );
+            }
+            return deps.toolInvokeExecutor(tool, args, {
+              agentId: lease.agentId,
+              caps: lease.caps,
+              // Thread the tree-stable rootRunId so the budgetHook charges the flat web
+              // call against the right per-root meter (Phase 213 BUDGET-03).
+              rootRunId: lease.rootRunId,
+            });
+          })();
+    // AUDIT-01 (215): the call was authorized AND the route resolved — emit the
+    // allow with the FULL lease tuple (the spawn-tree's per-node source with the
+    // real parent edge). Content-free: tool NAME + cap + ids ONLY, never args.
+    if (deps.container !== undefined) {
+      emitCapabilityAudit({ container: deps.container }, {
+        agentId: lease.agentId,
+        capability: cap,
+        tool,
+        method: "tool.invoke",
+        runId: lease.sessionKey,
+        rootRunId: lease.rootRunId,
+        leaseId: lease.leaseId,
+        ...(lease.parentLeaseId !== undefined ? { parentLeaseId: lease.parentLeaseId } : {}),
+        decision: "allow",
       });
     }
-    // Executor route (Gap 1): the in-process builtins + the daemon-side web pair.
-    // The executor is injected (Plan 05 wires it); a legitimately-authorized call
-    // must NOT silently no-op if it is absent — throw a clear wiring error.
-    if (deps.toolInvokeExecutor === undefined) {
-      throw new Error(
-        `tool.invoke executor route for "${tool}" requires a toolInvokeExecutor (not wired)`,
-      );
-    }
-    return deps.toolInvokeExecutor(tool, args, {
-      agentId: lease.agentId,
-      caps: lease.caps,
-      // Thread the tree-stable rootRunId so the budgetHook charges the flat web
-      // call against the right per-root meter (Phase 213 BUDGET-03).
-      rootRunId: lease.rootRunId,
-    });
+    return result;
   }
 
   async function handleCapCall(
