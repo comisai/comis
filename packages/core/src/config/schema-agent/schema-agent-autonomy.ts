@@ -38,6 +38,21 @@ import { z } from "zod";
 // `Capability` collides with `CapabilityId`/`ChannelCapability`/
 // `CapabilityDescriptor` already in the tree (v8 / RESEARCH A1).
 import { AGENT_CAPABILITIES, type AgentCapability } from "../../security/capability.js";
+// The four nested BOUNDS sub-blocks (BUDGET/RATE/SPAWN/OUTWARD, 213-03) live in a
+// sibling leaf to keep this file under the schema-agent file-size cap; re-exported
+// below so consumers continue to import them from `schema-agent-autonomy`.
+import {
+  AutonomyBudgetConfigSchema,
+  AutonomyRateConfigSchema,
+  AutonomySpawnConfigSchema,
+  AutonomyOutwardConfigSchema,
+  STANDARD_AUTONOMY_BOUNDS,
+  resolveAutonomyBounds,
+  type AutonomyBudgetConfig,
+  type AutonomyRateConfig,
+  type AutonomySpawnConfig,
+  type AutonomyOutwardConfig,
+} from "./schema-agent-autonomy-bounds.js";
 
 /**
  * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
@@ -170,6 +185,12 @@ export const AutonomyConfigSchema = z.strictObject({
   lease: z.object({ leaseMaxTtlMin: z.number().int().positive().optional() }).optional(),
   /** Origin-channel outward-message posture (§3.5/§8.4). */
   message: AutonomyMessageConfigSchema.default(() => AutonomyMessageConfigSchema.parse({})),
+  // 213 nested BOUNDS sub-blocks (per-limb docs in schema-agent-autonomy-bounds.ts;
+  // flat aggregateBudgetUsd/maxConcurrentSelfAgents are aliases the resolver folds in).
+  budget: AutonomyBudgetConfigSchema.default(() => AutonomyBudgetConfigSchema.parse({})), // $/token/wall-clock (BUDGET-01/02)
+  rate: AutonomyRateConfigSchema.default(() => AutonomyRateConfigSchema.parse({})), // per-root/socket/churn (RATE-01)
+  spawn: AutonomySpawnConfigSchema.default(() => AutonomySpawnConfigSchema.parse({})), // concurrent/depth/fanout (CEIL-01)
+  outward: AutonomyOutwardConfigSchema.default(() => AutonomyOutwardConfigSchema.parse({})), // origin/grants/volume (QUOTA-01/02)
   // ── per-surface ergonomic toggles → matching orch:* cap (§3.3 "one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
   web: z.boolean().optional(),
@@ -187,6 +208,10 @@ export const AutonomyConfigSchema = z.strictObject({
 
 export type AutonomyConfig = z.infer<typeof AutonomyConfigSchema>;
 export type AutonomyMessageConfig = z.infer<typeof AutonomyMessageConfigSchema>;
+
+// The nested-bounds schemas/types/helper live in `schema-agent-autonomy-bounds.ts`
+// (imported above for the schema fields + resolver) and are re-exported by the
+// `schema-agent/index.ts` barrel, so consumers reach them via `@comis/core`.
 
 /** A per-surface toggle field paired with the orch:* cap it maps to (§3.3). */
 const SURFACE_TOGGLE_TO_CAP = {
@@ -211,11 +236,22 @@ interface ProfileEntry {
   /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
+  // 213 nested bounds (BUDGET-01/02, RATE-01, CEIL-01, QUOTA-01/02).
+  readonly budget: AutonomyBudgetConfig;
+  readonly rate: AutonomyRateConfig;
+  readonly spawn: AutonomySpawnConfig;
+  readonly outward: AutonomyOutwardConfig;
   /** Present for `unattended`/`max` in M1: the "available in M2/M3" clamp notice. */
   readonly m1Notice?: string;
 }
 
-/** The §3.8 `standard` guard set — ON under every autonomy-bearing profile (§8.7). */
+/**
+ * The §3.8 `standard` guard set — ON under every autonomy-bearing profile
+ * (§8.7). The nested `budget`/`rate`/`spawn`/`outward` blocks derive their
+ * concrete defaults from the SCHEMA (`.parse({})`) so the profile table and the
+ * Zod `.default()`s stay in single-source-of-truth lockstep — adding/retuning a
+ * limb is a one-edit change in the schema above.
+ */
 const STANDARD_GUARDS = {
   aggregateBudgetUsd: 2.0,
   maxConcurrentSelfAgents: 4,
@@ -224,6 +260,8 @@ const STANDARD_GUARDS = {
   // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
   // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
   leaseMaxTtlMin: 60,
+  // 213 nested limbs (BUDGET-01/02, RATE-01, CEIL-01, QUOTA-01/02).
+  ...STANDARD_AUTONOMY_BOUNDS,
 } as const;
 
 const STANDARD_MESSAGE: AutonomyMessageConfig = { channels: ["origin"], maxPerHour: 20 };
@@ -308,6 +346,13 @@ export interface ResolvedAutonomy {
   /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
+  // 213 nested bounds — total on every profile. budget.aggregateUsd /
+  // spawn.maxConcurrentSelfAgents mirror the flat fields (one resolved source);
+  // spawn.maxSpawnDepth/maxChildrenPerAgent are surfaced here (prior: subagentContext).
+  readonly budget: AutonomyBudgetConfig; // $/token/wall-clock (BUDGET-01/02)
+  readonly rate: AutonomyRateConfig; // per-root/socket/churn (RATE-01)
+  readonly spawn: AutonomySpawnConfig; // concurrent/depth/fanout (CEIL-01)
+  readonly outward: AutonomyOutwardConfig; // origin/grants/volume (QUOTA-01/02)
   /** Present for `unattended`/`max` in M1 — the clamp notice. */
   readonly m1Notice?: string;
 }
@@ -370,18 +415,28 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     autoApprovable: capIsAutoApprovable(capability),
   }));
 
+  // Per-field merge of the nested BOUNDS blocks (resolveAutonomyBounds: explicit
+  // nested → prior-flat alias → profile default). The flat aggregateBudgetUsd /
+  // maxConcurrentSelfAgents resolved fields below mirror their nested twins (one
+  // resolved source at the meter/semaphore).
+  const bounds = resolveAutonomyBounds(cfg, base);
+
   const resolved: ResolvedAutonomy = {
     profile: profileName,
     enabled: cfg?.enabled ?? base.enabled,
     capabilities: orderedCaps,
     resolvedCapabilities,
     mode: cfg?.mode ?? base.mode,
-    aggregateBudgetUsd: cfg?.aggregateBudgetUsd ?? base.aggregateBudgetUsd,
-    maxConcurrentSelfAgents: cfg?.maxConcurrentSelfAgents ?? base.maxConcurrentSelfAgents,
+    aggregateBudgetUsd: bounds.budget.aggregateUsd,
+    maxConcurrentSelfAgents: bounds.spawn.maxConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
     leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
+    budget: bounds.budget,
+    rate: bounds.rate,
+    spawn: bounds.spawn,
+    outward: bounds.outward,
     ...(base.m1Notice !== undefined ? { m1Notice: base.m1Notice } : {}),
   };
   return resolved;
@@ -389,87 +444,10 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
 
 // ── The honest, legible degrade path (PROFILE-03) ────────────────────────────
 //
-// 210/211 SEAM (RESEARCH Pitfall 5 / A4): the downshift is driven by a
-// preflight-RESULT INPUT (a boolean the caller passes in), NEVER a live
-// bubblewrap / `unshare` probe. The probe that PRODUCES that boolean is Phase
-// 211 (JAIL-03). Keeping the trigger an input keeps `degradeAutonomy` PURE
-// (AGENTS §2.2) and independently testable — this leaf imports nothing from the
-// daemon's sandbox-provider layer.
-
-/** The host preconditions a jail-bearing posture depends on (210: the namespace preflight; 211 adds the probe that fills it). */
-export interface AutonomyPreflightResult {
-  /**
-   * Whether the unprivileged-user-namespace (`unshare --user`/`--net`)
-   * preflight passed. `false` means the jail cannot be built, so an
-   * autonomy-bearing posture would run UNJAILED — which we refuse, downshifting
-   * to `assistant` instead. In Phase 210 this is supplied by the caller (the
-   * default at boot is `true`); the actual probe lands in Phase 211.
-   */
-  readonly namespacePreflightOk: boolean;
-}
-
-/**
- * The structured signal a downshift surfaces (PROFILE-03). Carried out of
- * {@link degradeAutonomy} so the daemon can emit a WARN + a `doctor` finding —
- * the operator is TOLD, never silently dropped to a safer posture. The
- * `errorKind` is the closed-union `"precondition"` (an unmet host guard), and
- * `hint` names the remediation.
- */
-export interface AutonomyDownshift {
-  /** The profile that was selected before the precondition failed. */
-  readonly downshiftedFrom: AutonomyProfileName;
-  /** Always `assistant` in M1 — the zero-surface safe floor. */
-  readonly downshiftedTo: "assistant";
-  /** Machine-readable reason (the failed precondition). */
-  readonly reason: "namespace_preflight_failed";
-  /** Operator-facing remediation (canonical logging field `hint`). */
-  readonly hint: string;
-  /** Closed-union errorKind — `"precondition"` = an unmet guard (AGENTS §2.7). */
-  readonly errorKind: "precondition";
-}
-
-/** The actionable remediation surfaced on a namespace-preflight downshift. */
-const NAMESPACE_PREFLIGHT_DOWNSHIFT_HINT =
-  "Autonomy needs an unprivileged user namespace to build the jail, and the namespace preflight failed — downshifted to the 'assistant' profile (no orchestration surfaces). Enable unprivileged user namespaces (e.g. sysctl kernel.unprivileged_userns_clone=1 / kernel.apparmor_restrict_unprivileged_userns=0) and restart, or set autonomy.profile: assistant to silence this. See docs/agents/autonomy.";
-
-/**
- * Honest legible degrade (PROFILE-03). Given a fully-resolved posture and the
- * host preflight RESULT, downshift to `assistant` (enabled false, zero caps) and
- * SURFACE a structured {@link AutonomyDownshift} when the namespace preflight
- * failed — never a silent enabled-but-unjailed fallback.
- *
- * PURE — a function of `(resolved, preflight)` only (no env/clock/fs, AGENTS
- * §2.2). The preflight boolean is an INPUT; the probe that produces it is Phase
- * 211 (JAIL-03 / RESEARCH Pitfall 5). The downshift is a no-op (no signal) when
- * the preflight passed OR the posture is already `assistant` (nothing to take
- * away — idempotent).
- *
- * @param resolved the posture from {@link resolveAutonomy}.
- * @param preflight the host preconditions (210: caller-supplied; 211: probed).
- * @returns the (possibly-downshifted) posture + an optional surfaced signal.
- */
-export function degradeAutonomy(
-  resolved: ResolvedAutonomy,
-  preflight: AutonomyPreflightResult,
-): { resolved: ResolvedAutonomy; downshift?: AutonomyDownshift } {
-  // Preflight passed, or there is nothing to downshift FROM (already the
-  // zero-surface floor): return the posture untouched, no signal.
-  if (preflight.namespacePreflightOk || resolved.profile === "assistant") {
-    return { resolved };
-  }
-  // Failed precondition on an autonomy-bearing posture → fall to the assistant
-  // floor and SAY SO. Resolve the canonical `assistant` shape so the downshifted
-  // posture is byte-identical to a selected `assistant` (enabled false, 0 caps).
-  // Parse through the schema first so the `AutonomyConfig` is fully-defaulted
-  // (the resolver's param is the OUTPUT type — `message` is required), matching
-  // the Plan-02 m1Notice/`tsc`-vs-vitest typing precedent.
-  const downshifted = resolveAutonomy(AutonomyConfigSchema.parse({ profile: "assistant" }));
-  const downshift: AutonomyDownshift = {
-    downshiftedFrom: resolved.profile,
-    downshiftedTo: "assistant",
-    reason: "namespace_preflight_failed",
-    hint: NAMESPACE_PREFLIGHT_DOWNSHIFT_HINT,
-    errorKind: "precondition",
-  };
-  return { resolved: downshifted, downshift };
-}
+// Split into the sibling `schema-agent-autonomy-degrade.ts` leaf (PROFILE-03 is
+// a separate concern from PROFILE-01 resolution; keeps both files under the
+// schema-agent file-size cap). It imports `resolveAutonomy`/`AutonomyConfigSchema`
+// from THIS leaf (one-directional: degrade → autonomy), and is re-exported
+// alongside this leaf by the `schema-agent/index.ts` barrel — so consumers keep
+// importing `degradeAutonomy`/`AutonomyDownshift`/`AutonomyPreflightResult` from
+// `@comis/core`. (Re-exporting it HERE would form an autonomy↔degrade cycle.)

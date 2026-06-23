@@ -47,6 +47,9 @@ import {
   SubagentListContract,
   SubagentKillContract,
   SubagentSteerContract,
+  // autonomy-handlers.ts (2) — 213-03 REVOKE-01/03 admin contracts
+  LeaseRevokeContract,
+  RunKillContract,
   ORCHESTRATOR_CONTRACTS,
   INTERNAL_FIELD_NAMES,
 } from "./index.js";
@@ -56,8 +59,8 @@ import {
 // ===========================================================================
 
 describe("orchestrator-umbrella domain contracts", () => {
-  it("ORCHESTRATOR_CONTRACTS has exactly 27 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent)", () => {
-    expect(ORCHESTRATOR_CONTRACTS.length).toBe(27);
+  it("ORCHESTRATOR_CONTRACTS has exactly 29 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 2 autonomy)", () => {
+    expect(ORCHESTRATOR_CONTRACTS.length).toBe(29);
   });
 
   it("method names match the 4 handler-factory PropertyAssignment keys", () => {
@@ -95,6 +98,9 @@ describe("orchestrator-umbrella domain contracts", () => {
         "subagent.list",
         "subagent.kill",
         "subagent.steer",
+        // autonomy-handlers.ts (2)
+        "lease.revoke",
+        "run.kill",
       ].sort(),
     );
   });
@@ -156,6 +162,14 @@ describe("orchestrator-umbrella domain contracts", () => {
       SubagentSteerContract,
     ];
     for (const c of subagents) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
+  });
+
+  it("autonomy-handlers: both admin-scoped (REVOKE-01/03 → ADMIN_METHODS → deny-by-origin)", () => {
+    // scopes:["admin"] is LOAD-BEARING: it is what puts each method in the
+    // DERIVED ADMIN_METHODS set so assertNotAgentOrigin denies any _agentId-
+    // bearing (agent-origin) call automatically — no manual _agentId check.
+    const autonomy = [LeaseRevokeContract, RunKillContract];
+    for (const c of autonomy) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
   // -------------------------------------------------------------------------
@@ -931,5 +945,85 @@ describe("SubagentSteerContract", () => {
         newRunId: "r2",
       }),
     ).toThrow();
+  });
+});
+
+// ===========================================================================
+// Autonomy contracts (213-03 — REVOKE-01/03 admin RPC: lease.revoke + run.kill)
+// ===========================================================================
+//
+// The two operator-facing live-control methods. `scopes:["admin"]` is the
+// load-bearing declaration: it puts each method in the DERIVED ADMIN_METHODS
+// set (rpc-dispatch.ts:159) so `assertNotAgentOrigin` denies any agent-origin
+// (_agentId-bearing) call automatically — the deny-by-origin guarantee, with NO
+// manual _agentId check anywhere (a manual check would drift). The daemon
+// handlers that drive the LeaseManager revoke fan-outs + the runner's
+// killByRootRun land in Plan 06; these tests pin the CONTRACT surface.
+
+describe("LeaseRevokeContract (REVOKE-01 — revoke by leaseId OR rootRunId)", () => {
+  it("exposes the canonical method name + admin scope", () => {
+    expect(LeaseRevokeContract.method).toBe("lease.revoke");
+    expect(LeaseRevokeContract.scopes).toEqual(["admin"]);
+  });
+
+  it("accepts a leaseId-only request (revoke a single lease)", () => {
+    expect(() => LeaseRevokeContract.request.parse({ leaseId: "lease-1" })).not.toThrow();
+  });
+
+  it("accepts a rootRunId-only request (revoke a whole tree's leases)", () => {
+    expect(() => LeaseRevokeContract.request.parse({ rootRunId: "root-1" })).not.toThrow();
+  });
+
+  it("accepts an empty request (both selectors optional — one-of enforced in the handler)", () => {
+    expect(() => LeaseRevokeContract.request.parse({})).not.toThrow();
+  });
+
+  it("response carries the non-negative revoked count", () => {
+    expect(() => LeaseRevokeContract.response.parse({ revoked: 2 })).not.toThrow();
+    expect(() => LeaseRevokeContract.response.parse({ revoked: 0 })).not.toThrow();
+  });
+
+  it("rejects a negative revoked count", () => {
+    expect(() => LeaseRevokeContract.response.parse({ revoked: -1 })).toThrow();
+  });
+});
+
+describe("RunKillContract (REVOKE-03 — kill a whole tree by rootRunId)", () => {
+  it("exposes the canonical method name + admin scope", () => {
+    expect(RunKillContract.method).toBe("run.kill");
+    expect(RunKillContract.scopes).toEqual(["admin"]);
+  });
+
+  it("accepts a rootRunId request", () => {
+    expect(() => RunKillContract.request.parse({ rootRunId: "root-1" })).not.toThrow();
+  });
+
+  it("rejects a request missing rootRunId", () => {
+    expect(() => RunKillContract.request.parse({})).toThrow();
+  });
+
+  it("response carries the non-negative killed count", () => {
+    expect(() => RunKillContract.response.parse({ killed: 3 })).not.toThrow();
+    expect(() => RunKillContract.response.parse({ killed: 0 })).not.toThrow();
+  });
+
+  it("rejects a negative killed count", () => {
+    expect(() => RunKillContract.response.parse({ killed: -1 })).toThrow();
+  });
+});
+
+describe("Autonomy admin contracts — registry membership + deny-by-origin set", () => {
+  it("both methods are present in ORCHESTRATOR_CONTRACTS", () => {
+    const methods = ORCHESTRATOR_CONTRACTS.map((c) => c.method);
+    expect(methods).toContain("lease.revoke");
+    expect(methods).toContain("run.kill");
+  });
+
+  it("both methods land in the admin-derived set (the deny-by-origin guarantee — ADMIN_METHODS)", () => {
+    const adminMethods = ORCHESTRATOR_CONTRACTS.filter((c) => c.scopes.includes("admin")).map(
+      (c) => c.method,
+    );
+    expect(adminMethods).toContain("lease.revoke");
+    expect(adminMethods).toContain("run.kill");
   });
 });

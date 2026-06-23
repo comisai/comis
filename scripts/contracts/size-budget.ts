@@ -52,7 +52,13 @@ import { gzipSync } from "node:zlib";
 // additive, content-free (the loose ObsRecord/ObsRecordArray response shapes +
 // the proven optional-section family), and the gzipped total (12,779) stays far
 // under the 38 KB gzipped wire budget (the real wire cost).
-export const BUDGET_MINIFIED_BYTES = 129_000;
+// 2026-06-23: REVOKE-01/03 (Phase 213 Plan 03) — the two new admin RPCs
+// lease.revoke (req { leaseId?, rootRunId? }, resp { revoked }) + run.kill
+// (req { rootRunId }, resp { killed }) added +864 B → total 129,215, overflowing
+// 129,000. Bumped to 130,000 with headroom; both are bounded one request/response
+// pairs and gzip-friendly — the gzipped total (12,864) stays far under the 38 KB
+// gzipped wire budget (the real wire cost).
+export const BUDGET_MINIFIED_BYTES = 130_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;
