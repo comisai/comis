@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: TEST-ONLY crash-injection seam (Phase 216 Plan 08, MED-6). The two
+// `throw new Error(OUTWARD_SEND_CRASH_SENTINEL)` sites (lines ~158/162) MUST be real
+// throws — they simulate a process crash in the exact invariant-#12 window (BETWEEN
+// markUnknown and commit) so the post-restart recovery faces a genuine
+// `unknown_after_send` row written by the REAL code path. A `Result.err(...)` cannot
+// model this: the function would return normally and `commit` would NOT be skipped the
+// way an actual mid-send crash skips it, so the chaos test's double-send RED state
+// would never reproduce. INERT in production (__crashHook is never armed). The throws
+// unwind to the chaos test's `.rejects.toThrow(OUTWARD_SEND_CRASH_SENTINEL)` assertion.
 /**
  * wrapOutwardSend — the three-state outward-send ledger wrapper (Phase 216,
  * ONCE-01/02/04). It turns an irreversible chat-platform send into an
