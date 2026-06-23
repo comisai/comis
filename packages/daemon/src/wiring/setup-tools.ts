@@ -6,7 +6,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -106,6 +106,16 @@ import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
+  /**
+   * Phase 216 (HIGH-1 / NEW-4): the durable-run store + rootRunId resolver,
+   * threaded into the agent-scoped rpcCall factory so an in-process agent-loop
+   * OUTWARD send (`message.send/reply/react`) gets a monotonic `_outwardStepIndex`
+   * (the exactly-once ledger key). Both optional; absent ⇒ the index is not
+   * injected and Plan 05's wrap is a pass-through (byte-identical pre-216). The
+   * daemon wires them ONLY when durability is enabled.
+   */
+  durableRuns?: DurableRunPort;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
   /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
@@ -334,7 +344,14 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // Agent-scoped rpcCall factory (the _capabilities injection point, CAP-03)
   // extracted to setup-tools-capabilities.ts (file-size cap). createAgentRpcCall
   // is the per-agent builder; behavior is byte-identical to the prior inline form.
-  const createAgentRpcCall = makeCreateAgentRpcCall({ rpcCall, agents, defaultAgentId });
+  const createAgentRpcCall = makeCreateAgentRpcCall({
+    rpcCall, agents, defaultAgentId,
+    // Phase 216 (HIGH-1 / NEW-4): thread the durable store + rootRunId resolver
+    // so an in-process agent-loop outward send gets a monotonic _outwardStepIndex.
+    // Both undefined when durability is off ⇒ no index ⇒ the wrap is a pass-through.
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+  });
 
   /** Create MCP tools from connected servers (extracted to bypass profile filtering). */
   function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>): ReturnType<PlatformToolProvider> {

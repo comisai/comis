@@ -102,4 +102,101 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(forwarded._agentId).toBe("unknown-agent");
     expect(forwarded._capabilities).toContain("orch:spawn");
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 216 (HIGH-1 / NEW-4): the in-process leg allocates a monotonic
+  // _outwardStepIndex for an OUTWARD message method. Without it, an in-process
+  // agent-loop message.send is an un-ledgered pass-through and a second send in
+  // one run would collide on (rootRunId, 0) and be silently dropped.
+  // -------------------------------------------------------------------------
+
+  /** A durableRuns stub whose allocateOutwardStep returns a monotonic 0,1,2,… per root. */
+  function makeAllocStore() {
+    const counters = new Map<string, number>();
+    const calls: string[] = [];
+    return {
+      calls,
+      durableRuns: {
+        allocateOutwardStep: vi.fn(async (rootRunId: string) => {
+          calls.push(rootRunId);
+          const next = counters.has(rootRunId) ? counters.get(rootRunId)! + 1 : 0;
+          counters.set(rootRunId, next);
+          return { ok: true as const, value: next };
+        }),
+      } as never,
+    };
+  }
+
+  it("NEW-4: an in-process-leg outward send (with a sessionKey) gets a real _outwardStepIndex (not absent → not a silent pass-through)", async () => {
+    currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
+    const rpcCall = vi.fn(async () => "ok");
+    const { durableRuns } = makeAllocStore();
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+      durableRuns,
+      resolveRootRunId: () => "root-IP",
+    });
+
+    await create("agent-1")("message.send", { channelId: "chan-y", text: "hello" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBe(0);
+    expect(durableRuns.allocateOutwardStep).toHaveBeenCalledWith("root-IP");
+  });
+
+  it("HIGH-1: two distinct outward sends in one run get _outwardStepIndex 0 then 1 (NOT 0,0)", async () => {
+    currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
+    const rpcCall = vi.fn(async () => "ok");
+    const { durableRuns } = makeAllocStore();
+    const agentRpc = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+      durableRuns,
+      resolveRootRunId: () => "root-SAME",
+    })("agent-1");
+
+    await agentRpc("message.send", { channelId: "chan-y", text: "one" });
+    await agentRpc("message.reply", { channelId: "chan-y", text: "two" });
+
+    const first = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    const second = rpcCall.mock.calls[1][1] as Record<string, unknown>;
+    expect(first._outwardStepIndex).toBe(0);
+    expect(second._outwardStepIndex).toBe(1);
+    // Both still dispatch (neither is dropped) — proven by two forwarded calls.
+    expect(rpcCall).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT inject _outwardStepIndex for a NON-outward method (no un-needed ledger key)", async () => {
+    currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
+    const rpcCall = vi.fn(async () => "ok");
+    const { durableRuns } = makeAllocStore();
+    await makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+      durableRuns,
+      resolveRootRunId: () => "root-X",
+    })("agent-1")("session.spawn", { task: "t" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBeUndefined();
+    expect(durableRuns.allocateOutwardStep).not.toHaveBeenCalled();
+  });
+
+  it("is a pass-through (no index) when no durableRuns store is wired (byte-identical pre-216)", async () => {
+    currentCtx = { sessionKey: "tenant-x:chan-y:user-z" };
+    const rpcCall = vi.fn(async () => "ok");
+    // No durableRuns / resolveRootRunId — the default install.
+    await makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    })("agent-1")("message.send", { channelId: "chan-y", text: "hi" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBeUndefined();
+  });
 });

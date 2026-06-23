@@ -72,6 +72,7 @@ import {
   requireCapability,
   CapabilityDeniedError,
   type ResolvedAutonomy,
+  type DurableRunPort,
 } from "@comis/core";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
@@ -111,6 +112,22 @@ const CRON_MUTATION_METHODS: ReadonlySet<string> = new Set([
   "cron.update",
   "cron.run",
   "cron.remove",
+]);
+
+/**
+ * The OUTWARD message methods (Phase 216, HIGH-1) — the genuinely-outward subset
+ * (§3.5) that needs a monotonic `_outwardStepIndex` for the exactly-once ledger.
+ * A second outward send in the same run MUST get a UNIQUE index (0 then 1), or
+ * Plan 05's wrap would collide both on `(rootRunId, 0)` and silently drop one
+ * (inverting ONCE-02). The index is allocated HERE (the trusted chokepoint) and
+ * injected as `_outwardStepIndex` (stripped-then-re-injected, NEW-3). Only these
+ * three send the platform a NEW message; edit/delete/fetch/attach are NOT here.
+ * Mirrors the `wrapOutwardSend` call sites in message-handlers.ts.
+ */
+const OUTWARD_MESSAGE_METHODS: ReadonlySet<string> = new Set([
+  "message.send",
+  "message.reply",
+  "message.react",
 ]);
 
 /**
@@ -286,6 +303,18 @@ export interface CapabilityEndpointDeps {
    * unaffected). NEVER fabricate when absent — degrade to no-audit, not a fake.
    */
   container?: EmitCapabilityAuditDeps["container"];
+  /**
+   * Phase 216 (HIGH-1): the durable-run store — the SOLE source of the monotonic
+   * `_outwardStepIndex` (allocateOutwardStep). For an OUTWARD message method
+   * ({@link OUTWARD_MESSAGE_METHODS}) the endpoint allocates a UNIQUE per-root
+   * index and injects it alongside `_agentId` so Plan 05's wrap reads a distinct
+   * `(rootRunId, stepIndex)` per send (two sends → 0 then 1, never 0,0 — the
+   * ONCE-02 idempotency key). Optional so the deny-matrix unit tests construct the
+   * endpoint without it; **absent ⇒ no index is injected** → the wrap treats the
+   * absence as a pass-through (no ledger), which is the byte-identical pre-216
+   * behavior. The daemon wires it ONLY when durability is enabled.
+   */
+  durableRuns?: DurableRunPort;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -645,15 +674,48 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // emits the per-cap audit (allow + a downstream cap-deny) with the real lease
     // tuple — previously unaudited (no _callerSessionKey → dispatch-closure audit
     // unreachable), silently dropping the spawn-tree's most important edges.
+    // HIGH-1 (Phase 216): for an OUTWARD message method, allocate a UNIQUE
+    // monotonic `_outwardStepIndex` from the durable store (the SOLE source) and
+    // inject it alongside `_agentId`. `stripInternalFields` above already dropped
+    // any forged inbound value (NEW-3), so this re-injects the trusted allocated
+    // one (strip-then-inject, like `_agentId`). Two outward sends in this run get
+    // 0 then 1 → Plan 05's wrap reads distinct keys and BOTH deliver. Absent store
+    // or a non-outward method → no index injected → the wrap is a pass-through.
+    const outwardStep = await allocateOutwardStepIfNeeded(method, lease.rootRunId);
     return dispatchAudited(
       method,
       {
         ...stripInternalFields(params),
         _agentId: lease.agentId,
         _capabilities: lease.caps,
+        ...(outwardStep !== undefined ? { _outwardStepIndex: outwardStep } : {}),
       },
       lease,
     );
+  }
+
+  /**
+   * HIGH-1: allocate the monotonic outward-send index for an OUTWARD message
+   * method, or `undefined` for any other method (no index → the wrap is a
+   * pass-through). The durable store's `allocateOutwardStep` is the SOLE atomic
+   * source of the `(rootRunId, stepIndex)` idempotency key. Best-effort: an
+   * allocation error logs WARN + returns undefined (degrades to pass-through —
+   * never blocks the send, never substitutes a colliding 0).
+   */
+  async function allocateOutwardStepIfNeeded(
+    method: string,
+    rootRunId: string,
+  ): Promise<number | undefined> {
+    if (!deps.durableRuns || !OUTWARD_MESSAGE_METHODS.has(method)) return undefined;
+    const allocated = await deps.durableRuns.allocateOutwardStep(rootRunId);
+    if (!allocated.ok) {
+      log?.warn(
+        { submodule: "capability-endpoint", method, err: allocated.error, hint: "outward-step allocation failed — the send proceeds un-ledgered (no exactly-once for this send)", errorKind: "dependency" as const },
+        "Capability endpoint: allocateOutwardStep failed (degrading to pass-through)",
+      );
+      return undefined;
+    }
+    return allocated.value;
   }
 
   // --- 0600 unix socket server (mirrors mitm-broker.startUnixSocket lifecycle) ---
