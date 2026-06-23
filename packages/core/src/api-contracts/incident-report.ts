@@ -180,6 +180,37 @@ export const IncidentReportSchema = z.object({
       }),
     )
     .optional(),
+  /** TREE-01/02 (215): the root→children SPAWN TREE reconstructed from the
+   *  session's `capability.audited` trajectory records (Plan 01's per-cap audit
+   *  producer). One node per `leaseId`; each node surfaces the attenuated `caps`
+   *  it held, the tool NAMES it invoked, and any `CapabilityDeniedError` cap in
+   *  `denials` (TREE-02) — so an unattended run's authorization topology is
+   *  diagnosable from the report alone ("one call to root-cause an unattended
+   *  run"). `parentLeaseId` is the child→root edge (absent on the root and on the
+   *  in-process path, which has no real lease — the node groups under its
+   *  synthetic `rootRunId`, never a fabricated lease id, G1). `budgetTokensUsed`
+   *  is OPTIONAL + honest (G3): the offline tree is the post-mortem TOPOLOGY; the
+   *  live `whoami` (Plan 04) is the authoritative remaining-budget surface — so
+   *  the fold leaves it undefined unless a record carries it (never fabricated).
+   *  Content-free: ids/caps/tool-NAMES/decision-derived denials ONLY — never a
+   *  tool arg, a message body, or a secret (§2.7). Optional + additive (present
+   *  only when the trajectory carries `capability.audited` records; schemaVersion
+   *  stays 1) — pre-existing constructors omit it (the `nodeBudgetBreaches`
+   *  precedent). */
+  spawnTree: z
+    .array(
+      z.object({
+        leaseId: z.string(),
+        parentLeaseId: z.string().optional(),
+        rootRunId: z.string(),
+        agentId: z.string(),
+        caps: z.array(z.string()),
+        toolsInvoked: z.array(z.string()),
+        denials: z.array(z.string()),
+        budgetTokensUsed: z.number().optional(),
+      }),
+    )
+    .optional(),
   /** W3: the terminal per-call budget equation (optional — present only when the
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
@@ -566,6 +597,22 @@ export interface IncidentSignals {
     capSource: "node" | "operator-default" | "inherit-share" | "unknown";
     tokenBudget: number;
     tokensUsed: number;
+  }>;
+  /** TREE-01/02 (215): the spawn-tree nodes folded from `capability.audited`
+   *  trajectory records — one node per `leaseId` (in-process records group under
+   *  their synthetic `rootRunId`). Optional (the `recall`/`spend` presence-
+   *  conditional mold): absent when the trajectory carried no `capability.audited`
+   *  records, so the assembler omits the report section. The fold groups by lease
+   *  into a working map and materializes this array at the end. */
+  spawnTree?: Array<{
+    leaseId: string;
+    parentLeaseId?: string;
+    rootRunId: string;
+    agentId: string;
+    caps: string[];
+    toolsInvoked: string[];
+    denials: string[];
+    budgetTokensUsed?: number;
   }>;
   // derived booleans/strings for the heuristic registry:
   breakerOpenedTool?: string; // from a tool.breaker_opened event OR a "DO NOT retry" log line's toolName

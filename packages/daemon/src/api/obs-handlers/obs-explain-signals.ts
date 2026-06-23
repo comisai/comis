@@ -234,6 +234,41 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       });
       return;
     }
+    case "capability.audited": {
+      // TREE-01/02 (215): the per-cap audit record Plan 01 emits at the gate
+      // chokepoint — the spawn-tree's per-node source. Group by leaseId into ONE
+      // node per lease; an in-process record (no real lease, G1) keys on its
+      // synthetic rootRunId (NEVER a fabricated lease-<id>). The node collects the
+      // attenuated caps it held (deduped), the tool NAMES it invoked, and any
+      // CapabilityDeniedError cap (a `deny` decision → denials[], TREE-02). The
+      // record is content-free by construction (the translator strips bodies/args);
+      // agentId rides the envelope (acc.agentId, set above). budgetTokensUsed is
+      // honestly omitted unless the record carries it (G3 — the live whoami is the
+      // authoritative remaining-budget surface; this is the post-mortem topology).
+      const leaseId = asString(data.leaseId) ?? asString(data.rootRunId) ?? "";
+      const node = acc.spawnNodesByLease.get(leaseId) ?? {
+        leaseId,
+        ...(asString(data.parentLeaseId) !== undefined
+          ? { parentLeaseId: asString(data.parentLeaseId) }
+          : {}),
+        rootRunId: asString(data.rootRunId) ?? "",
+        agentId: asString(rec.agentId) ?? acc.agentId ?? "",
+        caps: [],
+        toolsInvoked: [],
+        denials: [],
+      };
+      const cap = asString(data.capability);
+      const tool = asString(data.tool);
+      if (cap !== undefined && !node.caps.includes(cap)) node.caps.push(cap);
+      if (tool !== undefined && !node.toolsInvoked.includes(tool)) node.toolsInvoked.push(tool);
+      if (data.decision === "deny" && cap !== undefined && !node.denials.includes(cap)) {
+        node.denials.push(cap);
+      }
+      const budgetTokensUsed = asNumber(data.budgetTokensUsed);
+      if (budgetTokensUsed !== undefined) node.budgetTokensUsed = budgetTokensUsed;
+      acc.spawnNodesByLease.set(leaseId, node);
+      return;
+    }
     case "context.budget": {
       // W3 (obs-llm-troubleshooting): the per-call budget equation emitted by the
       // LCD pre-flight (W2). LAST record wins — the terminal fit check explains
@@ -357,6 +392,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     breakerEvents: [],
     offloads: [],
     nodeBudgetBreaches: [],
+    spawnNodesByLease: new Map(),
     hasDoNotRetrySignal: false,
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
@@ -445,6 +481,13 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     breakerEvents: acc.breakerEvents,
     offloads: acc.offloads,
     nodeBudgetBreaches: acc.nodeBudgetBreaches,
+    // TREE (215-03): materialize the lease-keyed spawn nodes → an array (insertion
+    // order = first-seen-lease order). Present ONLY when the session carried ≥1
+    // capability.audited record (undefined, never [], so the assembler omits the
+    // section — the nodeBudgetBreaches/recall presence-conditional mold).
+    ...(acc.spawnNodesByLease.size > 0
+      ? { spawnTree: [...acc.spawnNodesByLease.values()] }
+      : {}),
     ...(acc.breakerOpenedTool !== undefined ? { breakerOpenedTool: acc.breakerOpenedTool } : {}),
     hasDoNotRetrySignal: acc.hasDoNotRetrySignal,
     ...(mostFailedTool !== undefined ? { mostFailedTool } : {}),
