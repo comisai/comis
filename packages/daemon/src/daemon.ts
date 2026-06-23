@@ -1863,7 +1863,7 @@ async function bootAgents(
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
   // Phase 213-08: the LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
-  const { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
+  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
 
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
@@ -2057,7 +2057,7 @@ async function bootAgents(
 
   Object.assign(boot, {
     defaultAgentId, defaultWorkspaceDir, agentsConfig,
-    boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
+    boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager, // Phase 213-08: ride the late-bind seam onto boot for bootChannels' cap layer
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters, skillWatcherHandles, skillRegistries, lockCleanupTimer,
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
@@ -2194,7 +2194,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     return port;
   };
   // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. Phase 213: cronJobCount binds the bounded-autonomy RATE-02 count to the per-agent CronScheduler.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, rootRunIdIndex: handle.rootRunIdIndex, leaseManager: handle.sharedLeaseManager }); // Phase 213-08: POPULATE the late-bound budget holder (the bridge reads holder.current at turn time) over the SAME holder+index setupAgents/setupSchedulers hold; SAME LeaseManager as the cron-fire mint
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager }); // Phase 213-08: POPULATE the late-bound budget holder (read by the bridge at turn time) + share the SAME LeaseManager as the cron-fire mint
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,

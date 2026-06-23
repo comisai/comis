@@ -330,13 +330,10 @@ export interface BootContext {
   // coordinator. Structurally the `ActivityBreakerGate` slice the coordinator
   // consumes (the concrete breaker's record/isTripped satisfy it).
   activityBreaker: import("@comis/orchestrator").ActivityBreakerGate;
-  // Test-only renderer-injection seam, captured from the daemon override
-  // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
-  // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field
-  // (which is the canonical test-only seam) so the seam declaration stays
-  // single-sourced. Optional + default-undefined; production never sets it
-  // (mirrors the `timers` test-only discipline). Inert on the inbound path until
-  // the inbound coordinatorFactory is built over the renderers map.
+  // Test-only renderer-injection seam, captured from the daemon override in
+  // bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps` →
+  // `buildActivityRenderers` (named distinctly from the DaemonOverrides field, the
+  // canonical test seam). Optional + default-undefined; production never sets it.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
   // Secrets (5 fields) — secretStore is always wired
   secretStore: SecretStorePort;
@@ -537,35 +534,25 @@ export interface BootContext {
   /** The ONE mode-selected MCP OAuth token store (selectMcpTokenStore), constructed at the
    * composition root in bootAgents and threaded as the SAME instance into both consumers:
    * setupMcp's manager wiring (consumed at construction) AND the login/handler path
-   * (buildRpcDispatchDeps reads it for the createTokenStore pass-through). Undefined in env mode
-   * (no writable MCP OAuth persistence). Kills the encrypted-mode split-brain. */
+   * (buildRpcDispatchDeps reads it for createTokenStore). Undefined in env mode (no writable
+   * MCP OAuth persistence); kills the encrypted-mode split-brain. */
   mcpTokenStore?: Awaited<ReturnType<typeof selectMcpTokenStore>>;
-  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured
-   *  comparison per provider, populated in setup-agents beside the per-agent
-   *  registry (bootAgents) and read at the bootShutdown posture write
-   *  (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
+  /** KNOB-01/03 (Phase 176): daemon-owned collector — one served-vs-configured comparison
+   *  per provider, populated in setup-agents (bootAgents), read at the bootShutdown posture
+   *  write (servedBelowConfiguredCount — one comparison, two surfaces, no drift). */
   servedWindowComparisons?: Map<string, import("@comis/agent").ServedWindowComparison>;
-  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info
-   *  (registry-mirrored configured + reconciled effective window + profile),
-   *  populated in setup-agents (bootAgents) and consumed by the bootChannels
-   *  viable-floor loop between setupTools and setupChannels. */
+  /** FLOOR-01 (Phase 176): daemon-owned collector of per-agent boot window info (configured
+   *  + reconciled effective window + profile), populated in setup-agents (bootAgents),
+   *  consumed by the bootChannels viable-floor loop between setupTools and setupChannels. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
   // Restart continuation tracker
   continuationTracker?: ReturnType<typeof createRestartContinuationTracker>;
   // Subprocess envs
   subprocessEnv?: Record<string, string>;
   execToolEnv?: Record<string, string>;
-  // Phase 213-08 (BUDGET-01/02 + RATE-02): the daemon-wide LATE-BOUND per-root
-  // budget holder + the session→rootRunId index + the resolver. Created in
-  // bootAgents BEFORE the cap layer (which populates the holder); ride onto boot
-  // so bootChannels' constructCapabilityLayer populates the SAME holder/index, and
-  // bootAgents' setupSchedulers reads the holder at cron-fire time.
+  // Phase 213-08: the LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
-  rootRunIdIndex?: Map<string, string>;
   resolveRootRunId?: (sessionKey: SessionKey) => string;
-  /** Phase 213-08 (RATE-02): the daemon-wide LeaseManager built in bootAgents
-   *  (before setupSchedulers' cron-fire mint), shared with the cap layer built in
-   *  bootChannels so both use the SAME instance. */
   sharedLeaseManager?: LeaseManager;
   // Schedulers
   systemEventQueue?: ReturnType<typeof createSystemEventQueue>;

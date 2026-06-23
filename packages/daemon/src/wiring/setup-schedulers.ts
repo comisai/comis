@@ -87,20 +87,14 @@ export async function setupSchedulers(deps: {
   clock: ClockPort;
   /** Timer scheduling. Threaded into SessionResetScheduler. */
   timers: TimerPort;
-  /**
-   * Phase 213-08 (RATE-02): the credential-broker lease manager. When present (with
-   * the holder), a cron-FIRED `agent_turn` run mints a FRESH attenuated lease at the
-   * fire site (scoped to the job's agentId + resolved caps). Optional — absent ⇒ no
-   * mint (byte-identical to the pre-213 unbounded-cron behavior).
-   */
+  /** Phase 213-08 (RATE-02): the credential-broker lease manager. With the holder, a
+   *  cron-FIRED agent_turn run mints a fresh attenuated lease at the fire site.
+   *  Optional — absent ⇒ no mint (byte-identical to the pre-213 unbounded cron). */
   leaseManager?: LeaseManager;
-  /**
-   * Phase 213-08 (RATE-02): the daemon-wide LATE-BOUND per-root budget holder. The
-   * schedulers are built BEFORE the cap layer (which populates `current`), so the
-   * mint reads `holder.current` at FIRE time (by when the cap layer is populated).
-   * `registerRoot` anchors the cron run's per-root budget/correlation. Optional —
-   * absent / `current` undefined ⇒ no mint.
-   */
+  /** Phase 213-08 (RATE-02): the daemon-wide LATE-BOUND per-root budget holder. The
+   *  schedulers are built BEFORE the cap layer that populates `current`, so the mint
+   *  reads `holder.current` at FIRE time; registerRoot anchors the cron run. Optional
+   *  — absent / `current` undefined ⇒ no mint. */
   boundedAutonomyHolder?: BoundedAutonomyBudgetHolder;
 }): Promise<SchedulersResult> {
   const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers, leaseManager, boundedAutonomyHolder } = deps;
@@ -236,16 +230,13 @@ export async function setupSchedulers(deps: {
             ? new Promise<{ status: "ok" | "error"; error?: string }>((resolve) => { deferredResolve = resolve; })
             : undefined;
 
-          // Phase 213-08 (RATE-02): a cron-FIRED agent_turn run mints a FRESH
-          // attenuated lease — scoped to the JOB's agentId + the agent's RESOLVED
-          // caps (NOT the operator/system identity that scheduled the daemon) + a
-          // fresh root-cron-* id (a cron-fired run is a NEW root, no parentLeaseId),
-          // then registerRoot anchors its per-root budget/correlation. STRICTLY
-          // gated on agent_turn (the system_event memory crons are NOT attenuated-
-          // lease runs). Best-effort: absent leaseManager/holder → skip (byte-
-          // identical to the pre-213 unbounded-cron behavior); a mint throw is
-          // WARN-logged and the job STILL runs (the lease is the bound-tracking
-          // anchor, never a hard dependency that takes down scheduling).
+          // Phase 213-08 (RATE-02): a cron-FIRED agent_turn run mints a FRESH lease
+          // scoped to the JOB's agentId + the agent's RESOLVED caps (NOT operator/
+          // system) + a fresh root-cron-* id (a new root, no parentLeaseId), then
+          // registerRoot anchors it. STRICTLY gated on agent_turn (system_event memory
+          // crons do NOT mint). Best-effort: absent leaseManager/holder → skip (byte-
+          // identical to pre-213 unbounded cron); a mint throw is WARN-logged and the
+          // job STILL runs (the lease tracks the bound, never crashes scheduling).
           const capLayer = boundedAutonomyHolder?.current;
           if (isAgentTurn && leaseManager && capLayer) {
             try {

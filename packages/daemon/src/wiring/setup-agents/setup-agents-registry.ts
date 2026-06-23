@@ -43,9 +43,8 @@ import {
 // root no longer goes through @comis/agent re-exports.
 import {
   selectOAuthCredentialStore,
-  // Canonical FileLockPort adapter consumed here as the production
-  // createFileLock() target so the daemon no longer reaches into
-  // @comis/scheduler for it.
+  // Canonical FileLockPort adapter consumed here as the production createFileLock()
+  // target so the daemon no longer reaches into @comis/scheduler for it.
   createFileLock,
 } from "@comis/core";
 import {
@@ -101,8 +100,7 @@ export interface AgentsResult {
   /** Per-agent skill registries for skills.list RPC method. */
   skillRegistries: Map<string, SkillRegistry>;
   /** Per-agent ToolCapabilityPort instances. Consumed by setupTools via the
-   * getCapabilityPortForAgent closure on ToolsDeps; mutated by hot-add / hot-remove in daemon.ts
-   * to keep the parallel map consistent with skillRegistries. */
+   * getCapabilityPortForAgent closure on ToolsDeps; mutated by hot-add / hot-remove in daemon.ts. */
   toolCapabilityPorts: Map<string, ToolCapabilityPort>;
   /** Periodic lock cleanup timer (cleared on shutdown). */
   lockCleanupTimer: import("@comis/core").TimerHandle;
@@ -123,10 +121,9 @@ export interface AgentsResult {
   /** Session-scoped trajectory recorder registry. Daemon shutdown MUST call `closeAll()` to
    * flush every open per-session recorder. */
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
-  /** Per-agent ExecutionPlanHolder reference (typed as the read-only port). Surfaced so daemon.ts
-   * can thread the DEFAULT agent's holder into ChannelsDeps.executionPlanPort. Same reference flows
-   * into PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (Pitfall 1: a parallel
-   * holder constructed at the chat path would always read empty since SEP publishes into THIS one). */
+  /** Per-agent ExecutionPlanHolder reference (read-only port). Surfaced so daemon.ts threads the
+   * DEFAULT agent's holder into ChannelsDeps.executionPlanPort; the same ref flows into
+   * PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (Pitfall 1). */
   executionPlanPorts: Map<string, import("@comis/core").ExecutionPlanPort>;
 }
 
@@ -183,10 +180,9 @@ export async function setupAgents(deps: {
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
   summarizerSpendBreaker?: import("@comis/agent").SummarizerSpendBreaker; spendAccumulator?: import("@comis/agent").SpendAccumulator; // spendAccumulator = Phase 177 kill-switch: the ONE daemon-wide accumulator (setupObservability), threaded per-agent so every bridge holds the SAME reference.
-  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + the run's
-   *  rootRunId resolver — created early in daemon.ts (before this call) and populated
-   *  by the cap layer after construction; forwarded into each SingleAgentDeps so every
-   *  bridge holds the SAME holder. Absent ⇒ the bridge's per-root reserve is a no-op. */
+  /** Phase 213-08 (BUDGET-01/02): the late-bound per-root budget holder + rootRunId
+   *  resolver, forwarded into each SingleAgentDeps (every bridge holds the SAME
+   *  holder, populated by the cap layer); absent ⇒ the per-root reserve is a no-op. */
   boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
   resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
@@ -457,8 +453,7 @@ export async function setupAgents(deps: {
     entityStore: deps.entityStore,
     lcdStore: deps.lcdStore,
     summarizerSpendBreaker: deps.summarizerSpendBreaker, spendAccumulator: deps.spendAccumulator,
-    // Phase 213-08 (BUDGET-01/02): forward the per-root budget holder + rootRunId
-    // resolver per-agent (the daemon-wide-REF pattern; absent ⇒ no-op).
+    // Phase 213-08 (BUDGET-01/02): forward the per-root budget holder + resolver per-agent (daemon-wide REF; absent ⇒ no-op).
     ...(deps.boundedAutonomyBudget ? { boundedAutonomyBudget: deps.boundedAutonomyBudget } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
     temporalStore: deps.temporalStore,
