@@ -71,6 +71,9 @@ export default tseslint.config(
       // CI workflow runner scripts (e.g. check-pr-description.mjs) run under Node.
       ".github/scripts/**/*.js",
       ".github/scripts/**/*.mjs",
+      // Live channel-emulation harness CLI binaries (chan/tg/ask) run under Node.
+      "test/live/bin/**/*.js",
+      "test/live/bin/**/*.mjs",
     ],
     languageOptions: {
       globals: {
