@@ -274,6 +274,9 @@ export function translatePayload(
     // ORCH-OBS appends three previously-dark sub-agent-lifecycle events (sandbox-downgrade
     // refusal / dead-lettered delivery / per-node budget breach) to the SAME content-free,
     // orchestration-translator-delegated group.
+    // AUDIT-01 / TREE (215): capability:audited joins the orchestration-translator
+    // group — the per-cap audit's spawn-tree producer, content-free (caps/tool-NAME/
+    // decision/lease-root ids ONLY, never args/body/secret).
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
@@ -281,6 +284,7 @@ export function translatePayload(
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:budget_exceeded":
+    case "capability:audited":
       return translateOrchestrationPayload(eventName, payload);
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).

@@ -152,6 +152,16 @@ export const TRAJECTORY_EVENT_TYPES = [
   "subagent.delivery_deadlettered",
   "subagent.budget_exceeded",
 
+  // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization
+  // decision for a gated call — the spawn-tree's per-node producer (Plan 03's
+  // TREE fold groups these by leaseId). DAEMON-emitted (rpc-dispatch.ts /
+  // setup-capability-endpoint.ts), bridged for operator trajectory visibility +
+  // arch closure (the subagent.budget_exceeded precedent). Content-free: caps +
+  // tool NAME + method + decision + lease/root ids ONLY, NEVER the tool.invoke
+  // args, a message body, or a secret name (§2.7 / H1 / T-215-01). In-process
+  // records honestly omit leaseId/parentLeaseId/tool (no lease, G1).
+  "capability.audited",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",

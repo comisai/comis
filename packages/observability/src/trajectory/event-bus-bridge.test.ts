@@ -1636,6 +1636,19 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       capSource: "node",
       timestamp: 0,
     },
+    // AUDIT-01 / TREE (215): the per-cap audit — the correlation invariant must
+    // hold (agentId/traceId/sessionKey/sessionId never leak into data).
+    "capability:audited": {
+      capability: "orch:read",
+      tool: "memory_search",
+      method: "tool.invoke",
+      decision: "allow",
+      rootRunId: "run-1",
+      leaseId: "lease-abc",
+      parentLeaseId: "lease-root",
+      agentId: "agent-1",
+      timestamp: 0,
+    },
     // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
     // + provider/model config ids); the envelope correlation keys are stripped.
     "observability:spend_warning": {

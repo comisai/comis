@@ -246,6 +246,46 @@ export interface AgentEvents {
     metadata?: Record<string, unknown>;
   };
 
+  /**
+   * AUDIT-01 / TREE (v2.29 Phase 215): the per-capability authorization decision
+   * for a gated call, emitted at the SINGLE `requireCapability`/`tool.invoke`
+   * chokepoint (rpc-dispatch.ts in-process; setup-capability-endpoint.ts socket)
+   * for an ALLOWED *and* a DENIED call. This is a SEPARATE event from
+   * {@link AgentEvents}["audit:event"] (the durable AUDIT-02 trail): this one is
+   * bridged to the trajectory (`capability.audited`) as the spawn-tree's per-node
+   * producer (Plan 03's TREE fold reads it). One chokepoint emits BOTH.
+   *
+   * CONTENT-FREE by construction (T-215-01): ids + caps + tool NAME + method +
+   * decision ONLY — there is deliberately NO args / body / param field on this
+   * payload type, so a careless emit cannot leak the tool.invoke args, a message
+   * body, or a secret name. The translator strips the envelope (agentId/timestamp)
+   * before it reaches the trajectory `data`.
+   *
+   * Chokepoint asymmetry (G1): the in-process path has NO lease → `leaseId` /
+   * `parentLeaseId` / `tool` are honestly ABSENT (undefined), `rootRunId` is the
+   * synthetic `root-session-<key>`; the socket path carries the full real tuple.
+   */
+  "capability:audited": {
+    timestamp: number;
+    agentId: string;
+    /** The required {@link AgentCapability} string the method/tool maps to. */
+    capability: string;
+    /** The inner tool NAME (socket tool.invoke path). Absent on direct methods / in-process. */
+    tool?: string;
+    /** The dispatch method identifier (content-free — never a param value). */
+    method: string;
+    /** The authorization outcome — a closed string-literal union (AGENTS §2.8). */
+    decision: "allow" | "deny";
+    /** ≈ the sessionKey/traceId of the call. Absent when neither is available. */
+    runId?: string;
+    /** The tree-stable root: the real lease's rootRunId, or the synthetic in-process root. */
+    rootRunId: string;
+    /** The real lease id (socket path) — ABSENT in-process (never fabricated, G1). */
+    leaseId?: string;
+    /** The parent lease id (socket path, when present) — the spawn-tree parent edge. */
+    parentLeaseId?: string;
+  };
+
   /** Token usage recorded for an LLM call */
   "observability:token_usage": {
     timestamp: number;
