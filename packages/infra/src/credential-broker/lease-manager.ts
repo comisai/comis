@@ -18,7 +18,11 @@
  *     `HANDLER_CAPABILITY_MAP[method]` and rejects if the lease does not hold
  *     it — a captured lease replayed at a foreign method is denied. Deriving
  *     the audience from the shipped map (not a bespoke audience claim) means
- *     caps and audience cannot drift.
+ *     caps and audience cannot drift. The one exception is the Phase-212
+ *     `tool.invoke` dispatch: it is not in `HANDLER_CAPABILITY_MAP`, so its
+ *     audience is the INNER tool's cap from `TOOL_CAPABILITY_MAP[innerTool]`
+ *     (Pitfall 2) — still derived from a shipped table, so a lease scoped to
+ *     `orch:read` cannot `tool.invoke` a `web_fetch` (orch:web).
  *
  * In-memory only (a `Map`, like SessionManager) — M1 does NOT persist in-flight
  * run state (that is M2). The operator-facing revoke RPC + cascade are Phase
@@ -34,6 +38,7 @@ import { timingSafeEqual, randomUUID } from "node:crypto";
 import {
   generateStrongToken,
   HANDLER_CAPABILITY_MAP,
+  TOOL_CAPABILITY_MAP,
   type ClockPort,
   type AgentCapability,
 } from "@comis/core";
@@ -87,8 +92,22 @@ export interface LeaseInfo {
 
 export interface LeaseManager {
   mintLease(input: MintLeaseInput): IssuedLease;
-  /** Timing-safe + not-expired + not-revoked + audience-matched, else null. */
-  validate(rawBearer: string, requestedMethod: string): LeaseInfo | null;
+  /**
+   * Timing-safe + not-expired + not-revoked + audience-matched, else null.
+   *
+   * AUDIENCE (RFC 8707): for every method the required cap is derived from
+   * `HANDLER_CAPABILITY_MAP[requestedMethod]`, EXCEPT the `tool.invoke` dispatch
+   * (Phase 212) — `tool.invoke` is not in that map; its audience is the INNER
+   * tool's cap from `TOOL_CAPABILITY_MAP[innerTool]` (Pitfall 2). So a lease
+   * scoped to `orch:read` is in-audience at `tool.invoke({tool:"memory_search"})`
+   * (orch:read) and OUT of audience at `tool.invoke({tool:"web_fetch"})`
+   * (orch:web) — a captured lease cannot dispatch a tool whose cap it lacks.
+   *
+   * @param innerTool - The `tool.invoke` inner tool name. REQUIRED when
+   *   `requestedMethod === "tool.invoke"` (omitted/undefined → no inner-tool cap
+   *   → denied); ignored for every other method (additive, no shim).
+   */
+  validate(rawBearer: string, requestedMethod: string, innerTool?: string): LeaseInfo | null;
   /** Renew the soft expiry, clamped to maxExpiresAt; null if revoked/at-ceiling/unknown. */
   renew(leaseId: string): { expiresAtMs: number } | null;
   /** Mark the lease revoked — denies the next validate AND renew. */
@@ -141,7 +160,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
       return { leaseId, bearer };
     },
 
-    validate(rawBearer: string, requestedMethod: string): LeaseInfo | null {
+    validate(rawBearer: string, requestedMethod: string, innerTool?: string): LeaseInfo | null {
       // An empty or malformed base64url string produces an empty/short Buffer —
       // the length-guard in tokenEquals rejects it without throwing.
       const candidateBuf = Buffer.from(rawBearer, "base64url");
@@ -168,8 +187,19 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         // Audience binding (RFC 8707): the requested method's required cap must
         // be one the lease holds. A non-cap method ("deny-by-origin"/"ungated")
         // or an unknown method has no orch:* cap → out of audience → deny.
+        //
+        // Pitfall 2 (Phase 212): `tool.invoke` is NOT in HANDLER_CAPABILITY_MAP;
+        // its audience is the INNER tool's cap from TOOL_CAPABILITY_MAP (shape
+        // (b) — derive from the SAME table the dispatch gate reads, so caps and
+        // audience cannot drift). An undefined/unmapped inner tool yields no cap →
+        // denied here, mirroring the dispatch-layer default-deny (defense-in-depth
+        // with requireCapability at the endpoint).
         const requiredCap =
-          HANDLER_CAPABILITY_MAP[requestedMethod as keyof typeof HANDLER_CAPABILITY_MAP];
+          requestedMethod === "tool.invoke"
+            ? innerTool === undefined
+              ? undefined
+              : TOOL_CAPABILITY_MAP[innerTool as keyof typeof TOOL_CAPABILITY_MAP]
+            : HANDLER_CAPABILITY_MAP[requestedMethod as keyof typeof HANDLER_CAPABILITY_MAP];
         if (
           typeof requiredCap !== "string" ||
           !requiredCap.startsWith("orch:") ||
