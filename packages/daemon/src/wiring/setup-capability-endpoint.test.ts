@@ -141,6 +141,52 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  // CR-01 (ORIGIN-02 at the socket boundary): the wire `params` are
+  // FULLY attacker-controlled (the jailed script the lease authenticates). A
+  // forged `_X` control field MUST NOT reach the dispatch sink — only the
+  // lease-derived `_agentId`/`_capabilities` are trusted. Without the
+  // stripInternalFields() at this boundary, a forged `_trustLevel:"admin"`
+  // reaches `authorizeChannelAccess` (which early-returns admin) and a forged
+  // `_agentId` impersonates another agent, defeating deny-by-origin. This
+  // mirrors the strip the external gateway path applies (setup-gateway-api.ts).
+  it("strips forged internal _X fields from the wire params before injecting the trusted lease ones", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-real");
+
+    const rpcCall = vi.fn(async (_method: string, _params: Record<string, unknown>) => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    // The wire payload forges EVERY high-value control field: a privilege
+    // escalation (_trustLevel:"admin"), an agent impersonation (_agentId), a
+    // caps broadening (_capabilities), plus origin/identity spoofs.
+    await endpoint.handleCapCall(bearer, "cron.add", {
+      schedule: "x",
+      _trustLevel: "admin",
+      _agentId: "someone-else",
+      _capabilities: ["admin"],
+      _userId: "victim",
+      _callerChannelId: "forged-channel",
+      _tenantId: "forged-tenant",
+    });
+
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    const [, calledParams] = rpcCall.mock.calls[0];
+
+    // The legitimate non-internal param survives.
+    expect(calledParams.schedule).toBe("x");
+    // ONLY the lease-derived trusted values reach the sink — the forged ones
+    // were stripped, then the lease values injected on top.
+    expect(calledParams._agentId).toBe("agent-real");
+    expect(calledParams._capabilities).toEqual(["orch:cron"]);
+    // The forged control fields are ABSENT (not merely overridden): every
+    // INTERNAL_FIELD_NAME the wire carried must be gone before injection.
+    expect("_trustLevel" in calledParams).toBe(false);
+    expect("_userId" in calledParams).toBe(false);
+    expect("_callerChannelId" in calledParams).toBe(false);
+    expect("_tenantId" in calledParams).toBe(false);
+  });
+
   // ENDPOINT-02: a bad/garbage bearer is denied (validate returns null), and the
   // dispatch sink is NOT called.
   it("denies a bad bearer (validate null) and never dispatches", async () => {
