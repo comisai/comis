@@ -35,6 +35,7 @@ import {
   clampTimeoutMs,
   MAX_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
+  STDOUT_HARD_CAP_BYTES,
 } from "./orchestrate-tool.js";
 import type {
   OrchestrateSpawnFn,
@@ -429,6 +430,53 @@ describe("orchestrate-tool", () => {
       }
       expect(err).toBeDefined();
       expect(err?.code).toBe("EBADF");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-01: the daemon-side stdout collector must be BYTE-CAPPED in-stream. The
+  // STDOUT_MAX_CHARS bounce only runs AFTER the child exits, so without an
+  // in-stream ceiling a jailed (attacker-controlled) script running
+  // `while (true) console.log("A".repeat(1e6))` grows the daemon heap without
+  // bound for the whole run. The fix fails CLOSED: stop appending past a hard
+  // ceiling and SIGKILL the child.
+  // -------------------------------------------------------------------------
+  describe("WR-01 stdout hard cap (in-stream OOM guard)", () => {
+    /** A fake child that emits ONE over-cap stdout chunk, then would close. */
+    function makeFloodingChild(killSpy: () => void): OrchestrateSpawnedChild {
+      const child = new EventEmitter() as unknown as OrchestrateSpawnedChild & EventEmitter;
+      const out = new EventEmitter();
+      const err = new EventEmitter();
+      (child as { stdout: EventEmitter }).stdout = out;
+      (child as { stderr: EventEmitter }).stderr = err;
+      (child as { kill: () => void }).kill = killSpy;
+      setImmediate(() => {
+        // One chunk strictly larger than the hard cap — must trip the guard on
+        // the first `data` event, before any `close`.
+        out.emit("data", Buffer.alloc(STDOUT_HARD_CAP_BYTES + 1, 0x41));
+        // A close MAY follow; the guard must already have settled (rejected).
+        child.emit("close", 0);
+      });
+      return child;
+    }
+
+    it("keeps STDOUT_HARD_CAP_BYTES a bounded ceiling (a few MiB, not unbounded)", () => {
+      expect(STDOUT_HARD_CAP_BYTES).toBeGreaterThan(0);
+      expect(STDOUT_HARD_CAP_BYTES).toBeLessThanOrEqual(16 * 1024 * 1024);
+    });
+
+    it("kills the child and rejects when the jailed stdout exceeds the hard cap", async () => {
+      const killSpy = vi.fn();
+      const spawnFn: OrchestrateSpawnFn = () => makeFloodingChild(killSpy);
+      const { deps } = makeDeps({ spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", { script: "1", language: "ts" }),
+      ).rejects.toThrow(/hard cap|exceeded|too large/i);
+
+      // Fail-closed: the runaway child is SIGKILLed.
+      expect(killSpy).toHaveBeenCalled();
     });
   });
 });

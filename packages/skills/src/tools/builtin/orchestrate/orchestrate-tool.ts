@@ -183,6 +183,16 @@ const SDK_ASSETS = ["comis_tools.d.ts", "comis_tools.js", "orchestrate-sdk-runti
 /** Max stdout characters that re-enter context — the rest is size-bounced. */
 const STDOUT_MAX_CHARS = 30_000;
 
+/**
+ * The hard in-stream ceiling on the daemon-side stdout collector (WR-01). The
+ * `STDOUT_MAX_CHARS` bounce only runs AFTER the child exits, so without this an
+ * unbounded jailed `console.log` flood grows the daemon heap for the whole run.
+ * A few × `STDOUT_MAX_CHARS` (4 MiB) leaves ample headroom for a legitimate
+ * large result while bounding memory; past it the runner SIGKILLs the child and
+ * fails closed. Exported so the bound is unit-testable.
+ */
+export const STDOUT_HARD_CAP_BYTES = 4 * 1024 * 1024;
+
 /** Default hard timeout for a jailed run (ms). Exported for the clamp tests. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -427,6 +437,7 @@ function runJailedChild(
     }
 
     let stdout = "";
+    let stdoutBytes = 0;
     let settled = false;
     const timer: SystemTimeoutHandle = systemSetTimeout(() => {
       if (settled) return;
@@ -441,6 +452,27 @@ function runJailedChild(
     timer.unref?.();
 
     child.stdout?.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      // WR-01: bound the in-stream accumulation. The post-exit STDOUT_MAX_CHARS
+      // bounce does not protect the daemon heap DURING the run, so a jailed
+      // `while(true) console.log(...)` flood must be stopped here — fail closed:
+      // stop appending, SIGKILL the runaway child, and reject.
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > STDOUT_HARD_CAP_BYTES) {
+        settled = true;
+        systemClearTimeout(timer);
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+        ctx.log.warn(
+          { runId: ctx.runId, errorKind: "resource" as const, stdoutBytes, hint: `Jailed stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap — the script was killed. Have it write high-volume output to a ResultRef (materialize) and slice it in-jail instead of console.log-ing it.` },
+          "orchestrate jailed child exceeded the stdout hard cap — killed",
+        );
+        reject(new Error(`orchestrate stdout exceeded the ${STDOUT_HARD_CAP_BYTES}B hard cap`));
+        return;
+      }
       stdout += chunk.toString("utf8");
     });
     // Read+discard stderr so it cannot back-pressure the child, but NEVER return
