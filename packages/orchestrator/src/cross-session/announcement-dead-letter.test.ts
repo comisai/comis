@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, writeFile, readFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ok, type Result } from "@comis/shared";
+import type { OutwardSendLedgerPort, OutwardSendRecord } from "@comis/core";
 
 import {
   createAnnouncementDeadLetterQueue,
@@ -590,6 +592,209 @@ describe("AnnouncementDeadLetterQueue drain marks recovered keys (WR-01)", () =>
     const sendToChannel = vi.fn().mockResolvedValue(true);
 
     // No second arg — must not throw.
+    await dlq.drain(sendToChannel);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(dlq.size()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HIGH-2 (ONCE-03/04): the DLQ drain must consult the ONCE ledger before
+// re-delivering. The in-memory deliveredKeys set rebuilds EMPTY on restart, so a
+// JSONL entry whose announcement already COMMITTED in the durable ledger would be
+// blindly re-delivered after a daemon restart — a second notify for the same run.
+// The ledger is the only durable source of "already sent". The fix: an entry that
+// carries a persisted (rootRunId, stepIndex) is checked against the ledger; a
+// committed row → SKIP the send, treat as delivered (no double-notify). Old-format
+// entries (no rootRunId/stepIndex) degrade to the existing at-least-once behavior.
+// ---------------------------------------------------------------------------
+
+/**
+ * A stub OutwardSendLedgerPort whose `lookup` returns a configurable result and
+ * records the (rootRunId, stepIndex) it was asked about. Only `lookup` is used by
+ * the drain; the rest satisfy the port contract.
+ */
+function makeStubLedger(
+  lookupResult: Result<OutwardSendRecord | undefined, Error> = ok(undefined),
+): { ledger: OutwardSendLedgerPort; lookupCalls: Array<[string, number]> } {
+  const lookupCalls: Array<[string, number]> = [];
+  const ledger: OutwardSendLedgerPort = {
+    lookup: vi.fn(async (rootRunId: string, stepIndex: number) => {
+      lookupCalls.push([rootRunId, stepIndex]);
+      return lookupResult;
+    }),
+    begin: vi.fn(async () => ok(undefined)),
+    markUnknown: vi.fn(async () => ok(undefined)),
+    commit: vi.fn(async () => ok(undefined)),
+    markFailed: vi.fn(async () => ok(undefined)),
+    resolveReconcile: vi.fn(async () => ok(undefined)),
+    listUnreconciled: vi.fn(async () => ok([])),
+  };
+  return { ledger, lookupCalls };
+}
+
+/** A committed ledger row for a given key (the already-landed announcement). */
+function committedRow(rootRunId: string, stepIndex: number): OutwardSendRecord {
+  return {
+    id: `${rootRunId}:${stepIndex}`,
+    rootRunId,
+    stepIndex,
+    agentId: "default",
+    channelType: "telegram",
+    channelId: "chat-123",
+    state: "committed",
+    platformMessageId: "msg-prior",
+    contentDigest: "deadbeefdeadbeef",
+    attemptCount: 1,
+  };
+}
+
+describe("AnnouncementDeadLetterQueue drain consults the ONCE ledger (HIGH-2, ONCE-03/04)", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dlq-once-"));
+    filePath = join(tmpDir, "dlq.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("committed → SKIP: an entry whose (rootRunId, stepIndex) is committed is NOT re-sent after restart (the HIGH-2 fix)", async () => {
+    const eventBus = createMockEventBus();
+    // A DLQ entry that carries its durable idempotency key.
+    const entry = makeFullEntry({
+      runId: "run-committed-1",
+      idempotencyKey: "default:u1:c1::run-committed-1",
+      rootRunId: "root-committed-1",
+      stepIndex: 4,
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const { ledger, lookupCalls } = makeStubLedger(ok(committedRow("root-committed-1", 4)));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const onDelivered = vi.fn();
+
+    await dlq.drain(sendToChannel, onDelivered);
+
+    // The committed announcement already landed across the restart → never re-send.
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(lookupCalls).toEqual([["root-committed-1", 4]]);
+    // It is treated as delivered: onDelivered fires + the entry is dropped.
+    expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-committed-1");
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("uncommitted → deliver once: an entry whose ledger row is NOT committed is delivered exactly once", async () => {
+    const eventBus = createMockEventBus();
+    const entry = makeFullEntry({
+      runId: "run-uncommitted-1",
+      idempotencyKey: "default:u1:c1::run-uncommitted-1",
+      rootRunId: "root-uncommitted-1",
+      stepIndex: 9,
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    // lookup returns ok(undefined) — no committed row yet.
+    const { ledger, lookupCalls } = makeStubLedger(ok(undefined));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const onDelivered = vi.fn();
+
+    await dlq.drain(sendToChannel, onDelivered);
+
+    // Not committed → it IS delivered (exactly once), and the ledger was consulted.
+    expect(lookupCalls).toEqual([["root-uncommitted-1", 9]]);
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-uncommitted-1");
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("stepIndex persisted: enqueue persists (rootRunId, stepIndex) on the JSONL row; a reload preserves the key across a restart", async () => {
+    const eventBus = createMockEventBus();
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus });
+
+    dlq.enqueue(
+      makeEntry({
+        runId: "run-persist-key",
+        idempotencyKey: "default:u1:c1::run-persist-key",
+        rootRunId: "root-persist-key",
+        stepIndex: 3,
+      }),
+    );
+    // Wait for the fire-and-forget append.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const content = await readFile(filePath, "utf-8");
+    const parsed = JSON.parse(content.trim()) as DeadLetterEntry;
+    expect(parsed.rootRunId).toBe("root-persist-key");
+    expect(parsed.stepIndex).toBe(3);
+
+    // A fresh queue (simulating a restart) reloads the row and, with a committed
+    // ledger, skips the re-send using the SAME persisted key.
+    const { ledger, lookupCalls } = makeStubLedger(ok(committedRow("root-persist-key", 3)));
+    const dlq2 = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq2.drain(sendToChannel);
+
+    expect(lookupCalls).toEqual([["root-persist-key", 3]]);
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("forward-additive: an old-format entry (no rootRunId/stepIndex) still drains via the legacy at-least-once path", async () => {
+    const eventBus = createMockEventBus();
+    // Pre-existing JSONL row from before ledgering — NO rootRunId / stepIndex.
+    const entry = makeFullEntry({ runId: "run-old-format" });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    const { ledger, lookupCalls } = makeStubLedger(ok(undefined));
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus,
+      retryIntervalMs: 0,
+      outwardLedger: ledger,
+    });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    await dlq.drain(sendToChannel);
+
+    // No key to look up → the ledger is NOT consulted; the entry still delivers
+    // (legacy at-least-once), not crashed.
+    expect(lookupCalls).toEqual([]);
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(dlq.size()).toBe(0);
+  });
+
+  it("no ledger wired → drain delivers normally (pass-through, unchanged behavior)", async () => {
+    const eventBus = createMockEventBus();
+    const entry = makeFullEntry({
+      runId: "run-no-ledger",
+      rootRunId: "root-no-ledger",
+      stepIndex: 1,
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+
+    // outwardLedger omitted entirely.
+    const dlq = createAnnouncementDeadLetterQueue({ filePath, eventBus, retryIntervalMs: 0 });
+    const sendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(sendToChannel);
 
     expect(sendToChannel).toHaveBeenCalledOnce();
