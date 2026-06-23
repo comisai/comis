@@ -129,6 +129,73 @@ describe("LeaseManager — audience binding (LEASE-03)", () => {
   });
 });
 
+describe("LeaseManager — tool.invoke audience-on-inner-tool (Pitfall 2; DISPATCH-01)", () => {
+  // tool.invoke is NOT a member of HANDLER_CAPABILITY_MAP — its required cap is
+  // the INNER tool's cap from TOOL_CAPABILITY_MAP (shape (b), keeps caps+audience
+  // un-drifted). A lease holding orch:read is in-audience at a tool.invoke whose
+  // inner tool maps to orch:read, and OUT of audience at one mapping to orch:web.
+
+  it("allows tool.invoke at an inner tool whose cap (orch:read) the lease holds", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // TOOL_CAPABILITY_MAP["memory_search"] === "orch:read"; lease holds orch:read.
+    // RED on pre-patch: validate ignores the 3rd arg and derives the cap from
+    // HANDLER_CAPABILITY_MAP["tool.invoke"] === undefined → returns null (denies
+    // EVERY tool.invoke). The audience MUST bind to the inner tool to pass.
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    const info = mgr.validate(bearer, "tool.invoke", "memory_search");
+    expect(info).not.toBeNull();
+    expect(info?.agentId).toBe("agent-1");
+    expect(info?.caps).toEqual(["orch:read"]);
+  });
+
+  it("denies tool.invoke at an inner tool whose cap (orch:web) the lease lacks", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // The load-bearing replay deny: a lease scoped to orch:read CANNOT dispatch
+    // web_fetch (orch:web) — the audience binds to TOOL_CAPABILITY_MAP["web_fetch"].
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    expect(mgr.validate(bearer, "tool.invoke", "web_fetch")).toBeNull();
+  });
+
+  it("allows tool.invoke at web_fetch when the lease holds orch:web", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:web"]));
+    expect(mgr.validate(bearer, "tool.invoke", "web_fetch")).not.toBeNull();
+  });
+
+  it("allows tool.invoke at an in-process builtin (read) for an orch:read lease", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // read is {kind:"executor"} but still TOOL_CAPABILITY_MAP["read"] === "orch:read".
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    expect(mgr.validate(bearer, "tool.invoke", "read")).not.toBeNull();
+  });
+
+  it("denies tool.invoke at an unmapped inner tool (no cap → out of audience)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // mcp_manage is NOT on the curated tool surface → TOOL_CAPABILITY_MAP[it] is
+    // undefined → no orch:* cap → denied at the audience layer (default-deny).
+    const { bearer } = mgr.mintLease(baseInput(["orch:read", "orch:web"]));
+    expect(mgr.validate(bearer, "tool.invoke", "mcp_manage")).toBeNull();
+  });
+
+  it("denies tool.invoke with NO inner tool (undefined → no cap → out of audience)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    // A tool.invoke validate without the 3rd arg cannot resolve an inner-tool cap.
+    expect(mgr.validate(bearer, "tool.invoke")).toBeNull();
+  });
+
+  it("leaves the HANDLER_CAPABILITY_MAP method path UNCHANGED (regression guard)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // A non-tool.invoke method still derives its cap from HANDLER_CAPABILITY_MAP —
+    // the 3rd arg is irrelevant. cron.add (orch:cron) for an orch:cron lease passes;
+    // an extra innerTool arg does not perturb the existing path.
+    const { bearer } = mgr.mintLease(baseInput(["orch:cron"]));
+    expect(mgr.validate(bearer, "cron.add")).not.toBeNull();
+    // graph.execute (orch:graph) for the same orch:cron lease is still out of audience.
+    expect(mgr.validate(bearer, "graph.execute")).toBeNull();
+  });
+});
+
 describe("LeaseManager — timing-safe rejection (no throw)", () => {
   it("validate with an empty bearer returns null and does not throw", () => {
     const mgr = createLeaseManager(makeDeps());

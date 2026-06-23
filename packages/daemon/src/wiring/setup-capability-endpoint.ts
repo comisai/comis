@@ -42,18 +42,38 @@
  * `_capabilities` (or any other `_X` gate) is dropped first, so the injected
  * lease values are the ONLY ones the sink ever sees. The rate-limit on the endpoint is wired
  * in Phase 213; the operator-facing revoke RPC + cascade are Phase 213. The
- * bwrap cap-socket bind is 211-05; the jailed SDK that is the socket CLIENT is
- * Phase 212 (which finalizes the wire format — for 211 the socket-server
- * existence + the 0600 chmod + the handleCapCall routing is the deliverable).
+ * bwrap cap-socket bind is 211-05.
+ *
+ * Phase 212 adds the `tool.invoke` ONE-ROUTE dispatch (`handleToolInvoke` —
+ * DISPATCH-01/02): the generalization of the per-method validate. `tool.invoke`
+ * carries `{tool, args}`; the dispatch gates in the v8 §6.2 order — cap-map
+ * allow-list (unmapped → `CapabilityDeniedError`, default-deny) → denylist →
+ * deny-by-origin (automatic on the rpc route) → `requireCapability` → route. The
+ * route split (Gap 1) is the load-bearing addition: `{kind:"rpc"}` tools
+ * (`memory_*`/`extract_document`/`session_*`) strip-then-inject and forward to
+ * the SAME sink (so deny-by-origin + `requireCapability` fire unchanged), while
+ * `{kind:"executor"}` tools (`read`/`grep`/`find`/`ls`/`jq` + the daemon-side
+ * `web_*`) route to the injected `toolInvokeExecutor` — a real RPC method does
+ * not exist for them, so a forged `{kind:"rpc"}` route would 404. The lease
+ * audience binds `tool.invoke` to `TOOL_CAPABILITY_MAP[innerTool]` (Pitfall 2),
+ * so a captured lease cannot dispatch a tool whose cap it lacks.
  *
  * @module
  */
 
 import net from "node:net";
 import { chmodSync, unlinkSync } from "node:fs";
-import { SUB_AGENT_TOOL_DENYLIST, stripInternalFields } from "@comis/core";
+import {
+  SUB_AGENT_TOOL_DENYLIST,
+  stripInternalFields,
+  TOOL_CAPABILITY_MAP,
+  TOOL_ROUTE_MAP,
+  requireCapability,
+  CapabilityDeniedError,
+} from "@comis/core";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
+import type { ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request
@@ -205,6 +225,15 @@ export interface CapabilityEndpointDeps {
    * absent the handlers degrade to a no-op (the pre-WR-02 behavior).
    */
   logger?: ComisLogger;
+  /**
+   * The daemon-side executor for the `{kind:"executor"}` tools of `tool.invoke`
+   * (read/grep/find/ls/jq + web_search/web_fetch — Gap 1, Phase 212). Constructed
+   * + injected in Plan 05's wiring. Optional so the rpc-route + deny-matrix unit
+   * tests can construct the endpoint without it; a `tool.invoke` whose route is
+   * `{kind:"executor"}` requires it (a clear throw when absent — never a silent
+   * no-op, since that would drop a legitimately-authorized call).
+   */
+  toolInvokeExecutor?: ExecuteToolInvoke;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -242,6 +271,68 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
   // logger, so the socket handlers degrade to no-ops there.
   const log = deps.logger?.child({ submodule: "capability-endpoint" });
 
+  /**
+   * The `tool.invoke` one-route dispatch (DISPATCH-01/02; v8 §6.2) — the
+   * generalization of `handleCapCall`'s per-method validate. It is NOT a second
+   * gate: it reuses the lease validate (audience-bound to the INNER tool, Task 1)
+   * + strip-then-inject (S2/CR-01) + the shipped sink, so deny-by-origin +
+   * `requireCapability` fire automatically on the rpc route. The two NEW pieces
+   * are the tool→cap allow-list lookup and the tool→route split (rpc vs the
+   * daemon-side executor, Gap 1). Gates in ORDER:
+   *   1. cap-map allow-list — an unmapped tool → CapabilityDeniedError (DISPATCH-02).
+   *   2. denylist — defense-in-depth (no cap-mapped tool is denylisted by the
+   *      Plan-01 module-load assertion, but the pre-check is kept).
+   *   3. deny-by-origin — AUTOMATIC on the rpc route (the injected `_agentId`
+   *      triggers `assertNotAgentOrigin` for any ADMIN_METHODS at the sink).
+   *   4. requireCapability — the dispatch-layer gate (complementary to the
+   *      lease-audience deny in validate).
+   *   5. route — `{kind:"rpc"}` strips-then-injects and forwards to the sink;
+   *      `{kind:"executor"}` calls the injected daemon-side executor.
+   *
+   * CRITICAL (S1): NO second capability gate beyond `requireCapability`, and the
+   * MCP export-policy is NOT the gate (the anti-pattern — only 3 tools are the
+   * `safe` policy, incl. browser; it would reject orch:read + admit browser). The
+   * cap-map + the denylist are the gates.
+   *
+   * The allow-list (step 1) + denylist (step 2) ran in `handleCapCall` BEFORE the
+   * lease validate (so an unmapped tool surfaces the typed default-deny, not the
+   * generic audience-mismatch); `cap` is the resolved, non-undefined capability.
+   * This function owns steps 4–5: the dispatch-layer `requireCapability` gate
+   * (complementary to the lease audience) + the rpc/executor route.
+   */
+  async function handleToolInvoke(
+    lease: LeaseInfo,
+    tool: string,
+    cap: (typeof TOOL_CAPABILITY_MAP)[keyof typeof TOOL_CAPABILITY_MAP],
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    // 4. requireCapability (3 deny-by-origin is automatic on the rpc route): the
+    //    plain membership gate — no wildcard, least-privilege by construction.
+    requireCapability(lease.caps, cap);
+    // 5. Route.
+    const route = TOOL_ROUTE_MAP[tool as keyof typeof TOOL_ROUTE_MAP];
+    if (route.kind === "rpc") {
+      // S2 strip-then-inject (CR-01): the inner args are FULLY attacker-controlled
+      // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
+      // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
+      // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
+      return rpcCall(route.method, {
+        ...stripInternalFields(args),
+        _agentId: lease.agentId,
+        _capabilities: lease.caps,
+      });
+    }
+    // Executor route (Gap 1): the in-process builtins + the daemon-side web pair.
+    // The executor is injected (Plan 05 wires it); a legitimately-authorized call
+    // must NOT silently no-op if it is absent — throw a clear wiring error.
+    if (deps.toolInvokeExecutor === undefined) {
+      throw new Error(
+        `tool.invoke executor route for "${tool}" requires a toolInvokeExecutor (not wired)`,
+      );
+    }
+    return deps.toolInvokeExecutor(tool, args, { agentId: lease.agentId, caps: lease.caps });
+  }
+
   async function handleCapCall(
     bearer: string,
     method: string,
@@ -253,6 +344,40 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     const denylistTool = denylistToolForMethod(method);
     if (denylistTool !== undefined && SUB_AGENT_TOOL_DENYLIST.has(denylistTool)) {
       throw new Error(`Tool ${denylistTool} is denylisted and not reachable from the capability endpoint`);
+    }
+
+    // tool.invoke is the one-route dispatch (Phase 212): extract the inner
+    // {tool, args} and thread the inner tool into the lease audience (Task 1 —
+    // validate binds tool.invoke to TOOL_CAPABILITY_MAP[innerTool]).
+    if (method === "tool.invoke") {
+      const tool = typeof params.tool === "string" ? params.tool : "";
+      const innerArgs =
+        typeof params.args === "object" && params.args !== null
+          ? (params.args as Record<string, unknown>)
+          : {};
+      // 1. Allow-list FIRST (DISPATCH-02 default-deny): an unmapped tool is
+      //    undispatchable → CapabilityDeniedError. This precedes the lease
+      //    validate so an unmapped tool surfaces the dispatch default-deny (a
+      //    typed capability denial) rather than the generic audience-mismatch
+      //    Error — the cap-map is the authority on what is dispatchable; the
+      //    lease audience (Task 1) is the complementary replay defense for a
+      //    MAPPED tool whose cap the lease lacks.
+      const cap = TOOL_CAPABILITY_MAP[tool as keyof typeof TOOL_CAPABILITY_MAP];
+      if (cap === undefined) {
+        throw new CapabilityDeniedError("orch:read");
+      }
+      // 2. Denylist (defense-in-depth) — also before validate, mirroring the
+      //    direct-method denylist pre-check above.
+      if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
+        throw new Error(`Tool ${tool} is denylisted and not reachable from the capability endpoint`);
+      }
+      // 3. Validate the lease, AUDIENCE-bound to the inner tool's cap (Task 1) —
+      //    a captured lease cannot dispatch a tool whose cap it lacks.
+      const toolLease: LeaseInfo | null = leaseManager.validate(bearer, "tool.invoke", tool);
+      if (!toolLease) {
+        throw new Error("lease invalid/expired/revoked or audience mismatch");
+      }
+      return handleToolInvoke(toolLease, tool, cap, innerArgs);
     }
 
     // Validate the bearer against the lease (timing-safe + not-expired +

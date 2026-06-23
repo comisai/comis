@@ -27,6 +27,12 @@
 // Built-in tools (web-search, web-fetch)
 export { createWebSearchTool, __clearSearchCache } from "./builtin/web-search-tool/index.js";
 export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builtin/web-fetch-tool.js";
+// Web-fetch internals reused by the daemon-side `tool.invoke` executor (Phase 212,
+// WEB-02): the DNS-pinned fetch primitive + the fetch-free readability extractor.
+// The autonomous `orch:web` path is validateUrl → fetchPinned → extractReadableContent
+// (undici, DNS-pinned, NO impit re-resolve), distinct from the in-process web_fetch tool.
+export { fetchPinned, createPinnedAgent } from "./integrations/pinned-fetch.js";
+export { extractReadableContent, type ExtractMode } from "./builtin/web-fetch-utils.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)
 export {

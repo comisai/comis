@@ -397,6 +397,177 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
+// tool.invoke — the one-route dispatch (DISPATCH-01/02; Phase 212 Plan 02)
+// ---------------------------------------------------------------------------
+
+describe("createCapabilityEndpoint tool.invoke dispatch", () => {
+  // DISPATCH-01 (rpc route): tool.invoke({tool:"memory_search"}) for an orch:read
+  // lease routes to the registered RPC method with strip-then-inject (the lease's
+  // _agentId is the only one the sink sees — self-scoping CR-01).
+  it("routes an rpc-kind tool to its registered method with strip-then-inject", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"], "agent-read");
+
+    const rpcCall = vi.fn(async (_m: string, _p: Record<string, unknown>) => ({ hits: [] }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    const result = await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "memory_search",
+      args: { q: "x" },
+    });
+
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    const [method, params] = rpcCall.mock.calls[0];
+    // TOOL_ROUTE_MAP["memory_search"] === { kind:"rpc", method:"memory.search_files" }.
+    expect(method).toBe("memory.search_files");
+    // The inner args reach the sink, stripped + with the lease-derived identity.
+    expect(params.q).toBe("x");
+    expect(params._agentId).toBe("agent-read");
+    expect(params._capabilities).toEqual(["orch:read"]);
+    expect(result).toEqual({ hits: [] });
+  });
+
+  // DISPATCH-01 (executor route): tool.invoke({tool:"web_fetch"}) for an orch:web
+  // lease routes to the INJECTED toolInvokeExecutor (NOT rpcCall).
+  it("routes an executor-kind tool to the injected toolInvokeExecutor (not rpcCall)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:web"], "agent-web");
+
+    const rpcCall = vi.fn(async () => ({ unused: true }));
+    const toolInvokeExecutor = vi.fn(async () => ({ url: "https://x", text: "body" }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, toolInvokeExecutor });
+
+    const result = await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "web_fetch",
+      args: { url: "https://x" },
+    });
+
+    expect(rpcCall).not.toHaveBeenCalled(); // executor route — the sink is bypassed
+    expect(toolInvokeExecutor).toHaveBeenCalledTimes(1);
+    const [tool, args, lease] = toolInvokeExecutor.mock.calls[0];
+    expect(tool).toBe("web_fetch");
+    expect(args).toEqual({ url: "https://x" });
+    expect(lease).toMatchObject({ agentId: "agent-web", caps: ["orch:web"] });
+    expect(result).toEqual({ url: "https://x", text: "body" });
+  });
+
+  // DISPATCH-02 (default-deny): an unmapped tool → CapabilityDeniedError.
+  it("denies an unmapped tool with CapabilityDeniedError (default-deny by absence)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read", "orch:web"]);
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const toolInvokeExecutor = vi.fn(async () => ({}));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, toolInvokeExecutor });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "tool.invoke", { tool: "definitely_not_a_tool", args: {} }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(rpcCall).not.toHaveBeenCalled();
+    expect(toolInvokeExecutor).not.toHaveBeenCalled();
+  });
+
+  // DISPATCH (denylist, defense-in-depth): an unmapped AND denylisted tool is
+  // denied. `gateway` is not on the cap-map (unmapped → CapabilityDeniedError);
+  // the deny fires either way. (The cap-map absence is the first gate.)
+  it("denies an unmapped+denylisted tool (gateway) — never dispatched", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"]);
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const toolInvokeExecutor = vi.fn(async () => ({}));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, toolInvokeExecutor });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "tool.invoke", { tool: "gateway", args: {} }),
+    ).rejects.toThrow();
+    expect(rpcCall).not.toHaveBeenCalled();
+    expect(toolInvokeExecutor).not.toHaveBeenCalled();
+  });
+
+  // DISPATCH (requireCapability): tool.invoke({tool:"web_fetch"}) with a lease
+  // holding ONLY orch:read is denied at requireCapability — orch:web is the cap
+  // for web_fetch. NOTE: the lease audience (Task 1) ALSO denies this at validate
+  // (the inner tool's cap is out of audience), so the deny may surface there; the
+  // point is web_fetch is unreachable with an orch:read-only lease.
+  it("denies web_fetch for an orch:read-only lease (cap not held)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"]); // NOT orch:web
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const toolInvokeExecutor = vi.fn(async () => ({}));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, toolInvokeExecutor });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "tool.invoke", { tool: "web_fetch", args: { url: "https://x" } }),
+    ).rejects.toThrow();
+    expect(toolInvokeExecutor).not.toHaveBeenCalled();
+  });
+
+  // DISPATCH (strip-then-inject / S2): forged _agentId/_trustLevel in the inner
+  // args are stripped; the rpc route receives the lease's _agentId (NOT the forged
+  // "victim") — the self-scoping integrity prerequisite (CR-01 / T-212-06).
+  it("strips forged _X fields from the inner args on the rpc route", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read"], "agent-honest");
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(bearer, "tool.invoke", {
+      tool: "memory_search",
+      args: { q: "x", _agentId: "victim", _trustLevel: "admin", _capabilities: ["admin"] },
+    });
+
+    const [, params] = rpcCall.mock.calls[0];
+    expect(params.q).toBe("x");
+    expect(params._agentId).toBe("agent-honest"); // lease wins, not "victim"
+    expect(params._capabilities).toEqual(["orch:read"]);
+    expect("_trustLevel" in params).toBe(false); // forged escalation stripped
+  });
+
+  // DISPATCH (admin unreachable): no admin tool is cap-mapped, so tool.invoke
+  // cannot reach an admin handler — an admin-ish tool name is unmapped → denied.
+  it("cannot reach an admin tool via tool.invoke (agents_create unmapped → denied)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:read", "orch:web"]);
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const toolInvokeExecutor = vi.fn(async () => ({}));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, toolInvokeExecutor });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "tool.invoke", { tool: "agents_create", args: {} }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  // The existing handleCapCall method-path is UNCHANGED — a direct method call
+  // (cron.add) still dispatches with the injection (regression guard for the
+  // tool.invoke special-case not perturbing the default path).
+  it("leaves the direct-method handleCapCall path unchanged (cron.add regression)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-cron");
+
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+    const [method, params] = rpcCall.mock.calls[0];
+    expect(method).toBe("cron.add");
+    expect(params._agentId).toBe("agent-cron");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Socket server lifecycle (0600 owner-only, mirroring mitm-broker.startUnixSocket)
 // ---------------------------------------------------------------------------
 
