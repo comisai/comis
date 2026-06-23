@@ -266,17 +266,13 @@ export interface ChannelsApiDeps {
   onGatewayAttachment?: (channelId: string, marker: string) => void;
   // Delivery queue + service
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
-  /** DeliveryService constructed once at the daemon composition root
-   *  (setup-channels.ts). Passed through to createMessageHandlers so
-   *  `message.send` / `message.reply` use the method form
-   *  `deps.deliveryService.deliverToChannel(...)`. */
+  /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */
   deliveryService: import("@comis/core").DeliveryService;
   // Channel health monitor
   healthMonitor?: import("@comis/channels").ChannelHealthMonitor;
-  // Channel plugins for capabilities RPC. Required: the production
-  // composition root (setup-channels-adapters.ts) always wires this Map
-  // with ≥9 plugin entries before `buildRpcDispatchDeps` runs. Tests must
-  // pass a Map (possibly empty) — see message-handlers.test.ts fixtures.
+  // Channel plugins for capabilities RPC. Required: the production composition
+  // root (setup-channels-adapters.ts) always wires this Map with ≥9 plugin
+  // entries before `buildRpcDispatchDeps` runs. Tests pass a Map (possibly empty).
   channelPlugins: Map<string, import("@comis/core").ChannelPluginPort>;
   /** message-handlers reads deps.defaultAgentId, deps.defaultWorkspaceDir,
    *  deps.workspaceDirs, deps.logger. channel-handlers reads deps.persistDeps. */
@@ -285,6 +281,10 @@ export interface ChannelsApiDeps {
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
   persistDeps?: PersistToConfigDeps;
+  /** Phase 213 (QUOTA-01/02): the bounded-autonomy service. message.send/reply/react
+   *  consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional;
+   *  absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
+  boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
 }
 
 /**

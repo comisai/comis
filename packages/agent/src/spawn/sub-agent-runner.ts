@@ -25,6 +25,7 @@ import {
   toolReachableGroups,
   RequiredToolsUnreachableError,
   type UnreachableToolEntry,
+  type SubAgentSpawnRejectedEvent,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
@@ -208,6 +209,23 @@ export interface SubAgentRunnerDeps {
    * compare; older test wiring). The daemon ALWAYS wires it in production.
    */
   resolvePosture?: (agentId: string, callerAgentId?: string) => SandboxPosture;
+  /**
+   * Tree-wide spawn ceiling consult (CEIL-01). Called at the spawn chokepoint —
+   * the SINGLE convergence point `session.spawn`, `graph.*`, AND the in-process
+   * agent loop ALL hit (they all call `runner.spawn`) — so a `for(;;) spawn()`
+   * fork-bomb is bounded tree-wide where the per-caller depth/fanout gates cannot
+   * (RESEARCH anti-pattern: "a semaphore that only sees the cap-endpoint path
+   * misses the in-process path"). Receives the run's tree-stable `rootRunId`, the
+   * `depth`, and the active-children `fanout`. On `{ ok:false }` the spawn is
+   * rejected EXACTLY like the depth/children gates (event + WARN + no run/session
+   * created). **Absent ⇒ inert** (non-daemon constructions / older test wiring);
+   * the daemon wires it to `boundedAutonomy.tryAcquireSpawn`.
+   */
+  checkSpawnCeiling?: (
+    rootRunId: string,
+    depth: number,
+    fanout: number,
+  ) => { ok: true } | { ok: false; reason: string };
   /** Optional structured logger for lifecycle diagnostics. */
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
@@ -1108,6 +1126,56 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }, "Sub-agent spawn queued");
 
         return queuedRunId;
+      }
+    }
+
+    // Tree-wide spawn ceiling (CEIL-01). The SINGLE consult both session.spawn
+    // AND graph.* AND the in-process agent loop hit (they all reach here via
+    // runner.spawn), keyed on the tree-stable rootRunId — so a for(;;) spawn()
+    // is bounded across the whole tree, not just one caller. Placed AFTER the
+    // per-caller depth/children/queue gates and BEFORE any runId/session is
+    // created, so it rejects with the SAME shape as the depth/children gates
+    // (event + WARN + no run/session). The fanout arg is the caller's active
+    // children (0 for a top-level / graph spawn with no callerSessionKey). Inert
+    // when the callback is absent (older/non-daemon wiring).
+    if (deps.checkSpawnCeiling) {
+      const ceilingFanout = countActiveChildren(params.callerSessionKey);
+      const ceiling = deps.checkSpawnCeiling(rootRunId, currentDepth, ceilingFanout);
+      if (!ceiling.ok) {
+        // Map the ceiling's reason (concurrency/depth/fanout) to the closed
+        // event union's tree-wide `ceiling_*` member; an unknown reason folds to
+        // ceiling_concurrency (the catch-all bound). Keeps the event distinct
+        // from the per-caller depth_exceeded/children_exceeded gates.
+        const eventReason: SubAgentSpawnRejectedEvent["reason"] =
+          ceiling.reason === "depth"
+            ? "ceiling_depth"
+            : ceiling.reason === "fanout"
+              ? "ceiling_fanout"
+              : "ceiling_concurrency";
+        deps.eventBus.emit("session:sub_agent_spawn_rejected", {
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId,
+          task: params.task,
+          reason: eventReason,
+          currentDepth,
+          maxDepth,
+          currentChildren: ceilingFanout,
+          maxChildren: deps.config.subagentContext?.maxChildrenPerAgent ?? 5,
+          timestamp: clock.now(),
+        });
+        deps.logger?.warn({
+          agentId: params.agentId,
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          reason: ceiling.reason,
+          rootRunId,
+          currentDepth,
+          hint: "Spawn rejected: tree-wide autonomy ceiling reached; the spawn tree hit its concurrency/depth/fanout bound (autonomy.spawn.*). Wait for sibling sub-agents to finish or raise the bound.",
+          errorKind: "resource" as const,
+        }, "Subagent spawn rejected");
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary — rpc-dispatch.ts converts to a JSON-RPC error.
+        throw new Error(
+          `Spawn rejected: tree-wide spawn ceiling reached (reason: ${ceiling.reason}). This spawn tree is at its concurrency/depth/fanout bound.`,
+        );
       }
     }
 

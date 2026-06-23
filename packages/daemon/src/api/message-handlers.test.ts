@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { createMessageHandlers as createMessageHandlersRaw, type MessageHandlerDeps } from "./message-handlers.js";
 import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
-import { ok } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import type { ChannelPort, AttachmentPayload, ChannelPluginPort, ChannelCapability, DeliveryService } from "@comis/core";
+import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 
 // CAP-03 / 210-GAP §3.5: the orch:message-gated handlers are message.send/
 // reply/react ONLY (the genuinely-outward send subset). They require an injected
@@ -724,5 +725,149 @@ describe("inboundMessageIdResolver integration", () => {
     });
 
     expect(adapter.deleteMessage).toHaveBeenCalledWith("678314278", "anything");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 213 QUOTA-01/02: the outward irreversible-action gate. Every agent-
+// initiated orch:message send (message.send/reply/react) is gated on the bounded-
+// autonomy outward quota AFTER authorizeChannelAccess, BEFORE deliver — origin-
+// only + per-target grant + per-hour + volume. A daemon-initiated send (no agent
+// origin) is NOT quota-gated (cron/heartbeat delivery).
+// ---------------------------------------------------------------------------
+
+/** A BoundedAutonomy stub exposing only the outward gate the message handlers use. */
+function makeOutwardStub(tryOutward: BoundedAutonomy["tryOutward"]): BoundedAutonomy {
+  return {
+    tryAcquireSpawn: () => ({ ok: true }),
+    releaseSpawn: () => {},
+    tryCall: () => ({ ok: true }),
+    tryChurn: () => ({ ok: true }),
+    reserveBudget: () => ({ kind: "ok" }) as ReturnType<BoundedAutonomy["reserveBudget"]>,
+    tryOutward,
+    registerRoot: () => {},
+    leaseIdsForRoot: () => new Set<string>(),
+    cronCount: () => 0,
+    destroy: () => {},
+  };
+}
+
+describe("outward quota gate (QUOTA-01/02)", () => {
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-quota-"));
+  });
+
+  afterEach(() => {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour (QUOTA-01)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(ok(undefined));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+    const deliver = (deps.deliveryService as never as { deliverToChannel: ReturnType<typeof vi.fn> }).deliverToChannel;
+
+    // Within quota → deliver proceeds (origin channel).
+    await handlers["message.send"]({
+      channel_type: "telegram", channel_id: "ch-A", text: "hi",
+      _agentId: "agent-1", _callerChannelId: "ch-A",
+    });
+    expect(deliver).toHaveBeenCalledTimes(1);
+
+    // Over quota (per_hour) → denied BEFORE deliver.
+    tryOutward.mockReturnValue(err({ reason: "per_hour" }));
+    await expect(
+      handlers["message.send"]({
+        channel_type: "telegram", channel_id: "ch-A", text: "again",
+        _agentId: "agent-1", _callerChannelId: "ch-A",
+      }),
+    ).rejects.toThrow();
+    expect(deliver).toHaveBeenCalledTimes(1); // NOT called a second time
+  });
+
+  it("denies a send to a new (non-origin) target when tryOutward returns no_grant (QUOTA-01)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "no_grant" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+    const deliver = (deps.deliveryService as never as { deliverToChannel: ReturnType<typeof vi.fn> }).deliverToChannel;
+
+    await expect(
+      handlers["message.send"]({
+        channel_type: "telegram", channel_id: "ch-A", text: "spam",
+        _agentId: "agent-1", _callerChannelId: "ch-A",
+      }),
+    ).rejects.toThrow();
+    expect(deliver).not.toHaveBeenCalled();
+    // tryOutward(agentId, channelId, isOrigin, volume): isOrigin true here
+    // (target === caller), so the gate fired on the grant/quota itself.
+    const [agentArg, channelId, isOrigin] = tryOutward.mock.calls[0];
+    expect(agentArg).toBe("agent-1");
+    expect(channelId).toBe("ch-A");
+    expect(isOrigin).toBe(true);
+  });
+
+  it("derives the tryOutward volume from text.length and denies on a volume trip (QUOTA-02)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "volume" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+
+    const big = "x".repeat(9999);
+    await expect(
+      handlers["message.send"]({
+        channel_type: "telegram", channel_id: "ch-A", text: big,
+        _agentId: "agent-1", _callerChannelId: "ch-A",
+      }),
+    ).rejects.toThrow();
+    // tryOutward(agentId, channelId, isOrigin, volume): the 4th arg (volume) is
+    // derived from text.length.
+    const [, , , volume] = tryOutward.mock.calls[0];
+    expect(volume).toBe(big.length);
+  });
+
+  it("gates message.reply AND message.react through tryOutward, not just send (QUOTA-01)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    // reactions enabled so message.react reaches the quota gate (not the cap guard).
+    deps.channelPlugins = new Map([["telegram", createMockPlugin({
+      reactions: true, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: false,
+    })]]);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "per_hour" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+
+    await expect(
+      handlers["message.reply"]({
+        channel_type: "telegram", channel_id: "ch-A", text: "r", message_id: "m1",
+        _agentId: "agent-1", _callerChannelId: "ch-A",
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      handlers["message.react"]({
+        channel_type: "telegram", channel_id: "ch-A", emoji: "👍", message_id: "m1",
+        _agentId: "agent-1", _callerChannelId: "ch-A",
+      }),
+    ).rejects.toThrow();
+
+    // BOTH outward methods consulted the quota.
+    expect(tryOutward).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT quota-gate a daemon-initiated send (no agent origin) — cron/heartbeat delivery", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "per_hour" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+    const deliver = (deps.deliveryService as never as { deliverToChannel: ReturnType<typeof vi.fn> }).deliverToChannel;
+
+    // No _agentId → daemon-initiated (cron/heartbeat). The quota is NOT consulted;
+    // the deliver proceeds (mirrors authorizeChannelAccess's daemon-initiated allow).
+    await handlers["message.send"]({ channel_type: "telegram", channel_id: "ch-B", text: "scheduled" });
+    expect(tryOutward).not.toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledTimes(1);
   });
 });

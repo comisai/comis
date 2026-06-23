@@ -14,7 +14,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PerAgentConfig, ClockPort } from "@comis/core";
+import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
 import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
@@ -23,15 +23,26 @@ afterEach(async () => {
   for (const c of cleanups.splice(0)) await c();
 });
 
+/** A no-op TimerPort — the bounded-autonomy rate limiter schedules TTL-evict
+ *  timers through it; the boot tests do not advance time, so a handle whose
+ *  cancel/unref are no-ops is sufficient (and leak-free under `destroy()`). */
+function createNoopTimers(): TimerPort {
+  const handle: TimerHandle = { cancelled: false, cancel: () => {}, unref: () => {} };
+  return { setTimeout: () => handle, setInterval: () => handle };
+}
+
 function createDeps(
   agents: Record<string, PerAgentConfig>,
-  opts: { dataDir?: string } = {},
+  opts: { dataDir?: string; cronJobCount?: (agentId: string) => number } = {},
 ) {
   const clock: ClockPort = { now: () => 1_700_000_000_000 };
-  // The boot helper threads daemonLogger into createCapabilityEndpoint, which
-  // binds a `submodule` child for the socket boundary (WR-02) — so the mock must
-  // carry a `child` that returns a logger with the level methods.
-  const childLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  // The boot helper threads daemonLogger into createCapabilityEndpoint (a
+  // `submodule` child for the socket boundary, WR-02) AND into createBoundedAutonomy,
+  // whose sub-modules bind a SECOND-level `submodule` child — so the child logger
+  // must itself carry `child` (returns itself). A self-referential child handles
+  // arbitrary nesting depth.
+  const childLogger: Record<string, unknown> = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  childLogger.child = vi.fn(() => childLogger);
   const daemonLogger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -41,8 +52,10 @@ function createDeps(
     agents,
     rpcCall: vi.fn(async () => ({})),
     clock,
+    timers: createNoopTimers(),
     dataDir: opts.dataDir ?? "/test/data",
     daemonLogger,
+    ...(opts.cronJobCount ? { cronJobCount: opts.cronJobCount } : {}),
   };
 }
 
@@ -93,6 +106,46 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(result.capEndpointHandle!.capSocketPath).toContain("cap.sock");
     expect(typeof result.capEndpointStop).toBe("function");
     expect(deps.daemonLogger.info).toHaveBeenCalledTimes(1);
+  });
+
+  // PHASE 213 (CEIL/BUDGET/RATE/QUOTA): the daemon-wide BoundedAutonomy service
+  // is constructed alongside the LeaseManager and held on the handle — the single
+  // chokepoint the spawn ceiling / rate limit / outward quota / budget meter all
+  // consult. Without it, none of the 213 bounds are live.
+  it("constructs the BoundedAutonomy service and holds it on the handle", async () => {
+    const dataDir = tempDataDir();
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig },
+      { dataDir },
+    );
+    const result = await constructCapabilityLayer(deps);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    expect(result.capEndpointHandle!.boundedAutonomy).toBeDefined();
+    // The composed surface is callable (the real per-root meter for the web charge).
+    const outcome = result.capEndpointHandle!.boundedAutonomy.reserveBudget(
+      "root-x", "_web", "_web", 0, 0,
+    );
+    expect(outcome.kind).toBeDefined();
+  });
+
+  // RATE-02 count source: the cronJobCount provider threaded into
+  // constructCapabilityLayer is bound INTO the service — boundedAutonomy.cronCount
+  // delegates to it (so the cap endpoint's cronSelfMax cap reads a REAL count, not
+  // an undefined/0 stub). daemon.ts binds the provider to the per-agent
+  // CronScheduler.getJobs().length.
+  it("binds the cronJobCount provider into BoundedAutonomy.cronCount", async () => {
+    const dataDir = tempDataDir();
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig },
+      { dataDir, cronJobCount: (id: string) => (id === "a1" ? 4 : 0) },
+    );
+    const result = await constructCapabilityLayer(deps);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    // The provider is threaded all the way through to the service.
+    expect(result.capEndpointHandle!.boundedAutonomy.cronCount("a1")).toBe(4);
+    expect(result.capEndpointHandle!.boundedAutonomy.cronCount("other")).toBe(0);
   });
 
   // The cap socket path lives under the supplied data dir.

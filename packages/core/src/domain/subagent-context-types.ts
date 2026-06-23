@@ -166,13 +166,25 @@ export interface SubAgentSpawnPreparedEvent {
 }
 
 /**
- * Emitted when a spawn request is denied due to depth or children limits.
+ * Emitted when a spawn request is denied. The per-caller gates emit
+ * `depth_exceeded`/`children_exceeded`/`queue_full`/`queue_timeout`; the Phase-213
+ * tree-wide spawn ceiling (CEIL-01, `boundedAutonomy.tryAcquireSpawn`) emits the
+ * `ceiling_*` reasons so an observer can distinguish a tree-wide bound (the whole
+ * spawn tree, keyed on `rootRunId`) from a single caller's depth/fan-out gate.
  */
 export interface SubAgentSpawnRejectedEvent {
   parentSessionKey: string;
   agentId: string;
   task: string;
-  reason: "depth_exceeded" | "children_exceeded" | "queue_full" | "queue_timeout";
+  reason:
+    | "depth_exceeded"
+    | "children_exceeded"
+    | "queue_full"
+    | "queue_timeout"
+    // Tree-wide ceiling (CEIL-01) — concurrency/depth/fanout across the whole tree.
+    | "ceiling_concurrency"
+    | "ceiling_depth"
+    | "ceiling_fanout";
   currentDepth: number;
   maxDepth: number;
   currentChildren: number;

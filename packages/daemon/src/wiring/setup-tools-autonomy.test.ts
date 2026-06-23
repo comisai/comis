@@ -27,15 +27,21 @@ function makeLogger() {
   return { child: vi.fn(() => child), ...child } as never;
 }
 
-function makeHandle(overrides: { mintBearer?: string } = {}) {
+function makeHandle(overrides: { mintBearer?: string; mintLeaseId?: string } = {}) {
   return {
     leaseManager: {
-      mintLease: vi.fn(() => ({ bearer: overrides.mintBearer ?? "lease-xyz" })),
+      // mintLease returns BOTH bearer and leaseId (the leaseId feeds registerRoot).
+      mintLease: vi.fn(() => ({
+        bearer: overrides.mintBearer ?? "lease-xyz",
+        leaseId: overrides.mintLeaseId ?? "leaseid-1",
+      })),
       validate: vi.fn(),
       renew: vi.fn(),
       revoke: vi.fn(),
     },
     endpoint: { handleCapCall: vi.fn(), startSocket: vi.fn(), stopSocket: vi.fn() },
+    // Phase 213: the bounded-autonomy service the wiring anchors the tree root in.
+    boundedAutonomy: { registerRoot: vi.fn() },
     capSocketPath: "/data/cap.sock",
     outputGuard: { scan: vi.fn(), registerSecret: vi.fn() },
   } as never as NonNullable<AutonomyToolInputs["capEndpointHandle"]>;
@@ -70,6 +76,34 @@ describe("buildAutonomyToolWiring", () => {
     expect((handle.outputGuard as never as { registerSecret: ReturnType<typeof vi.fn> }).registerSecret).toHaveBeenCalledWith("lease-xyz");
     expect(brokerSpawnEnv?.placeholders?.COMIS_CAP_LEASE).toBe("lease-xyz");
     expect(brokerSpawnEnv?.placeholders?.COMIS_ORCH_SOCKET).toBe("/data/cap.sock");
+  });
+
+  // Phase 213 (CEIL-01/BUDGET): the mint anchors the tree root in the bounded-
+  // autonomy service with the SAME rootRunId the lease is minted with + the
+  // freshly-minted leaseId (so the per-root budget wall-clock anchors).
+  it("anchors the tree root in boundedAutonomy.registerRoot after the mint (root mints a fresh id)", () => {
+    const input = baseInput();
+    buildAutonomyToolWiring(input);
+    const handle = input.capEndpointHandle!;
+    const reg = (handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot;
+    expect(reg).toHaveBeenCalledTimes(1);
+    const [rootRunId, leaseId] = reg.mock.calls[0]!;
+    // The root (no callerRootRunId) mints a fresh tree-stable id.
+    expect(rootRunId).toMatch(/^root-agent-1-/);
+    expect(leaseId).toBe("leaseid-1");
+  });
+
+  // Tree-stable rootRunId (RESEARCH Pitfall 1): a sub-agent assembly INHERITS the
+  // caller's rootRunId rather than minting a fresh one — so the whole tree shares
+  // one id the semaphore/budget/kill key on. The mint + registerRoot use it.
+  it("INHERITS the caller's rootRunId (no fresh mint) when callerRootRunId is supplied", () => {
+    const input = baseInput({ callerRootRunId: "root-parent-stable" });
+    buildAutonomyToolWiring(input);
+    const handle = input.capEndpointHandle!;
+    const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+    expect(mint.mock.calls[0]![0]).toMatchObject({ rootRunId: "root-parent-stable" });
+    const reg = (handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot;
+    expect(reg).toHaveBeenCalledWith("root-parent-stable", "leaseid-1", undefined);
   });
 
   it("assembles the orchestrate tool with the cap socket + the minted env for an autonomy agent with a sandbox", () => {

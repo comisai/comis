@@ -1,12 +1,12 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 167 JSON-RPC methods across 39 namespaces"
+description: "Complete reference for all 169 JSON-RPC methods across 41 namespaces"
 icon: "code"
 ---
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 167 methods across 39 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 169 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
 Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
 
@@ -3945,6 +3945,73 @@ Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yam
 - **Flag on** -- injects `message` into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn -- the same runId continues). Returns `{ status: "steered_inject", runId }`. The message lands as a user turn after the current step commits (it does not interrupt a tool call mid-execution).
 
 Rate-limited to one steer per `target` every 2 seconds (shared across both modes). A steered message is a message, not a capability grant: the child's tool set is fixed at spawn, so a steered request for a tool on the sub-agent tool denylist is still refused (the [defense-in-depth](/security/defense-in-depth) governance applies regardless of message source).
+
+</Accordion>
+
+<Accordion title="autonomy / live control (2 methods)">
+
+Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop a runaway or misbehaving spawn tree. Both methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke or un-kill itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these two methods are the manual override.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `lease.revoke` | `admin` | Cooperative stop — revoke a capability lease so the bearer's next RPC is denied |
+| `run.kill` | `admin` | Hard stop — kill a whole spawn tree by `rootRunId` (abort each SDK session) and revoke its leases |
+
+### `lease.revoke`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ leaseId?: string, rootRunId?: string }` — exactly one. `leaseId` revokes a single lease; `rootRunId` revokes every lease of that spawn tree. Neither/both is rejected. |
+| **Returns** | `{ revoked: number }` — the count of leases revoked (0 when the selector matched nothing) |
+
+Cooperative: the revoked lease's next `validate`/`renew` is denied, so the bearer cannot keep acting or re-lease — but an in-flight call already past validation runs to completion. For a hard stop use `run.kill`.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "lease.revoke",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "revoked": 3 },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `run.kill`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ rootRunId: string }` — the root run identifying the whole spawn tree |
+| **Returns** | `{ killed: number }` — the count of runs killed across the tree |
+
+Hard stop: aborts every running/queued SDK session of the tree (by `rootRunId`) AND revokes its leases (the cascade reaches grandchildren via `parentLeaseId`). Use this for a runaway `for(;;) spawn()` loop the cooperative `lease.revoke` cannot interrupt mid-flight.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "run.kill",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "killed": 4 },
+  "id": 1
+}
+```
+</CodeGroup>
 
 </Accordion>
 

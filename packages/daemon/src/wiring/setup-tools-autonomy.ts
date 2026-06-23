@@ -62,6 +62,14 @@ export interface AutonomyToolInputs {
   readonly sandboxProvider: SandboxProvider | undefined;
   /** The session key the lease is minted for, or undefined (heartbeat/cron). */
   readonly sessionKey: SessionKey | undefined;
+  /**
+   * The CALLER's tree-stable rootRunId (Phase 213 CEIL-01/BUDGET), when this
+   * assembly is itself a sub-agent whose spawn metadata carried one. When present
+   * the minted lease INHERITS it (so the whole tree shares one id — RESEARCH
+   * Pitfall 1, the silent under-count). Absent ⇒ this is a tree root and a fresh
+   * id is minted here.
+   */
+  readonly callerRootRunId?: string;
   /** The skills-scoped logger (instrument the runner + the store). */
   readonly logger: ComisLogger;
   /** The filtered inherited env the runner scrubs (ORCH-02); the lease vars ride placeholders. */
@@ -91,6 +99,12 @@ export interface AutonomyToolWiring {
 export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyToolWiring {
   const resolved = resolveAutonomy(input.agentConfig?.autonomy);
   const handle = input.capEndpointHandle;
+  // Tree-stable rootRunId (Phase 213 — RESEARCH Pitfall 1): INHERIT the caller's
+  // id when this assembly is a sub-agent (so the whole tree shares one id the
+  // semaphore/budget/kill key on); mint a fresh root id ONLY when there is no
+  // caller id (the tree root). Uses systemNowMs (the sanctioned-root time helper).
+  const rootRunId =
+    input.callerRootRunId ?? `root-${input.agentId}-${systemNowMs().toString(36)}`;
   const capMint: CapabilityMintDeps | undefined =
     handle && resolved.enabled
       ? {
@@ -101,7 +115,11 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           // budgetRef is the Phase-213 budget seam; an M1 per-assembly id.
           budgetRef: `run-${input.agentId}-${systemNowMs().toString(36)}`,
           sessionKey: input.sessionKey ? formatSessionKey(input.sessionKey) : input.agentId,
-          rootRunId: `root-${input.agentId}-${systemNowMs().toString(36)}`,
+          rootRunId,
+          // Anchor the tree root in the bounded-autonomy service right after the
+          // mint (the per-root budget wall-clock + the rootRunId↔leaseId index).
+          registerRoot: (rid, leaseId, parentLeaseId) =>
+            handle.boundedAutonomy.registerRoot(rid, leaseId, parentLeaseId),
         }
       : undefined;
   const brokerSpawnEnv = buildBrokerSpawnEnv(input.brokerContext, input.agentId, capMint);
