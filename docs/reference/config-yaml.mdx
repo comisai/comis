@@ -296,11 +296,23 @@ behavior.
 | `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. |
 | `capabilities` | `string[]` | _(from profile)_ | Explicit `orch:*` capability list. Overrides the profile's base set (still bounded by the structural floor). |
 | `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
-| `aggregateBudgetUsd` | `number` | `2.0` | Hard $ ceiling across the whole spawn tree, per root run. |
-| `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. |
+| `aggregateBudgetUsd` | `number` | `2.0` | Hard $ ceiling across the whole spawn tree, per root run. Alias of `budget.aggregateUsd` (either form resolves to the same bound). |
+| `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. Alias of `spawn.maxConcurrentSelfAgents`. |
 | `maxSelfSpawnRatePerMin` | `number` | `30` | Self-spawn rate limit per minute (distinct from the concurrency cap). |
 | `cronSelfMax` | `number` | `8` | Maximum agent-authored cron jobs. |
 | `lease.leaseMaxTtlMin` | `number` | `60` | Capability-lease renewal ceiling, in minutes. A jailed-surface lease renews on a shorter per-renew TTL but never past this maximum, so revoking a lease actually stops its renewal (no unbounded re-lease). Positive integer. |
+| `budget.aggregateUsd` | `number` | `2.0` | Per-root-run priced $ ceiling across the whole spawn tree (the `aggregateBudgetUsd` alias resolves here). Positive. |
+| `budget.tokens` | `number` | `2000000` | Per-root-run token ceiling. Bites even on an unknown-priced (subscription / $0) model that the $ limb counts as free, so a runaway loop is bounded regardless of pricing knowledge. Positive integer. |
+| `budget.wallClockMs` | `number` | `1800000` | Per-root-run wall-clock ceiling in milliseconds (30 min). Backstops a stuck/looping tree that burns neither $ nor tokens fast. Positive integer. |
+| `rate.perRootCallsPerSec` | `number` | `20` | Calls/second across the whole spawn tree (per root run). Bounds a `for(;;) spawn()` call storm. Positive integer. |
+| `rate.perSocketCallsPerSec` | `number` | `10` | Calls/second on a single orchestration socket. Positive integer. |
+| `rate.connectionChurnPerMin` | `number` | `60` | New-connection churn per minute (a reconnect-storm cap). Positive integer. |
+| `spawn.maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-agent ceiling (the `maxConcurrentSelfAgents` alias resolves here). Positive integer. |
+| `spawn.maxSpawnDepth` | `number` | `3` | Delegation-tree depth cap. Positive integer. |
+| `spawn.maxChildrenPerAgent` | `number` | `5` | Per-caller fan-out cap (children one agent may spawn). Positive integer. |
+| `outward.originOnly` | `boolean` | `true` | When true, only the agent's own origin channel is an auto-allowable outward target; a new target needs an explicit grant. |
+| `outward.perTargetGrants` | `string[]` | `[]` | Explicit per-target grant list. A send to a non-origin target is denied unless its channel id is listed here. |
+| `outward.volumeCap` | `number` | `4000` | Per-send volume bound (a mass-recipient / high-volume send trips this gate even when reversible). Positive integer. |
 | `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
 | `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
 | `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |

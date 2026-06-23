@@ -115,6 +115,98 @@ export const AutonomyMessageConfigSchema = z.strictObject({
 });
 
 /**
+ * Per-root-run BUDGET ceiling (§8.7, BUDGET-01/02). The nested
+ * `autonomy.budget.{ aggregateUsd, tokens, wallClockMs }` sub-block bounds the
+ * WHOLE spawn tree keyed on its `rootRunId` (the daemon-side BoundedAutonomy
+ * meter, Plans 04/06 reads it). Three independent limbs so a runaway loop trips
+ * a bound regardless of pricing knowledge:
+ *  - `aggregateUsd` — the priced $-ceiling (the existing flat `aggregateBudgetUsd`
+ *    is its legacy-flat alias; the resolver folds both into this one field).
+ *  - `tokens` — the token ceiling, which STILL bites on an unknown-priced ($0)
+ *    subscription/Codex model that the $-limb counts as free (the ffe11736
+ *    BUDGET-02 case).
+ *  - `wallClockMs` — the wall-clock ceiling, a backstop on a stuck/looping tree
+ *    that burns neither $ nor tokens fast.
+ * Every limb is `.positive()` so a profile can never resolve an absent/zero
+ * (fails-open) bound. The defaults are sized well above a single legit turn but
+ * below a self-spawning storm (a §22.3 floor that is ON in every profile).
+ */
+export const AutonomyBudgetConfigSchema = z.strictObject({
+  /** Priced per-root $ ceiling (the legacy flat `aggregateBudgetUsd` is its alias). */
+  aggregateUsd: z.number().positive().default(2.0),
+  /** Per-root token ceiling — bites even on an unknown-priced ($0) model (BUDGET-02). */
+  tokens: z.number().int().positive().default(2_000_000),
+  /** Per-root wall-clock ceiling in ms — backstop on a stuck/looping tree (30 min). */
+  wallClockMs: z.number().int().positive().default(1_800_000),
+});
+
+/**
+ * Per-root / per-socket call-RATE ceiling (RATE-01). The nested
+ * `autonomy.rate.{ perRootCallsPerSec, perSocketCallsPerSec, connectionChurnPerMin }`
+ * sub-block bounds a `for(;;) spawn()` / cron-storm call rate without tripping a
+ * legitimate burst (the daemon-side call-rate-limiter, Plan 06, reads it):
+ *  - `perRootCallsPerSec` — calls/sec across the whole spawn tree (per `rootRunId`).
+ *  - `perSocketCallsPerSec` — calls/sec on a single orchestration socket.
+ *  - `connectionChurnPerMin` — new-connection churn/min (a reconnect-storm cap).
+ * Distinct from `maxSelfSpawnRatePerMin` (the spawn-rate, which stays flat) —
+ * concurrency ≠ rate ≠ call-rate. Every limb `.positive()` (never fails open).
+ */
+export const AutonomyRateConfigSchema = z.strictObject({
+  /** Calls/sec across the whole spawn tree (per rootRunId). */
+  perRootCallsPerSec: z.number().int().positive().default(20),
+  /** Calls/sec on a single orchestration socket. */
+  perSocketCallsPerSec: z.number().int().positive().default(10),
+  /** New-connection churn per minute (reconnect-storm cap). */
+  connectionChurnPerMin: z.number().int().positive().default(60),
+});
+
+/**
+ * The tree-wide SPAWN ceiling shape (CEIL-01). The nested
+ * `autonomy.spawn.{ maxConcurrentSelfAgents, maxSpawnDepth, maxChildrenPerAgent }`
+ * sub-block is the ONE resolved source the per-root semaphore (Plan 04) reads:
+ *  - `maxConcurrentSelfAgents` — concurrent self-agents tree-wide (the existing
+ *    flat field is its legacy-flat alias; the resolver folds both here).
+ *  - `maxSpawnDepth` (3) — delegation-tree depth cap.
+ *  - `maxChildrenPerAgent` (5) — per-caller fan-out cap.
+ * `maxSpawnDepth`/`maxChildrenPerAgent` previously defaulted only inside
+ * `subagentContext` (sub-agent-runner `?? 3`/`?? 5`); surfacing them here +
+ * into `ResolvedAutonomy` gives the semaphore a single resolved read. Every
+ * limb `.positive()`.
+ */
+export const AutonomySpawnConfigSchema = z.strictObject({
+  /** Concurrent self-agents tree-wide (the legacy flat `maxConcurrentSelfAgents` is its alias). */
+  maxConcurrentSelfAgents: z.number().int().positive().default(4),
+  /** Delegation-tree depth cap (v8 CEIL-01). */
+  maxSpawnDepth: z.number().int().positive().default(3),
+  /** Per-caller fan-out cap (v8 CEIL-01). */
+  maxChildrenPerAgent: z.number().int().positive().default(5),
+});
+
+/**
+ * OUTWARD-send governance beyond the per-hour quota (QUOTA-01/02). The nested
+ * `autonomy.outward.{ originOnly, perTargetGrants, volumeCap }` sub-block bounds
+ * the genuinely-outward `orch:message` subset (the outward-quota meter, Plan 05,
+ * reads it; `message.channels`/`maxPerHour` stay for the channel/hour quota):
+ *  - `originOnly` (true) — by default only the agent's OWN origin channel is an
+ *    auto-allowable target; a NEW target needs an explicit grant.
+ *  - `perTargetGrants` — the §8.4 explicit per-target grant list (empty default);
+ *    a send to a non-origin target is denied unless its id is here.
+ *  - `volumeCap` — a per-send volume bound (chars / recipient-weighted units; the
+ *    Plan-05 meter defines the unit) so a mass-recipient / high-volume send trips
+ *    a gate even when reversible. `.positive()`.
+ * NB: `orch:browse` stays OFF (the `ALWAYS_ESCALATE_CAPABILITIES` member,
+ * QUOTA-02) — no tool maps to it in M1, so no config knob is needed here.
+ */
+export const AutonomyOutwardConfigSchema = z.strictObject({
+  /** Only the agent's own origin channel is auto-allowable by default. */
+  originOnly: z.boolean().default(true),
+  /** The §8.4 explicit per-target grant list (a non-origin target needs an entry). */
+  perTargetGrants: z.array(z.string()).default([]),
+  /** Per-send volume bound (chars / recipient-weighted; the Plan-05 meter defines the unit). */
+  volumeCap: z.number().int().positive().default(4000),
+});
+
+/**
  * `AutonomyConfigSchema` — the §3.3 knob surface. Every field carries a
  * `.default()` (§6.4); a fully-omitted block parses to the `standard` posture
  * (PROFILE-01 + MIG-01). `strictObject` is the typo guard.
@@ -170,6 +262,23 @@ export const AutonomyConfigSchema = z.strictObject({
   lease: z.object({ leaseMaxTtlMin: z.number().int().positive().optional() }).optional(),
   /** Origin-channel outward-message posture (§3.5/§8.4). */
   message: AutonomyMessageConfigSchema.default(() => AutonomyMessageConfigSchema.parse({})),
+  /**
+   * Per-root-run BUDGET ceiling (§8.7, BUDGET-01/02). Nested
+   * `autonomy.budget.{ aggregateUsd, tokens, wallClockMs }` (the `message`
+   * precedent). The flat `aggregateBudgetUsd` above stays the $-limb's
+   * legacy alias — the resolver folds both into `budget.aggregateUsd`.
+   */
+  budget: AutonomyBudgetConfigSchema.default(() => AutonomyBudgetConfigSchema.parse({})),
+  /** Per-root / per-socket / churn call-RATE ceiling (RATE-01). Nested sub-block. */
+  rate: AutonomyRateConfigSchema.default(() => AutonomyRateConfigSchema.parse({})),
+  /**
+   * Tree-wide SPAWN ceiling shape (CEIL-01). Nested
+   * `autonomy.spawn.{ maxConcurrentSelfAgents, maxSpawnDepth, maxChildrenPerAgent }`.
+   * The flat `maxConcurrentSelfAgents` above stays its legacy alias.
+   */
+  spawn: AutonomySpawnConfigSchema.default(() => AutonomySpawnConfigSchema.parse({})),
+  /** OUTWARD-send governance (origin-only / per-target grants / volume cap; QUOTA-01/02). */
+  outward: AutonomyOutwardConfigSchema.default(() => AutonomyOutwardConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap (§3.3 "one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
   web: z.boolean().optional(),
@@ -187,6 +296,10 @@ export const AutonomyConfigSchema = z.strictObject({
 
 export type AutonomyConfig = z.infer<typeof AutonomyConfigSchema>;
 export type AutonomyMessageConfig = z.infer<typeof AutonomyMessageConfigSchema>;
+export type AutonomyBudgetConfig = z.infer<typeof AutonomyBudgetConfigSchema>;
+export type AutonomyRateConfig = z.infer<typeof AutonomyRateConfigSchema>;
+export type AutonomySpawnConfig = z.infer<typeof AutonomySpawnConfigSchema>;
+export type AutonomyOutwardConfig = z.infer<typeof AutonomyOutwardConfigSchema>;
 
 /** A per-surface toggle field paired with the orch:* cap it maps to (§3.3). */
 const SURFACE_TOGGLE_TO_CAP = {
@@ -211,11 +324,25 @@ interface ProfileEntry {
   /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
+  /** Per-root $/token/wall-clock budget (BUDGET-01/02). */
+  readonly budget: AutonomyBudgetConfig;
+  /** Per-root/per-socket/churn call-rate ceiling (RATE-01). */
+  readonly rate: AutonomyRateConfig;
+  /** Tree-wide spawn shape — concurrent/depth/fanout (CEIL-01). */
+  readonly spawn: AutonomySpawnConfig;
+  /** Outward-send governance — origin-only/grants/volume (QUOTA-01/02). */
+  readonly outward: AutonomyOutwardConfig;
   /** Present for `unattended`/`max` in M1: the "available in M2/M3" clamp notice. */
   readonly m1Notice?: string;
 }
 
-/** The §3.8 `standard` guard set — ON under every autonomy-bearing profile (§8.7). */
+/**
+ * The §3.8 `standard` guard set — ON under every autonomy-bearing profile
+ * (§8.7). The nested `budget`/`rate`/`spawn`/`outward` blocks derive their
+ * concrete defaults from the SCHEMA (`.parse({})`) so the profile table and the
+ * Zod `.default()`s stay in single-source-of-truth lockstep — adding/retuning a
+ * limb is a one-edit change in the schema above.
+ */
 const STANDARD_GUARDS = {
   aggregateBudgetUsd: 2.0,
   maxConcurrentSelfAgents: 4,
@@ -224,6 +351,12 @@ const STANDARD_GUARDS = {
   // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
   // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
   leaseMaxTtlMin: 60,
+  // 213 nested limbs (BUDGET-01/02, RATE-01, CEIL-01, QUOTA-01/02). Derived from
+  // the schema defaults above so the two never drift.
+  budget: AutonomyBudgetConfigSchema.parse({}),
+  rate: AutonomyRateConfigSchema.parse({}),
+  spawn: AutonomySpawnConfigSchema.parse({}),
+  outward: AutonomyOutwardConfigSchema.parse({}),
 } as const;
 
 const STANDARD_MESSAGE: AutonomyMessageConfig = { channels: ["origin"], maxPerHour: 20 };
@@ -308,6 +441,22 @@ export interface ResolvedAutonomy {
   /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
+  /**
+   * Per-root $/token/wall-clock budget (BUDGET-01/02). `budget.aggregateUsd`
+   * mirrors the flat `aggregateBudgetUsd` (one resolved source the meter reads).
+   */
+  readonly budget: AutonomyBudgetConfig;
+  /** Per-root/per-socket/churn call-rate ceiling (RATE-01). */
+  readonly rate: AutonomyRateConfig;
+  /**
+   * Tree-wide spawn shape (CEIL-01). `spawn.maxConcurrentSelfAgents` mirrors the
+   * flat `maxConcurrentSelfAgents`; `maxSpawnDepth`/`maxChildrenPerAgent` are
+   * surfaced here (previously only in `subagentContext`) so the Plan-04
+   * semaphore reads ONE resolved source.
+   */
+  readonly spawn: AutonomySpawnConfig;
+  /** Outward-send governance — origin-only/grants/volume (QUOTA-01/02). */
+  readonly outward: AutonomyOutwardConfig;
   /** Present for `unattended`/`max` in M1 — the clamp notice. */
   readonly m1Notice?: string;
 }
@@ -370,18 +519,61 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     autoApprovable: capIsAutoApprovable(capability),
   }));
 
+  // Per-field nested merge (the `cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin`
+  // model at the lease/message limbs, RESEARCH §D). Each new sub-block reads the
+  // explicit nested field first, then the LEGACY-FLAT alias (budget.aggregateUsd
+  // ← aggregateBudgetUsd; spawn.maxConcurrentSelfAgents ← maxConcurrentSelfAgents),
+  // then the profile default. The merged $-budget and concurrent-spawn values are
+  // computed ONCE so the flat resolved field and its nested twin agree (one
+  // resolved source — no silent divergence at the meter/semaphore call site).
+  // This is resolved-OUTPUT surfacing of two representations onto one value, NOT a
+  // backward-compat shim (no old-behavior fallback path; the flat field is a live
+  // alias, not deprecated).
+  const resolvedAggregateUsd =
+    cfg?.budget?.aggregateUsd ?? cfg?.aggregateBudgetUsd ?? base.budget.aggregateUsd;
+  const resolvedConcurrentSelfAgents =
+    cfg?.spawn?.maxConcurrentSelfAgents ??
+    cfg?.maxConcurrentSelfAgents ??
+    base.spawn.maxConcurrentSelfAgents;
+
+  const resolvedBudget: AutonomyBudgetConfig = {
+    aggregateUsd: resolvedAggregateUsd,
+    tokens: cfg?.budget?.tokens ?? base.budget.tokens,
+    wallClockMs: cfg?.budget?.wallClockMs ?? base.budget.wallClockMs,
+  };
+  const resolvedRate: AutonomyRateConfig = {
+    perRootCallsPerSec: cfg?.rate?.perRootCallsPerSec ?? base.rate.perRootCallsPerSec,
+    perSocketCallsPerSec: cfg?.rate?.perSocketCallsPerSec ?? base.rate.perSocketCallsPerSec,
+    connectionChurnPerMin: cfg?.rate?.connectionChurnPerMin ?? base.rate.connectionChurnPerMin,
+  };
+  const resolvedSpawn: AutonomySpawnConfig = {
+    maxConcurrentSelfAgents: resolvedConcurrentSelfAgents,
+    maxSpawnDepth: cfg?.spawn?.maxSpawnDepth ?? base.spawn.maxSpawnDepth,
+    maxChildrenPerAgent: cfg?.spawn?.maxChildrenPerAgent ?? base.spawn.maxChildrenPerAgent,
+  };
+  const resolvedOutward: AutonomyOutwardConfig = {
+    originOnly: cfg?.outward?.originOnly ?? base.outward.originOnly,
+    perTargetGrants: cfg?.outward?.perTargetGrants ?? base.outward.perTargetGrants,
+    volumeCap: cfg?.outward?.volumeCap ?? base.outward.volumeCap,
+  };
+
   const resolved: ResolvedAutonomy = {
     profile: profileName,
     enabled: cfg?.enabled ?? base.enabled,
     capabilities: orderedCaps,
     resolvedCapabilities,
     mode: cfg?.mode ?? base.mode,
-    aggregateBudgetUsd: cfg?.aggregateBudgetUsd ?? base.aggregateBudgetUsd,
-    maxConcurrentSelfAgents: cfg?.maxConcurrentSelfAgents ?? base.maxConcurrentSelfAgents,
+    // Flat $-budget + concurrent-spawn mirror their nested twins (one source).
+    aggregateBudgetUsd: resolvedAggregateUsd,
+    maxConcurrentSelfAgents: resolvedConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
     leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
+    budget: resolvedBudget,
+    rate: resolvedRate,
+    spawn: resolvedSpawn,
+    outward: resolvedOutward,
     ...(base.m1Notice !== undefined ? { m1Notice: base.m1Notice } : {}),
   };
   return resolved;

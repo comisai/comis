@@ -107,8 +107,27 @@ matching `orch:*` capability. The scalar guard rails (`aggregateBudgetUsd`,
 `maxConcurrentSelfAgents`, `maxSelfSpawnRatePerMin`, `cronSelfMax`), the
 `lease.leaseMaxTtlMin` renewal ceiling (in minutes -- the maximum a jailed-surface
 capability lease can renew up to, so revoke actually stops renewal), and the
-`message` block (`channels`, `maxPerHour`) are all individually overridable. See
-the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
+`message` block (`channels`, `maxPerHour`) are all individually overridable.
+
+The always-on bounds are also exposed as nested blocks for finer control, each
+defaulting safe so a runaway agent is bounded out of the box:
+
+- `budget.{ aggregateUsd, tokens, wallClockMs }` -- the per-root-run ceiling.
+  `aggregateUsd` is the priced $ limb (the `aggregateBudgetUsd` field is its
+  alias); `tokens` and `wallClockMs` bound a loop even on an unknown-priced
+  (subscription / $0) model the $ limb would count as free.
+- `rate.{ perRootCallsPerSec, perSocketCallsPerSec, connectionChurnPerMin }` --
+  the call-rate ceiling that bounds a call storm without tripping a legitimate
+  burst.
+- `spawn.{ maxConcurrentSelfAgents, maxSpawnDepth, maxChildrenPerAgent }` -- the
+  tree-wide spawn shape (`maxConcurrentSelfAgents` is the alias of the flat field;
+  depth defaults to 3, fan-out to 5).
+- `outward.{ originOnly, perTargetGrants, volumeCap }` -- outward-send governance.
+  `originOnly` keeps sends to the agent's own channel by default; a new target
+  needs an explicit `perTargetGrants` entry; `volumeCap` bounds a mass-recipient
+  send.
+
+See the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
 ## Legible Boot Logging
 
