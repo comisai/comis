@@ -3657,6 +3657,20 @@ Media processing test methods and provider inspection. All methods require `admi
 
 Cross-channel message operations: send, reply, edit, delete, fetch, react, and attach files. All methods require `admin` scope and a `channel_type` + `channel_id` to identify the target channel.
 
+<Note>
+**Exactly-once across a daemon restart (autonomy-originated sends).** When
+[`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
+is on, an outward `message.send` / `message.reply` / `message.react` issued by an
+autonomy run (a run with a `rootRunId`) is durably ledgered and delivered
+**exactly once across a daemon restart**: a replayed step whose send already
+committed is a **no-op** (it returns the prior result, it does not re-send), and
+a step that crashed *between* the send attempt and the platform acknowledgement
+is **reconciled** on recovery (the channel is asked "did this send?") rather than
+blind-replayed. See [Durability & Resume](/agents/autonomy#durability-resume) for
+the guarantee and its honest per-channel coverage. Operator-issued sends (no
+`rootRunId`) are unchanged at-least-once.
+</Note>
+
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `message.send` | `admin` | Send a message to a channel |
@@ -4055,6 +4069,19 @@ Hard stop: aborts every running/queued SDK session of the tree (by `rootRunId`) 
 }
 ```
 </CodeGroup>
+
+<Note>
+**Durability / resume signals.** When
+[`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
+is on, a `lease.revoke` / `run.kill` also **poisons the run's persisted record**
+(flips it to `revoked`), so a subsequent daemon restart can never resurrect the
+killed run's pre-revoke capabilities. Restart-time **resume** and **orphan**
+outcomes are observable out-of-band, not over these RPCs: a run that the daemon
+could not safely resume is orphaned and the operator is **notified out-of-band**
+(it does not silently vanish), and the durable run/ledger state is inspectable in
+[`memory.db`](/operations/data-directory#memory-db). See
+[Durability & Resume](/agents/autonomy#durability-resume).
+</Note>
 
 </Accordion>
 
