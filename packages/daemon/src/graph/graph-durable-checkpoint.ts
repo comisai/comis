@@ -66,7 +66,7 @@ export const TERMINAL_NODE_STATES: ReadonlySet<string> = new Set<string>([
  */
 export function snapshotToSpawnTree(snapshot: GraphExecutionSnapshot): SpawnTreeNode[] {
   const tree: SpawnTreeNode[] = [];
-  for (const state of snapshot.nodes.values()) {
+  for (const state of snapshot.nodes.values() as IterableIterator<NodeExecutionState>) {
     tree.push({
       nodeId: state.nodeId,
       status: state.status,
