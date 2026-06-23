@@ -1697,10 +1697,12 @@ describe("createSubAgentRunner", () => {
       ).toThrow(/spawn ceiling|concurrency/i);
 
       // The reject mirrors the depth/children reject: the rejection event fires
-      // and NO run/session is created (the ceiling sits before run creation).
+      // (the ceiling's "concurrency" reason maps to the closed-union tree-wide
+      // member "ceiling_concurrency") and NO run/session is created (the ceiling
+      // sits before run creation).
       expect(ceilingDeps.eventBus.emit).toHaveBeenCalledWith(
         "session:sub_agent_spawn_rejected",
-        expect.objectContaining({ reason: "concurrency" }),
+        expect.objectContaining({ reason: "ceiling_concurrency" }),
       );
       expect(ceilingDeps.sessionStore.save).not.toHaveBeenCalled();
     });
