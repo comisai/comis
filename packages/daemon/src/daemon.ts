@@ -2192,11 +2192,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
     }
     return port;
   };
-  // shutdownBackgroundProcesses returned from setupTools — the
-  // previous eventBus.on("system:shutdown", ...) inline closure is now a
-  // hoisted function threaded through ShutdownDeps.
+  // 7.9. Capability-lease layer + ACTIVATION (Phase 211 + 212 Gap 3) — constructed
+  // BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into
+  // tool assembly; stored on `boot` so bootShutdown reads capEndpointStop/namespacePreflightOk.
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager });
+  Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
-    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
+    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
     // WR-04 (Phase 174-04): resolve the per-provider operator capabilityClass override so
     // ctx_expand's walk depth honors a pinned tier (the same providers.entries source the
     // executor's live ModelProfile uses). Undefined ⇒ provider-family heuristic.
@@ -2701,7 +2703,7 @@ async function bootShutdown(
     | "lockCleanupTimer"
   >>;
   const {
-    container, dataDir, configPaths,
+    container, dataDir, configPaths, capEndpointHandle, namespacePreflightOk,
     logger, logLevelManager, daemonLogger, daemonVersion,
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
@@ -2739,8 +2741,6 @@ async function bootShutdown(
   // assigned after emitStartupInvariants. Ref-object pattern mirrors
   // shutdownRef.value — setupShutdown reads .fn at teardown time.
   const _healthAggRef: { fn: (() => void) | undefined } = { fn: undefined };
-  // 7.9. Capability-lease layer + JAIL-03 host preflight (Phase 211; see helper doc).
-  const { capEndpointStop, namespacePreflightOk } = constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, dataDir, daemonLogger });
 
   // 8. Graceful shutdown: signal-handler registration + teardown ordering (setupShutdown).
   const { shutdownHandle } = setupShutdown({
@@ -2787,7 +2787,7 @@ async function bootShutdown(
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
-    capEndpointStop, // Phase 211 — stops + unlinks cap.sock (undefined when no autonomy agent).
+    capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // Phase 211/212: stops+unlinks cap.sock
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:

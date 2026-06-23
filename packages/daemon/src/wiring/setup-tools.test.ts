@@ -159,6 +159,11 @@ vi.mock("@comis/skills/tools", () => ({
   // ctx_expand wiring site. A pure map (nano1/small2/mid3/frontier4) — the gate test
   // only needs it to return a number; the real mapping is unit-tested in skills.
   depthForTier: vi.fn((c: string) => ({ nano: 1, small: 2, mid: 3, frontier: 4 })[c] ?? 1),
+  // Phase 212 Gap 3: the orchestrate runner + its ResultRef store the dormancy
+  // activation assembles for an autonomy-bearing agent. Named-tool doubles so the
+  // assembly gate test can assert `orchestrate` is present/absent.
+  createOrchestrateTool: vi.fn(() => ({ name: "orchestrate", execute: vi.fn() })),
+  createResultRefStore: vi.fn(() => ({ materialize: vi.fn(), gcRun: vi.fn(), cleanupRun: vi.fn() })),
 }));
 
 // `createPlatformToolRegistry` mock returns descriptors that delegate back
@@ -1905,6 +1910,85 @@ describe("setupTools", () => {
       for (const name of CTX_NAMES) {
         expect(toolNames).toContain(name);
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 19. Phase 212 Gap 3 — orchestrate tool assembly + capMint (dormancy activation)
+  // -------------------------------------------------------------------------
+
+  describe("orchestrate tool assembly + cap lease mint (Phase 212 Gap 3)", () => {
+    function mockSandbox() {
+      return { name: "mock-sandbox", available: vi.fn(() => true), buildArgs: vi.fn(() => ["--sandbox"]), wrapEnv: vi.fn((e: Record<string, string>) => e) };
+    }
+    function mockCapHandle() {
+      return {
+        leaseManager: { mintLease: vi.fn(() => ({ bearer: "lease-bearer-xyz" })), validate: vi.fn(), renew: vi.fn(), revoke: vi.fn() },
+        endpoint: { handleCapCall: vi.fn(), startSocket: vi.fn(), stopSocket: vi.fn() },
+        capSocketPath: "/test/data/cap.sock",
+        outputGuard: { scan: vi.fn(), registerSecret: vi.fn() },
+      } as any;
+    }
+    const autonomyAgent = {
+      "agent-1": {
+        autonomy: { profile: "standard" },
+        skills: { builtinTools: { browser: false, exec: true, process: false }, toolPolicy: { profile: "default" }, discoveryPaths: [], execSandbox: { enabled: "always", readOnlyAllowPaths: [] } },
+      } as any,
+    };
+
+    it("assembles the orchestrate tool for an autonomy-bearing agent when the cap handle + sandbox are present", async () => {
+      const deps = createMinimalDeps({ sandboxProvider: mockSandbox() as any, capEndpointHandle: mockCapHandle(), agents: autonomyAgent });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1");
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      expect(tools.map((t: any) => t.name)).toContain("orchestrate");
+    });
+
+    it("does NOT assemble the orchestrate tool when no cap handle was constructed (non-autonomy daemon)", async () => {
+      const deps = createMinimalDeps({ sandboxProvider: mockSandbox() as any, capEndpointHandle: undefined, agents: autonomyAgent });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1");
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      expect(tools.map((t: any) => t.name)).not.toContain("orchestrate");
+    });
+
+    it("does NOT assemble the orchestrate tool when no sandbox provider is available (jail unbuildable)", async () => {
+      const deps = createMinimalDeps({ sandboxProvider: undefined, capEndpointHandle: mockCapHandle(), agents: autonomyAgent });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1");
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      expect(tools.map((t: any) => t.name)).not.toContain("orchestrate");
+    });
+
+    it("threads the cap socket + the minted brokerSpawnEnv into the orchestrate tool", async () => {
+      const { createOrchestrateTool } = await import("@comis/skills/tools");
+      (createOrchestrateTool as unknown as ReturnType<typeof vi.fn>).mockClear();
+      const deps = createMinimalDeps({ sandboxProvider: mockSandbox() as any, capEndpointHandle: mockCapHandle(), agents: autonomyAgent });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1");
+      mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      const orchArgs = (createOrchestrateTool as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(orchArgs.capSocketPath).toBe("/test/data/cap.sock");
+      // The minted lease env rides brokerSpawnEnv.placeholders (COMIS_CAP_LEASE/COMIS_ORCH_SOCKET).
+      expect(orchArgs.brokerSpawnEnv?.placeholders?.COMIS_CAP_LEASE).toBe("lease-bearer-xyz");
+      expect(orchArgs.brokerSpawnEnv?.placeholders?.COMIS_ORCH_SOCKET).toBe("/test/data/cap.sock");
+    });
+
+    it("mints the lease + registers the bearer in OutputGuard for an autonomy agent (capMint threaded to buildBrokerSpawnEnv)", async () => {
+      const handle = mockCapHandle();
+      const deps = createMinimalDeps({ sandboxProvider: mockSandbox() as any, capEndpointHandle: handle, agents: autonomyAgent });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1");
+      mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      // buildBrokerSpawnEnv(deps.brokerContext, agentId, capMint) ran the mint → the
+      // bearer was minted + registered (Pitfall 1: never logged).
+      expect(handle.leaseManager.mintLease).toHaveBeenCalledTimes(1);
+      expect(handle.outputGuard.registerSecret).toHaveBeenCalledWith("lease-bearer-xyz");
     });
   });
 
