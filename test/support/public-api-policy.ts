@@ -2260,6 +2260,35 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HANDLER_CAPABILITY_MAP",
       "HandlerCapabilityClassification",
       "GatedMethodName",
+      // ── Durability-resume engine (Phase 216, interface-first Wave 1) ──
+      // The DurableRunPort (run checkpoint store) + OutwardSendLedgerPort
+      // (three-state outward-send ledger) + the DurableRunRecord domain type +
+      // the ChannelPort.reconcileSend? query/outcome types land FIRST (Plan
+      // 216-01) so every downstream plan implements against one contract: the
+      // SQLite stores (Wave 2), the resume engine + adapters (Wave 3), the boot
+      // wiring (Wave 4). Until those land, the only callers are this plan's own
+      // domain test (intra-core, excluded from the consumer scan). Shrink each
+      // entry as a real cross-package production consumer lands — the SQLite
+      // adapter (@comis/memory, Wave 2) consumes the port + record types, the
+      // daemon resume wiring (Wave 4) consumes the ports, and the channel
+      // adapters consume ReconcileSendQuery/ReconcileSendOutcome. Mirrors the
+      // Phase 212 tool.invoke + Phase 211 validateBindMount + Phase 199 REACT-01
+      // interface-first precedents above. parseDurableRunRecord/the *Schema
+      // values are part of the documented durability API surface.
+      "DurableRunPort",
+      "DurableRunStatusSchema",
+      "DurableRunStatus",
+      "DurableRunRecordSchema",
+      "DurableRunRecord",
+      "parseDurableRunRecord",
+      "AgentCapabilitySchema",
+      "OutwardSendLedgerPort",
+      "OutwardSendState",
+      "ReconcileOutcome",
+      "OutwardSendRecord",
+      "OutwardSendBeginInput",
+      "ReconcileSendQuery",
+      "ReconcileSendOutcome",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
