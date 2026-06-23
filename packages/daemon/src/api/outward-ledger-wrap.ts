@@ -30,7 +30,7 @@
 
 import { createHash } from "node:crypto";
 import { ok, type Result } from "@comis/shared";
-import { isPermanentError, type OutwardSendLedgerPort } from "@comis/core";
+import { isPermanentError, systemNowMs, type OutwardSendLedgerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 /** The arguments to {@link wrapOutwardSend}. */
@@ -87,7 +87,7 @@ export async function wrapOutwardSend(
     return ok({ messageId: existing.value.platformMessageId ?? "delivered" });
   }
 
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
   // Content-free key (T-216-03): only the sha256 slice — never the body.
   const contentDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -118,7 +118,7 @@ export async function wrapOutwardSend(
   if (sent.ok) {
     await ledger.commit(rootRunId, stepIndex, sent.value.messageId);
     logger.info(
-      { rootRunId, stepIndex, durationMs: Date.now() - startedAt },
+      { rootRunId, stepIndex, durationMs: systemNowMs() - startedAt },
       "Outward send committed",
     );
     return sent;
