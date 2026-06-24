@@ -2478,6 +2478,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "__setOutwardSendCrashHookForTest",
       "OUTWARD_SEND_CRASH_SENTINEL",
       "OutwardSendCrashHookMode",
+      // Cap-socket denylist RE-PROVE seam (Phase 219-05, CLI-02/03) — re-exported
+      // from the TOP-LEVEL daemon barrel so the comis-agent-same-gate /
+      // comis-agent-no-admin arch-tests DERIVE the denylisted-method set from the
+      // SAME source the cap endpoint's pre-check uses (not a hand-copied literal
+      // that drifts). @comis/core CANNOT import it (a package cycle), so the
+      // cross-check must live in the architecture suite. Exact analog of
+      // assembleFleetHealthReport above: the sole external consumers import it
+      // statically from @comis/daemon under test/architecture/**, which the
+      // public-export-consumers AST walker (it scans packages/ only) excludes — so
+      // this orphan list is the canonical place to record the test-only export.
+      // SECURITY: read-only widening — DENYLISTED_RPC_METHODS is an inert
+      // closed-door const (the SUB_AGENT_TOOL_DENYLIST soundness loop is
+      // unchanged); exporting it grants no new authority and the cap-socket
+      // denylist pre-check is untouched.
+      // Consumer: test/architecture/comis-agent-same-gate.test.ts +
+      //           test/architecture/comis-agent-no-admin.test.ts (Plan 219-05)
+      "DENYLISTED_RPC_METHODS",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
