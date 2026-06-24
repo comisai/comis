@@ -3491,6 +3491,217 @@ describe("persistFailureRecord integration", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SUMREF-02: materializeFullOutput — the child's full output becomes a
+// structured ResultRef (summary + handle) in the announcement, never the
+// full body. Real timers: the completion path awaits real fs/async ticks.
+// ---------------------------------------------------------------------------
+
+describe("materializeFullOutput child-output ResultRef in completion path", () => {
+  // A response large enough that re-injecting it would defeat the longevity
+  // invariant; the announcement must NEVER contain this verbatim.
+  const LARGE_RESPONSE = "X".repeat(50_000);
+
+  function makeMaterializeDeps(): SubAgentRunnerDeps {
+    const localDeps = createMockDeps();
+    localDeps.logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    // The condenser produces the bounded summary (SUMREF-01); both run.
+    localDeps.resultCondenser = {
+      condense: vi.fn().mockResolvedValue({
+        level: 1,
+        result: { taskComplete: true, summary: "bounded summary", conclusions: ["ok"] },
+        originalTokens: 5000,
+        condensedTokens: 50,
+        compressionRatio: 100,
+        diskPath: "/tmp/condensed-r1.json",
+      }),
+    };
+    vi.mocked(localDeps.executeAgent).mockResolvedValue({
+      response: LARGE_RESPONSE,
+      tokensUsed: { total: 5000 },
+      cost: { total: 0.1 },
+      finishReason: "stop",
+      stepsExecuted: 7,
+    });
+    return localDeps;
+  }
+
+  it("embeds the bounded summary plus the ResultRef handle but never the full body", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi.fn().mockResolvedValue({
+      ref: "results/r1.json",
+      kind: "json",
+      bytes: 1_048_576,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "produce a megabyte report",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(localDeps.sendToChannel).toHaveBeenCalledTimes(1);
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    // SUMREF-01 summary is present...
+    expect(text).toContain("bounded summary");
+    // ...AND the structured handle (ref + bytes + kind)...
+    expect(text).toContain("results/r1.json");
+    expect(text).toContain("1048576");
+    expect(text).toContain("json");
+    // ...but the full child body NEVER enters the lead's window.
+    expect(text).not.toContain(LARGE_RESPONSE);
+  });
+
+  it("calls materializeFullOutput with the spawn runId and the full child response", async () => {
+    const localDeps = makeMaterializeDeps();
+    const materializeMock = vi.fn().mockResolvedValue({
+      ref: "results/r2.json",
+      kind: "json",
+      bytes: 2048,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    localDeps.materializeFullOutput = materializeMock;
+
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    const [content, ctx] = materializeMock.mock.calls[0]!;
+    expect(content).toBe(LARGE_RESPONSE);
+    expect(ctx.runId).toBe(runId);
+    expect(typeof ctx.nowMs).toBe("number");
+  });
+
+  it("passes the child agentId in the ctx so the daemon targets the CHILD's jailed workspace", async () => {
+    // Security (T-218-08): the materialize target MUST be the child's own jailed
+    // workspace, never the lead's — the daemon resolves it from this agentId.
+    const localDeps = makeMaterializeDeps();
+    const materializeMock = vi.fn().mockResolvedValue({
+      ref: "results/r3.json",
+      kind: "json",
+      bytes: 100,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    localDeps.materializeFullOutput = materializeMock;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    const ctx = materializeMock.mock.calls[0]![1];
+    expect(ctx.agentId).toBe("researcher");
+  });
+
+  it("falls back to summary plus diskPath when materializeFullOutput is absent", async () => {
+    const localDeps = makeMaterializeDeps();
+    // No materializeFullOutput dep — the worker/no-autonomy path.
+    delete (localDeps as { materializeFullOutput?: unknown }).materializeFullOutput;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    expect(text).not.toContain(LARGE_RESPONSE);
+  });
+
+  it("degrades to summary plus diskPath and WARNs on a MaterializeError refusal", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi
+      .fn()
+      .mockResolvedValue({ error: "result_ref_too_large: 9000000 > 8388608" });
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Completion path did not crash — announcement degraded to summary + diskPath.
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    // A WARN with errorKind:"resource" was emitted on the refusal branch.
+    const warnCalls = vi.mocked(localDeps.logger!.warn).mock.calls;
+    const resourceWarn = warnCalls.find(
+      (c) => (c[0] as { errorKind?: string }).errorKind === "resource",
+    );
+    expect(resourceWarn).toBeDefined();
+  });
+
+  it("degrades silently without a resource WARN when materializeFullOutput returns undefined", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi.fn().mockResolvedValue(undefined);
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    // No double-report: the store already logged the contained write failure,
+    // so the runner emits NO errorKind:"resource" WARN on the undefined branch.
+    const warnCalls = vi.mocked(localDeps.logger!.warn).mock.calls;
+    const resourceWarn = warnCalls.find(
+      (c) => (c[0] as { errorKind?: string }).errorKind === "resource",
+    );
+    expect(resourceWarn).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ANNOUNCE_PARENT_TIMEOUT_MS constant
 // ---------------------------------------------------------------------------
 
