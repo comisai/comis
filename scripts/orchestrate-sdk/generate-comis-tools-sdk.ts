@@ -112,6 +112,8 @@ const TOOL_SUMMARIES: Record<string, string> = {
   find: "Find files in the jailed workspace by name/glob.",
   ls: "List a directory in the jailed workspace.",
   jq: "Run a jq expression over JSON (a value or a ResultRef).",
+  sql: "Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only).",
+  jsonpath: "Extract a precise value from a JSON ResultRef via JSONPath (no eval).",
   web_search: "Search the web (daemon-side, DNS-pinned).",
   web_fetch: "Fetch a URL's readable content (daemon-side, DNS-pinned).",
 };
@@ -171,6 +173,10 @@ export interface ResultRef {
   grep(pattern: string): Promise<string>;
   /** Run a jq \`expr\` over the materialized JSON/JSONL; returns the result. */
   jq(expr: string): Promise<unknown>;
+  /** Run DuckDB SQL over the materialized CSV/JSONL/JSON; returns the row slice. */
+  sql(query: string): Promise<unknown>;
+  /** Extract a precise value via a JSONPath \`$\`-expr (DuckDB json_extract, no eval). */
+  jsonpath(expr: string): Promise<unknown>;
   /** Read a slice of the materialized file (\`offset\`/\`limit\` lines or bytes). */
   read(offset?: number, limit?: number): Promise<string>;
 }

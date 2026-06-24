@@ -39,6 +39,7 @@ const mockCreateMcpLoginTool = vi.hoisted(() => vi.fn(() => ({ name: "mcp_login"
 const mockCreateExecTool = vi.hoisted(() => vi.fn(() => ({ name: "exec" })));
 const mockCreateProcessTool = vi.hoisted(() => vi.fn(() => ({ name: "process" })));
 const mockCreateApplyPatchTool = vi.hoisted(() => vi.fn(() => ({ name: "apply_patch" })));
+const mockCreateSleepTool = vi.hoisted(() => vi.fn(() => ({ name: "sleep", execute: vi.fn() })));
 const mockCreateHeartbeatManageTool = vi.hoisted(() => vi.fn(() => ({ name: "heartbeat_manage" })));
 const mockCreateProvidersManageTool = vi.hoisted(() => vi.fn(() => ({ name: "providers_manage" })));
 const mockCreateNotifyTool = vi.hoisted(() => vi.fn(() => ({ name: "notify_user" })));
@@ -99,6 +100,12 @@ vi.mock("@comis/skills", () => ({
     coding: ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
     messaging: ["message", "session_status"],
     supervisor: ["agents_manage", "obs_query", "sessions_manage", "memory_manage", "channels_manage", "tokens_manage", "models_manage"],
+    // COORD-01 (218-01): the lean-coordinator orchestration surface. Mirrors the
+    // real entry's shape (orchestration + orch:read drill-in + obs_query, NO
+    // exec/edit/write/browser) so the assembly-narrowing test can observe a
+    // role:coordinator lead stripped to it. The real profile is unit-tested in
+    // packages/skills/src/skills/policy/tool-policy.test.ts.
+    coordinator: ["sessions_spawn", "pipeline", "session_status", "cron", "message", "read", "obs_query"],
     full: [],
   },
   TOOL_GROUPS: {
@@ -111,6 +118,9 @@ vi.mock("@comis/skills/tools", () => ({
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,
   createApplyPatchTool: mockCreateApplyPatchTool,
+  // STREAM-03: the sleep pacing primitive pushed into the toolset next to the
+  // other always-on builtins (createExecTool/createProcessTool/createApplyPatchTool).
+  createSleepTool: mockCreateSleepTool,
   createFileStateTracker: mockCreateFileStateTracker,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
@@ -241,24 +251,35 @@ vi.mock("@comis/core", () => ({
   // the `standard` floor set (the zero-config default) so the injection test
   // can assert _capabilities carries orch:spawn. The resolver itself is unit-
   // tested against the real schema in schema-agent-autonomy.test.ts.
-  resolveAutonomy: vi.fn((_cfg?: unknown) => ({
-    profile: "standard",
-    enabled: true,
-    capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
-    resolvedCapabilities: [],
-    mode: "accept-reversible",
-    aggregateBudgetUsd: 2.0,
-    maxConcurrentSelfAgents: 4,
-    maxSelfSpawnRatePerMin: 30,
-    cronSelfMax: 8,
-    message: { channels: ["origin"], maxPerHour: 20 },
-  })),
+  //
+  // COORD-01 (218-01): the mock honors the input `role` exactly as the real
+  // resolver does — `coordinator` expands into `coordinatorToolGroups:
+  // ["coordinator"]`, `worker` (the default) omits it. The cap set is
+  // role-invariant (narrows-only), so the same caps are returned either way.
+  resolveAutonomy: vi.fn((cfg?: { role?: "worker" | "coordinator" }) => {
+    const role: "worker" | "coordinator" = cfg?.role ?? "worker";
+    return {
+      profile: "standard",
+      role,
+      ...(role === "coordinator" ? { coordinatorToolGroups: ["coordinator"] } : {}),
+      enabled: true,
+      capabilities: ["orch:spawn", "orch:graph", "orch:cron", "orch:skill", "orch:read", "orch:web", "orch:analyze", "orch:write"],
+      resolvedCapabilities: [],
+      mode: "accept-reversible",
+      aggregateBudgetUsd: 2.0,
+      maxConcurrentSelfAgents: 4,
+      maxSelfSpawnRatePerMin: 30,
+      cronSelfMax: 8,
+      message: { channels: ["origin"], maxPerHour: 20 },
+    };
+  }),
   // PROFILE-05/JAIL-03: buildAutonomyToolWiring degrades the resolved posture via
   // degradeAutonomy(resolved, {namespacePreflightOk}) before gating the orchestrate
   // surface. These tests don't pass namespacePreflightOk (→ defaults to true →
   // preflight OK), so the faithful mock is a no-op pass-through here; it still
   // downshifts to assistant on an explicit false (mirroring the real shipped fn,
-  // unit-tested in schema-agent-autonomy.test.ts).
+  // unit-tested in schema-agent-autonomy.test.ts). The pass-through preserves the
+  // full resolved posture (incl. role + coordinatorToolGroups) for the COORD-01 path.
   degradeAutonomy: vi.fn((resolved: { profile?: string }, preflight?: { namespacePreflightOk?: boolean }) =>
     preflight?.namespacePreflightOk === false && resolved?.profile !== "assistant"
       ? { resolved: { ...resolved, profile: "assistant", enabled: false, capabilities: [] }, downshift: { downshiftedFrom: resolved?.profile, downshiftedTo: "assistant", reason: "namespace_preflight_failed" } }
@@ -470,6 +491,9 @@ describe("setupTools", () => {
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
     expect(toolNames).toContain("providers_manage");
+    // STREAM-03: the sleep pacing primitive is an always-on builtin.
+    expect(toolNames).toContain("sleep");
+    expect(mockCreateSleepTool).toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -528,6 +552,104 @@ describe("setupTools", () => {
     const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).not.toContain("browser");
+  });
+
+  // -------------------------------------------------------------------------
+  // 3c. COORD-01 (218-01): autonomy.role: coordinator narrows the lead's tool
+  // surface to the coordinator TOOL_PROFILE via resolveAutonomy().coordinatorToolGroups.
+  // assembleToolsForAgent selects effectiveGroups = coordinatorToolGroups when
+  // role:coordinator AND no explicit tool_groups; an explicit tool_groups (or
+  // "full") still wins (operator intent, T-218-04).
+  // -------------------------------------------------------------------------
+
+  it("narrows a role:coordinator lead (no explicit tool_groups) to the coordinator orchestration surface, excluding heavy-work tools", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          autonomy: { role: "coordinator" },
+          skills: {
+            builtinTools: { browser: true, exec: true, process: true },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const toolNames = tools.map((t: any) => t.name);
+    // Orchestration + drill-in survive the narrowing.
+    expect(toolNames).toContain("sessions_spawn");
+    expect(toolNames).toContain("pipeline");
+    expect(toolNames).toContain("message");
+    expect(toolNames).toContain("obs_query");
+    // Heavy-work tools are stripped even though builtinTools enabled them —
+    // the coordinator profile has nowhere for inline heavy work to run (COORD-02).
+    expect(toolNames).not.toContain("exec");
+    expect(toolNames).not.toContain("browser");
+    expect(toolNames).not.toContain("gateway");
+  });
+
+  it("does NOT narrow a default role:worker lead (byte-identical to today — heavy-work tools remain)", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          // No autonomy.role → resolves to worker; no narrowing.
+          skills: {
+            builtinTools: { browser: true, exec: true, process: true },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const toolNames = tools.map((t: any) => t.name);
+    // No narrowing — the full platform surface is present (incl. heavy-work).
+    expect(toolNames).toContain("exec");
+    expect(toolNames).toContain("browser");
+    expect(toolNames).toContain("gateway");
+  });
+
+  it("an explicit tool_groups wins over the coordinator role default (operator intent — T-218-04)", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          autonomy: { role: "coordinator" },
+          skills: {
+            builtinTools: { browser: false, exec: true, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    // The operator explicitly requested the coding surface — it must win over
+    // the coordinator role narrowing (no surprise override of explicit intent).
+    await assembleToolsForAgent("agent-1", { toolGroups: ["coding"] });
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const toolNames = tools.map((t: any) => t.name);
+    // coding includes exec — the explicit group wins, so exec survives.
+    expect(toolNames).toContain("exec");
+    // sessions_spawn is NOT in the coding profile — the coordinator default did
+    // not apply, proving the explicit tool_groups took precedence.
+    expect(toolNames).not.toContain("sessions_spawn");
   });
 
   // -------------------------------------------------------------------------

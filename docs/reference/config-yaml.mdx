@@ -292,10 +292,13 @@ behavior.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `profile` | `enum` | `"standard"` | `assistant`, `standard`, `unattended`, or `max`. `standard` is the zero-config default. `unattended`/`max` resolve to `standard`-equivalent in this release plus an "available later" notice (no silent over-grant). |
+| `profile` | `enum` | `"standard"` | `assistant`, `standard`, `unattended`, or `max`. `standard` is the zero-config default. `unattended`'s never-hang mode behaviors (deny+escalate, the denial breaker, operator evict) are **active**; its capability set stays `standard`-equivalent (no over-grant). `max` still resolves to `standard`-equivalent in this release plus an "available later" notice. |
+| `role` | `enum` | `"worker"` | `worker` (default) or `coordinator`. `worker` does its work inline -- no change to existing agents. `coordinator` strips a long-running lead to the orchestration surface (`sessions_spawn`/`pipeline`/`cron`/`message` + the read-only drill-in tools `read`/`grep`/`find`/`ls` + the `obs_query` observability tool) under a delegate-then-synthesize doctrine -- heavy work always routes to a fresh-window child (`exec`/`edit`/`write`/`browser` are not on the coordinator surface). **Narrows the tool surface only; never widens a capability** -- the resolved `orch:*` set is byte-identical with and without the role. An explicit `tool_groups`/`full` overrides it. See [Long-Running Coordinator](/agents/efficiency). |
 | `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. |
 | `capabilities` | `string[]` | _(from profile)_ | Explicit `orch:*` capability list. Overrides the profile's base set (still bounded by the structural floor). |
 | `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
+| `denialBreakerN` | `number` | `5` | Consecutive floor blocks (capability/outward-quota denials) on a single run that trip the denial breaker -> the run aborts (`execution:aborted` reason `denial_breaker`) and escalates, rather than retry-looping and burning the budget. An allowed step in between resets the count. Positive integer. The never-hang dial for the [`unattended`](/agents/autonomy#the-unattended-profile) profile (applies to every profile). |
+| `evictOnPolicyUnreachable` | `boolean` | `true` | Fail-closed posture: if the run's autonomy mode cannot be resolved, treat it as `default` (the safe profile), never broader. This is the same safe target the operator [`autonomy.evict`](/reference/json-rpc#autonomy-evict) demotion lands on. |
 | `aggregateBudgetUsd` | `number` | `2.0` | Hard $ ceiling across the whole spawn tree, per root run. Alias of `budget.aggregateUsd` (either form resolves to the same bound). |
 | `maxConcurrentSelfAgents` | `number` | `4` | Tree-wide concurrent self-spawned-agent ceiling. Alias of `spawn.maxConcurrentSelfAgents`. |
 | `maxSelfSpawnRatePerMin` | `number` | `30` | Self-spawn rate limit per minute (distinct from the concurrency cap). |
@@ -313,6 +316,10 @@ behavior.
 | `outward.originOnly` | `boolean` | `true` | When true, only the agent's own origin channel is an auto-allowable outward target; a new target needs an explicit grant. |
 | `outward.perTargetGrants` | `string[]` | `[]` | Explicit per-target grant list. A send to a non-origin target is denied unless its channel id is listed here. |
 | `outward.volumeCap` | `number` | `4000` | Per-send volume bound (a mass-recipient / high-volume send trips this gate even when reversible). Positive integer. |
+| `durability.enabled` | `boolean` | `false` | Turn on durable runs: the daemon persists a per-root checkpoint as the spawn tree advances, emits a keep-alive heartbeat, and on restart re-mints the run from its persisted (attenuated) capabilities + reconciles any crashed-mid-send message exactly-once. Off by default; a default install builds no durable stores or watchdog (byte-identical). Only takes effect for an autonomy-bearing agent. |
+| `durability.staleHeartbeatMs` | `number` | `120000` | Lapsed-heartbeat threshold in milliseconds. A running run whose last heartbeat is older than this is treated as crashed and orphan-swept by the daemon-wide watchdog (which also fires at this cadence). Default is 4x `keepAliveMs` (the conservative ratio: a transiently-slow run must not be falsely failed and its work duplicated). Positive integer. |
+| `durability.keepAliveMs` | `number` | `30000` | Keep-alive write cadence in milliseconds — how often a live run stamps its heartbeat, independent of step/spawn completion so a long-running child never looks stale. Positive integer. |
+| `durability.recoveryBudgetMs` | `number` | `30000` | Wall-clock recovery budget in milliseconds for one boot/watchdog pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass (no thundering herd on a large crash backlog). Positive integer. |
 | `message` | `object` | `{ channels: ["origin"], maxPerHour: 20 }` | Outward-message posture. `channels` lists allowed channels (`"origin"` = the agent's own); `maxPerHour` is the rolling-hour send quota. A new channel is an explicit, always-escalating grant. |
 | `web` | `boolean` | _(from profile)_ | Toggle for `orch:web` (untrusted external content). |
 | `analyze` | `boolean` | _(from profile)_ | Toggle for `orch:analyze` (cost-bearing media analysis). |
@@ -326,6 +333,14 @@ agents:
       profile: standard
       aggregateBudgetUsd: 5
       browse: true            # opt into orch:browse (still always escalates)
+```
+
+```yaml title="~/.comis/config.yaml -- a long-running coordinator lead"
+agents:
+  orchestrator:
+    autonomy:
+      profile: standard
+      role: coordinator       # narrow to the orchestration surface; delegate heavy work
 ```
 
 #### Budget (agents.*.budgets)
@@ -595,7 +610,7 @@ Context engine configuration. Controls the system that manages what your agent s
 |-----|------|---------|-------------|
 | `historyTurns` | `number` | `15` | Recent user turns to keep in context (3-100) |
 | `historyTurnOverrides` | `Record<string, number>` | -- | Per-channel-type turn count overrides (e.g., `{ dm: 10, group: 5 }`) |
-| `observationKeepWindow` | `number` | `25` | Recent tool uses that retain full results (1-50) |
+| `observationKeepWindow` | `number` | `25` | Recent tool uses that retain full results -- the "last K". Read-time observation masking keeps this many, and the [Tier-0 micro-compaction pass](/agents/compaction#tier-0-micro-compaction-every-turn) runs **every turn** keeping this many before evicting older read-only tool results (1-50) |
 | `observationTriggerChars` | `number` | `120000` | Character threshold before observation masking activates (50K-1M) |
 | `compactionCooldownTurns` | `number` | `5` | Turns to wait before re-triggering LLM compaction (1-50) |
 | `compactionPrefixAnchorTurns` | `number` | `2` | User turns preserved at conversation head for cache prefix stability (0-10) |

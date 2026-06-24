@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";
+import { callCapSocket, invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";
 
 /** One received request line, captured by the fake server for assertions. */
 interface CapturedRequest {
@@ -155,6 +155,122 @@ describe("orchestrate-sdk-runtime", () => {
     );
   });
 
+  describe("callCapSocket (the generalized arbitrary-method cap-socket wire, CLI-04)", () => {
+    it("sends the method THROUGH verbatim (not wrapped in a tool.invoke envelope) and returns the {result}", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(
+        socketPath,
+        () => ({ result: { sessionId: "sub-7" } }),
+        captured,
+      );
+
+      // A DIRECT orchestration method — the very case invoke() cannot serve
+      // (invoke("session.spawn", …) would send tool.invoke{tool:"session.spawn"},
+      // an unmapped tool → CapabilityDeniedError). callCapSocket passes it raw.
+      const out = await callCapSocket("session.spawn", { task: "x" });
+
+      expect(out).toEqual({ sessionId: "sub-7" });
+      expect(captured).toHaveLength(1);
+      expect(captured[0].bearer).toBe("lease-bearer-xyz");
+      // The method is the WIRE method itself — NOT "tool.invoke".
+      expect(captured[0].method).toBe("session.spawn");
+      // params is passed through verbatim — NO { tool, args } wrapping.
+      expect(captured[0].params).toEqual({ task: "x" });
+    });
+
+    it("rides the unix cap socket (COMIS_ORCH_SOCKET), never the ws://…:4766 gateway wire", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: "ok" }), captured);
+
+      // The fake server is a node:net unix-socket listener on COMIS_ORCH_SOCKET.
+      // A reply only arrives if callCapSocket connected to THAT socket — proving
+      // the wire is the lease-authenticated unix cap socket, not a WebSocket to
+      // ws://…:4766/ws (the forbidden gateway client, CLI-04).
+      const out = await callCapSocket("graph.execute", { graph: "g" });
+
+      expect(out).toBe("ok");
+      expect(captured[0].method).toBe("graph.execute");
+    });
+
+    it("rejects loudly naming both env vars and 'jail' when COMIS_ORCH_SOCKET is absent (CLI-06 loud-fail seed)", async () => {
+      delete process.env.COMIS_ORCH_SOCKET;
+
+      const err = await callCapSocket("cron.add", { spec: "* * * * *" }).then(
+        () => undefined,
+        (e: Error) => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/COMIS_ORCH_SOCKET/);
+      expect(err!.message).toMatch(/COMIS_CAP_LEASE/);
+      expect(err!.message).toMatch(/jail/);
+    });
+
+    it("rejects loudly naming both env vars and 'jail' when COMIS_CAP_LEASE is absent (never a silent host run)", async () => {
+      delete process.env.COMIS_CAP_LEASE;
+
+      const err = await callCapSocket("message.send", { text: "hi" }).then(
+        () => undefined,
+        (e: Error) => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/COMIS_ORCH_SOCKET/);
+      expect(err!.message).toMatch(/COMIS_CAP_LEASE/);
+      expect(err!.message).toMatch(/jail/);
+    });
+
+    it("rejects with the server's {error} line (deny surfaces to the caller)", async () => {
+      server = await startFakeCapServer(socketPath, () => ({ error: "denied" }), []);
+
+      await expect(callCapSocket("skills.create", { name: "x" })).rejects.toThrow(/denied/);
+    });
+
+    it("rejects with a 'closed before a complete response line' error when the server closes without a newline reply (containment fault)", async () => {
+      // The server ends the connection WITHOUT writing a newline-terminated
+      // reply line — mirroring a mid-protocol close. callCapSocket must surface
+      // the close-before-reply error, never hang.
+      server = await new Promise<net.Server>((resolve, reject) => {
+        const s = net.createServer((socket) => {
+          socket.setEncoding("utf8");
+          socket.on("data", () => {
+            socket.end(); // close with no reply line
+          });
+        });
+        s.on("error", reject);
+        s.listen({ path: socketPath }, () => resolve(s));
+      });
+
+      await expect(callCapSocket("session.spawn", { task: "x" })).rejects.toThrow(
+        /closed before a complete response line/,
+      );
+    });
+  });
+
+  describe("invoke delegates to callCapSocket (byte-identical tool.invoke wire, zero behavior change)", () => {
+    it("invoke('grep', {pattern}) still sends exactly {bearer, method:'tool.invoke', params:{tool, args}}", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: "matched" }), captured);
+
+      const out = await invoke("grep", { pattern: "x" });
+
+      expect(out).toBe("matched");
+      expect(captured).toHaveLength(1);
+      expect(captured[0].bearer).toBe("lease-bearer-xyz");
+      expect(captured[0].method).toBe("tool.invoke");
+      // The exact pre-refactor envelope: { tool, args } under params.
+      expect(captured[0].params).toEqual({ tool: "grep", args: { pattern: "x" } });
+    });
+
+    it("invoke('grep') with no args sends params.args as {} (the args ?? {} default is preserved)", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: "ok" }), captured);
+
+      await invoke("grep");
+
+      expect(captured[0].method).toBe("tool.invoke");
+      expect(captured[0].params).toEqual({ tool: "grep", args: {} });
+    });
+  });
+
   describe("wrapResultRef (REF-02 in-jail extraction)", () => {
     it("preserves the ResultRef handle fields (ref/kind/bytes/preview)", () => {
       const wrapped = wrapResultRef({
@@ -217,6 +333,46 @@ describe("orchestrate-sdk-runtime", () => {
       expect(captured[0].params).toEqual({
         tool: "jq",
         args: { path: "results/data.json", expr: ".items[].id" },
+      });
+    });
+
+    it(".sql(query) runs the DuckDB SQL query over the ref file and returns only the slice", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: [{ id: 1 }] }), captured);
+      const wrapped = wrapResultRef({
+        ref: "results/data.jsonl",
+        kind: "jsonl",
+        bytes: 9,
+        preview: "",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+
+      const out = await wrapped.sql("SELECT id FROM data WHERE id = 1");
+
+      expect(out).toEqual([{ id: 1 }]);
+      expect(captured[0].params).toEqual({
+        tool: "sql",
+        args: { path: "results/data.jsonl", query: "SELECT id FROM data WHERE id = 1" },
+      });
+    });
+
+    it(".jsonpath(expr) extracts the JSONPath slice over the ref file in-jail", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: ["a", "b"] }), captured);
+      const wrapped = wrapResultRef({
+        ref: "results/data.json",
+        kind: "json",
+        bytes: 9,
+        preview: "",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+
+      const out = await wrapped.jsonpath("$.items[*].name");
+
+      expect(out).toEqual(["a", "b"]);
+      expect(captured[0].params).toEqual({
+        tool: "jsonpath",
+        args: { path: "results/data.json", expr: "$.items[*].name" },
       });
     });
 

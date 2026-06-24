@@ -28,6 +28,10 @@ export interface ResultRef {
   grep(pattern: string): Promise<string>;
   /** Run a jq `expr` over the materialized JSON/JSONL; returns the result. */
   jq(expr: string): Promise<unknown>;
+  /** Run DuckDB SQL over the materialized CSV/JSONL/JSON; returns the row slice. */
+  sql(query: string): Promise<unknown>;
+  /** Extract a precise value via a JSONPath `$`-expr (DuckDB json_extract, no eval). */
+  jsonpath(expr: string): Promise<unknown>;
   /** Read a slice of the materialized file (`offset`/`limit` lines or bytes). */
   read(offset?: number, limit?: number): Promise<string>;
 }
@@ -63,6 +67,8 @@ export interface ComisTools {
   grep(args?: Record<string, unknown>): Promise<ResultRef>;
   /** Run a jq expression over JSON (a value or a ResultRef). (capability: orch:read) */
   jq(args?: Record<string, unknown>): Promise<unknown>;
+  /** Extract a precise value from a JSON ResultRef via JSONPath (no eval). (capability: orch:read) */
+  jsonpath(args?: Record<string, unknown>): Promise<unknown>;
   /** List a directory in the jailed workspace. (capability: orch:read) */
   ls(args?: Record<string, unknown>): Promise<unknown>;
   /** Fetch a specific memory file by id (self-tenant). (capability: orch:read) */
@@ -79,6 +85,8 @@ export interface ComisTools {
   sessions_history(args?: Record<string, unknown>): Promise<unknown>;
   /** List the agent's own sessions. (capability: orch:read) */
   sessions_list(args?: Record<string, unknown>): Promise<unknown>;
+  /** Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only). (capability: orch:read) */
+  sql(args?: Record<string, unknown>): Promise<unknown>;
   /** Fetch a URL's readable content (daemon-side, DNS-pinned). (capability: orch:web) */
   web_fetch(args?: Record<string, unknown>): Promise<ResultRef>;
   /** Search the web (daemon-side, DNS-pinned). (capability: orch:web) */

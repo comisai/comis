@@ -159,3 +159,62 @@ describe("result-ref cap constants", () => {
     expect(PER_RUN_AGGREGATE_CAP_BYTES).toBeGreaterThan(PER_FILE_CAP_BYTES);
   });
 });
+
+// ---------------------------------------------------------------------------
+// QRY-03: pin the shipped GC / TTL / per-run-cap math against the SHIPPED named
+// caps (not arbitrary numbers). The arithmetic is already covered above; this
+// block makes QRY-03's specific bounds — the 8 MiB per-file cap, the 64 MiB
+// per-run aggregate cap, and the TTL eviction predicate — the explicit assertion
+// target, so a future change to a cap or the eviction order trips a named test.
+// The math is DONE (shipped in result-ref.ts); this ASSERTS it holds. T-221-QRY-08.
+// ---------------------------------------------------------------------------
+
+describe("QRY-03: results/ GC / TTL / per-run-cap enforced (assert the shipped math)", () => {
+  it("checkPerFileCap rejects a result one byte over the 8 MiB PER_FILE_CAP_BYTES", () => {
+    // At-cap stays inline; one byte over is refused with the overflow handle —
+    // the store turns this into a content-free result_ref_too_large (no truncate).
+    expect(checkPerFileCap(PER_FILE_CAP_BYTES, PER_FILE_CAP_BYTES).ok).toBe(true);
+    const over = checkPerFileCap(PER_FILE_CAP_BYTES + 1, PER_FILE_CAP_BYTES);
+    expect(over.ok).toBe(false);
+    if (!over.ok) {
+      expect(over.error.kind).toBe("result_ref_too_large");
+      expect(over.error.bytes).toBe(PER_FILE_CAP_BYTES + 1);
+      expect(over.error.cap).toBe(PER_FILE_CAP_BYTES);
+    }
+  });
+
+  it("selectEvictions evicts oldest-first until the total is under PER_RUN_AGGREGATE_CAP_BYTES", () => {
+    // Three files each 0.6× the cap: any TWO together (1.2×) overflow it, so only
+    // the single newest survives and the two oldest must be evicted.
+    const big = Math.floor(PER_RUN_AGGREGATE_CAP_BYTES * 0.6);
+    const entries = [
+      { path: "results/newest.jsonl", bytes: big, createdAtMs: 3000 },
+      { path: "results/oldest.jsonl", bytes: big, createdAtMs: 1000 },
+      { path: "results/middle.jsonl", bytes: big, createdAtMs: 2000 },
+    ];
+    // total = 1.8× the cap → must drop the two oldest (oldest, then middle),
+    // returned oldest-first (the deletion order), leaving only the newest.
+    const evicted = selectEvictions(entries, PER_RUN_AGGREGATE_CAP_BYTES);
+    expect(evicted).toEqual(["results/oldest.jsonl", "results/middle.jsonl"]);
+  });
+
+  it("selectEvictions keeps everything when the run's total is within the aggregate cap", () => {
+    const entries = [
+      { path: "results/a.jsonl", bytes: 1024, createdAtMs: 1000 },
+      { path: "results/b.jsonl", bytes: 1024, createdAtMs: 2000 },
+    ];
+    expect(selectEvictions(entries, PER_RUN_AGGREGATE_CAP_BYTES)).toEqual([]);
+  });
+
+  it("evicts at the TTL boundary: isExpired / computeExpiresAt drive the predicate", () => {
+    // Stamp an expiry one hour out, then probe just-before / at / just-after it:
+    // exactly-at-expiry is NOT yet expired (the GC keeps it that tick).
+    const nowMs = Date.parse("2026-06-24T00:00:00.000Z");
+    const ttlMs = 60 * 60 * 1000;
+    const expiresAt = computeExpiresAt(nowMs, ttlMs);
+    expect(isExpired(expiresAt, nowMs)).toBe(false); // fresh
+    expect(isExpired(expiresAt, nowMs + ttlMs - 1)).toBe(false); // one ms before
+    expect(isExpired(expiresAt, nowMs + ttlMs)).toBe(false); // exactly at expiry
+    expect(isExpired(expiresAt, nowMs + ttlMs + 1)).toBe(true); // past → evict
+  });
+});

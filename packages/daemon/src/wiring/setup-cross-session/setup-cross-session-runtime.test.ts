@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import os from "node:os";
 import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
 import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -47,6 +48,27 @@ const mockStepCounterInstance = vi.hoisted(() => ({
   getCount: vi.fn().mockReturnValue(0),
 }));
 const mockCreateStepCounter = vi.hoisted(() => vi.fn(() => ({ ...mockStepCounterInstance })));
+
+// Phase 218 (SUMREF-02): the ResultRef store (from @comis/skills/tools). The
+// wiring constructs it and injects a materializeFullOutput callback into the
+// runner; the spy lets the test invoke that callback and assert it targets the
+// CHILD's resolved jailed workspace (T-218-08) and returns the union unchanged.
+const mockResultRefMaterialize = vi.hoisted(() =>
+  vi.fn(async () => ({
+    ref: "results/child.json",
+    kind: "json" as const,
+    bytes: 1024,
+    preview: "{...}",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  })),
+);
+const mockCreateResultRefStore = vi.hoisted(() =>
+  vi.fn(() => ({
+    materialize: mockResultRefMaterialize,
+    gcRun: vi.fn(async () => {}),
+    cleanupRun: vi.fn(async () => {}),
+  })),
+);
 
 // cross-session-sender, announcement-batcher, and announcement-dead-letter
 // live in packages/orchestrator/src/cross-session/. setup-cross-session.ts
@@ -194,6 +216,17 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     resolveWorkspaceDir: mockResolveWorkspaceDir,
+  };
+});
+
+// createResultRefStore lives in @comis/skills/tools (SUMREF-02). Spread the real
+// module so any other re-exports keep working; override only the store factory so
+// the wiring's injected materializeFullOutput routes to the spy.
+vi.mock("@comis/skills/tools", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/skills/tools")>();
+  return {
+    ...actual,
+    createResultRefStore: mockCreateResultRefStore,
   };
 });
 
@@ -3075,6 +3108,187 @@ describe("setupCrossSession", () => {
       expect(resolvePosture("child-no-config", "loose-agent")).toEqual({ exec: "never" });
       expect(resolvePosture("child-no-config", "confined-agent")).toEqual({ exec: "always" });
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // SUMREF-02: the materializeFullOutput callback is injected and targets the
+  // CHILD's OWN jailed workspace (T-218-08), returning the store's 3-way union
+  // unchanged. These fail on the pre-patch wiring (no dep injected) — RED proof.
+  // -------------------------------------------------------------------------
+
+  describe("full-output ResultRef materialize wiring (SUMREF-02)", () => {
+    it("injects a defined materializeFullOutput callback into createSubAgentRunner", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      expect(runnerArgs.materializeFullOutput).toBeDefined();
+      expect(typeof runnerArgs.materializeFullOutput).toBe("function");
+    });
+
+    it("materializes to the CHILD's resolved jailed workspace (never the lead's)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      await materializeFullOutput("the child's megabyte output", {
+        runId: "run-xyz",
+        nowMs: 1234,
+        agentId: "agent-1",
+      });
+
+      // The target workspace is resolved from the CHILD's agent id — agent-1's
+      // own jailed workspace, NOT the lead/default's (T-218-08).
+      expect(mockResolveWorkspaceDir).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Agent 1" }),
+        "agent-1",
+        undefined,
+      );
+      expect(mockResultRefMaterialize).toHaveBeenCalledTimes(1);
+      const [content, toolName, ctx] = mockResultRefMaterialize.mock.calls[0]!;
+      expect(content).toBe("the child's megabyte output");
+      expect(toolName).toBe("sessions_spawn");
+      expect(ctx.workspacePath).toBe("/mock/workspace/agent-1");
+      expect(ctx.workspacePath).not.toBe("/mock/workspace/default");
+      expect(ctx.runId).toBe("run-xyz");
+      expect(ctx.nowMs).toBe(1234);
+    });
+
+    it("returns the store's 3-way union unchanged (a ResultRef passes through)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      const out = await materializeFullOutput("x", { runId: "r", nowMs: 1, agentId: "agent-2" });
+      // No mapping/wrapping — the runner's contract IS the store's union.
+      expect(out).toEqual({
+        ref: "results/child.json",
+        kind: "json",
+        bytes: 1024,
+        preview: "{...}",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("passes a MaterializeError refusal through unchanged (no synthesized wrapper)", async () => {
+      mockResultRefMaterialize.mockResolvedValueOnce(
+        { error: "result_ref_too_large: 9000000 > 8388608" } as never,
+      );
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      const out = await materializeFullOutput("x", { runId: "r", nowMs: 1, agentId: "agent-1" });
+      expect(out).toEqual({ error: "result_ref_too_large: 9000000 > 8388608" });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 216 Plan 12 (HIGH-2): the durable-store deps are INJECTED into the
+// cross-session/announcement path — NOT dead code. setupCrossSession must
+// thread the SAME `outwardLedger` / `durableRuns` / `resolveRootRunId` it
+// receives into BOTH createCrossSessionSender (Plan 10 Task 1) AND the
+// announcement dead-letter queue (Plan 10 Task 2). Without this wiring the
+// announce ledgering is a runtime pass-through (the deps are undefined), so
+// HIGH-2 is closed only in isolated unit tests, never at runtime. These cases
+// fail on the pre-patch wiring (the deps are dropped on the floor) — RED proof.
+// ---------------------------------------------------------------------------
+
+describe("setupCrossSession durable-store injection (Phase 216 Plan 12, HIGH-2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function getSetupCrossSession() {
+    const mod = await import("./index.js");
+    return mod.setupCrossSession;
+  }
+
+  it("threads outwardLedger + durableRuns + resolveRootRunId into createCrossSessionSender (non-undefined ⇒ not dead code)", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const outwardLedger = {
+      lookup: vi.fn(async () => undefined),
+      begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      markUnknown: vi.fn(async () => {}),
+      commit: vi.fn(async () => {}),
+      markFailed: vi.fn(async () => {}),
+      listUnreconciled: vi.fn(async () => []),
+    };
+    const durableRuns = { allocateOutwardStep: vi.fn(async () => 0) };
+    const resolveRootRunId = vi.fn(() => "root-xyz");
+
+    setupCrossSession(createMinimalDeps({ outwardLedger, durableRuns, resolveRootRunId }));
+
+    // The SAME instances must reach the sender (the announce-ledger seam).
+    const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
+    expect(senderArgs.outwardLedger).toBe(outwardLedger);
+    expect(senderArgs.durableRuns).toBe(durableRuns);
+    expect(senderArgs.resolveRootRunId).toBe(resolveRootRunId);
+  });
+
+  it("the injected ledger reaches the dead-letter queue: a committed row makes drain SKIP the re-send (HIGH-2, ONCE-03)", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    // A ledger whose lookup reports the announce already committed (delivered) —
+    // the DLQ must consult it BEFORE re-delivering and skip the send. If the DLQ
+    // never received the ledger (dead-code wiring), it would re-send. lookup
+    // returns Result<OutwardSendRecord|undefined, Error> (the port contract).
+    const outwardLedger = {
+      lookup: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          rootRunId: "root-dlq",
+          stepIndex: 3,
+          state: "committed" as const,
+          contentDigest: "abc",
+          platformMessageId: "delivered",
+        },
+      })),
+      begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      markUnknown: vi.fn(async () => {}),
+      commit: vi.fn(async () => {}),
+      markFailed: vi.fn(async () => {}),
+      listUnreconciled: vi.fn(async () => []),
+    };
+    // Isolate the DLQ JSONL onto a unique temp dataDir so no stray
+    // process.cwd()/dead-letters.jsonl leaks pre-existing entries into drain.
+    const deps = createMinimalDeps({ outwardLedger });
+    deps.container.config.dataDir = `${os.tmpdir()}/comis-dlq-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const result = setupCrossSession(deps);
+
+    const dlq = result.deadLetterQueue;
+    expect(dlq).toBeDefined();
+
+    // A captured sender the DLQ drain calls — asserts the committed-skip path.
+    const sendSpy = vi.fn(async () => true);
+    // Prime the lazy disk-load first (the file does not exist ⇒ empty + loaded=true)
+    // so the subsequent in-memory enqueue is not clobbered by a re-read on drain.
+    await dlq!.drain(sendSpy as any);
+    dlq!.enqueue({
+      announcementText: "completion announcement",
+      channelType: "telegram",
+      channelId: "chat-1",
+      runId: "run-dlq",
+      failedAt: Date.now(),
+      attemptCount: 0,
+      idempotencyKey: "default:u1:c1::run-dlq",
+      rootRunId: "root-dlq",
+      stepIndex: 3,
+    });
+
+    // The entry's lastAttemptAt is set to now by enqueue; the daemon DLQ uses a
+    // 60s retryIntervalMs gate before re-delivery. Advance real time past it so
+    // the entry is retry-eligible and the committed-skip lookup actually fires.
+    vi.useFakeTimers({ now: Date.now() + 61_000 });
+    try {
+      await dlq!.drain(sendSpy as any);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The ledger was consulted and reported committed ⇒ the re-send was skipped.
+    expect(outwardLedger.lookup).toHaveBeenCalledWith("root-dlq", 3);
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -1,12 +1,12 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 169 JSON-RPC methods across 41 namespaces"
+description: "Complete reference for all 170 JSON-RPC methods across 41 namespaces"
 icon: "code"
 ---
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 169 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 170 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill / autonomy-evict), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
 Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
 
@@ -780,7 +780,7 @@ The v2.26 **user-model revision & generalization** deepening (P4) emits two furt
 
 Accordingly the `learning` block carries two further optional counts — **`userModelRevised`** and **`memoriesGeneralized`** (folded from the bridged records; omitted when zero) — and a **benign, lowest-priority** `user_model_revised` `likelyRootCause` verdict fires when `userModelRevised > 0` (it ranks below `outcome_unresolved` and every acute cause: Defer ≠ Retry, a profile revision is never a failure or a retry, and it carries no profile body).
 
-Accepts EITHER `sessionKey` OR `traceId` (at least one is required). A `traceId` is canonicalized to its `sessionKey` first, so by-trace and by-session produce the identical report.
+Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` (FLEET-05) is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.fleet.health`](#obs-fleet-health) → `obs.explain` drill-down ref: pass the fleet report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report.
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
 
@@ -791,7 +791,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ sessionKey?: string, traceId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` required. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
+| **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` required. `rootRunId` (FLEET-05) is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
 | **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
@@ -847,7 +847,7 @@ Assemble a bounded, redaction-safe **cross-session** fleet-health triage (a `Fle
 
 `degradedByCause` is the fleet-level **degradation detector**: a bounded `{ <endReason>: count }` map (counts only) over the degraded sessions in the window, keyed by the named terminal cause -- e.g. `{ "context_exhausted": 5, "output_starved": 2 }` answers "how many sessions degraded, and *why*" at a glance. Only degraded sessions contribute; a session whose cause is missing folds into `"unknown"`. The two Glass Box causes worth calling out -- `context_exhausted` (the context-window pre-flight guard aborted the run; run `obs.explain` on the session for the numbers-backed `contextBudget` verdict) and `output_starved` (the final response was truncated at the model's max output tokens) -- are named here and in [`obs.explain`](#obs-explain)'s `outcome.endReason` + `likelyRootCause`, where previously both collapsed into a generic `error`.
 
-`likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`fleet_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`fleet_config_posture`) and recurring-health-signal (`fleet_recurring_health_signal`) verdicts; only a fleet-wide degradation spike (`fleet_high_degraded_rate`) ranks above it. Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity and no longer inflate the warning findings.
+`likelyRootCause` ranks **acute over chronic**: any degraded session with a named cause (`fleet_acute_degradation`, naming the dominant `degradedByCause` entry) out-ranks the standing config-posture (`fleet_config_posture`) and recurring-health-signal (`fleet_recurring_health_signal`) verdicts; only a fleet-wide degradation spike (`fleet_high_degraded_rate`) ranks above it. A degraded **autonomy** run (an unattended run orphaned on restart, revoked/killed, or aborted by the capability-denial breaker) ranks **first** of all -- `fleet_autonomy_degradation` names the worst run's `rootRunId` so you can paste it straight into `comis explain` (the unattended-mode signal out-prioritizes the session-level rules). Routine `session_rebase` continuations (a restart resuming at the store's max seq) ingest at `info` severity and no longer inflate the warning findings.
 
 The boot-time `config_posture` diagnostic row carries `servedBelowConfiguredCount` in its details JSON -- the number of providers whose Ollama-served window (`num_ctx`) was below the configured `contextWindow` at that boot (a **count only**, never provider names; the posture record severity is `warning` when it is > 0). When the **latest** posture row's count is non-zero, `findings[]` gains the dedicated `config_posture:served_below_configured` code with that count -- latest-row semantics because posture is standing state, not cumulative (a healthy restart clears the finding). The hint names the `OLLAMA_CONTEXT_LENGTH` / Modelfile `PARAMETER num_ctx` knobs; a malformed or pre-v2.21 posture row folds to 0 defensively (no finding, never an assembly error). For triaging this finding on a local deployment -- model choice, window sizing, and the full knob map -- see the [Local models playbook](/operations/local-models).
 
@@ -857,6 +857,8 @@ When small/local-tier models author pipeline DAGs over the window, `findings[]` 
 
 This finding is the metric behind a **pre-committed, measure-first decision rule**. The report carries a deterministic `pipelineAuthoringGate` verdict `{ buildAuthor, reason }`, computed by a pure reducer over the windowed authoring rows -- the same window always reproduces the same verdict (no LLM, no clock). **Phase 174 (small-model-authorable DAGs) is built only when this rule fires `buildAuthor: true`**, which happens only when both gates pass: small-tier invocations are non-trivial (**at least 20** over the window) AND small-tier author-validity is materially below frontier (**at least 15 percentage points** below). Otherwise it defers -- and with no telemetry, the default state for a fresh deployment, it returns `buildAuthor: false` with a reason naming insufficient telemetry. The thresholds are pinned in code so a silent retune is caught; the verdict is auditable from `comis fleet` once a v2.27+ daemon has accumulated authoring telemetry.
 
+When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_runs` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` (FLEET-02) is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree (Phase 217). It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** fleet surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` (FLEET-04) is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis fleet --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
+
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
 
 `sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the fleet sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity fleet.
@@ -865,7 +867,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -906,6 +908,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
       "suggestedNextSteps": ["obs.explain the worst session", "raise the breaker threshold"]
     },
     "pipelineAuthoringGate": { "buildAuthor": false, "reason": "insufficient telemetry: 12 small-tier invocations (< 20)" },
+    "autonomy": { "runs": { "total": 20, "degraded": 3, "degradedRate": 0.15 }, "orphaned": 2, "resumed": 4, "revoked": 1, "killed": 0, "breakerTrips": 1, "denialBreakerTrips": 2, "budgetBreaches": 0, "costUsd": 0.42, "worstRootRunId": "root-2f9c1a" },
     "suggestedNextSteps": ["raise the breaker threshold"],
     "truncations": [],
     "coverage": { "sessionSummary": { "found": true, "rows": 40 }, "sessionIndex": { "daysRead": 1, "daysMissing": 0 }, "billing": { "present": true } }
@@ -3657,6 +3660,20 @@ Media processing test methods and provider inspection. All methods require `admi
 
 Cross-channel message operations: send, reply, edit, delete, fetch, react, and attach files. All methods require `admin` scope and a `channel_type` + `channel_id` to identify the target channel.
 
+<Note>
+**Exactly-once across a daemon restart (autonomy-originated sends).** When
+[`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
+is on, an outward `message.send` / `message.reply` / `message.react` issued by an
+autonomy run (a run with a `rootRunId`) is durably ledgered and delivered
+**exactly once across a daemon restart**: a replayed step whose send already
+committed is a **no-op** (it returns the prior result, it does not re-send), and
+a step that crashed *between* the send attempt and the platform acknowledgement
+is **reconciled** on recovery (the channel is asked "did this send?") rather than
+blind-replayed. See [Durability & Resume](/agents/autonomy#durability-resume) for
+the guarantee and its honest per-channel coverage. Operator-issued sends (no
+`rootRunId`) are unchanged at-least-once.
+</Note>
+
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `message.send` | `admin` | Send a message to a channel |
@@ -3950,7 +3967,7 @@ Rate-limited to one steer per `target` every 2 seconds (shared across both modes
 
 <Accordion title="capabilities (1 method)">
 
-The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` are the write side).
+The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` / `autonomy.evict` are the write side).
 
 | Method | Scope | Description |
 |--------|-------|-------------|
@@ -3991,14 +4008,15 @@ Read-only and **not capability-gated** (an agent reading its OWN posture needs n
 
 </Accordion>
 
-<Accordion title="autonomy / live control (2 methods)">
+<Accordion title="autonomy / live control (3 methods)">
 
-Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop a runaway or misbehaving spawn tree. Both methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke or un-kill itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these two methods are the manual override.
+Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop, hard-stop, or demote a runaway or misbehaving spawn tree. All three methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke, un-kill, or un-evict itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these methods are the manual override.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `lease.revoke` | `admin` | Cooperative stop — revoke a capability lease so the bearer's next RPC is denied |
 | `run.kill` | `admin` | Hard stop — kill a whole spawn tree by `rootRunId` (abort each SDK session) and revoke its leases |
+| `autonomy.evict` | `admin` | Demote-but-continue — drop an in-flight run to the `default` profile by `rootRunId` (it keeps running, but under the safe posture) |
 
 ### `lease.revoke`
 
@@ -4055,6 +4073,47 @@ Hard stop: aborts every running/queued SDK session of the tree (by `rootRunId`) 
 }
 ```
 </CodeGroup>
+
+### `autonomy.evict`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ rootRunId: string }` — the root run to demote |
+| **Returns** | `{ evicted: boolean }` — `true` once the run is demoted (whether this call newly demoted it or it was already evicted; idempotent) |
+
+Demote-but-continue: unlike `lease.revoke` (cooperative stop) and `run.kill` (hard stop), evict does **not** abort the run. It marks the `rootRunId` in a daemon-wide evicted-set; the bounded-autonomy chokepoint consults that set at the run's **next gate decision** and resolves its effective profile to `default` — so an over-eager [`unattended`](/agents/autonomy#the-unattended-profile) run reverts to the conservative posture **mid-flight** (not at the next mint or spawn). The run keeps going under `default` (which still escalates outward, never auto-sends). `default` is also the fail-closed target [`evictOnPolicyUnreachable`](/reference/config-yaml#autonomy-agents-autonomy) lands on when a mode cannot be resolved.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "autonomy.evict",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "evicted": true },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Note>
+**Durability / resume signals.** When
+[`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
+is on, a `lease.revoke` / `run.kill` also **poisons the run's persisted record**
+(flips it to `revoked`), so a subsequent daemon restart can never resurrect the
+killed run's pre-revoke capabilities. Restart-time **resume** and **orphan**
+outcomes are observable out-of-band, not over these RPCs: a run that the daemon
+could not safely resume is orphaned and the operator is **notified out-of-band**
+(it does not silently vanish), and the durable run/ledger state is inspectable in
+[`memory.db`](/operations/data-directory#memory-db). See
+[Durability & Resume](/agents/autonomy#durability-resume).
+</Note>
 
 </Accordion>
 

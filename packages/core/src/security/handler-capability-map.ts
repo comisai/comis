@@ -135,3 +135,38 @@ export const HANDLER_CAPABILITY_MAP = {
 
 /** The method-name keys of {@link HANDLER_CAPABILITY_MAP}. */
 export type GatedMethodName = keyof typeof HANDLER_CAPABILITY_MAP;
+
+/**
+ * SELF_SCOPED_AGENT_READS — the tight, named cap-socket audience exception
+ * (CLI-01 / CLI-02; v8 §15 "whoami — read, no cap").
+ *
+ * These three methods are `"ungated"` in {@link HANDLER_CAPABILITY_MAP} (no
+ * `orch:*` cap, not deny-by-origin), `scopes:["rpc"]` (not admin), and each
+ * self-scopes to the dispatcher-injected `_agentId` at its handler
+ * (`capabilities-handlers.ts` reads `_agentId` before strip; `session-read.ts`
+ * filters to the caller's own sessions) — so a valid lease reaching one reports
+ * ONLY the caller's own caps/status, never another agent's.
+ *
+ * The lease audience (`@comis/infra` `lease-manager.ts` `validate`) imports THIS
+ * set so the exception lives in ONE auditable place beside the classification
+ * table (no drift). `validate` short-circuits the `orch:*` audience deny ONLY
+ * for these names, and ONLY after the bearer/expiry/revoke authenticity checks —
+ * it grants a valid lease reach to nothing else; the gated/deny-by-origin path
+ * is byte-identical to before.
+ *
+ * TIGHTNESS is the whole point: the set is exactly these three. Do NOT add
+ * `session.search`/`session.history`/`graph.list`/`cron.list`/`skills.list` —
+ * those self-scoped reads are reachable via the `tool.invoke` cap-mapped path or
+ * are out of scope for `whoami`/`status`; widening here is unreviewed audience
+ * surface. The drift test in `handler-capability-map.test.ts` pins each member
+ * to `ungated` + `scopes:["rpc"]` + non-denylisted, so a typo adding a fourth
+ * (or an admin/gated) method fails the build.
+ */
+export const SELF_SCOPED_AGENT_READS = [
+  "capabilities.introspect",
+  "session.status",
+  "session.list",
+] as const satisfies readonly GatedMethodName[];
+
+/** A member of {@link SELF_SCOPED_AGENT_READS}. */
+export type SelfScopedAgentRead = (typeof SELF_SCOPED_AGENT_READS)[number];

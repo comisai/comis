@@ -47,9 +47,10 @@ import {
   SubagentListContract,
   SubagentKillContract,
   SubagentSteerContract,
-  // autonomy-handlers.ts (2) — 213-03 REVOKE-01/03 admin contracts
+  // autonomy-handlers.ts (3) — 213-03 REVOKE-01/03 + 217-04 EVICT-01 admin contracts
   LeaseRevokeContract,
   RunKillContract,
+  AutonomyEvictContract,
   ORCHESTRATOR_CONTRACTS,
   INTERNAL_FIELD_NAMES,
 } from "./index.js";
@@ -59,8 +60,8 @@ import {
 // ===========================================================================
 
 describe("orchestrator-umbrella domain contracts", () => {
-  it("ORCHESTRATOR_CONTRACTS has exactly 29 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 2 autonomy)", () => {
-    expect(ORCHESTRATOR_CONTRACTS.length).toBe(29);
+  it("ORCHESTRATOR_CONTRACTS has exactly 30 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 3 autonomy)", () => {
+    expect(ORCHESTRATOR_CONTRACTS.length).toBe(30);
   });
 
   it("method names match the 4 handler-factory PropertyAssignment keys", () => {
@@ -98,9 +99,10 @@ describe("orchestrator-umbrella domain contracts", () => {
         "subagent.list",
         "subagent.kill",
         "subagent.steer",
-        // autonomy-handlers.ts (2)
+        // autonomy-handlers.ts (3)
         "lease.revoke",
         "run.kill",
+        "autonomy.evict",
       ].sort(),
     );
   });
@@ -164,11 +166,13 @@ describe("orchestrator-umbrella domain contracts", () => {
     for (const c of subagents) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
-  it("autonomy-handlers: both admin-scoped (REVOKE-01/03 → ADMIN_METHODS → deny-by-origin)", () => {
+  it("autonomy-handlers: all 3 admin-scoped (REVOKE-01/03 + EVICT-01 → ADMIN_METHODS → deny-by-origin)", () => {
     // scopes:["admin"] is LOAD-BEARING: it is what puts each method in the
     // DERIVED ADMIN_METHODS set so assertNotAgentOrigin denies any _agentId-
     // bearing (agent-origin) call automatically — no manual _agentId check.
-    const autonomy = [LeaseRevokeContract, RunKillContract];
+    // autonomy.evict (217-04) joins lease.revoke/run.kill: an agent cannot
+    // self-un-evict (T-217-12 elevation-of-privilege).
+    const autonomy = [LeaseRevokeContract, RunKillContract, AutonomyEvictContract];
     for (const c of autonomy) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
@@ -1012,18 +1016,44 @@ describe("RunKillContract (REVOKE-03 — kill a whole tree by rootRunId)", () =>
   });
 });
 
+describe("AutonomyEvictContract (EVICT-01 — demote a whole tree by rootRunId)", () => {
+  it("exposes the canonical method name + admin scope", () => {
+    expect(AutonomyEvictContract.method).toBe("autonomy.evict");
+    expect(AutonomyEvictContract.scopes).toEqual(["admin"]);
+  });
+
+  it("accepts a rootRunId request", () => {
+    expect(() => AutonomyEvictContract.request.parse({ rootRunId: "root-1" })).not.toThrow();
+  });
+
+  it("rejects a request missing rootRunId", () => {
+    expect(() => AutonomyEvictContract.request.parse({})).toThrow();
+  });
+
+  it("response carries the evicted boolean", () => {
+    expect(() => AutonomyEvictContract.response.parse({ evicted: true })).not.toThrow();
+    expect(() => AutonomyEvictContract.response.parse({ evicted: false })).not.toThrow();
+  });
+
+  it("rejects a non-boolean evicted value", () => {
+    expect(() => AutonomyEvictContract.response.parse({ evicted: 1 })).toThrow();
+  });
+});
+
 describe("Autonomy admin contracts — registry membership + deny-by-origin set", () => {
-  it("both methods are present in ORCHESTRATOR_CONTRACTS", () => {
+  it("all three methods are present in ORCHESTRATOR_CONTRACTS", () => {
     const methods = ORCHESTRATOR_CONTRACTS.map((c) => c.method);
     expect(methods).toContain("lease.revoke");
     expect(methods).toContain("run.kill");
+    expect(methods).toContain("autonomy.evict");
   });
 
-  it("both methods land in the admin-derived set (the deny-by-origin guarantee — ADMIN_METHODS)", () => {
+  it("all three methods land in the admin-derived set (the deny-by-origin guarantee — ADMIN_METHODS)", () => {
     const adminMethods = ORCHESTRATOR_CONTRACTS.filter((c) => c.scopes.includes("admin")).map(
       (c) => c.method,
     );
     expect(adminMethods).toContain("lease.revoke");
     expect(adminMethods).toContain("run.kill");
+    expect(adminMethods).toContain("autonomy.evict");
   });
 });

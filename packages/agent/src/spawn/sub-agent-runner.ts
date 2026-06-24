@@ -21,6 +21,10 @@ import {
   type DeliveryOrigin,
   type ClockPort,
   type TimerPort,
+  type TimerHandle,
+  type DurableRunPort,
+  type AgentCapability,
+  type ResultRef,
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
   RequiredToolsUnreachableError,
@@ -28,6 +32,10 @@ import {
   type SubAgentSpawnRejectedEvent,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
+import {
+  createCoordinatorProgressFork,
+  type CoordinatorProgressForkHandle,
+} from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
@@ -346,6 +354,8 @@ export interface SubAgentRunnerDeps {
       tokensUsed: number;
       cost: number;
       sessionKey: string;
+      /** Phase 218 (SUMREF-02): the materialized full-output handle, when produced. */
+      resultRef?: ResultRef;
     }): string;
   };
   /** Base data directory for locating subagent-results (e.g., ~/.comis). Optional — caller may omit. */
@@ -354,6 +364,40 @@ export interface SubAgentRunnerDeps {
   clock: ClockPort;
   /** Timer scheduling. Sweep-interval + watchdog setTimeout + shutdown-timeout setTimeout. */
   timers: TimerPort;
+  /**
+   * Phase 216 (DUR-01 / HB-01): the durable-run checkpoint store. OPTIONAL — when
+   * present (the daemon wires it ONLY when `autonomy.durability.enabled` AND an
+   * autonomy agent is configured), `spawn()` writes a per-root checkpoint at the
+   * spawn boundary + refreshes a keep-alive heartbeat on the injected timer, and
+   * marks the run completed on terminal settle. **Absent ⇒ inert** (no checkpoint,
+   * no heartbeat — the default, byte-identical path). A store error is WARN-logged
+   * (hint + errorKind) but NEVER crashes the run (durability is a recovery aid,
+   * not a correctness gate on the live run).
+   */
+  durableRuns?: DurableRunPort;
+  /**
+   * Phase 216 (HB-01): the keep-alive cadence + lapsed threshold (from
+   * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
+   * (independent of step/spawn completion so a long-running child never looks
+   * stale — Pitfall 4). Optional alongside {@link durableRuns}; defaults applied
+   * when absent.
+   */
+  durability?: { keepAliveMs: number; staleHeartbeatMs: number };
+  /**
+   * Phase 216 (DUR-01): resolve the durable-checkpoint facts for a tree root —
+   * the ATTENUATED caps the run was minted with (the lease's caps), the correlated
+   * `leaseIds` (BoundedAutonomy.leaseIdsForRoot), and the consumed budget (the
+   * budget `snapshot`). Injected by the daemon wiring (which holds the
+   * LeaseManager + BoundedAutonomy); the runner stays a `@comis/agent` leaf with
+   * no daemon import. **Absent ⇒ the checkpoint records empty caps/leaseIds +
+   * zero budget** (still a valid, resumable record — a resume re-mints the
+   * persisted caps verbatim, so an empty set is a safe degrade, never an
+   * over-grant).
+   */
+  durableRunFacts?: (
+    rootRunId: string,
+    agentId: string,
+  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
   /** Optional lifecycle hooks for spawn preparation and completion */
   lifecycleHooks?: {
     prepareSpawn(params: {
@@ -377,6 +421,29 @@ export interface SubAgentRunnerDeps {
       cost: number;
     }): Promise<void>;
   };
+  /**
+   * Phase 218 (SUMREF-02): materialize the child's FULL output to the CHILD's
+   * own jailed workspace as a structured {@link ResultRef} (preview + ref +
+   * bytes + kind), so the lead's announcement carries a bounded summary + a
+   * HANDLE instead of the megabyte body (the longevity invariant). The daemon
+   * supplies a `createResultRefStore`-backed impl targeting
+   * `resolveWorkspaceDir(spawnAgentConfig, childAgentId, dataDir)`; the runner
+   * stays `@comis/skills`-free (DI, mirroring {@link resultCondenser}). The
+   * contract IS the store's own 3-way union — the runner discriminates it by
+   * structure (a `ResultRef` has `.ref`; a refusal has `.error`; `undefined` is
+   * the contained-write-failed signal). **Absent ⇒ the announcement embeds the
+   * condensed summary + diskPath only (today's behavior)** — the no-op is the
+   * absence of the dep / a no-handle outcome, never a flag.
+   *
+   * `ctx.agentId` is the CHILD's agent id — the daemon resolves the materialize
+   * target (`resolveWorkspaceDir(config[agentId], agentId, dataDir)`) from it so
+   * the write lands in the CHILD's OWN jailed workspace, NEVER the lead's
+   * (T-218-08); the store is additionally `safePath`-confined to that root.
+   */
+  materializeFullOutput?: (
+    content: string,
+    ctx: { runId: string; nowMs: number; agentId: string },
+  ) => Promise<ResultRef | { error: string } | undefined>;
 }
 
 export interface SpawnParams {
@@ -408,6 +475,27 @@ export interface SpawnParams {
   /** Lease that authorized this spawn (REVOKE-02 cascade correlation). Recorded on the
    *  run so a future revoke-by-root can map runs to leases; omitted for the root. */
   parentLeaseId?: string;
+  /**
+   * Phase 216 (MED-4 cronOrigin): the REAL cron signal carried from the cron-fire
+   * turn metadata (`metadata.isCronAgentTurn` — see prompt-assembly.ts:676). When
+   * a sub-agent is spawned during a cron-fired turn, the caller threads this from
+   * the turn metadata so the durable checkpoint records a non-null `cronOrigin`
+   * (the jobId). A non-cron spawn leaves it false → cronOrigin = null. There is NO
+   * `cronOrigin` string at HEAD — the runner DERIVES it from this flag + jobId.
+   */
+  isCronAgentTurn?: boolean;
+  /** Phase 216 (MED-4): the firing cron job's id — the cronOrigin value when `isCronAgentTurn`. */
+  jobId?: string;
+  /** Phase 216 (MED-4): the firing cron job's name — the cronOrigin fallback when jobId is absent. */
+  jobName?: string;
+  /**
+   * Phase 216 (DUR-01): the ATTENUATED caps this run was minted with (the lease's
+   * caps). Threaded from the spawn caller (the cap layer / cron-fire mint) so the
+   * durable checkpoint records the exact caps a resume must re-mint VERBATIM
+   * (never re-attenuated). When absent, `durableRunFacts` (deps) is consulted; if
+   * both are absent the checkpoint records an empty set (a safe degrade).
+   */
+  caps?: readonly AgentCapability[];
   /** Caller type for GraphCoordinator bypass of children limit. */
   callerType?: "agent" | "graph";
   /** File paths for the sub-agent to reference. */
@@ -464,6 +552,17 @@ export interface SpawnParams {
    *  Leaf nodes use "short" (5m) cache retention instead of the 1h default
    *  because their cache prefix has no downstream consumers. */
   isLeafNode?: boolean;
+  /**
+   * WT-01: run this child in an ISOLATED git worktree (its own working tree on a
+   * fresh branch rooted under the child's jailed workspace) so parallel children
+   * never clobber each other's files. The runner is @comis/skills-free, so it does
+   * NOT create the worktree itself — it persists this flag onto the child session
+   * metadata (`worktree`), and the daemon's executeSubAgent (which holds the
+   * GitExec seam + the workspace resolver) reads the metadata, creates the
+   * worktree, runs the child in it, and auto-cleans-if-unchanged on completion.
+   * Absent/false ⇒ the child runs in its normal jailed workspace (today's path).
+   */
+  worktree?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +603,175 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
+
+  // -------------------------------------------------------------------------
+  // Phase 216 (DUR-01 / HB-01): durable checkpoint + keep-alive heartbeat.
+  // Inert when `deps.durableRuns` is absent (the default install). The
+  // heartbeat timer is tracked per runId so the terminal `finally` clears it
+  // (no leaked interval). Store calls are best-effort — a write error is
+  // WARN-logged but NEVER crashes the live run (durability is a recovery aid).
+  // -------------------------------------------------------------------------
+  const heartbeatTimers = new Map<string, TimerHandle>();
+  const DURABLE_KEEPALIVE_MS = deps.durability?.keepAliveMs ?? 30_000;
+
+  /**
+   * Derive the MED-4 `cronOrigin` from the REAL cron signal threaded onto the
+   * spawn params (`isCronAgentTurn` + `jobId`/`jobName`). A cron-fired turn's
+   * sub-agent records the firing job's id; a non-cron spawn records null. There
+   * is NO `cronOrigin` string at HEAD — this IS the derivation.
+   */
+  function deriveCronOrigin(params: SpawnParams): string | null {
+    return params.isCronAgentTurn === true ? (params.jobId ?? params.jobName ?? "cron") : null;
+  }
+
+  /**
+   * Write the initial durable checkpoint at the SPAWN BOUNDARY (DUR-01) and start
+   * the keep-alive heartbeat (HB-01). `stepIndex` starts at -1 (the never-sent
+   * sentinel — the outward counter is owned by allocateOutwardStep, NOT here).
+   * Inert when no store is wired. Never throws.
+   */
+  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+    const store = deps.durableRuns;
+    if (!store) return;
+    const rootRunId = run.rootRunId;
+    const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
+    // Caps: explicit spawn param wins (the lease's minted caps), else the
+    // injected facts resolver, else an empty set (a safe degrade — a resume
+    // re-mints the persisted caps VERBATIM, so empty is zero-authority, never
+    // an over-grant).
+    const caps = params.caps ?? facts?.caps ?? [];
+    const leaseIds = facts?.leaseIds ?? (params.parentLeaseId ? [params.parentLeaseId] : []);
+    const budgetConsumed = facts?.budgetConsumed ?? 0;
+    const cronOrigin = deriveCronOrigin(params);
+    void store
+      .upsertCheckpoint({
+        rootRunId,
+        spawnTree: [rootRunId],
+        // Copy into mutable arrays — DurableRunRecord's caps/leaseIds are mutable
+        // (the Zod-inferred shape); the deps/params surfaces are readonly.
+        caps: [...caps],
+        leaseIds: [...leaseIds],
+        budgetConsumed,
+        cronOrigin,
+        stepIndex: -1,
+        status: "running",
+        lastHeartbeatAt: clock.now(),
+      })
+      .then((r) => {
+        if (!r.ok) {
+          deps.logger?.warn(
+            { rootRunId, err: r.error, hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
+            "Durable checkpoint: upsert failed (run continues)",
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        deps.logger?.warn(
+          { rootRunId, err, hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
+          "Durable checkpoint: upsert threw (run continues)",
+        );
+      });
+
+    // HB-01: a keep-alive that fires INDEPENDENT of step/spawn completion so a
+    // long-running child never trips the watchdog's stale threshold (Pitfall 4).
+    // One interval per run, cleared on terminal settle (no leaked timer).
+    if (!heartbeatTimers.has(run.runId)) {
+      const handle = timers.setInterval(() => {
+        suppressError(
+          store
+            .touchHeartbeat(rootRunId, clock.now())
+            .then((r) => {
+              if (!r.ok) {
+                deps.logger?.debug(
+                  { rootRunId, err: r.error, hint: "durable heartbeat touch failed; the watchdog may orphan-sweep this run if it persists", errorKind: "internal" as const },
+                  "Durable heartbeat: touch failed",
+                );
+              }
+            }),
+          "durable heartbeat touch (best-effort)",
+        );
+      }, DURABLE_KEEPALIVE_MS);
+      handle.unref();
+      heartbeatTimers.set(run.runId, handle);
+    }
+  }
+
+  /**
+   * Terminal seam (DUR-01): mark the run completed + clear its keep-alive
+   * heartbeat. Fires on EVERY terminal settle of a started run (completion,
+   * failure, kill/ghost/watchdog — the underlying executeAgent promise still
+   * settles), so the interval is reclaimed and the durable record stops being
+   * resumable. Inert + idempotent when no store / no timer. Never throws.
+   */
+  function finishDurableCheckpoint(run: SubAgentRun): void {
+    const handle = heartbeatTimers.get(run.runId);
+    if (handle) {
+      handle.cancel();
+      heartbeatTimers.delete(run.runId);
+    }
+    const store = deps.durableRuns;
+    if (!store) return;
+    suppressError(
+      store
+        .markCompleted(run.rootRunId)
+        .then((r) => {
+          if (!r.ok) {
+            deps.logger?.warn(
+              { rootRunId: run.rootRunId, err: r.error, hint: "durable markCompleted failed — the watchdog will eventually orphan-sweep the stale record (no live impact)", errorKind: "internal" as const },
+              "Durable checkpoint: markCompleted failed",
+            );
+          }
+        }),
+      "durable terminal markCompleted (best-effort)",
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // COORD-03: the ~30s read-only progress fork (coordinator-progress-fork.ts).
+  // One fork per running child, tracked by runId so the terminal `finally`
+  // stops it (no leaked timer — the fork's interval is .unref()'d). The fork is
+  // a READ-ONLY summary of the in-flight child's advance — it never re-executes,
+  // calls a tool, or spawns. It runs INDEPENDENT of the durable store (a long
+  // child should surface progress even when durability is off), so it is started
+  // at the spawn boundary alongside — but not inside — startDurableCheckpoint.
+  // -------------------------------------------------------------------------
+  const progressForks = new Map<string, CoordinatorProgressForkHandle>();
+
+  /**
+   * Start the read-only progress fork for a just-started child run. `getStepState`
+   * is a thin read of the run's live step counter — `run.result` is only
+   * populated on completion (by which point the fork is already stopped), so an
+   * in-flight tick reports `stepsExecuted: 0` and the elapsed wall-clock is the
+   * advance signal (RESEARCH: a count-only advance is still NOT a re-execution).
+   * Idempotent per runId. No model call, no tool, no spawn.
+   */
+  function startProgressFork(run: SubAgentRun, params: SpawnParams): void {
+    if (progressForks.has(run.runId)) return;
+    const fork = createCoordinatorProgressFork({
+      eventBus: deps.eventBus,
+      clock,
+      timers,
+      runId: run.runId,
+      agentId: params.agentId,
+      // Thin read of the existing run handle — no new run-state plumbing.
+      getStepState: () => ({ stepsExecuted: run.result?.stepsExecuted ?? 0 }),
+    });
+    fork.start();
+    progressForks.set(run.runId, fork);
+  }
+
+  /**
+   * Stop + reclaim a child's progress fork on its terminal settle. Idempotent +
+   * inert when none was started (e.g. a queued run that never ran). Mirrors
+   * finishDurableCheckpoint's terminal-seam discipline — the fork never outlives
+   * the child (T-218-15).
+   */
+  function stopProgressFork(run: SubAgentRun): void {
+    const fork = progressForks.get(run.runId);
+    if (!fork) return;
+    fork.stop();
+    progressForks.delete(run.runId);
+  }
 
   // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
   // silently no-ops when `resolvePosture` is absent — a P0 security control that
@@ -1367,6 +1635,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         graphToolNames: params.graphToolNames ?? [],
         graphNodeDepth: params.graphNodeDepth,
         isLeafNode: params.isLeafNode ?? false,
+        // WT-01: carry the worktree request onto the child session metadata so
+        // executeSubAgent (the only place that holds the GitExec seam + the
+        // workspace resolver) can run the child in an isolated git worktree.
+        // Defaults to false so the no-worktree path stays byte-identical.
+        worktree: params.worktree ?? false,
       });
     }
 
@@ -1374,6 +1647,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     run.sessionKey = formattedKey;
     run.status = "running";
     run.startedAt = clock.now();
+
+    // Phase 216 (DUR-01 / HB-01): the SPAWN BOUNDARY — the run is now registered
+    // + running, so write the initial durable checkpoint (stepIndex -1) + start
+    // the keep-alive heartbeat. Inert when no durable store is wired. The keep-
+    // alive is cleared + the record marked completed in the terminal `finally`.
+    startDurableCheckpoint(run, params);
+
+    // COORD-03: start the ~30s read-only progress fork so a long-running child
+    // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
+    // completing. Stopped in the terminal `finally` (no leaked timer). Runs
+    // independent of the durable store.
+    startProgressFork(run, params);
 
     deps.logger?.info({
       runId, agentId: params.agentId,
@@ -1554,6 +1839,48 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
+        // Phase 218 (SUMREF-02): materialize the child's FULL output to its OWN
+        // jailed workspace as a structured ResultRef, so the lead's announcement
+        // grows by a bounded summary + a HANDLE, never the megabyte body (the
+        // longevity invariant). The condenser (SUMREF-01 summary) and the store
+        // (SUMREF-02 handle) are complementary — both run. The drill-in line that
+        // follows the summary defaults to the condenser's diskPath: the genuine
+        // "no store wired / no handle produced" path (no store to materialize
+        // through, so the on-disk condensed result IS the handle — NOT a shim).
+        let fullResultLine = condensedResult ? `\n\nFull result: ${condensedResult.diskPath}` : "";
+        // The successful handle (when produced) — threaded into the NarrativeCaster
+        // path too, so the production-default tagged announcement also carries the
+        // handle, not the diskPath (SUMREF-02 longevity invariant on every path).
+        let materializedRef: ResultRef | undefined;
+        if (condensedResult && deps.materializeFullOutput) {
+          const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now(), agentId: params.agentId });
+          if (materialized && "ref" in materialized && typeof materialized.ref === "string") {
+            // Success: the lead drills into the handle on demand (read/grep/jq).
+            materializedRef = materialized;
+            fullResultLine = `\n\nFull result (drill in with read/grep/jq): ${materialized.ref} (${materialized.bytes}B, ${materialized.kind})`;
+            deps.logger?.debug({
+              runId, step: "child-result-materialize",
+              bytes: materialized.bytes, kind: materialized.kind,
+            }, "Child output materialized to ResultRef");
+          } else if (materialized && "error" in materialized && typeof materialized.error === "string") {
+            // Refused (over per-file cap / path-traversal); the store wrote
+            // nothing. Degrade to the summary + diskPath and surface a WARN — the
+            // `.error` is a content-free CODE string, safe to echo in the hint.
+            deps.logger?.warn({
+              runId, step: "child-result-materialize",
+              errorKind: "resource" as const,
+              hint: `Child output materialize refused (${materialized.error}); the lead falls back to the condensed summary + diskPath.`,
+            }, "Child output materialize refused");
+          } else {
+            // undefined: the contained write itself failed (the store already
+            // logged it). Degrade to the summary + diskPath WITHOUT a WARN — no
+            // double-report; a DEBUG of the no-handle degrade is sufficient.
+            deps.logger?.debug({
+              runId, step: "child-result-materialize",
+            }, "Child output materialize produced no handle; using condensed summary + diskPath");
+          }
+        }
+
         // Emit completion event
         const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
         deps.eventBus.emit("session:sub_agent_completed", {
@@ -1713,6 +2040,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 tokensUsed: result.tokensUsed.total,
                 cost: result.cost.total,
                 sessionKey: formattedKey,
+                // SUMREF-02: the materialized handle (when produced) so the tagged
+                // announcement carries the drill-in handle, not the diskPath.
+                resultRef: materializedRef,
               });
             } else {
               // Legacy fallback: no condenser or no caster
@@ -1720,7 +2050,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 task: params.task,
                 status: "completed",
                 response: condensedResult
-                  ? `${condensedResult.result.summary}\n\nFull result: ${condensedResult.diskPath}`
+                  ? `${condensedResult.result.summary}${fullResultLine}`
                   : sanitizeAssistantResponse(result.response),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
@@ -2006,6 +2336,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // executeAgent promise still settles here), so a long-running tree's slots
       // are reclaimed rather than monotonically leaking.
       releaseCeilingSlotOnce(run);
+      // Phase 216 (DUR-01 / HB-01): the SAME universal terminal seam — mark the
+      // durable record completed + clear its keep-alive heartbeat (no leaked
+      // interval). Inert + idempotent when no durable store is wired.
+      finishDurableCheckpoint(run);
+      // COORD-03: stop the read-only progress fork on the same universal terminal
+      // seam so it never outlives the child (no leaked timer; T-218-15).
+      stopProgressFork(run);
       // Drain queue when a slot opens (use abortGroup for graph-scoped draining)
       const drainKey = run.abortGroup ?? run.callerSessionKey;
       if (drainKey) {

@@ -30,7 +30,7 @@ import {
 // Mock helpers (Tests 1-4: handlers in isolation)
 // ---------------------------------------------------------------------------
 
-function createMockDeps(): AutonomyHandlerDeps {
+function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandlerDeps {
   return {
     leaseManager: {
       mintLease: vi.fn(),
@@ -43,9 +43,107 @@ function createMockDeps(): AutonomyHandlerDeps {
     subAgentRunner: {
       killByRootRun: vi.fn().mockReturnValue({ killed: 0 }),
     },
+    // Phase 216 DUR-03: a durable store stub whose invalidateForRevoke is observable.
+    durableRuns: {
+      invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+    },
+    // Phase 217-04 EVICT-01: a stub evicted-set whose mark/isEvicted/clear are
+    // observable. The OPTIONAL dep — present here so the default deps register the
+    // autonomy.evict handler; the gating test below omits it to prove the handler
+    // is then absent (HIGH-1).
+    evictRegistry: {
+      mark: vi.fn(() => ({ newlyEvicted: true })),
+      isEvicted: vi.fn(() => false),
+      clear: vi.fn(),
+    },
     logger: { info: vi.fn(), warn: vi.fn() },
+    ...over,
   } as unknown as AutonomyHandlerDeps;
 }
+
+// ---------------------------------------------------------------------------
+// FLEET-03 (Phase 220-01): the handlers emit a content-free typed event BESIDE
+// the existing INFO line — autonomy:revoked on a rootRunId revoke,
+// autonomy:killed on a run.kill. A spy eventBus + a deterministic `now` seam are
+// passed on deps; the emit carries ONLY {rootRunId, count, timestamp} (T-220-02).
+// ---------------------------------------------------------------------------
+
+interface EmittedEvent {
+  event: string;
+  payload: Record<string, unknown>;
+}
+function createEmittingDeps(over: Partial<AutonomyHandlerDeps> = {}): {
+  deps: AutonomyHandlerDeps;
+  emitted: EmittedEvent[];
+} {
+  const emitted: EmittedEvent[] = [];
+  const deps = createMockDeps({
+    eventBus: {
+      emit: (event: string, payload: Record<string, unknown>) => {
+        emitted.push({ event, payload });
+      },
+    },
+    now: () => 1_700_000_000_123,
+    ...over,
+  } as Partial<AutonomyHandlerDeps>);
+  return { deps, emitted };
+}
+
+describe("createAutonomyHandlers — FLEET-03 typed event emission (content-free)", () => {
+  it("lease.revoke by rootRunId emits autonomy:revoked { rootRunId, revoked, timestamp } with the COUNT", async () => {
+    const { deps, emitted } = createEmittingDeps();
+    vi.mocked(deps.leaseManager.revokeByRootRun).mockReturnValue({ revoked: 5 });
+    const handlers = createAutonomyHandlers(deps);
+
+    await handlers["lease.revoke"]!({ rootRunId: "root-R" });
+
+    const ev = emitted.find((e) => e.event === "autonomy:revoked");
+    expect(ev).toBeDefined();
+    expect(ev!.payload.rootRunId).toBe("root-R");
+    expect(ev!.payload.revoked).toBe(5);
+    expect(ev!.payload.timestamp).toBe(1_700_000_000_123);
+    // Content-free (T-220-02): the key-set is EXACTLY {rootRunId, revoked, timestamp}
+    // — no lease bearer / selector / body field.
+    expect(Object.keys(ev!.payload).sort()).toEqual(["revoked", "rootRunId", "timestamp"]);
+  });
+
+  it("run.kill emits autonomy:killed { rootRunId, killed, timestamp } with the COUNT (separable from revoke)", async () => {
+    const { deps, emitted } = createEmittingDeps();
+    vi.mocked(deps.subAgentRunner.killByRootRun).mockReturnValue({ killed: 3 });
+    const handlers = createAutonomyHandlers(deps);
+
+    await handlers["run.kill"]!({ rootRunId: "root-K" });
+
+    const ev = emitted.find((e) => e.event === "autonomy:killed");
+    expect(ev).toBeDefined();
+    expect(ev!.payload.rootRunId).toBe("root-K");
+    expect(ev!.payload.killed).toBe(3);
+    expect(ev!.payload.timestamp).toBe(1_700_000_000_123);
+    expect(Object.keys(ev!.payload).sort()).toEqual(["killed", "rootRunId", "timestamp"]);
+    // A kill does NOT also emit autonomy:revoked (the EVENT is the only separator
+    // between killed and revoked counts — RESEARCH OQ1).
+    expect(emitted.some((e) => e.event === "autonomy:revoked")).toBe(false);
+  });
+
+  it("lease.revoke by leaseId (no rootRunId) does NOT emit autonomy:revoked (a by-leaseId revoke has no rootRunId)", async () => {
+    const { deps, emitted } = createEmittingDeps();
+    const handlers = createAutonomyHandlers(deps);
+
+    await handlers["lease.revoke"]!({ leaseId: "L1" });
+
+    expect(emitted.some((e) => e.event === "autonomy:revoked")).toBe(false);
+  });
+
+  it("absent eventBus ⇒ no emit, byte-identical pre-220 behavior (the revoke/kill still succeed)", async () => {
+    // The default createMockDeps has NO eventBus — the handlers must not throw and
+    // must still return the count (an absent optional dep gates the emit only).
+    const deps = createMockDeps();
+    vi.mocked(deps.leaseManager.revokeByRootRun).mockReturnValue({ revoked: 2 });
+    const handlers = createAutonomyHandlers(deps);
+    await expect(handlers["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 2 });
+    await expect(handlers["run.kill"]!({ rootRunId: "R1" })).resolves.toEqual({ killed: 0 });
+  });
+});
 
 describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", () => {
   let deps: AutonomyHandlerDeps;
@@ -121,6 +219,106 @@ describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", ()
     );
     expect(deps.subAgentRunner.killByRootRun).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 216 DUR-03: a revoke ALSO invalidates the persisted run record so a
+  // restart can never re-mint the pre-revoke caps (the resurrection-window close).
+  // -------------------------------------------------------------------------
+  it("DUR-03: lease.revoke by rootRunId ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
+    await handlers["lease.revoke"]!({ rootRunId: "R1" });
+    expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+  });
+
+  it("DUR-03: run.kill ALSO calls durableRuns.invalidateForRevoke(rootRunId)", async () => {
+    await handlers["run.kill"]!({ rootRunId: "R1" });
+    expect(deps.durableRuns!.invalidateForRevoke).toHaveBeenCalledWith("R1");
+  });
+
+  it("DUR-03: lease.revoke by leaseId (no rootRunId) does NOT invalidate a persisted record", async () => {
+    await handlers["lease.revoke"]!({ leaseId: "L1" });
+    expect(deps.durableRuns!.invalidateForRevoke).not.toHaveBeenCalled();
+  });
+
+  it("DUR-03: an invalidate error is WARN-logged but does NOT fail the revoke RPC", async () => {
+    vi.mocked(deps.durableRuns!.invalidateForRevoke).mockResolvedValue({ ok: false, error: new Error("db down") });
+    vi.mocked(deps.leaseManager.revokeByRootRun).mockReturnValue({ revoked: 2 });
+    // The revoke still succeeds (the lease is revoked regardless of the durable write).
+    await expect(handlers["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 2 });
+    expect(deps.logger.warn).toHaveBeenCalled();
+  });
+
+  it("DUR-03: inert when no durableRuns store is wired (durability off) — revoke still succeeds", async () => {
+    const noStoreDeps = createMockDeps({ durableRuns: undefined });
+    const h = createAutonomyHandlers(noStoreDeps);
+    await expect(h["lease.revoke"]!({ rootRunId: "R1" })).resolves.toEqual({ revoked: 0 });
+    await expect(h["run.kill"]!({ rootRunId: "R1" })).resolves.toEqual({ killed: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 217-04 EVICT-01: the autonomy.evict handler (DEMOTE-to-default).
+//
+// evict MARKS the rootRunId in the OPTIONAL evictRegistry (the chokepoint reads
+// it at the next gate decision, EVICT-03) — it does NOT abort. The handler is
+// registered ONLY when evictRegistry is present (HIGH-1 — mirrors the
+// leaseManager/boundedAutonomy family gating), so the Wave-1 dispatch call site
+// (which does not yet supply evictRegistry) keeps building green.
+// ---------------------------------------------------------------------------
+
+describe("createAutonomyHandlers — autonomy.evict (EVICT-01, demote to default)", () => {
+  let deps: AutonomyHandlerDeps;
+  let handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    handlers = createAutonomyHandlers(deps);
+  });
+
+  it("marks the rootRunId in the evictRegistry and returns { evicted: true }", async () => {
+    const result = await handlers["autonomy.evict"]!({ rootRunId: "root-A" });
+    expect(deps.evictRegistry!.mark).toHaveBeenCalledWith("root-A");
+    expect(result).toEqual({ evicted: true });
+  });
+
+  it("with no rootRunId throws the bespoke pre-Zod Missing required parameter", async () => {
+    await expect(handlers["autonomy.evict"]!({})).rejects.toThrow(
+      "Missing required parameter: rootRunId",
+    );
+    expect(deps.evictRegistry!.mark).not.toHaveBeenCalled();
+  });
+
+  it("a SECOND evict of the same rootRunId still returns { evicted: true } (idempotent — already-evicted is still evicted)", async () => {
+    // The registry reports newlyEvicted:false on the second mark; the handler's
+    // response is { evicted: true } regardless (the run IS demoted either way).
+    vi.mocked(deps.evictRegistry!.mark)
+      .mockReturnValueOnce({ newlyEvicted: true })
+      .mockReturnValueOnce({ newlyEvicted: false });
+    await expect(handlers["autonomy.evict"]!({ rootRunId: "root-A" })).resolves.toEqual({ evicted: true });
+    await expect(handlers["autonomy.evict"]!({ rootRunId: "root-A" })).resolves.toEqual({ evicted: true });
+  });
+
+  it("logs content-free — method + a boolean/id only, never a param body (§2.7)", async () => {
+    await handlers["autonomy.evict"]!({ rootRunId: "root-A" });
+    expect(deps.logger.info).toHaveBeenCalled();
+    for (const [payload] of vi.mocked(deps.logger.info).mock.calls) {
+      const fields = payload as Record<string, unknown>;
+      expect(fields).not.toHaveProperty("body");
+      expect(fields).not.toHaveProperty("params");
+      expect(fields).not.toHaveProperty("rootRunId");
+    }
+  });
+
+  // HIGH-1: the handler is registered ONLY when evictRegistry is present.
+  it("HIGH-1: registers the autonomy.evict key ONLY when evictRegistry is present", () => {
+    const withRegistry = createAutonomyHandlers(createMockDeps());
+    expect(Object.keys(withRegistry)).toContain("autonomy.evict");
+
+    const withoutRegistry = createAutonomyHandlers(createMockDeps({ evictRegistry: undefined }));
+    expect(Object.keys(withoutRegistry)).not.toContain("autonomy.evict");
+    // lease.revoke / run.kill stay registered regardless (they gate on leaseManager).
+    expect(Object.keys(withoutRegistry)).toContain("lease.revoke");
+    expect(Object.keys(withoutRegistry)).toContain("run.kill");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -128,8 +326,8 @@ describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", ()
 // test). The methods are scopes:["admin"] → ADMIN_METHODS → assertNotAgentOrigin
 // denies an _agentId-bearing call BEFORE the handler runs. We mock every handler
 // factory so createRpcDispatch can be constructed without the full deps bag, then
-// dispatch lease.revoke / run.kill with _agentId and assert the deny; an
-// operator-origin call (no _agentId) reaches the (mocked) handler.
+// dispatch lease.revoke / run.kill / autonomy.evict with _agentId and assert the
+// deny; an operator-origin call (no _agentId) reaches the (mocked) handler.
 // ---------------------------------------------------------------------------
 
 vi.mock("./cron-handlers.js", () => ({ createCronHandlers: vi.fn(() => ({})) }));
@@ -184,6 +382,12 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
       cascadeRevoke: vi.fn(), revokeByRootRun: vi.fn().mockReturnValue({ revoked: 2 }),
     },
     subAgentRunner: { killByRootRun: vi.fn().mockReturnValue({ killed: 1 }) },
+    // 217-04: the evictRegistry so the autonomy.evict handler registers (the
+    // operator-origin call reaches it; an agent-origin call is denied at the
+    // chokepoint BEFORE the handler regardless).
+    evictRegistry: {
+      mark: vi.fn(() => ({ newlyEvicted: true })), isEvicted: vi.fn(() => false), clear: vi.fn(),
+    },
   } as never;
 
   beforeEach(() => {
@@ -199,13 +403,23 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
       .map((c: unknown[]) => c[1] as Record<string, unknown>);
   }
 
+  /** Pull the captured payload for a specific event name off the container bus. */
+  function capturedEvent(name: string): Record<string, unknown> | undefined {
+    const emit = (mockDeps as unknown as { container: { eventBus: { emit: ReturnType<typeof vi.fn> } } })
+      .container.eventBus.emit;
+    const call = emit.mock.calls.find((c: unknown[]) => c[0] === name);
+    return call ? (call[1] as Record<string, unknown>) : undefined;
+  }
+
   async function getDispatch() {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     return createRpcDispatch(mockDeps);
   }
 
-  it("denies an _agentId-bearing lease.revoke / run.kill on the in-process dispatch path (admin-derived, no manual check)", async () => {
-    for (const method of ["lease.revoke", "run.kill"]) {
+  it("denies an _agentId-bearing lease.revoke / run.kill / autonomy.evict on the in-process dispatch path (admin-derived, no manual check)", async () => {
+    // T-217-12: autonomy.evict joins the deny set — an agent cannot self-un-evict
+    // (or evict a sibling). The deny fires at the chokepoint BEFORE the handler.
+    for (const method of ["lease.revoke", "run.kill", "autonomy.evict"]) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
       await expect(
@@ -233,5 +447,39 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
     const dispatch = await getDispatch();
     const result = await dispatch("run.kill", { rootRunId: "R1" });
     expect(result).toEqual({ killed: 1 });
+  });
+
+  it("an operator-origin autonomy.evict (no _agentId) PASSES the chokepoint and reaches the handler", async () => {
+    const dispatch = await getDispatch();
+    const result = await dispatch("autonomy.evict", { rootRunId: "R1" });
+    expect(result).toEqual({ evicted: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // FLEET-03 (Phase 220-01) PRODUCTION WIRING: the LIVE createRpcDispatch
+  // construction site MUST thread deps.container.eventBus into
+  // createAutonomyHandlers — otherwise the optional eventBus? is absent in prod,
+  // the handler emits NOTHING, and Plan 03's autonomy_revoked/killed counts are
+  // silently ZERO. We assert the emit lands on the CONTAINER bus (the real
+  // construction path), NOT a harness-injected `...over` spy.
+  // -------------------------------------------------------------------------
+  it("PRODUCTION WIRING: an operator-origin lease.revoke emits autonomy:revoked on the container bus (the live daemon emits, not just the harness)", async () => {
+    const dispatch = await getDispatch();
+    await dispatch("lease.revoke", { rootRunId: "R1" });
+    const ev = capturedEvent("autonomy:revoked");
+    expect(ev, "the live construction site must supply eventBus to createAutonomyHandlers").toBeDefined();
+    expect(ev!.rootRunId).toBe("R1");
+    expect(ev!.revoked).toBe(2); // the mock revokeByRootRun returns { revoked: 2 }
+    expect(typeof ev!.timestamp).toBe("number");
+  });
+
+  it("PRODUCTION WIRING: an operator-origin run.kill emits autonomy:killed on the container bus", async () => {
+    const dispatch = await getDispatch();
+    await dispatch("run.kill", { rootRunId: "R1" });
+    const ev = capturedEvent("autonomy:killed");
+    expect(ev).toBeDefined();
+    expect(ev!.rootRunId).toBe("R1");
+    expect(ev!.killed).toBe(1); // the mock killByRootRun returns { killed: 1 }
+    expect(typeof ev!.timestamp).toBe("number");
   });
 });

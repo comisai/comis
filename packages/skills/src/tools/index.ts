@@ -58,6 +58,12 @@ export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
 
+// Built-in tools -- Sleep (STREAM-03): the pacing primitive the model calls to
+// defer for the ~5-min prompt-cache TTL instead of polling in a token-burning
+// loop. Consumed by the daemon toolset assembly (setup-tools.ts) next to the
+// other always-on builtins (createExecTool/createProcessTool).
+export { createSleepTool } from "./builtin/sleep-tool.js";
+
 // Built-in tools -- Interactive terminal driver. The nine never-export
 // tool factories + the daemon-side registry + the allowlist/IPC types the
 // daemon wiring (setup-tools.ts, the composition root) consumes.
@@ -306,6 +312,13 @@ export {
   // Plan 05 dormancy activation: the shipped daemon-side executor cores
   // (read/grep/find/ls/jq + web_search) the Plan-02 tool.invoke executor routes to.
   createOrchestrateExecutorCores,
+  // WT-01/WT-02 (Phase 219): the git-worktree lifecycle for `spawn --worktree`,
+  // consumed by the daemon's executeSubAgent + boot orphan-sweep (the daemon
+  // binds the real execFile-backed GitExec at the composition root).
+  createWorktree,
+  isWorktreeCleanIfUnchanged,
+  cleanIfUnchanged,
+  sweepOrphans,
 } from "./builtin/orchestrate/index.js";
 export type {
   OrchestrateToolDeps,
@@ -321,4 +334,11 @@ export type {
   OrchestrateFileCore,
   OrchestrateFileCoreContext,
   OrchestrateWebSearchCore,
+  // WT-01/WT-02 lifecycle types.
+  GitExec,
+  WorktreeEntry,
+  CreateWorktreeOptions,
+  CleanIfUnchangedResult,
+  SweepSummary,
+  SweepDeps,
 } from "./builtin/orchestrate/index.js";

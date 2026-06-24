@@ -13,8 +13,9 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort } from "@comis/core";
-import { tryGetContext, safePath, systemNowMs } from "@comis/core";
+import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability, AgentConfig } from "@comis/core";
+import { tryGetContext, safePath, systemNowMs, resolveWorkspaceDir } from "@comis/core";
+import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
@@ -26,6 +27,28 @@ import { randomUUID } from "node:crypto";
 import { computeRetryBackoff } from "../../graph/graph-node-lifecycle.js";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
+
+// ---------------------------------------------------------------------------
+// No-op logger fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * A silent {@link ComisLogger} used only when the optional `deps.logger` is
+ * absent (test wiring). `createResultRefStore` requires a full ComisLogger; the
+ * production composition root always supplies one, so this never logs in
+ * production — it exists so the materialize feature is wired regardless.
+ */
+const NOOP_LOGGER: ComisLogger = {
+  level: "silent",
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  fatal: () => {},
+  audit: () => {},
+  child: () => NOOP_LOGGER,
+};
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -103,6 +126,16 @@ export function setupCrossSession(deps: {
   /** Timer scheduling. */
   timers: TimerPort;
   /**
+   * WT-01: the lifecycle GitExec the composition root binds (the real
+   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }` via
+   * `toLifecycleGitExec`). Threaded into executeSubAgent so a `worktree:true`
+   * child runs in an isolated git worktree. Paired with {@link worktreeRegistry}.
+   * Absent ⇒ the worktree request is honestly skipped (WARN, not silent no-op).
+   */
+  worktreeGitExec?: import("@comis/skills/tools").GitExec;
+  /** WT-02: the shared registry the boot/periodic orphan sweep reads (paired with {@link worktreeGitExec}). */
+  worktreeRegistry?: import("../setup-worktree-sweep.js").WorktreeRegistry;
+  /**
    * Phase 213 (CEIL-01): the tree-wide spawn ceiling consult, threaded into the
    * sub-agent runner's `checkSpawnCeiling` so every spawn (session.spawn AND
    * graph.* AND the in-process loop) is bounded at the convergence point. Bound
@@ -122,6 +155,31 @@ export function setupCrossSession(deps: {
    * release is inert (matches an absent `checkSpawnCeiling`).
    */
   releaseSpawnCeiling?: (rootRunId: string) => void;
+  /**
+   * Phase 216 (DUR-01 / HB-01): the durable-run store + its keep-alive thresholds
+   * + the leaseId/budget facts resolver, threaded into the sub-agent runner so it
+   * writes a per-root checkpoint at the spawn boundary + a heartbeat on the
+   * injected timer. All optional; absent ⇒ the runner's durable path is inert (the
+   * byte-identical default). The daemon wires them ONLY when durability is enabled.
+   */
+  durableRuns?: DurableRunPort;
+  durability?: { keepAliveMs: number; staleHeartbeatMs: number };
+  durableRunFacts?: (
+    rootRunId: string,
+    agentId: string,
+  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  /**
+   * Phase 216 (HIGH-2 / ONCE-01..04): the three-state outward-send ledger + the
+   * announce-origin rootRunId resolver, threaded into BOTH `createCrossSessionSender`
+   * (the announce() ledger wrap, Plan 10 Task 1) AND the announcement dead-letter
+   * queue (the drain committed-skip, Plan 10 Task 2) so the completion-announcement
+   * outward path is ledgered exactly-once (no restart double-notify). All optional;
+   * absent ⇒ both paths are pure pass-throughs (the byte-identical default). The
+   * daemon (Plan 12, the sole daemon.ts editor) wires them ONLY when durability is on,
+   * reusing the SAME store instances Plan 07 built (one ledger, one durable store).
+   */
+  outwardLedger?: OutwardSendLedgerPort;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -191,6 +249,11 @@ export function setupCrossSession(deps: {
     getExecutor,
     fileLock: deps.fileLock,
     logger: deps.logger,
+    // WT-01: thread the git-worktree seam + registry so a `worktree:true` child
+    // runs in an isolated worktree (auto-clean-if-unchanged). Both absent ⇒ the
+    // request is honestly skipped (no git seam) — byte-identical default.
+    ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
+    ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
   });
 
   // Cross-session sender — fire-and-forget, wait, or ping-pong messaging
@@ -204,6 +267,13 @@ export function setupCrossSession(deps: {
     sendToChannel,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
+    // Phase 216 HIGH-2 (ONCE-01/02): the announce() send is routed through the
+    // SAME three-state exactly-once ledger as message.send when the durable
+    // store + a resolvable rootRunId are wired — a restart-driven re-announce of
+    // an already-committed announcement is then a no-op. Absent ⇒ pass-through.
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
   });
 
   // Announce to parent session by injecting [System Message] and executing parent agent.
@@ -275,6 +345,11 @@ export function setupCrossSession(deps: {
     maxEntries: 100,
     eventBus: container.eventBus,
     logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
+    // Phase 216 HIGH-2 (ONCE-03/04): the SAME ledger instance — drain consults it
+    // BEFORE re-delivering, so a committed announcement is SKIPPED across a restart
+    // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
+    // is the authoritative no-double-notify signal). Absent ⇒ legacy at-least-once.
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
   });
 
   // WR-02/WR-03: ONE bounded delivered-key store shared across every
@@ -344,6 +419,38 @@ export function setupCrossSession(deps: {
     tagPrefix: subagentCtxConfigForCondenser?.resultTagPrefix ?? "Subagent Result",
   });
 
+  // Phase 218 (SUMREF-02): the full-output ResultRef store. The runner stays
+  // @comis/skills-free (DI) — the daemon owns the store + the child-workspace
+  // target selection. The callback resolves the CHILD's OWN jailed workspace
+  // from ctx.agentId (mirroring setup-cross-session-graph.ts:358-361), NEVER the
+  // lead's (T-218-08); createResultRefStore is additionally safePath-confined to
+  // that root, so a traversal returns a MaterializeError the runner degrades on.
+  // The store's 3-way union (ResultRef | MaterializeError | undefined) is returned
+  // UNCHANGED — the runner's dep contract IS that union, so no mapping is forced.
+  const resultRefStore = createResultRefStore({
+    logger: deps.logger
+      ? deps.logger.child({ submodule: "sub-agent-result-ref" })
+      : NOOP_LOGGER,
+  });
+  const materializeFullOutput = (
+    content: string,
+    ctx: { runId: string; nowMs: number; agentId: string },
+  ) => {
+    const childAgentConfig = container.config.agents[ctx.agentId]
+      ?? container.config.agents["default"]
+      ?? ({} as AgentConfig);
+    const childWorkspaceDir = resolveWorkspaceDir(
+      childAgentConfig,
+      ctx.agentId,
+      container.config.dataDir || undefined,
+    );
+    return resultRefStore.materialize(content, "sessions_spawn", {
+      workspacePath: childWorkspaceDir,
+      runId: ctx.runId,
+      nowMs: ctx.nowMs,
+    });
+  };
+
   // Create lifecycle hooks for spawn preparation and completion
   const lifecycleHooks = createLifecycleHooks({
     logger: deps.logger
@@ -390,6 +497,10 @@ export function setupCrossSession(deps: {
     condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
     condenserApiKey: condenserApiKey || undefined,
     narrativeCaster,
+    // SUMREF-02: the full-output ResultRef materialize, targeting the CHILD's
+    // own jailed workspace (resolved from ctx.agentId), returning the store's
+    // 3-way union unchanged. Absent of a wired store IS the no-op (no BC shim).
+    materializeFullOutput,
     lifecycleHooks,
     deadLetterQueue,
     deliveryDedup,
@@ -400,6 +511,12 @@ export function setupCrossSession(deps: {
     ...(deps.checkSpawnCeiling ? { checkSpawnCeiling: deps.checkSpawnCeiling } : {}),
     // Phase 213 CR-02: the symmetric release (boundedAutonomy.releaseSpawn).
     ...(deps.releaseSpawnCeiling ? { releaseSpawnCeiling: deps.releaseSpawnCeiling } : {}),
+    // Phase 216 DUR-01/HB-01: the durable checkpoint store + thresholds + facts
+    // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
+    // absent (the byte-identical default; the daemon wires these only when on).
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.durability ? { durability: deps.durability } : {}),
+    ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
   });
 
   // Register proxy typing event listeners (typing:proxy_start/stop + TTL

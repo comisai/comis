@@ -23,6 +23,7 @@
     "build:clean": "pnpm clean && pnpm build",
     "contracts:generate": "npx tsx scripts/contracts/generate-web-artifact.ts",
     "sdk:generate": "npx tsx scripts/orchestrate-sdk/generate-comis-tools-sdk.ts",
+    "agent-cli:manifest": "npx tsx scripts/orchestrate-sdk/generate-comis-agent-manifest.ts",
     "cycles": "node scripts/check-cycles.mjs",
     "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",

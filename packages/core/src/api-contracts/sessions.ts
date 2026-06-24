@@ -363,7 +363,10 @@ export const SessionSendContract = defineContract({
  *
  * Request: `{ task, agent?, async?, max_steps?, model?, expected_outputs?,
  * artifact_refs?, objective?, domain_knowledge?, tool_groups?,
- * include_parent_history?, announce_channel_type?, announce_channel_id? }`.
+ * include_parent_history?, announce_channel_type?, announce_channel_id?,
+ * worktree? }`. `worktree?` (WT-01) requests an isolated git worktree for the
+ * child (auto-clean-if-unchanged + conservative orphan-sweep —
+ * worktree-lifecycle.ts).
  *
  * Response has 4 variants discriminated by combination of fields:
  *   - sync-success: `{ sessionKey, response?, tokensUsed?, finishReason?,
@@ -394,6 +397,13 @@ export const SessionSpawnContract = defineContract({
     include_parent_history: z.string().optional(),
     announce_channel_type: z.string().optional(),
     announce_channel_id: z.string().optional(),
+    // WT-01: request an isolated git worktree for the child (its own working
+    // tree on a fresh branch). The worktree is auto-cleaned ONLY if unchanged
+    // (precise predicate: `status --porcelain` empty AND HEAD == base) and
+    // orphans are conservatively swept — a dirty/ahead worktree is preserved.
+    // See worktree-lifecycle.ts. (WT-03: `--async` rides the already-async-only
+    // spawn — `async` above is the existing flag, not a new path.)
+    worktree: z.boolean().optional(),
   }),
   response: z.record(z.string(), z.unknown()),
   scopes: ["rpc"] as const,

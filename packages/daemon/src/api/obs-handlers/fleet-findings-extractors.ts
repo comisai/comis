@@ -17,6 +17,19 @@
  */
 import type { DiagnosticRow } from "@comis/memory";
 
+/**
+ * One report finding. Shape-identical to `FleetHealthReport.findings[number]`.
+ * Declared in this leaf module (no back-imports) so both `fleet-findings.ts` and
+ * the `fleet-autonomy.ts` sibling can import it without a cycle; `fleet-findings.ts`
+ * re-exports it for its existing consumers.
+ */
+export interface Finding {
+  code: string;
+  detail: string;
+  count: number;
+  hint: string;
+}
+
 export function healthSignalLabel(row: DiagnosticRow): string {
   if (row.details === undefined) return "unknown";
   try {
@@ -149,6 +162,25 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "sandbox_downgrade_refused",
   "delivery_deadlettered",
   "node_budget_exceeded",
+  // FLEET-01 (Phase 220-03): the four autonomy/durable-run signals Plan 01
+  // persists are EXCLUDED from the generic `health_signal:<label>` rollup.
+  // durable_orphaned / autonomy_revoked / autonomy_killed each get a dedicated
+  // finding below (orphaned reason group / revoked count / killed count) — finding
+  // + entry MOVE TOGETHER. durable_resumed is healthy crash-recovery, NOT
+  // degradation (severity:info, the BENIGN_DAG_DEGRADED precedent), so it has NO
+  // dedicated finding and must NOT surface as a generic finding either — it is
+  // surfaced ONLY as the structured `autonomy.resumed` COUNT (fleet-health.ts),
+  // never as an operator-facing degradation finding (mirrors how a healthy boot is
+  // not a "provider degradation" finding). All four are excluded here.
+  "durable_orphaned",
+  "durable_resumed",
+  "autonomy_revoked",
+  "autonomy_killed",
+  // FLEET-02 (Phase 220-05): the capability-denial breaker trip gets a dedicated
+  // finding below (the denialBreakerN abort) — EXCLUDED from the generic rollup so
+  // it is not double-counted as `health_signal:autonomy_denial_breaker` (finding +
+  // entry MOVE TOGETHER; listing it here without the dedicated branch silently drops it).
+  "autonomy_denial_breaker",
 ]);
 
 /** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
@@ -254,6 +286,110 @@ export function nodeBudgetExceededFromRow(row: DiagnosticRow): { capSource: stri
     const capSource =
       typeof parsed.capSource === "string" && parsed.capSource.length > 0 ? parsed.capSource : "unknown";
     return { capSource };
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-01 (Phase 220-03): the closed orphan `reason` enum + the `rootRunId` from a
+ *  `durable_orphaned` health_signal row's details JSON (the Plan-01 obs-autonomy-rows
+ *  shape). Defensive parse cloning `nodeBudgetExceededFromRow` — a non-orphaned /
+ *  malformed / missing row folds to `null` (ignored; counts only, never throws). The
+ *  `reason` is a CLOSED enum (not_resumable / reread_failed / invalid_caps /
+ *  resume_failed) mapped at the source — NEVER the engine's free-text reason — so it
+ *  is rendered only into a count + a closed-token detail. `rootRunId` is an id (the
+ *  worst-run drill-down), not a body. */
+export function durableOrphanedFromRow(row: DiagnosticRow): { reason: string; rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; reason?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "durable_orphaned") return null;
+    const reason = typeof parsed.reason === "string" && parsed.reason.length > 0 ? parsed.reason : "unknown";
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { reason, rootRunId } : { reason };
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-01 (Phase 220-03): the resumed `stepIndex` + the `rootRunId` from a
+ *  `durable_resumed` health_signal row's details JSON. Defensive parse (the
+ *  durableOrphanedFromRow clone) — a non-resumed / malformed / missing row folds to
+ *  `null`. A resumed run is healthy crash-recovery (it has NO finding); this extractor
+ *  feeds ONLY the structured `autonomy.resumed` COUNT. Counts/ids only, never a body. */
+export function durableResumedFromRow(row: DiagnosticRow): { rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "durable_resumed") return null;
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { rootRunId } : {};
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-01 (Phase 220-03): the revoked COUNT + the `rootRunId` from an
+ *  `autonomy_revoked` health_signal row's details JSON. Defensive parse (the
+ *  durableOrphanedFromRow clone) — a non-revoked / malformed / missing row folds to
+ *  `null`. The `revoked` count defaults to 0 when absent/non-finite. NEVER reads a
+ *  lease bearer / selector / body (the Plan-01 row never carried them — T-220-02). */
+export function autonomyRevokedFromRow(row: DiagnosticRow): { revoked: number; rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; revoked?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "autonomy_revoked") return null;
+    const revoked = typeof parsed.revoked === "number" && Number.isFinite(parsed.revoked) && parsed.revoked > 0 ? parsed.revoked : 0;
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { revoked, rootRunId } : { revoked };
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-01 (Phase 220-03): the killed COUNT + the `rootRunId` from an
+ *  `autonomy_killed` health_signal row's details JSON. Defensive parse (the
+ *  autonomyRevokedFromRow clone). A hard kill (run.kill) flips durable status to
+ *  'revoked' INDISTINGUISHABLY from a cooperative revoke in the table — so this
+ *  DISTINCT signal label is the ONLY way the fleet lens separates killed from revoked
+ *  counts (the Plan-01 kill≠revoke separation). Counts/ids only, never a body. */
+export function autonomyKilledFromRow(row: DiagnosticRow): { killed: number; rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; killed?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "autonomy_killed") return null;
+    const killed = typeof parsed.killed === "number" && Number.isFinite(parsed.killed) && parsed.killed > 0 ? parsed.killed : 0;
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { killed, rootRunId } : { killed };
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-02 (Phase 220-05): the per-event denial-breaker COUNT + the `rootRunId` from
+ *  an `autonomy_denial_breaker` health_signal row's details JSON. Defensive parse (the
+ *  autonomyKilledFromRow clone). A Phase-217 capability-DENIAL breaker trip is NEVER a
+ *  session endReason / breakerTripCount — so this DISTINCT signal label is the ONLY way
+ *  the fleet lens counts it SEPARABLY from the tool-failure breaker (breakerTripTotal),
+ *  the same separation discipline as kill≠revoke. The `denialBreakerTrips` count
+ *  defaults to 1 when absent/non-finite (each row is one trip). Counts/ids only — NEVER
+ *  the engine's free-text deny reason (the row never carried it). */
+export function autonomyDenialBreakerFromRow(row: DiagnosticRow): { denialBreakerTrips: number; rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; denialBreakerTrips?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "autonomy_denial_breaker") return null;
+    const denialBreakerTrips =
+      typeof parsed.denialBreakerTrips === "number" && Number.isFinite(parsed.denialBreakerTrips) && parsed.denialBreakerTrips > 0
+        ? parsed.denialBreakerTrips
+        : 1;
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { denialBreakerTrips, rootRunId } : { denialBreakerTrips };
   } catch {
     return null;
   }

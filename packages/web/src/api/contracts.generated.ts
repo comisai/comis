@@ -933,6 +933,37 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "autonomy.evict": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "evicted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "evicted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "browser.act": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -7722,6 +7753,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "minLength": 1
         },
+        "rootRunId": {
+          "type": "string",
+          "minLength": 1
+        },
         "depth": {
           "type": "string",
           "enum": [
@@ -8937,6 +8972,70 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "required": [
             "buildAuthor",
             "reason"
+          ],
+          "additionalProperties": false
+        },
+        "autonomy": {
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                },
+                "degradedRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded",
+                "degradedRate"
+              ],
+              "additionalProperties": false
+            },
+            "orphaned": {
+              "type": "number"
+            },
+            "resumed": {
+              "type": "number"
+            },
+            "revoked": {
+              "type": "number"
+            },
+            "killed": {
+              "type": "number"
+            },
+            "breakerTrips": {
+              "type": "number"
+            },
+            "denialBreakerTrips": {
+              "type": "number"
+            },
+            "budgetBreaches": {
+              "type": "number"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "worstRootRunId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runs",
+            "orphaned",
+            "resumed",
+            "revoked",
+            "killed",
+            "breakerTrips",
+            "denialBreakerTrips",
+            "budgetBreaches",
+            "costUsd"
           ],
           "additionalProperties": false
         }
@@ -10654,6 +10753,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "announce_channel_id": {
           "type": "string"
+        },
+        "worktree": {
+          "type": "boolean"
         }
       },
       "required": [

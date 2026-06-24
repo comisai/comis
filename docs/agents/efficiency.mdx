@@ -1,0 +1,290 @@
+---
+title: "Long-Running Coordinator"
+description: "The run-for-days pattern: a lean coordinator offloads heavy work to fresh-window children that return a summary plus a ResultRef, so the lead stays context-flat"
+icon: "infinity"
+---
+
+**What it does.** Lets one agent stay productive for hours or days without its
+context window filling up. A *coordinator* lead spends its window on
+coordination -- it delegates every heavy, long, or high-volume task to a
+fresh-window child, and that child returns only a **bounded summary** plus a
+**`ResultRef`** handle to its full output on disk. The lead's window grows by a
+sentence per task, not by the task. Long children surface a content-free
+progress signal every ~30 seconds so you can watch them advance without them
+completing, and every child runs isolated under an attenuated lease in its own
+jailed workspace -- so this longevity is never bought with a loss of safety.
+
+<Note>
+**Coordinator vs. profile.** `autonomy.role` is a sibling of
+[`autonomy.profile`](/agents/autonomy), not a replacement. The *profile* decides
+*how much* an agent may do (its capability set and guard rails). The *role*
+decides *how it spends its own window* -- `worker` (the default) does the work
+inline; `coordinator` narrows the lead to an orchestration-only tool surface so
+heavy work must be delegated. The role **never** widens a capability; it only
+narrows the tool surface. The two dials are orthogonal.
+</Note>
+
+## The run-for-days pattern
+
+A normal agent does its work in its own context: it reads the files, runs the
+searches, and accumulates every intermediate result in the window it is
+reasoning in. That is fine for a short task and fatal for a long one -- the
+window fills, compaction kicks in, and the lead starts losing the thread of what
+it was coordinating.
+
+The coordinator pattern inverts this. The lead does **not** do heavy work
+inline. For each heavy task it spawns an **isolated** child (via
+[`sessions_spawn`](/agent-tools/sessions)), the child does the work in *its own*
+context window, and it returns:
+
+1. a **bounded summary** sized for the lead's context, and
+2. a **`ResultRef`** -- a handle to the child's full, unredacted output on disk.
+
+The lead reads the summary, keeps the handle, and moves on. It only grows by the
+summary. The full output never enters its window unless it explicitly drills in.
+
+This is the longevity invariant. In words:
+
+```text
+main_context  ≈  Σ(child summaries)  +  periodic compaction
+```
+
+The lead's context is roughly the sum of the per-child summaries (plus the
+context engine's normal [compaction](/agents/compaction)), not the sum of the
+work. Because each summary is small and bounded, the lead stays roughly
+context-flat no matter how much total work the children do -- which is what lets
+the same coordinator run for days. (This invariant is pinned by an architecture
+test, so a refactor that lets a child's transcript leak into the lead window
+turns the build red.)
+
+### Tier-0 micro-compaction (every turn)
+
+Underneath the periodic compaction, a **Tier-0 micro-compaction pass runs on
+every turn** -- no LLM, no cost. It evicts stale **tool results** for the
+read-only tool set (`read`, `grep`, `find`, `ls`, `exec`, `web_fetch`,
+`web_search`), keeping the **last K** (the
+[`observationKeepWindow`](/reference/config-yaml) knob, default 25). It never
+touches user or assistant messages, thinking blocks, or recalled memory -- only
+the ephemeral tool output beyond the keep window.
+
+Unlike the TTL-expiry and token-ceiling triggers (which only fire after an idle
+gap or once the context crosses a size ceiling), this runs unconditionally so the
+long-running coordinator's context stays flat *continuously*, not only after an
+idle period. The replacement placeholder is **cache-stable**: frozen by
+tool-call-id and protected behind the cache fence, so a cleared result is
+byte-identical turn-over-turn and never busts the prompt cache (see
+[the cache-stable prompt architecture](/agents/compaction#cache-stable-prompt-architecture)).
+
+## `autonomy.role: coordinator`
+
+Set the role in config -- it is a single field on the
+[`autonomy`](/reference/config-yaml#autonomy-agents-autonomy) block:
+
+```yaml title="~/.comis/config.yaml -- a long-running coordinator lead"
+agents:
+  orchestrator:
+    model: gpt-5.1
+    autonomy:
+      profile: standard
+      role: coordinator        # worker (default) | coordinator
+```
+
+`role` defaults to `worker`, which is exactly today's behavior -- existing
+agents are unchanged, and a default install is byte-identical. Setting
+`coordinator` does one thing: it **narrows the lead's tool surface** to the
+orchestration set, so the lead *cannot* do heavy work inline and must delegate.
+
+**The coordinator surface.** A `coordinator` lead is stripped to:
+
+- **Orchestration** -- `sessions_spawn`, `pipeline`, `cron`, `message`, plus the
+  session-management tools (`sessions_list`, `sessions_history`,
+  `session_status`, `session_search`).
+- **Read-only drill-in** -- `read`, `grep`, `find`, `ls`, `memory_search`,
+  `memory_get`, `extract_document`. These are how the lead inspects a child's
+  `ResultRef` on demand (next section) without ingesting it.
+- **Observability** -- the `obs_query` tool, so the lead can ask about the health
+  and outcome of the children it is coordinating.
+
+And it **excludes** the heavy-work tools entirely: `exec`, `edit`, `write`, and
+`browser` are not on a coordinator's surface. That exclusion *is* the
+delegate-then-synthesize doctrine made structural -- the lead has no inline way
+to run a command, edit a file, or browse, so a heavy task has to become a child
+spawn, and the lead's job becomes routing the work out and synthesizing the
+results back.
+
+<Note>
+**Narrows the tool surface; never widens a capability.** `role: coordinator`
+changes only *which tools* the lead may call. The agent's resolved
+**capabilities** (the `orch:*` permission tokens from its
+[profile](/agents/autonomy)) are **byte-identical** with and without the role --
+a no-escalation invariant pinned by an architecture test. `obs_query` is a *tool
+name* on the coordinator surface, **not** a new capability: there is no
+`obs:read` capability to grant. The role can only ever take tools away, never add
+authority.
+</Note>
+
+<Tip>
+**Explicit `tool_groups` still wins.** If you set `role: coordinator` *and* an
+explicit `tool_groups` (or `full`) on the agent, your explicit choice overrides
+the coordinator default -- progressive disclosure. The role is the convenient
+posture; an explicit tool list is the override.
+</Tip>
+
+## Window isolation
+
+The reason a coordinator stays context-flat is that each child runs in a
+**genuinely isolated** context loop -- not a fork.
+
+- **Isolated, not fork-mode.** A forked child *copies the parent's prefix* into
+  its own window, which is the opposite of what longevity needs. A coordinator's
+  children are **isolated** spawns: each gets its own fresh context budget and
+  its own message list. The child does not start from the lead's transcript and,
+  critically, the child loop **never writes back into the lead's message list**.
+- **Only the summary crosses back.** The single thing that enters the lead's
+  window from a finished child is its bounded return summary (built from the
+  child's condensed result, not its raw transcript). The child's full
+  conversation, tool calls, and intermediate output stay in the child --
+  reachable later via the `ResultRef`, never injected.
+- **Parent history defaults to none.** When the lead spawns a child it passes
+  `include_parent_history: "none"` by default, so the child does not even start
+  with the lead's history. (You can opt into a *condensed parent summary* per
+  spawn, but never the raw transcript -- see
+  [Subagent Context Lifecycle](/agents/subagent-lifecycle).)
+
+The net effect is the structural backbone of the longevity invariant: work flows
+*out* to children and only *summaries* flow back, so the lead's window is bounded
+by the number of tasks, not their size. See
+[Context Management](/agents/context-management) for how the lead's own window is
+budgeted and compacted on top of this.
+
+## Summary + `ResultRef`
+
+A child can produce megabytes -- a long file dump, a full crawl, a giant
+analysis. The point of the `ResultRef` is that none of that has to enter the
+lead's window for the lead to *have* it.
+
+When a child finishes, Comis **materializes** its full output to the **child's
+own jailed workspace** and hands the lead two things in the completion
+announcement:
+
+- the **bounded summary** (for context), and
+- a **`ResultRef` handle** -- a reference plus the byte size and kind of the
+  stored output.
+
+The announcement carries a drill-in line shaped like:
+
+```text
+Full result (drill in with read/grep/jq): <ref> (<bytes>B, <kind>)
+```
+
+The lead reads the summary to decide what to do next, and only if it actually
+needs the detail does it drill into the handle. It pulls in just the slice it
+needs, not the whole artifact. A megabyte child grows the lead's window by a
+summary and a handle; the megabyte stays on disk.
+
+A `ResultRef` carries a full **query engine** -- five in-jail extraction methods,
+all on the coordinator's read-only surface:
+
+| Method | What it does |
+|--------|--------------|
+| `read(offset?, limit?)` | A byte/line slice of the materialized file |
+| `grep(pattern)` | Lines matching a pattern |
+| `jq(expr)` | A `jq` filter over JSON |
+| `sql(query)` | A **DuckDB** `SELECT` over a CSV/JSONL/JSON payload -- precise structured queries (`WHERE`/`ORDER BY`/`LIMIT`/aggregates) |
+| `jsonpath(expr)` | A precise `$`-rooted JSON extraction (DuckDB `json_extract`, no `eval`) |
+
+```typescript
+// A megabyte of tabular rows came back as a ResultRef. Query the slice you need:
+const top = await rows.sql(
+  "SELECT id, price FROM read_json_auto('" + rows.ref + "') WHERE price > 100 LIMIT 5",
+);
+// only the 5-row slice re-enters context -- the megabyte stays on disk.
+```
+
+The `sql`/`jsonpath` methods run the DuckDB CLI **daemon-side** (the jail stays
+`--unshare-net`), hardened to a read-only slicer: `--readonly :memory:`, extension
+auto-load disabled, and any extension/file-write/network statement refused before
+DuckDB is ever spawned. DuckDB is a prerequisite the daemon host provides; if it is
+absent, `sql`/`jsonpath` honest-degrade and `read`/`grep`/`jq` keep working. See
+[the orchestrate tool reference](/agent-tools/orchestrate#resultref-high-volume-returns)
+for the full extraction API and the hardening details.
+
+## 30-second progress fork
+
+A delegated task can run for a long time, and an isolated child by design does
+not stream its work into the lead's window. So that a long child does not look
+*stuck*, Comis attaches a **read-only progress fork** to it.
+
+Roughly every 30 seconds, while a child is still running, the fork emits a
+content-free [`session:sub_agent_progress`](/developer-guide/event-bus) event:
+
+```text
+{ runId, agentId, progressLine, elapsedMs, stepsExecuted, timestamp }
+```
+
+- It is an **advance signal**, not a result. The `progressLine` is a short status
+  (a few words like `running, step N`); the payload carries **no** child output,
+  message body, or tool result -- it is content-free by design (the same §2.7
+  observability rule the rest of the platform follows).
+- It is **read-only**. The fork does not re-run the child, call a tool, or spawn
+  anything -- it only reads the child's elapsed time and step count and emits the
+  event. It is read-only *by construction*: the fork has no execution channel at
+  all, so it cannot burn budget or fan out.
+- It is **lifecycle-bound**. The fork starts when the child is spawned and stops
+  on the child's terminal boundary, so it never outlives the child and never
+  leaks a timer.
+
+The operator (and the coordinating lead, via observability) can watch a long
+child advance -- "still going, on step 4, 90 seconds in" -- without the child
+having to complete and without anything re-executing.
+
+## Security: isolation is never escalation
+
+Spinning up a fresh-window child must not become a way to *gain* authority. It
+does not.
+
+- **Each child inherits an attenuated lease.** A child's capabilities are the
+  **intersection** of the parent's capabilities and what the child requested
+  (`child_caps = parent_caps ∩ requested_caps`) -- a child can only ever be a
+  *subset* of its parent, never a superset. A narrow lead spawns only narrow
+  children.
+- **Each child writes to its own jailed workspace.** A child's output is
+  materialized to *its own* per-child jailed workspace, resolved from the child's
+  agent id -- never the lead's workspace and never a shared, un-jailed location.
+- **The longevity machinery does not touch the lease.** Window isolation, the
+  `ResultRef` materialization, and the progress fork are all built on top of the
+  existing attenuated-lease and jailed-workspace primitives -- they read and
+  surface, they never mint or broaden. A coordinator that runs for days spawns
+  hundreds of children, and every one of them is bounded by the same
+  intersection rule as the first.
+
+The result is that the run-for-days pattern is *also* a least-privilege pattern:
+each unit of work runs in the smallest window, with the smallest capability set,
+in its own jail -- and the lead that coordinates them all stays both
+context-flat and authority-flat. See [Autonomy](/agents/autonomy) for the lease
+attenuation and capability model that bounds every child.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Autonomy" icon="sliders" href="/agents/autonomy">
+    Named profiles, the capability set the role narrows around, and the
+    attenuated lease that bounds every child.
+  </Card>
+  <Card title="Subagent Context Lifecycle" icon="diagram-subtask" href="/agents/subagent-lifecycle">
+    How a child is prepared, run, condensed, and announced back to the lead.
+  </Card>
+  <Card title="Context Management" icon="layer-group" href="/agents/context-management">
+    How the lead's own window is budgeted -- the layer the longevity invariant
+    sits on top of.
+  </Card>
+  <Card title="Compaction" icon="compress" href="/agents/compaction">
+    The periodic compaction term in the longevity equation.
+  </Card>
+  <Card title="Config YAML Reference" icon="file-code" href="/reference/config-yaml#autonomy-agents-autonomy">
+    The autonomy.role field and every other autonomy.* knob.
+  </Card>
+  <Card title="Sessions Tool" icon="terminal" href="/agent-tools/sessions">
+    sessions_spawn and the session tools a coordinator orchestrates with.
+  </Card>
+</CardGroup>

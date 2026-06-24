@@ -730,11 +730,12 @@ export interface IncidentSignals {
 /**
  * Assemble a redaction-safe post-mortem for a single agent session.
  *
- * Accepts EITHER `sessionKey` OR `traceId` (the `.refine` rejects neither;
- * a traceId is canonicalized to its sessionKey so there is one assembler
- * path). `depth` selects the summary (≤6 KB) vs. full projection. Admin-only;
- * the handler is non-mutating (read-only post-mortem). The full assembler
- * pipeline lands in Plan 05 — this contract is the Wave-1 shared shape.
+ * Accepts ONE of `sessionKey`, `traceId`, or `rootRunId` (FLEET-05; the
+ * `.refine` rejects none-of-three). A `traceId` is canonicalized to its
+ * sessionKey, and a `rootRunId` (an autonomy run) is canonicalized to the
+ * run's sessionKey, so there is one assembler path. `depth` selects the
+ * summary (≤6 KB) vs. full projection. Admin-only; the handler is
+ * non-mutating (read-only post-mortem).
  */
 export const ObsExplainContract = defineContract({
   method: "obs.explain",
@@ -742,12 +743,17 @@ export const ObsExplainContract = defineContract({
     .object({
       sessionKey: z.string().min(1).optional(),
       traceId: z.string().min(1).optional(),
+      // FLEET-05: the 3rd ref shape — an autonomy run's rootRunId (the synthetic
+      // `root-session-<key>` or a real spawned/socket root). The daemon
+      // canonicalizes it to its sessionKey FIRST (resolveRootRunToSession), so the
+      // fleet→explain drill-down can paste the worst run's rootRunId straight in.
+      rootRunId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
       // D9: admin opt-in to include synthetic/test sessions (excluded by default).
       includeSynthetic: z.boolean().optional(),
     })
-    .refine((r) => r.sessionKey != null || r.traceId != null, {
-      message: "sessionKey or traceId required",
+    .refine((r) => r.sessionKey != null || r.traceId != null || r.rootRunId != null, {
+      message: "sessionKey, traceId, or rootRunId required",
     }),
   response: IncidentReportSchema,
   scopes: ["admin"] as const,

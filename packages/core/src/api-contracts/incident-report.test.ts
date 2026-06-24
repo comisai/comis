@@ -11,7 +11,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { IncidentReportSchema } from "./observability.js";
+import { IncidentReportSchema, ObsExplainContract } from "./observability.js";
 
 /** A minimal-but-valid IncidentReport (no optional sections) — the base fixture. */
 function baseReport(): Record<string, unknown> {
@@ -134,5 +134,51 @@ describe("IncidentReportSchema spend? section (WEBUI-04, 179-04 — locked A2)",
   it("rejects a spend section missing capUsd (the shape is enforced)", () => {
     const report = { ...baseReport(), spend: { scope: "global", totalUsd: 5 } };
     expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+});
+
+describe("ObsExplainContract.request rootRunId arm (FLEET-05)", () => {
+  // FLEET-05 widens obs.explain from a TWO-ref (sessionKey | traceId) request to a
+  // THREE-ref one (+ rootRunId), so the fleet→explain drill-down can paste an
+  // autonomy run's rootRunId straight in. The widen is ADDITIVE-OPTIONAL: the
+  // .object stays non-strict, the .refine requires "one of three", and an existing
+  // sessionKey/traceId caller is unaffected.
+
+  it("accepts a rootRunId-only request and the rootRunId SURVIVES the parse (the field is declared, not stripped)", () => {
+    // A non-strict z.object STRIPS an undeclared key — so an undeclared rootRunId
+    // would silently vanish through .parse and mis-resolve downstream. Proving it
+    // round-trips proves the field is actually declared on the request shape.
+    const parsed = ObsExplainContract.request.parse({ rootRunId: "root-session-default:u:c:1" });
+    expect(parsed.rootRunId).toBe("root-session-default:u:c:1");
+  });
+
+  it("accepts a real (non-synthetic) rootRunId ref", () => {
+    const parsed = ObsExplainContract.request.parse({ rootRunId: "run-abc-123", depth: "summary" });
+    expect(parsed.rootRunId).toBe("run-abc-123");
+    expect(parsed.depth).toBe("summary");
+  });
+
+  it("still rejects an empty request via the widened .refine, naming all three refs", () => {
+    // The neither-id guard must still fire — but now the message names rootRunId too,
+    // so an operator who passes none of the three sees the full set.
+    const result = ObsExplainContract.request.safeParse({});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.map((i) => i.message).join(" ");
+      expect(msg).toMatch(/sessionKey/);
+      expect(msg).toMatch(/traceId/);
+      expect(msg).toMatch(/rootRunId/);
+    }
+  });
+
+  it("rejects an empty-string rootRunId (min(1) — the same guard as sessionKey/traceId)", () => {
+    expect(() => ObsExplainContract.request.parse({ rootRunId: "" })).toThrow();
+  });
+
+  it("still accepts a sessionKey-only and a traceId-only request (the widen is additive — no existing caller breaks)", () => {
+    expect(ObsExplainContract.request.parse({ sessionKey: "default:u:c:1" }).sessionKey).toBe(
+      "default:u:c:1",
+    );
+    expect(ObsExplainContract.request.parse({ traceId: "t-1" }).traceId).toBe("t-1");
   });
 });

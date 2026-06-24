@@ -53,6 +53,25 @@ import {
   type AutonomySpawnConfig,
   type AutonomyOutwardConfig,
 } from "./schema-agent-autonomy-bounds.js";
+// Phase 216 (DUR-01..04 / HB-01): the durable-run + resume-engine gate. Default-
+// off; nested into AutonomyConfigSchema below. Sibling leaf to keep this file
+// under the schema-agent file-size cap; re-exported via the schema-agent barrel.
+import { DurabilityConfigSchema } from "./schema-agent-autonomy-durability.js";
+// 217: the §22 mode vocabulary + the EVICT-02 fail-closed `resolveEffectiveMode`
+// primitive + the two `unattended`/`max` posture notices live in a sibling leaf
+// (file-size cap), exported to `@comis/core` via the schema-agent barrel.
+import {
+  AUTONOMY_MODES,
+  UNATTENDED_NOTICE,
+  MAX_M1_CLAMP_NOTICE,
+  type AutonomyMode,
+} from "./schema-agent-autonomy-mode.js";
+// 218-01 (COORD-01): the §23.10 lean-coordinator role vocabulary + the pure
+// `coordinator → coordinatorToolGroups` expansion live in a sibling leaf (file-size cap).
+import { AUTONOMY_ROLES, resolveCoordinatorToolGroups, type AutonomyRole } from "./schema-agent-autonomy-role.js";
+// 218-01 (file-size cap): the §22.3 always-escalate floor cap-set + the per-cap
+// `capIsAutoApprovable` predicate live in a sibling leaf (one-way import, no cycle).
+import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
 
 /**
  * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
@@ -86,36 +105,11 @@ export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:message",
 ] as const satisfies readonly AgentCapability[];
 
-/**
- * The structural-floor caps that are `autoApprovable:false` in EVERY profile
- * forever (v8 §22.3): outward + irreversible. They are escalate-not-auto —
- * no mode, trust-graduation, or LLM-judge may ever auto-decide them. A profile
- * that opts one IN (e.g. an explicit `browse: true`) still resolves it with
- * `autoApprovable:false`.
- *
- * `orch:browse` (the browser) is the always-escalate cap-LITERAL member.
- * `orch:message` is deliberately NOT here: per §22.3 the floor item is
- * "orch:message to a NON-ORIGIN channel", and that target scoping rides the
- * `message.channels` config (`["origin"]` default + the §8.4 per-target grant),
- * NOT the cap literal. The cap-literal `orch:message` is auto-approvable to the
- * agent's OWN origin channel under quota (the §3.8 capable default), so it
- * resolves `autoApprovable:true` here while the non-origin send is gated by the
- * message config — modeling it as an always-escalate cap-literal would
- * incorrectly forbid even origin sends. `report:issue` is a Phase-215 deputy cap
- * outside this milestone's `orch:*` vocabulary.
- */
-const ALWAYS_ESCALATE_CAPABILITIES = ["orch:browse"] as const satisfies readonly AgentCapability[];
-
-const ALWAYS_ESCALATE_SET: ReadonlySet<AgentCapability> = new Set(ALWAYS_ESCALATE_CAPABILITIES);
-
 // ── The autonomy config schema (§3.3 knob surface, §6.4 defaulting) ──────────
 
 /** Per-agent autonomy posture. `accept-reversible` is the `standard` mode. */
 export const AUTONOMY_PROFILE_NAMES = ["assistant", "standard", "unattended", "max"] as const;
 export type AutonomyProfileName = (typeof AUTONOMY_PROFILE_NAMES)[number];
-
-export const AUTONOMY_MODES = ["default", "accept-reversible", "unattended", "max"] as const;
-export type AutonomyMode = (typeof AUTONOMY_MODES)[number];
 
 /**
  * The origin-channel message posture (§3.5/§8.4). `standard` resolves
@@ -141,6 +135,13 @@ export const AutonomyMessageConfigSchema = z.strictObject({
 export const AutonomyConfigSchema = z.strictObject({
   /** §3.8 posture: assistant | standard (default) | unattended | max. */
   profile: z.enum(AUTONOMY_PROFILE_NAMES).default("standard"),
+  /**
+   * §23.10 lean-coordinator role (COORD-01; full doc + expansion in
+   * `schema-agent-autonomy-role.ts`). `worker` (default) ⇒ byte-identical to
+   * today; `coordinator` NARROWS the resolved tool surface only (never a cap).
+   * Operator-set; the agent CANNOT self-raise (like `mode`).
+   */
+  role: z.enum(AUTONOMY_ROLES).default("worker"),
   /**
    * Whether autonomy surfaces are on. Optional at the config layer — the
    * resolver fills it from the profile when omitted (`standard` → true,
@@ -174,6 +175,22 @@ export const AutonomyConfigSchema = z.strictObject({
   /** Max agent-authored cron jobs (§8). */
   cronSelfMax: z.number().int().positive().optional(),
   /**
+   * §8.8/§22.4 denial-limit circuit breaker (BREAK-01). The number of
+   * CONSECUTIVE structural-floor blocks within one root run after which the run
+   * aborts + escalates rather than retry-looping the budget away. A positive int
+   * (a 0 would disable the breaker — `z.number().int().positive()` rejects it so
+   * a malformed config fails CLOSED, T-217-01). Default 5; inert until a deny
+   * actually happens, so a default install is byte-identical.
+   */
+  denialBreakerN: z.number().int().positive().default(5),
+  /**
+   * §22.5 fail-closed evict posture (EVICT-02). When the per-run autonomy mode
+   * cannot be resolved (an unreachable/forged policy source), resolve to the
+   * `default` (SAFE) mode, never a broader profile. Default true — which IS the
+   * already-safe behavior, so a default install is byte-identical.
+   */
+  evictOnPolicyUnreachable: z.boolean().default(true),
+  /**
    * Capability-lease posture (§4.2 / LEASE-02). The nested `lease` sub-block —
    * `autonomy.lease.{ leaseMaxTtlMin }` — bounds how long a renewable lease can
    * live. `leaseMaxTtlMin` is the renewal CEILING in MINUTES (a positive int);
@@ -191,6 +208,13 @@ export const AutonomyConfigSchema = z.strictObject({
   rate: AutonomyRateConfigSchema.default(() => AutonomyRateConfigSchema.parse({})), // per-root/socket/churn (RATE-01)
   spawn: AutonomySpawnConfigSchema.default(() => AutonomySpawnConfigSchema.parse({})), // concurrent/depth/fanout (CEIL-01)
   outward: AutonomyOutwardConfigSchema.default(() => AutonomyOutwardConfigSchema.parse({})), // origin/grants/volume (QUOTA-01/02)
+  // Phase 216 DURABILITY sub-block (DUR-01..04 / HB-01). Default-off
+  // (`{ enabled:false, ... }` on a fully-omitted block) — a default install
+  // constructs no durable stores / boot recovery / watchdog (byte-identical).
+  // `.parse({})` materializes the per-field defaults (mirrors the sibling
+  // budget/rate/spawn/outward blocks above; a bare `.default({})` does not
+  // typecheck because every nested field is itself `.default()`-ed).
+  durability: DurabilityConfigSchema.default(() => DurabilityConfigSchema.parse({})),
   // ── per-surface ergonomic toggles → matching orch:* cap (§3.3 "one cap model") ──
   /** orch:web — untrusted external content (Rule-of-Two leg A). */
   web: z.boolean().optional(),
@@ -233,6 +257,10 @@ interface ProfileEntry {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate (BREAK-01, §8.8/§22.4). */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02, §22.5). */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -241,7 +269,7 @@ interface ProfileEntry {
   readonly rate: AutonomyRateConfig;
   readonly spawn: AutonomySpawnConfig;
   readonly outward: AutonomyOutwardConfig;
-  /** Present for `unattended`/`max` in M1: the "available in M2/M3" clamp notice. */
+  /** Present for `unattended` (mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
 }
 
@@ -257,6 +285,11 @@ const STANDARD_GUARDS = {
   maxConcurrentSelfAgents: 4,
   maxSelfSpawnRatePerMin: 30,
   cronSelfMax: 8,
+  // 217 never-hang scalars (flow into all four profiles). Default-safe: the
+  // breaker is inert until a deny happens; evict fail-closed defaults to the
+  // already-safe `true`. Kept in SSOT lockstep with the schema `.default()`s.
+  denialBreakerN: 5,
+  evictOnPolicyUnreachable: true,
   // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
   // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
   leaseMaxTtlMin: 60,
@@ -267,22 +300,15 @@ const STANDARD_GUARDS = {
 const STANDARD_MESSAGE: AutonomyMessageConfig = { channels: ["origin"], maxPerHour: 20 };
 
 /**
- * The M1 clamp notice for `unattended`/`max`. Selecting either resolves to the
- * `standard`-equivalent cap set today; the extra surfaces (coordinator role,
- * durable runs, sandbox-auto-allow) land in M2/M3 (v8 §3.8 / ROADMAP criterion
- * 5). No silent over-grant.
- */
-const M1_CLAMP_NOTICE =
-  "Resolved to standard-equivalent in M1: the unattended/max surfaces (coordinator role, durable runs, max-mode sandbox auto-allow) are available in M2/M3.";
-
-/**
  * The resolved cap/guard sets for the four named profiles (v8 §3.8).
  *
  * - `assistant`: enabled off, zero orchestration surfaces.
  * - `standard` (default): enabled on, the nine floor-contained caps (incl.
  *   origin-channel `orch:message`), guards ON, origin-only message.
- * - `unattended` / `max`: CLAMPED to `standard`'s cap set in M1 + the notice
- *   (Pitfall 4 / §3.8 + ROADMAP criterion 5 — no larger cap set).
+ * - `unattended`: cap set standard-equivalent (no over-grant) + a notice that
+ *   the never-hang MODE behaviors (deny+escalate, denial breaker, evict) are
+ *   ACTIVE as of Phase 217 (UNATT/BREAK/EVICT). `max`: CLAMPED to `standard`'s
+ *   cap set in M1 + a clamp notice (sandbox auto-allow is M3 — no larger cap set).
  */
 export const AUTONOMY_PROFILES = {
   assistant: {
@@ -301,11 +327,11 @@ export const AUTONOMY_PROFILES = {
   },
   unattended: {
     enabled: true,
-    capabilities: STANDARD_FLOOR_CAPABILITIES, // CLAMP — no over-grant in M1
+    capabilities: STANDARD_FLOOR_CAPABILITIES, // cap set standard-equivalent (no over-grant); mode behaviors active (217)
     mode: "unattended",
     ...STANDARD_GUARDS,
     message: STANDARD_MESSAGE,
-    m1Notice: M1_CLAMP_NOTICE,
+    m1Notice: UNATTENDED_NOTICE,
   },
   max: {
     enabled: true,
@@ -313,7 +339,7 @@ export const AUTONOMY_PROFILES = {
     mode: "max",
     ...STANDARD_GUARDS,
     message: STANDARD_MESSAGE,
-    m1Notice: M1_CLAMP_NOTICE,
+    m1Notice: MAX_M1_CLAMP_NOTICE,
   },
 } as const satisfies Record<AutonomyProfileName, ProfileEntry>;
 
@@ -333,6 +359,10 @@ export interface ResolvedCapability {
 /** The fully-resolved autonomy posture a consumer (Plan 04/06) reads. */
 export interface ResolvedAutonomy {
   readonly profile: AutonomyProfileName;
+  /** §23.10 lean-coordinator role (COORD-01) — narrows the tool surface only; caps are role-invariant. */
+  readonly role: AutonomyRole;
+  /** `["coordinator"]` when `role:coordinator` (the allowlist `setup-tools` applies); `undefined` for `worker`. */
+  readonly coordinatorToolGroups?: readonly string[];
   readonly enabled: boolean;
   /** The resolved orch:* caps (deduped). */
   readonly capabilities: readonly AgentCapability[];
@@ -343,6 +373,10 @@ export interface ResolvedAutonomy {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate; the denial breaker (BREAK-01) reads this. */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02); the chokepoint reads this. */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -353,13 +387,8 @@ export interface ResolvedAutonomy {
   readonly rate: AutonomyRateConfig; // per-root/socket/churn (RATE-01)
   readonly spawn: AutonomySpawnConfig; // concurrent/depth/fanout (CEIL-01)
   readonly outward: AutonomyOutwardConfig; // origin/grants/volume (QUOTA-01/02)
-  /** Present for `unattended`/`max` in M1 — the clamp notice. */
+  /** Present for `unattended` (mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
-}
-
-/** Is this resolved cap auto-allowable? `false` for the §22.3 always-escalate floor. */
-function capIsAutoApprovable(cap: AgentCapability): boolean {
-  return !ALWAYS_ESCALATE_SET.has(cap);
 }
 
 /**
@@ -421,8 +450,15 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
   // resolved source at the meter/semaphore).
   const bounds = resolveAutonomyBounds(cfg, base);
 
+  // COORD-01: the role NARROWS the tool surface only (the cap set above is
+  // untouched); `worker` omits `coordinatorToolGroups` (see *-role.ts).
+  const role: AutonomyRole = cfg?.role ?? "worker";
+  const coordinatorToolGroups = resolveCoordinatorToolGroups(role);
+
   const resolved: ResolvedAutonomy = {
     profile: profileName,
+    role,
+    ...(coordinatorToolGroups !== undefined ? { coordinatorToolGroups } : {}),
     enabled: cfg?.enabled ?? base.enabled,
     capabilities: orderedCaps,
     resolvedCapabilities,
@@ -431,6 +467,9 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     maxConcurrentSelfAgents: bounds.spawn.maxConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
+    denialBreakerN: cfg?.denialBreakerN ?? base.denialBreakerN,
+    // `??` (NOT `||`) so an explicit `false` is honored, not coerced to the default true.
+    evictOnPolicyUnreachable: cfg?.evictOnPolicyUnreachable ?? base.evictOnPolicyUnreachable,
     leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
     budget: bounds.budget,

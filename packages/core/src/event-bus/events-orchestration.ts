@@ -274,4 +274,60 @@ export interface OrchestrationEvents {
     sessionKey?: string;
     timestamp: number;
   };
+
+  /**
+   * FLEET-03 (v2.30 Phase 220): a durable run did NOT resume after a restart —
+   * the boot/watchdog resume pass orphaned it (durable-resume-engine.ts orphan()).
+   * Emitted DAEMON-SIDE; bridges to a content-free `health_signal` obs row
+   * (obs-autonomy-rows.ts) so `comis fleet` surfaces an orphaned-run count.
+   * Content-free by construction (T-220-01): the `reason` is a CLOSED enum —
+   * the engine's free-text reason ("not resumable: status=…", "reread failed",
+   * "invalid caps", "resume failed") is mapped to a member via the TOTAL
+   * `orphanReasonToEnum` BEFORE the emit and stays ONLY on the WARN log / notify.
+   * Mirrors `pipeline:authored`'s closed-enum-only discipline (§2.7).
+   */
+  "durable:orphaned": {
+    rootRunId: string;
+    /** CLOSED enum — NOT the engine's free text (durable-resume-engine.ts orphan reasons). */
+    reason: "not_resumable" | "reread_failed" | "invalid_caps" | "resume_failed";
+    timestamp: number;
+  };
+
+  /**
+   * FLEET-03: a durable run resumed in-flight after a restart (the resume pass
+   * rehydrated it from its checkpoint). Counts/ids only (§2.7) — the numeric
+   * stepIndex is the resumed checkpoint position, never a body.
+   */
+  "durable:resumed": { rootRunId: string; stepIndex: number; timestamp: number };
+
+  /**
+   * FLEET-03: a capability lease (or a whole spawn tree) was cooperatively
+   * REVOKED (lease.revoke). Carries the revoked COUNT + the rootRunId (an id) +
+   * timestamp ONLY — NEVER the lease bearer, selector, or any body (T-220-02).
+   */
+  "autonomy:revoked": { rootRunId: string; revoked: number; timestamp: number };
+
+  /**
+   * FLEET-03: a spawn tree was HARD-killed (run.kill). DISTINCT from revoke —
+   * kill flips durable status to 'revoked' INDISTINGUISHABLY from a cooperative
+   * revoke in the table, so the separate EVENT is the only way to count killed
+   * separately (RESEARCH OQ1). Carries the killed COUNT + rootRunId + timestamp ONLY.
+   */
+  "autonomy:killed": { rootRunId: string; killed: number; timestamp: number };
+
+  /**
+   * FLEET-02 (Phase 220-05): a Phase-217 capability-DENIAL breaker tripped — N
+   * consecutive floor-blocks aborted + killed the run tree (rpc-dispatch.ts, beside
+   * the `execution:aborted{reason:"denial_breaker"}` emit). DISTINCT from both the
+   * TOOL-failure breaker (`execution:aborted{reason:"circuit_breaker"}` → the
+   * session-rollup `breakerTripCount` → `breakerTripTotal`) and from kill/revoke:
+   * the denial-breaker abort is NEVER a session endReason and NEVER a
+   * breakerTripCount, so this dedicated event is the ONLY fleet-ingestion path for
+   * it — without it the trip is invisible to `comis fleet` (the milestone-audit
+   * FLEET-02 gap; the aborted run lands in durable status 'completed', so it shows
+   * 0 in orphaned/revoked/killed/breakerTrips too). Carries the rootRunId (an id) +
+   * timestamp ONLY — NEVER the engine's free-text deny reason (which stays on the
+   * escalate/WARN at the source). Each trip is one event (the count is the row count).
+   */
+  "autonomy:denial_breaker_tripped": { rootRunId: string; timestamp: number };
 }

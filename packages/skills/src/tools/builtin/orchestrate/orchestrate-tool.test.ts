@@ -105,6 +105,8 @@ describe("orchestrate-tool", () => {
   function makeDeps(over?: {
     spawnFn?: OrchestrateSpawnFn;
     resolveJailNodeFn?: () => { mode: "path" } | { mode: "bind"; execPath: string } | { mode: "unavailable"; hint: string };
+    resolveJailAgentCliFn?: () => { mode: "bind"; binPath: string } | { mode: "unavailable"; hint: string };
+    logger?: ComisLogger;
     cleanupRun?: ReturnType<typeof vi.fn>;
     baseEnv?: Record<string, string | undefined>;
     loadSeccompFdFn?: () => number | null;
@@ -112,7 +114,7 @@ describe("orchestrate-tool", () => {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
       deps: {
-        logger: makeLogger(),
+        logger: over?.logger ?? makeLogger(),
         workspaceResolver: () => workspacePath,
         capSocketPath,
         sandbox: new BwrapProvider(),
@@ -130,6 +132,11 @@ describe("orchestrate-tool", () => {
         },
         spawnFn: over?.spawnFn ?? ((): OrchestrateSpawnedChild => makeFakeChild("ok-output\n")),
         resolveJailNodeFn: over?.resolveJailNodeFn ?? (() => ({ mode: "path" as const })),
+        // Default to a bound comis-agent so the CLI surface is on unless a test
+        // overrides it (the default keeps unrelated tests' env/args stable).
+        resolveJailAgentCliFn:
+          over?.resolveJailAgentCliFn ??
+          (() => ({ mode: "bind" as const, binPath: "/jail/comis-agent-entry.js" })),
         loadSeccompFdFn: over?.loadSeccompFdFn ?? (() => null),
         now: () => 1_700_000_000_000,
         baseEnv: over?.baseEnv ?? { PATH: "/usr/bin", HOME: "/home/x" },
@@ -405,6 +412,116 @@ describe("orchestrate-tool", () => {
       /no node inside the jail|unavailable|jail/i,
     );
     expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  // -- CLI-05/06: bind the comis-agent binary + honest-degrade the CLI surface --
+
+  describe("comis-agent CLI bind + honest-degrade (CLI-05/06)", () => {
+    const binPath = "/jail/comis-agent-entry.js";
+
+    /** Capture the spawn bin/args + the child env (the runner's only spawn seam). */
+    function captureSpawn(): {
+      spawnFn: OrchestrateSpawnFn;
+      captured: { args: string[]; env: Record<string, string | undefined> };
+    } {
+      const captured = { args: [] as string[], env: {} as Record<string, string | undefined> };
+      const spawnFn: OrchestrateSpawnFn = (_bin, args, opts) => {
+        captured.args = args;
+        captured.env = opts?.env ?? {};
+        return makeFakeChild("ok\n");
+      };
+      return { spawnFn, captured };
+    }
+
+    /** True iff `target` appears as an adjacent `--ro-bind src dest` triple. */
+    function hasRoBind(args: string[], target: string): boolean {
+      for (let i = 0; i < args.length - 2; i++) {
+        if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    it("when the comis-agent binary resolves (bind): RO-binds it AND sets COMIS_AGENT_BIN", async () => {
+      const { spawnFn, captured } = captureSpawn();
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailAgentCliFn: () => ({ mode: "bind", binPath }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      // The binary is RO-bound (read-only — a writable binary is a host-RCE vector).
+      expect(hasRoBind(captured.args, binPath)).toBe(true);
+      // COMIS_AGENT_BIN is set so the in-jail comis-agent CLI resolves; it is NOT
+      // a secret, so it survives (set after the scrub, like the lease vars).
+      expect(captured.env.COMIS_AGENT_BIN).toBe(binPath);
+      // The lease vars still survive alongside it.
+      expect(captured.env.COMIS_CAP_LEASE).toBe("lease-xyz");
+    });
+
+    it("when the comis-agent binary is unavailable: the jail STILL launches (script surface), NO bind, NO COMIS_AGENT_BIN", async () => {
+      const { spawnFn, captured } = captureSpawn();
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailAgentCliFn: () => ({ mode: "unavailable", hint: "comis-agent binary missing" }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      // A missing/tampered CLI binary degrades ONLY the CLI surface — the run
+      // (the orchestrate SCRIPT surface) STILL completes (contrast: a node-
+      // unavailable throws/refuses the whole jail).
+      const result = await tool.execute("c", { script: "1", language: "ts" });
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("ok");
+
+      // No comis-agent bind and no COMIS_AGENT_BIN env (never a silent bind).
+      expect(captured.args).not.toContain(binPath);
+      expect(captured.env.COMIS_AGENT_BIN).toBeUndefined();
+    });
+
+    it("emits a content-free WARN (errorKind precondition) naming the unavailable CLI surface, NOT the hash/bytes", async () => {
+      const warnCalls: Array<{ fields: Record<string, unknown>; msg: string }> = [];
+      const logger: ComisLogger = (() => {
+        const noop = (): void => {};
+        const base: ComisLogger = {
+          level: "silent",
+          trace: noop,
+          debug: noop,
+          info: noop,
+          warn: (a?: unknown, b?: unknown) => {
+            warnCalls.push({
+              fields: (a ?? {}) as Record<string, unknown>,
+              msg: typeof b === "string" ? b : "",
+            });
+          },
+          error: noop,
+          fatal: noop,
+          audit: noop,
+          child: () => base,
+        };
+        return base;
+      })();
+      const { deps } = makeDeps({
+        logger,
+        resolveJailAgentCliFn: () => ({
+          mode: "unavailable",
+          hint: "The comis-agent CLI binary was not found … CLI surface UNAVAILABLE",
+        }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      const cliWarn = warnCalls.find((w) => /comis-agent/i.test(w.msg));
+      expect(cliWarn, "expected a WARN naming the comis-agent CLI surface").toBeDefined();
+      expect(cliWarn!.fields.errorKind).toBe("precondition");
+      // The hint rides the WARN; it must NOT carry the raw hash digest / bytes.
+      const hint = String(cliWarn!.fields.hint ?? "");
+      expect(hint).not.toMatch(/[0-9a-f]{64}/);
+    });
   });
 
   it("size-bounces an oversized stdout (head+tail+marker) and returns ONLY the bounced stdout", async () => {

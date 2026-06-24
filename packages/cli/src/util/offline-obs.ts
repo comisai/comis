@@ -97,7 +97,7 @@ async function loadDaemonAssemblers(): Promise<typeof import("@comis/daemon")> {
 /** Assemble an IncidentReport from the local data dir without a daemon. */
 export async function assembleIncidentReportOffline(
   dataDir: string,
-  params: { sessionKey?: string; traceId?: string; depth?: "summary" | "full" },
+  params: { sessionKey?: string; traceId?: string; rootRunId?: string; depth?: "summary" | "full" },
 ): Promise<IncidentReport> {
   const { assembleIncidentReportFromSources, makeRealReader } = await loadDaemonAssemblers();
   const { store, close } = openObsStoreIfPresent(dataDir);
@@ -117,7 +117,11 @@ export async function assembleFleetHealthReportOffline(
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleFleetHealthReport(
-      { obsStore: store, dataDir, clock: systemClock },
+      // FLEET-01/02/04 (Phase 220-03): the offline CLI is daemon-less — there is no
+      // durable-run store edge here, so pass `durableRuns: undefined` explicitly. The
+      // assembler soft-fails and the autonomy block is honestly OMITTED (the documented
+      // coverage degradation, NOT a divergence from the RPC/MCP surfaces, which DO wire it).
+      { obsStore: store, dataDir, clock: systemClock, durableRuns: undefined },
       sinceHours,
     );
   } finally {

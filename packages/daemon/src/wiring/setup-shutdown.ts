@@ -143,16 +143,10 @@ export interface ShutdownDeps {
    * Constructed in setupAgents and surfaced on AgentsResult.
    */
   trajectoryRegistry?: import("@comis/observability").SessionTrajectoryHandleRegistry;
-  // ---------------------------------------------------------------------
-  // Lifted teardowns
-  // Previously these ran via container.eventBus.on("system:shutdown", …)
-  // subscribers, but no production emitter existed — they silently
-  // no-op'd in production. They are now direct fields invoked by this
-  // composition root.
-  //
-  // 8 production subscribers expand to 9 fields because setup-tools.ts's
-  // single closure splits into background-processes + mcp-client-manager.
-  // ---------------------------------------------------------------------
+  // Lifted teardowns: previously ran via container.eventBus.on("system:shutdown", …)
+  // subscribers with no production emitter (silent no-ops); now direct fields invoked
+  // by this composition root. (8 subscribers → 9 fields: setup-tools splits into
+  // background-processes + mcp-client-manager.)
   /** Drain per-agent background-process registries (from setupTools). */
   shutdownBackgroundProcesses?: () => Promise<void>;
   /** Disconnect MCP clients. */
@@ -167,6 +161,7 @@ export interface ShutdownDeps {
   shutdownDeliveryQueue?: () => void;
   /** Stop the background video poller — sweeper interval + in-flight loops (189). */
   shutdownVideoPoller?: () => void;
+  durableResumeShutdown?: () => void; // Phase 216: cancel the durable-resume watchdog interval (no leaked timer).
   /** Stop the delivery mirror (from setupDeliveryMirror). */
   shutdownDeliveryMirror?: () => void;
   /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
@@ -243,6 +238,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     proxyTypingCleanup,
     shutdownDeliveryQueue,
     shutdownVideoPoller,
+    durableResumeShutdown,
     shutdownDeliveryMirror,
     outputRetentionShutdown,
     stopChannelHealthMonitor,
@@ -551,12 +547,12 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "wake-coalescer", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "wake-coalescer", daemonLogger);
       }
-      // Drain the delivery queue, the Phase-189 background video poller, the
-      // delivery mirror, and the output retention housekeeper. Each replaces a
-      // system:shutdown subscriber previously installed in channels-helpers.ts that
-      // silently no-op'd in production. Order is preserved (sequential await).
+      // Drain the delivery queue / video poller / durable-resume watchdog / delivery
+      // mirror / output retention. Each replaces a system:shutdown subscriber that
+      // silently no-op'd in production. Order preserved (sequential await).
       await stopSync(shutdownDeliveryQueue, "delivery-queue");
       await stopSync(shutdownVideoPoller, "video-poller"); // 189: sweeper + in-flight loops
+      await stopSync(durableResumeShutdown, "durable-resume-watchdog"); // 216: cancel the watchdog interval
       await stopSync(shutdownDeliveryMirror, "delivery-mirror");
       await stopSync(outputRetentionShutdown, "output-retention");
       // Dispose all active Gemini caches on shutdown

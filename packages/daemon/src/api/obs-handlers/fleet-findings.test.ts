@@ -681,6 +681,178 @@ function budgetRow(ts: number, capSource: string): DiagnosticRow {
   };
 }
 
+// ---------------------------------------------------------------------------
+// FLEET-01/02 (Phase 220-03) — three dedicated AUTONOMY findings over the
+// `health_signal` rows Plan 01 persists (signal labels durable_orphaned /
+// autonomy_revoked / autonomy_killed). Each clones the node_budget_exceeded mold:
+// a closed `signal` label, a zero-traffic if-guard, counts + a STATIC knob-naming
+// hint ONLY (safe to paste), defensive parse. The kill-vs-revoke SEPARATION is
+// the whole point — Plan 01 emits DISTINCT events (both flip durable status to
+// 'revoked' in the table), so two separate findings are the only count separator.
+// RED: none of the three arms exist yet, so NO finding is produced — every
+// assertion below fails on the pre-patch code.
+// ---------------------------------------------------------------------------
+
+/** A `health_signal` row labelled `durable_orphaned` (the Plan-01 details shape:
+ *  closed reason enum + rootRunId — never the engine free-text reason). */
+function durableOrphanedRow(ts: number, reason: string, rootRunId = "root-orphan"): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "durable:orphaned",
+    details: JSON.stringify({ signal: "durable_orphaned", reason, rootRunId }),
+  };
+}
+
+/** A `health_signal` row labelled `autonomy_revoked` (revoked COUNT + rootRunId only). */
+function autonomyRevokedRow(ts: number, revoked: number, rootRunId = "root-revoke"): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:revoked",
+    details: JSON.stringify({ signal: "autonomy_revoked", revoked, rootRunId }),
+  };
+}
+
+/** A `health_signal` row labelled `autonomy_killed` (killed COUNT + rootRunId only). */
+function autonomyKilledRow(ts: number, killed: number, rootRunId = "root-kill"): DiagnosticRow {
+  return {
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:killed",
+    details: JSON.stringify({ signal: "autonomy_killed", killed, rootRunId }),
+  };
+}
+
+describe("buildFindings — FLEET-01 durable_orphaned finding", () => {
+  const CODE = "durable_orphaned";
+
+  it("emits ONE finding counting the orphaned rows, naming the top reason + comis explain + the heartbeat knob", () => {
+    const findings = buildFindings(
+      [
+        durableOrphanedRow(1_000, "not_resumable", "r1"),
+        durableOrphanedRow(2_000, "not_resumable", "r2"),
+        durableOrphanedRow(3_000, "resume_failed", "r3"),
+      ],
+      [],
+      [],
+    );
+    const f = findings.filter((x) => x.code === CODE);
+    expect(f).toHaveLength(1);
+    // 3 orphaned rows → count 3.
+    expect(f[0]!.count).toBe(3);
+    expect(f[0]!.detail).toMatch(/3 run\(s\) orphaned on restart/);
+    // The TOP closed reason (not_resumable, 2 of 3) is named — a closed enum, no free text.
+    expect(f[0]!.detail).toMatch(/not_resumable/);
+    // The hint names comis explain <rootRunId> + the heartbeat knob.
+    expect(f[0]!.hint).toMatch(/comis explain <rootRunId>/);
+    expect(f[0]!.hint).toMatch(/heartbeatStaleMs|heartbeat/);
+  });
+
+  it("does NOT emit when there are zero durable_orphaned rows (zero-traffic guard)", () => {
+    const findings = buildFindings(
+      [{ timestamp: 1, category: "health_signal", severity: "warning", message: "h", details: JSON.stringify({ signal: "lcd_divergence" }) }],
+      [],
+      [],
+    );
+    expect(findings.some((x) => x.code === CODE)).toBe(false);
+  });
+
+  it("CONTENT-FREE: the detail/hint carry no free-text reason / path / secret — only the closed enum + counts", () => {
+    // The Plan-01 row only ever holds a closed reason enum + an id, but pin that
+    // the FINDING text is a fixed digest (no engine free-text reason ever leaks).
+    const findings = buildFindings([durableOrphanedRow(1_000, "invalid_caps", "r9")], [], []);
+    const f = findings.find((x) => x.code === CODE)!;
+    for (const text of [f.detail, f.hint]) {
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toMatch(/Bearer|sk-/i);
+      expect(text).not.toMatch(/\/home\/|\/tmp\//); // no filesystem path
+      // No free-text orphan-reason sentence (only the closed enum token).
+      expect(text).not.toMatch(/lease holder|dropped its heartbeat at/i);
+    }
+  });
+
+  it("folds malformed details to no-throw and ignores it (defensive parse)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "warning", message: "x", details: "not json {" };
+    expect(() => buildFindings([malformed, durableOrphanedRow(2_000, "reread_failed", "r2")], [], [])).not.toThrow();
+    const f = buildFindings([malformed, durableOrphanedRow(2_000, "reread_failed", "r2")], [], []).find((x) => x.code === CODE)!;
+    // The malformed row never parses to durable_orphaned → only the good row counts.
+    expect(f.count).toBe(1);
+  });
+});
+
+describe("buildFindings — FLEET-01 autonomy_revoked + autonomy_killed findings (kill≠revoke separable)", () => {
+  it("emits SEPARATE autonomy_revoked and autonomy_killed findings — the kill-vs-revoke separation Plan 01 enables", () => {
+    const findings = buildFindings(
+      [
+        autonomyRevokedRow(1_000, 2, "r-rev1"),
+        autonomyRevokedRow(2_000, 1, "r-rev2"),
+        autonomyKilledRow(3_000, 1, "r-kill1"),
+      ],
+      [],
+      [],
+    );
+    const revoked = findings.filter((x) => x.code === "autonomy_revoked");
+    const killed = findings.filter((x) => x.code === "autonomy_killed");
+    // Two distinct findings — proving kill is separable from revoke.
+    expect(revoked).toHaveLength(1);
+    expect(killed).toHaveLength(1);
+    // Counts SUM the per-row revoked/killed counts (2 + 1 = 3 revoked; 1 killed).
+    expect(revoked[0]!.count).toBe(3);
+    expect(killed[0]!.count).toBe(1);
+    expect(revoked[0]!.detail).toMatch(/revoked/i);
+    expect(killed[0]!.detail).toMatch(/kill/i);
+    // Static hints — no body.
+    expect(revoked[0]!.hint.length).toBeGreaterThan(0);
+    expect(killed[0]!.hint.length).toBeGreaterThan(0);
+  });
+
+  it("emits a revoked finding but NO killed finding when only revoke rows are present (and vice-versa)", () => {
+    const onlyRevoked = buildFindings([autonomyRevokedRow(1_000, 1, "r1")], [], []);
+    expect(onlyRevoked.some((x) => x.code === "autonomy_revoked")).toBe(true);
+    expect(onlyRevoked.some((x) => x.code === "autonomy_killed")).toBe(false);
+
+    const onlyKilled = buildFindings([autonomyKilledRow(1_000, 1, "r1")], [], []);
+    expect(onlyKilled.some((x) => x.code === "autonomy_killed")).toBe(true);
+    expect(onlyKilled.some((x) => x.code === "autonomy_revoked")).toBe(false);
+  });
+
+  it("CONTENT-FREE: neither finding's detail/hint carries a lease bearer / selector / body", () => {
+    const findings = buildFindings(
+      [autonomyRevokedRow(1_000, 1, "r-rev"), autonomyKilledRow(2_000, 1, "r-kill")],
+      [],
+      [],
+    );
+    for (const code of ["autonomy_revoked", "autonomy_killed"]) {
+      const f = findings.find((x) => x.code === code)!;
+      for (const text of [f.detail, f.hint]) {
+        expect(text).not.toMatch(/https?:\/\//);
+        expect(text).not.toMatch(/Bearer|sk-|secret-lease/i);
+      }
+    }
+  });
+
+  it("folds malformed revoke/kill details to no-throw (defensive parse)", () => {
+    const malformed: DiagnosticRow = { timestamp: 1, category: "health_signal", severity: "warning", message: "x", details: "not json {" };
+    expect(() => buildFindings([malformed, autonomyRevokedRow(2_000, 1), autonomyKilledRow(3_000, 1)], [], [])).not.toThrow();
+  });
+
+  it("no double-report: revoked/killed do NOT also appear in the generic health_signal rollup", () => {
+    const findings = buildFindings(
+      [autonomyRevokedRow(1_000, 1, "r1"), autonomyKilledRow(2_000, 1, "r2"), durableOrphanedRow(3_000, "not_resumable", "r3")],
+      [],
+      [],
+    );
+    // None of the three labels leak into the generic `health_signal:<label>` rollup.
+    expect(findings.some((f) => f.code === "health_signal:autonomy_revoked")).toBe(false);
+    expect(findings.some((f) => f.code === "health_signal:autonomy_killed")).toBe(false);
+    expect(findings.some((f) => f.code === "health_signal:durable_orphaned")).toBe(false);
+  });
+});
+
 describe("buildFindings — ORCH-OBS node_budget_exceeded finding", () => {
   const CODE = "node_budget_exceeded";
 

@@ -173,6 +173,55 @@ describe("comis explain routes a UUID (no ':') to { traceId }", () => {
   });
 });
 
+describe("comis explain routes a root- arg (FLEET-05) to { rootRunId }", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("threads { rootRunId, depth } when the arg starts with 'root-session-' (synthetic root)", async () => {
+    // FLEET-05: the `root-` prefix is the disambiguator. A synthetic in-process
+    // root is `root-session-<key>` — it contains ':' but MUST route to rootRunId,
+    // NOT sessionKey (the prefix check is FIRST).
+    const { client, calls } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "root-session-default:u:c:1",
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe(ObsExplainContract.method);
+    expect(calls[0]?.params).toEqual({ rootRunId: "root-session-default:u:c:1", depth: "summary" });
+  });
+
+  it("threads { rootRunId, depth } when the arg starts with 'root-' (a real spawned root id)", async () => {
+    const { client, calls } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "root-abc-123"]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.params).toEqual({ rootRunId: "root-abc-123", depth: "summary" });
+  });
+});
+
 describe("comis explain --format json emits machine-readable JSON", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;

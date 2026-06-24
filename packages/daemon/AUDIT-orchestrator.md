@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:331–381`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 19 (10 required + 9 optional + 0 stale-fallback)
+**Field count:** 22 (10 required + 12 optional + 0 stale-fallback)
 **Location rationale:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -33,6 +33,10 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | eventBus | optional | graph-handlers cannot emit the counts-only `pipeline:authored` telemetry event (TELEM-01); the small-model pipeline-authoring fleet metric stays empty (handlers otherwise function) | packages/daemon/src/api/types.ts:370 |
 | getProviderCapabilityClass | optional | the per-agent `resolveCapabilityClass` wired at rpc-dispatch.ts:200 returns undefined, so every `pipeline:authored` records `capabilityClass:"unknown"` (the tier is recorded honestly, never dropped) | packages/daemon/src/api/types.ts:378 |
 | leaseManager | optional | the autonomy-handlers (213-06) `lease.revoke` / `run.kill` are not registered in the dispatcher (a partial boot); a stray call hits the dispatcher's unknown-method path. Plan 07 wires the real instance at the composition root, so production always carries it | packages/daemon/src/api/types.ts:362 |
+| durableRuns | optional | Phase 216 DUR-03: the revoke does NOT poison the persisted run record, so a restart could re-mint pre-revoke caps; inert when absent (the in-memory lease revoke alone still stops the live bearer — only matters once durability is enabled, which is when Plan 07 wires this) | packages/daemon/src/api/types.ts:363 |
+| denialBreaker | optional | Phase 217-05 BREAK-02: the per-rootRunId consecutive-floor-block circuit breaker (a pure count-based trip-once counter, no clock/throws) the dispatch chokepoint reads — recordAllow on the gated allow branch, recordDenial on a CapabilityDeniedError floor-block, trip→abort+escalate at the Nth consecutive deny (autonomy.denialBreakerN). Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:414) from the resolved autonomy-bearing config; absent when no autonomy agent ⇒ the chokepoint never trips and a deny loop is bounded only by the per-root budget (pre-217 byte-identical) | packages/daemon/src/api/types.ts:360 |
+| evictRegistry | optional | Phase 217-05 EVICT-01/03: the daemon-wide in-memory evicted-rootRunId set — written by the autonomy.evict admin handler (mark) and read by the chokepoint (isEvicted → demote the run's mode to "default" mid-run, the run keeps going). Threading it onto these deps ALSO activates the conditionally-registered autonomy.evict handler via the createAutonomyHandlers `...deps` spread. Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:422); absent when no autonomy agent ⇒ autonomy.evict is not registered and no run can be demoted mid-flight (pre-217 byte-identical) | packages/daemon/src/api/types.ts:361 |
+| escalate | optional | Phase 217-05 UNATT-03: the content-free out-of-band operator-escalation callback (a NotifyFn carrying ids + reason + hint, NEVER a message body). The chokepoint fires it fire-and-forget (never awaited) on an unattended-mode would-ask deny and on a breaker trip, so the deny still re-throws immediately and the run never hangs. Constructed at the cap-endpoint boot (setup-capability-endpoint-boot.ts:429) as a content-free WARN; absent when no autonomy agent ⇒ an unattended deny is not escalated out-of-band (pre-217 deny-without-escalate, byte-identical) | packages/daemon/src/api/types.ts:362 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -41,7 +45,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 17
-- **Final count:** 19 (10 required + 9 optional)
+- **Final count:** 22 (10 required + 12 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

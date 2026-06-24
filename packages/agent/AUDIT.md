@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-15
 **Status:** FINAL
-**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (22-field interface)
+**Interface source:** `packages/agent/src/spawn/sub-agent-runner.ts` SubAgentRunnerDeps (26-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-cross-session/setup-cross-session-runtime.ts` (single site — `createSubAgentRunner({`)
-**Field count:** 22 (7 required + 15 optional + 0 stale-fallback)
+**Field count:** 26 (7 required + 19 optional + 0 stale-fallback)
 
 This audit lives co-located with the agent package; `files: ["dist"]` in `packages/agent/package.json` excludes it from the npm tarball.
 
@@ -46,7 +46,11 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | dataDir | optional | result-file sweep + ghost-sweep dataDir lookups skipped (line 500 `if (deps.dataDir)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:263 |
 | clock | required | — | packages/agent/src/spawn/sub-agent-runner.ts:265 |
 | timers | required | — | packages/agent/src/spawn/sub-agent-runner.ts:267 |
+| durableRuns | optional | Phase 216 DUR-01/HB-01: the durable-checkpoint store is inert — no checkpoint is written + no keep-alive heartbeat fires, so the run is NOT resumable after a crash (the byte-identical default; the daemon wires it ONLY when autonomy.durability.enabled AND an autonomy agent is configured; guard `if (!store) return` in startDurableCheckpoint/finishDurableCheckpoint) | packages/agent/src/spawn/sub-agent-runner.ts:380 |
+| durability | optional | Phase 216 HB-01: the keep-alive cadence/threshold default (keepAliveMs 30s) when absent — only consulted when durableRuns is wired (deps.durability?.keepAliveMs ?? 30_000) | packages/agent/src/spawn/sub-agent-runner.ts:389 |
+| durableRunFacts | optional | Phase 216 DUR-01: the checkpoint records empty caps/leaseIds + zero budget (a safe degrade — a resume re-mints the persisted caps verbatim, so empty is zero-authority, never an over-grant; deps.durableRunFacts?.(...) optional-chain in startDurableCheckpoint) | packages/agent/src/spawn/sub-agent-runner.ts:404 |
 | lifecycleHooks | optional | spawn rollback hooks + onEnded hooks disabled for non-graph-coordinator paths (line 575 `if (deps.lifecycleHooks)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:269 |
+| materializeFullOutput | optional | Phase 218 SUMREF-02: the child's full output is NOT materialized to a ResultRef — the announcement embeds the condensed summary + diskPath only (today's behavior; the daemon wires a `createResultRefStore`-backed impl targeting the child's jailed workspace, guard `if (condensedResult && deps.materializeFullOutput)`) | packages/agent/src/spawn/sub-agent-runner.ts:432 |
 
 ## Removed Fields (stale-fallback)
 
@@ -56,7 +60,7 @@ The candidate stale-fallback field `activeRunRegistry` was retained as `optional
 
 ## Summary
 
-- **Final count:** 22 (7 required + 15 optional)
+- **Final count:** 26 (7 required + 19 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

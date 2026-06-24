@@ -88,6 +88,18 @@ export {
 // Consumer: test/integration/mcp-config-refresh.test.ts.
 export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
+// Phase 216 Plan 08 (MED-6) test seam: the exactly-once chaos test
+// (test/integration/durable-resume-e2e.test.ts) arms a crash-injection hook in
+// the REAL wrapOutwardSend so a live autonomy-originated send crashes in the
+// invariant-#12 window (between markUnknown and commit), leaving a genuine
+// unknown_after_send row for the post-restart recovery to reconcile. INERT in
+// production (never armed); mirrors the _resetSigusr1Timer test-seam pattern.
+export {
+  __setOutwardSendCrashHookForTest,
+  OUTWARD_SEND_CRASH_SENTINEL,
+  type OutwardSendCrashHookMode,
+} from "./api/outward-ledger-wrap.js";
+
 // Bundle-install helper + boot orchestrator surfaced through the daemon barrel
 // so the skill-bundle-install integration test
 // (test/integration/skill-bundle-install.test.ts) can drive the
@@ -153,3 +165,15 @@ export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
 // `wiring/main-helpers`) — and intentionally NOT on the public barrel until a
 // cross-package consumer exists (public-export-consumers gate). A future-phase
 // transport that genuinely needs one cross-package re-exports it here then.
+
+// DENYLISTED_RPC_METHODS (Phase 219, CLI-02/03 RE-PROVE seam) — the cap-socket's
+// method-precise closed-door set (the `skills_manage`/admin-management methods the
+// endpoint's pre-check throws on BEFORE `validate()`). Re-exported from the
+// top-level barrel so the `comis-agent-same-gate` / `comis-agent-no-admin`
+// arch-tests DERIVE the denylisted-method set from the SAME source the endpoint
+// uses (no hand-maintained literal that drifts). Pure additive `export` — the
+// const + its `SUB_AGENT_TOOL_DENYLIST` soundness loop are unchanged; the daemon
+// runtime behavior is byte-identical. @comis/core cannot import this (it would be
+// a package cycle), so the cross-check lives in the architecture-suite arch-test.
+// Consumer: test/architecture/comis-agent-same-gate.test.ts + comis-agent-no-admin.test.ts
+export { DENYLISTED_RPC_METHODS } from "./wiring/setup-capability-endpoint.js";

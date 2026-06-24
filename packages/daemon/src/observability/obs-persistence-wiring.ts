@@ -26,6 +26,16 @@ import {
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
 } from "./obs-orchestration-rows.js";
+// FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle row-builders, in a
+// sibling module for the 800-line cap (the obs-orchestration-rows precedent);
+// imported for the subscriber registrations + re-exported below.
+import {
+  durableOrphanedEventToRow,
+  durableResumedEventToRow,
+  autonomyRevokedEventToRow,
+  autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
+} from "./obs-autonomy-rows.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
 
 // ===========================================================================
@@ -478,6 +488,17 @@ export {
   nodeBudgetExceededEventToRow,
 };
 
+// FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle row-builders live in
+// obs-autonomy-rows.ts (the 800-line-cap extraction) and are RE-EXPORTED here so the
+// public API + the test imports stay byte-identical (the obs-orchestration-rows mold).
+export {
+  durableOrphanedEventToRow,
+  durableResumedEventToRow,
+  autonomyRevokedEventToRow,
+  autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
+};
+
 // ---------------------------------------------------------------------------
 // Factory types
 // ---------------------------------------------------------------------------
@@ -686,6 +707,29 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));
+  });
+
+  // FLEET-03 (Phase 220-01): the four autonomy/durable lifecycle signals →
+  // content-free health_signal rows (same diagnosticBuffer, NO migration). The
+  // fleet lens (Plan 03) rolls these into the orphaned/resumed/revoked/killed
+  // counts. Each row carries closed labels/enums/counts/ids only — the engine's
+  // free-text orphan reason stays on its WARN log, never on the row (§2.7).
+  eventBus.on("durable:orphaned", (payload) => {
+    diagnosticBuffer.push(durableOrphanedEventToRow(payload));
+  });
+  eventBus.on("durable:resumed", (payload) => {
+    diagnosticBuffer.push(durableResumedEventToRow(payload));
+  });
+  eventBus.on("autonomy:revoked", (payload) => {
+    diagnosticBuffer.push(autonomyRevokedEventToRow(payload));
+  });
+  eventBus.on("autonomy:killed", (payload) => {
+    diagnosticBuffer.push(autonomyKilledEventToRow(payload));
+  });
+  // FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip → a content-free
+  // health_signal row (the SEPARABLE denialBreakerTrips count; see the mapper docstring).
+  eventBus.on("autonomy:denial_breaker_tripped", (payload) => {
+    diagnosticBuffer.push(autonomyDenialBreakerEventToRow(payload));
   });
 
   // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an obs_diagnostics

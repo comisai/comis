@@ -52,6 +52,7 @@ import {
   safePath,
   type FleetHealthReport,
   type ClockPort,
+  type DurableRunPort,
 } from "@comis/core";
 import { reduceFleetWindow, type ObservabilityStore } from "@comis/memory";
 import { pipelineAuthoringGate } from "@comis/observability";
@@ -59,6 +60,7 @@ import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { readSessionIndexWindow } from "./fleet-session-index.js";
 import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./fleet-findings.js";
+import { computeAutonomySlice } from "./fleet-autonomy.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / fleet-session-index.ts. */
 function defaultDataDir(): string {
@@ -115,6 +117,12 @@ interface FleetSignals {
   healthSignalCount: number;
   configPostureCount: number;
   topErrorKind?: string;
+  /** FLEET-04: count of DEGRADED autonomy runs (orphaned + revoked/killed) in the
+   *  window — the acute autonomy event the worst-rootRunId verdict fires on. */
+  autonomyDegradedCount: number;
+  /** FLEET-04: the worst autonomy run's rootRunId (an id the operator pastes into
+   *  `comis explain`). Undefined when no autonomy row carried one. */
+  worstRootRunId?: string;
 }
 
 /**
@@ -123,6 +131,29 @@ interface FleetSignals {
  * degradation outranks a single recurring WARN class.
  */
 const FLEET_HEURISTICS: ReadonlyArray<(s: FleetSignals) => FleetRootCause | null> = [
+  // 0) FLEET-04 acute AUTONOMY degradation — an unattended run was orphaned on
+  //    restart or revoked/killed. This outranks the session-level rules: an
+  //    autonomy run that did not survive is the highest-priority unattended-mode
+  //    signal, and it carries the worst `rootRunId` so the operator pastes it
+  //    straight into `comis explain` (the FLEET-05 root- arm). Clones the
+  //    fleet_acute_degradation shape (a named-cause acute event). NO clock read —
+  //    keys only on the assembled autonomy signals (determinism, T-220-12).
+  (s) => {
+    if (s.autonomyDegradedCount === 0) return null;
+    const explainRef =
+      s.worstRootRunId !== undefined ? `comis explain ${s.worstRootRunId}` : "comis explain <rootRunId>";
+    return {
+      code: "fleet_autonomy_degradation",
+      detail:
+        s.worstRootRunId !== undefined
+          ? `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window — worst: ${s.worstRootRunId}`
+          : `${s.autonomyDegradedCount} autonomy run(s) degraded (orphaned/revoked/killed) over the window`,
+      suggestedNextSteps: [
+        `run \`${explainRef}\` on the worst autonomy run to see its spawn-tree + why it did not survive`,
+        "check the durable checkpoint + lease heartbeat (autonomy.durability.heartbeatStaleMs) for orphaned runs; confirm intent for revoked/killed runs",
+      ],
+    };
+  },
   // 1) High fleet degradation — most sessions in the window degraded.
   (s) => {
     if (s.sessionCount === 0 || s.degradedRate < HIGH_DEGRADED_RATE) return null;
@@ -234,13 +265,18 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
  * @param deps.dataDir - the data dir for the A3 session-index reader.
  * @param deps.clock - the injected ClockPort. The ONE clock read (for `sinceMs`);
  *   NEVER `Date.now()` (the globals gate).
+ * @param deps.durableRuns - FLEET-01/02/04 (Phase 220-03): the durable-run store
+ *   for the autonomy block's run counts (`countByStatus(sinceMs)`). Soft-fail (the
+ *   `obsStore?` precedent): absent ⇒ the autonomy block is honestly OMITTED (the
+ *   daemon-less offline CLI / a non-durability boot). NO extra clock read — reuses
+ *   the ONE `sinceMs` window.
  * @param sinceHours - the window size (the caller applies the 24h default). A
  *   non-finite or non-positive value is clamped to {@link DEFAULT_WINDOW_HOURS}
  *   here (IN-01 defense-in-depth) so a contract-bypassing caller cannot produce
  *   a `-Infinity`/`NaN` window bound.
  */
 export async function assembleFleetHealthReport(
-  deps: { obsStore?: ObservabilityStore; dataDir: string; clock: ClockPort },
+  deps: { obsStore?: ObservabilityStore; dataDir: string; clock: ClockPort; durableRuns?: DurableRunPort },
   sinceHours: number,
 ): Promise<FleetHealthReport> {
   // IN-01 guard (defense-in-depth): the contract rejects a non-finite/non-positive
@@ -306,6 +342,38 @@ export async function assembleFleetHealthReport(
   // topErrorKinds — Record -> [{kind,count}], already capped (top-3) + key-sorted by A2.
   const topErrorKinds = Object.entries(fleet.topErrorKinds).map(([kind, count]) => ({ kind, count }));
 
+  // FLEET-01/02/04 (Phase 220-03) — the AUTONOMY slice. autonomy runs ARE
+  // durable_runs by construction, so the run counts come from the crash-surviving
+  // DurableRunPort.countByStatus (NOT the session-rollup schema). Soft-fail read
+  // (the getRollingSpendUsd / obsStore? precedent) — NO new clock read, reuse the
+  // ONE `sinceMs` window. The resumed/killed counts + the worst rootRunId are
+  // event-sourced from the `healthSignals` rows already read above (kill is
+  // separable from revoked ONLY because Plan 01 emits a distinct event). When the
+  // store is unwired AND no autonomy rows exist, the block is OMITTED (honest
+  // degradation — offline CLI). The whole slice reads only assembled signals +
+  // the synthetic-excluded `fleet` read-back — NO Date.now()/new Date() (T-220-12),
+  // NO re-derivation over raw `rows` (T-220-11 / WR-01).
+  // Soft-fail read of the crash-surviving counts (the getRollingSpendUsd precedent):
+  // the Result is narrowed on `.ok` — a read error degrades to `undefined` (the block
+  // is then driven by the event-sourced rows / omitted), never throws.
+  const durableCountsResult = await deps.durableRuns?.countByStatus(sinceMs);
+  const durableCounts =
+    durableCountsResult !== undefined && durableCountsResult.ok ? durableCountsResult.value : undefined;
+  const autonomy = computeAutonomySlice({
+    durableCounts,
+    healthSignals,
+    // FLEET-02: breaker trips read back the synthetic-excluded windowed breakerTripTotal
+    // (summed from per-session breakerTripCount in reduceFleetWindow) — NEVER re-derived over
+    // raw rows. NOT degradedByCause["denial_breaker"]: denial_breaker is an execution:aborted
+    // EVENT reason, never a session endReason (END_REASON_MAP has no such key), so that bucket
+    // is always 0 (WR-01). breakerTripTotal is the real, populated source; breaker trips are an
+    // autonomy-only mechanism (Phase 217), so the window total IS the autonomy-scoped count.
+    breakerTrips: fleet.breakerTripTotal ?? 0,
+    // FLEET-01: the window's autonomy-inclusive operator cost (the synthetic-excluded
+    // read-back — documented in the schema; a stricter autonomy-only cost is a follow-up).
+    costUsd: fleet.costUsd,
+  });
+
   // The deterministic verdict (PURE, ordered first-match-wins).
   // W9: dominant named degradation cause (highest count; lexicographic tiebreak).
   const topDegradedCause = Object.entries(fleet.degradedByCause).sort(
@@ -319,6 +387,17 @@ export async function assembleFleetHealthReport(
     healthSignalCount: healthSignals.length,
     configPostureCount: configPosture.length,
     topErrorKind: topErrorKinds[0]?.kind,
+    // FLEET-04: the autonomy verdict keys on the DEGRADED autonomy run count +
+    // the worst rootRunId (both from the slice above) — undefined-safe spread.
+    // FLEET-02: a denial-breaker-aborted run lands in durable status 'completed'
+    // (NOT orphaned/revoked), so it is invisible to `runs.degraded` — but it IS a
+    // degraded autonomy event (the run burned its denial budget and was force-
+    // aborted). Add `denialBreakerTrips` so the verdict fires + surfaces the worst
+    // rootRunId for the denial-breaker case too (the worst-run scan already promotes
+    // it at rank 3). The session-level rules still take precedence when no autonomy
+    // run degraded; this only widens the autonomy arm to its full degraded surface.
+    autonomyDegradedCount: (autonomy?.runs.degraded ?? 0) + (autonomy?.denialBreakerTrips ?? 0),
+    ...(autonomy?.worstRootRunId !== undefined ? { worstRootRunId: autonomy.worstRootRunId } : {}),
   });
 
   // Report-level guidance (independent of the per-verdict steps).
@@ -360,6 +439,11 @@ export async function assembleFleetHealthReport(
     // FleetHealthReportSchema so .parse() preserves it; rides the existing
     // admin-gated obs.fleet.health — no new RPC surface).
     pipelineAuthoringGate: pipelineAuthoringVerdict,
+    // FLEET-01/02/04 — the autonomy block (counts + the worst rootRunId ONLY).
+    // Conditionally spread so an offline/non-durability boot with no autonomy
+    // signals OMITS the field entirely (honest degradation; the schema field is
+    // optional, so an absent block round-trips). Present otherwise.
+    ...(autonomy !== undefined ? { autonomy } : {}),
     suggestedNextSteps,
     truncations,
     coverage: {
@@ -394,7 +478,11 @@ export function bindFleetHealthHandlers(deps: ObsHandlerDeps): Record<string, Rp
       const params = ObsFleetHealthContract.request.parse(stripInternalFields(rawParams));
 
       const report = await assembleFleetHealthReport(
-        { obsStore: deps.obsStore, dataDir, clock: deps.clock! },
+        // FLEET-01/02/04: thread durableRuns for the autonomy block. Populated by
+        // buildRpcDispatchDeps (daemon.ts:893, `durableRuns: c.durableRunStore`) on
+        // the SAME ObservabilityApiDeps object as obsStore/clock; absent ⇒ honest
+        // degradation (the block is omitted).
+        { obsStore: deps.obsStore, dataDir, clock: deps.clock!, durableRuns: deps.durableRuns },
         params.sinceHours ?? DEFAULT_WINDOW_HOURS,
       );
 

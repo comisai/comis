@@ -266,3 +266,78 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// PHASE 217-05 Task 1 (UNATT/BREAK/EVICT composition-root wiring): the
+// denial breaker (BREAK-01/02), the evict registry (EVICT-01/03), and the
+// content-free escalate NotifyFn (UNATT-03) are constructed at this
+// composition root alongside BoundedAutonomy and held on the cap handle —
+// so the daemon threads them onto the dispatch deps (the chokepoint reads
+// them; the evict handler activates via the `...deps` spread). Each is
+// gated on an autonomy-bearing profile (the same gate as the lease layer).
+// ---------------------------------------------------------------------------
+describe("constructCapabilityLayer — denial breaker + evict registry + escalate (217-05 Task 1)", () => {
+  it("constructs a denialBreaker + evictRegistry + escalate and holds all three on the handle", async () => {
+    const dataDir = tempDataDir();
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig },
+      { dataDir },
+    );
+    const result = await constructCapabilityLayer(deps);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    const handle = result.capEndpointHandle!;
+    // The breaker exposes its record/evict surface (BREAK-01/02).
+    expect(handle.denialBreaker).toBeDefined();
+    expect(typeof handle.denialBreaker.recordDenial).toBe("function");
+    expect(typeof handle.denialBreaker.recordAllow).toBe("function");
+    expect(typeof handle.denialBreaker.evict).toBe("function");
+    // The evict registry exposes its mark/isEvicted/clear surface (EVICT-01/03).
+    expect(handle.evictRegistry).toBeDefined();
+    expect(typeof handle.evictRegistry.mark).toBe("function");
+    expect(typeof handle.evictRegistry.isEvicted).toBe("function");
+    expect(typeof handle.evictRegistry.clear).toBe("function");
+    // escalate is a content-free NotifyFn (UNATT-03) — a callable.
+    expect(typeof handle.escalate).toBe("function");
+  });
+
+  it("sources denialBreakerN from autonomyBearingConfig (LOW-1, not a hardcoded 5): an explicit N=3 trips the breaker on the 3rd consecutive denial", async () => {
+    const dataDir = tempDataDir();
+    // An autonomy-bearing agent with an EXPLICIT denialBreakerN override. If the
+    // boot wired a hardcoded 5 (or a defaultAgentId lookup that does not exist in
+    // this file), the breaker would NOT trip at 3 — proving the value is sourced
+    // from the resolved autonomyBearingConfig.denialBreakerN.
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard", denialBreakerN: 3 } } as unknown as PerAgentConfig },
+      { dataDir },
+    );
+    const result = await constructCapabilityLayer(deps);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    const breaker = result.capEndpointHandle!.denialBreaker;
+    expect(breaker.recordDenial("root-A").tripped).toBe(false); // 1
+    expect(breaker.recordDenial("root-A").tripped).toBe(false); // 2
+    expect(breaker.recordDenial("root-A").tripped).toBe(true); // 3 → trip at N=3
+  });
+
+  it("escalate is content-free (a synchronous void WARN with ids/enums/hint only, NEVER awaited)", async () => {
+    const dataDir = tempDataDir();
+    const deps = createDeps(
+      { a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig },
+      { dataDir },
+    );
+    const result = await constructCapabilityLayer(deps);
+    cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
+    cleanups.push(() => result.capEndpointStop?.());
+    // Drive the escalate closure; it logs a content-free WARN through the daemon
+    // logger child (the cap-layer boundary). Assert it does not throw and returns
+    // void (a Promise would force the chokepoint to await — the UNATT hang).
+    const out = result.capEndpointHandle!.escalate({
+      kind: "would_ask_denied",
+      rootRunId: "root-x",
+      reason: "capability/quota denied: orch:message",
+      hint: "an unattended run hit a ceiling; the platform escalated and the run continues",
+    });
+    expect(out).toBeUndefined();
+  });
+});

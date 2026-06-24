@@ -37,10 +37,13 @@ import {
   CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
+  parseFormattedSessionKey,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
 import { relative } from "node:path";
 import { resolveAdapter, authorizeChannelAccess } from "../wiring/daemon-utils.js";
+import { wrapOutwardSend } from "./outward-ledger-wrap.js";
 
 import type { RpcHandler } from "./types.js";
 
@@ -190,6 +193,35 @@ function enforceOutwardQuota(
 }
 
 /**
+ * Phase 216 (ONCE-01/02): resolve the `(rootRunId, outwardStepIndex)` idempotency
+ * key for an outward send from the threaded raw params.
+ *
+ * `rootRunId` comes from `resolveRootRunId(parseFormattedSessionKey(...))` — the
+ * tree-stable run root (present iff a caller session + resolver are wired). The
+ * `_outwardStepIndex` is the monotonic step the RPC chokepoint (Plan 07 Task 4)
+ * allocated + injected for EVERY autonomy outward call.
+ *
+ * HIGH-1: `_outwardStepIndex` is read as-is — `undefined` ⇒ pass-through (no
+ * ledger) in {@link wrapOutwardSend}. It is NEVER defaulted to 0 here (two
+ * un-indexed sends would collide on the idempotency key and one would be
+ * silently dropped). A non-autonomy / interactive send has no rootRunId and no
+ * step index, so the wrap is a pure pass-through.
+ */
+function resolveOutwardLedgerContext(
+  deps: MessageHandlerDeps,
+  rawParams: Record<string, unknown>,
+): { rootRunId: string | undefined; outwardStepIndex: number | undefined } {
+  const callerSessionKey = rawParams._callerSessionKey as string | undefined;
+  // parseFormattedSessionKey returns undefined for a malformed key; guard it
+  // (mirrors graph-coordinator.ts) so a bad key is a pass-through, never a throw.
+  const parsedCaller = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+  const rootRunId = parsedCaller ? deps.resolveRootRunId?.(parsedCaller) : undefined;
+  // HIGH-1: read the injected step index verbatim — NEVER `?? 0`.
+  const outwardStepIndex = rawParams._outwardStepIndex as number | undefined;
+  return { rootRunId, outwardStepIndex };
+}
+
+/**
  * Create message and platform-action RPC handlers.
  * @param deps - Injected dependencies (channel adapter registry)
  * @returns Record mapping method names to handler functions
@@ -220,13 +252,33 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         ...(rawParams.effects ? { effects: rawParams.effects as RichEffect[] } : {}),
         ...(rawParams.thread_reply !== undefined ? { threadReply: rawParams.thread_reply as boolean } : {}),
       };
-      const deliveryResult = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
-        extra: Object.keys(extra).length > 0 ? extra : undefined,
-        origin: "rpc:message.send",
+      // Phase 216 (ONCE-01/02): wrap the EXISTING deliverToChannel with the
+      // three-state ledger (begin→markUnknown→commit). The quota gate above is
+      // untouched and there is NO parallel send path — the real delivery still
+      // happens inside doSend. A non-autonomy send (no rootRunId/step) is a
+      // pure pass-through.
+      const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
+      const wrapResult = await wrapOutwardSend({
+        ledger: deps.outwardLedger,
+        rootRunId,
+        outwardStepIndex,
+        agentId: (rawParams._agentId as string | undefined) ?? "",
+        channelType,
+        channelId,
+        text: typeof text === "string" ? text : String(text),
+        doSend: async () => {
+          const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            extra: Object.keys(extra).length > 0 ? extra : undefined,
+            origin: "rpc:message.send",
+          });
+          if (!dr.ok) return dr;
+          if (dr.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          return ok({ messageId: dr.value.chunks[0]?.messageId ?? "delivered" });
+        },
+        logger: deps.logger,
       });
-      if (!deliveryResult.ok) throw deliveryResult.error;
-      if (deliveryResult.value.failedChunks > 0) throw new Error("Message delivery failed");
-      const result = { messageId: deliveryResult.value.chunks[0]?.messageId ?? "delivered", channelId };
+      if (!wrapResult.ok) throw wrapResult.error;
+      const result = { messageId: wrapResult.value.messageId, channelId };
       if (IS_DEV) MessageSendContract.response.parse(result);
       return result;
     },
@@ -253,14 +305,30 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         ...(rawParams.effects ? { effects: rawParams.effects as RichEffect[] } : {}),
         ...(rawParams.thread_reply !== undefined ? { threadReply: rawParams.thread_reply as boolean } : {}),
       };
-      const deliveryResult = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
-        replyTo: messageId,
-        extra: Object.keys(extra).length > 0 ? extra : undefined,
-        origin: "rpc:message.reply",
+      // Phase 216 (ONCE-01/02): wrap the EXISTING delivery call as in message.send.
+      const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
+      const wrapResult = await wrapOutwardSend({
+        ledger: deps.outwardLedger,
+        rootRunId,
+        outwardStepIndex,
+        agentId: (rawParams._agentId as string | undefined) ?? "",
+        channelType,
+        channelId,
+        text: typeof text === "string" ? text : String(text),
+        doSend: async () => {
+          const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            replyTo: messageId,
+            extra: Object.keys(extra).length > 0 ? extra : undefined,
+            origin: "rpc:message.reply",
+          });
+          if (!dr.ok) return dr;
+          if (dr.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          return ok({ messageId: dr.value.chunks[0]?.messageId ?? "delivered" });
+        },
+        logger: deps.logger,
       });
-      if (!deliveryResult.ok) throw deliveryResult.error;
-      if (deliveryResult.value.failedChunks > 0) throw new Error("Message delivery failed");
-      const result = { messageId: deliveryResult.value.chunks[0]?.messageId ?? "delivered", channelId };
+      if (!wrapResult.ok) throw wrapResult.error;
+      const result = { messageId: wrapResult.value.messageId, channelId };
       if (IS_DEV) MessageReplyContract.response.parse(result);
       return result;
     },
@@ -288,8 +356,28 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
-      const reactResult = await reactToMessage(channelId, messageId, emoji);
-      if (!reactResult.ok) throw reactResult.error;
+      // Phase 216 (ONCE-01/02): wrap the EXISTING reactToMessage with the
+      // three-state ledger. A reaction sends an emoji (not free text), so the
+      // emoji is the digest input; it has no platform message id, so doSend
+      // returns a fixed "reacted" sentinel on success. Same single path — no
+      // parallel send; a non-autonomy reaction is a pass-through.
+      const { rootRunId, outwardStepIndex } = resolveOutwardLedgerContext(deps, rawParams);
+      const wrapResult = await wrapOutwardSend({
+        ledger: deps.outwardLedger,
+        rootRunId,
+        outwardStepIndex,
+        agentId: (rawParams._agentId as string | undefined) ?? "",
+        channelType,
+        channelId,
+        text: emoji,
+        doSend: async () => {
+          const reactResult = await reactToMessage(channelId, messageId, emoji);
+          if (!reactResult.ok) return reactResult;
+          return ok({ messageId: "reacted" });
+        },
+        logger: deps.logger,
+      });
+      if (!wrapResult.ok) throw wrapResult.error;
       const result = { reacted: true as const, channelId, messageId, emoji };
       if (IS_DEV) MessageReactContract.response.parse(result);
       return result;

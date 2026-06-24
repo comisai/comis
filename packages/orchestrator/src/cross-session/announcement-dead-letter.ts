@@ -12,7 +12,7 @@
 
 import { appendFile, writeFile, rename, readFile, unlink } from "node:fs/promises";
 import { randomUUID, randomBytes } from "node:crypto";
-import type { TypedEventBus } from "@comis/core";
+import type { TypedEventBus, OutwardSendLedgerPort } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 
 /** Minimal pino-compatible logger for dead-letter queue diagnostics.
@@ -72,6 +72,22 @@ export interface DeadLetterEntry {
   threadId?: string;
   /** Idempotency key `${callerSessionKey}::${runId}` (DELIVERY-01). Optional/forward-additive — pre-existing JSONL rows have it undefined (no migration; parseEntries tolerates the missing field). */
   idempotencyKey?: string;
+  /**
+   * HIGH-2 (ONCE-03/04) — the announce origin's `rootRunId`, half of the durable
+   * `(rootRunId, stepIndex)` ONCE-ledger idempotency key. Optional/forward-additive
+   * (like {@link DeadLetterEntry.idempotencyKey}): pre-ledgering JSONL rows have it
+   * undefined and `parseEntries` tolerates that — no migration. When present
+   * alongside {@link DeadLetterEntry.stepIndex}, `drain` consults the ledger and
+   * skips a committed announcement (no restart double-notify).
+   */
+  rootRunId?: string;
+  /**
+   * HIGH-2 (ONCE-03/04) — the stable per-announce `stepIndex` allocated ONCE at
+   * first announce (`allocateOutwardStep`), the other half of the idempotency key.
+   * Persisted so a retry after a restart re-uses the SAME key. Optional/forward-
+   * additive (no migration).
+   */
+  stepIndex?: number;
 }
 
 /** Dead-letter queue interface for announcement retry management. */
@@ -116,6 +132,15 @@ interface AnnouncementDeadLetterQueueOptions {
   eventBus: TypedEventBus;
   /** Optional logger for diagnostics. */
   logger?: AnnouncementLogger;
+  /**
+   * HIGH-2 (ONCE-03/04) — the three-state outward-send ledger. When present,
+   * `drain` consults it BEFORE re-delivering an entry that carries a persisted
+   * `(rootRunId, stepIndex)`: a committed row → SKIP the send (the announcement
+   * already landed; the in-memory deliveredKeys set could not know this across a
+   * restart, the durable ledger does). `undefined` ⇒ the legacy at-least-once
+   * behavior (unchanged). Wired by Plan 12 (the sole daemon.ts editor).
+   */
+  outwardLedger?: OutwardSendLedgerPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +206,7 @@ export function createAnnouncementDeadLetterQueue(
   const retryIntervalMs = opts.retryIntervalMs ?? 60_000;
   const maxAgeMs = opts.maxAgeMs ?? 3_600_000;
   const maxEntries = opts.maxEntries ?? 100;
-  const { filePath, eventBus, logger } = opts;
+  const { filePath, eventBus, logger, outwardLedger } = opts;
 
   // Closure state
   let entries: DeadLetterEntry[] = [];
@@ -299,6 +324,33 @@ export function createAnnouncementDeadLetterQueue(
         for (const entry of entries) {
           // Skip if not yet eligible for retry
           if (now - entry.lastAttemptAt < retryIntervalMs) continue;
+
+          // HIGH-2 (ONCE-03/04): before re-delivering, consult the durable ONCE
+          // ledger for an entry that carries its (rootRunId, stepIndex). A
+          // committed row means the announcement ALREADY landed — the in-memory
+          // deliveredKeys set rebuilds empty on restart and cannot know this, so
+          // without this check a restart would re-deliver a sent announcement (a
+          // double-notify). Skip the send, treat the entry as delivered. An
+          // old-format entry (no rootRunId/stepIndex) has no key to look up and
+          // falls through to the legacy at-least-once path.
+          if (outwardLedger && entry.rootRunId !== undefined && entry.stepIndex !== undefined) {
+            const row = await outwardLedger.lookup(entry.rootRunId, entry.stepIndex);
+            if (row.ok && row.value?.state === "committed") {
+              delivered.add(entry.id);
+              if (entry.idempotencyKey) onDelivered?.(entry.idempotencyKey);
+              eventBus.emit("announcement:dead_letter_delivered", {
+                runId: entry.runId,
+                channelType: entry.channelType,
+                attemptCount: entry.attemptCount,
+                timestamp: systemNowMs(),
+              });
+              logger?.debug(
+                { runId: entry.runId, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex, step: "dlq-ledger-committed-skip" },
+                "Dead-letter entry skipped: announcement already committed in the ONCE ledger (no double-notify)",
+              );
+              continue;
+            }
+          }
 
           try {
             // Pass persisted threadId so retried deliveries land in the correct thread

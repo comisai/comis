@@ -12,19 +12,20 @@
  *   - `{kind:"rpc"}` — `memory_*`/`extract_document`/`session_*` map to existing
  *     registered RPC methods; `handleToolInvoke` (setup-capability-endpoint.ts)
  *     strips-then-injects and forwards them to the dispatch sink.
- *   - `{kind:"executor"}` — `read`/`grep`/`find`/`ls`/`jq` (in-process AgentTools
- *     with NO RPC registration) and `web_search`/`web_fetch` (daemon-side). These
- *     CANNOT be a forged RPC method (would 404 at the sink's `!handler` throw),
- *     so they route HERE — the daemon executing the builtin on behalf of the
- *     jailed (network-isolated) script, over the cap socket.
+ *   - `{kind:"executor"}` — `read`/`grep`/`find`/`ls`/`jq`/`sql`/`jsonpath`
+ *     (in-process AgentTools with NO RPC registration) and `web_search`/`web_fetch`
+ *     (daemon-side). These CANNOT be a forged RPC method (would 404 at the sink's
+ *     `!handler` throw), so they route HERE — the daemon executing the builtin on
+ *     behalf of the jailed (network-isolated) script, over the cap socket.
  *
  * Two execution classes:
- *   - FILE builtins (`read`/`grep`/`find`/`ls`/`jq`): run under the agent's
- *     resolved workspace dir (NOT the host root). The actual builtin cores are
- *     INJECTED (DI, AGENTS.md §2.4) — Plan 05's wiring supplies the shipped
- *     `createComisReadTool`/grep/find/ls cores; the executor passes the args plus
- *     a workspace ctx. The jail is for the orchestrate script; these are the
- *     daemon servicing a read for it, so they run daemon-side but workspace-scoped.
+ *   - FILE builtins (`read`/`grep`/`find`/`ls`/`jq`/`sql`/`jsonpath`): run under
+ *     the agent's resolved workspace dir (NOT the host root). The actual builtin
+ *     cores are INJECTED (DI, AGENTS.md §2.4) — Plan 05's wiring supplies the
+ *     shipped `createComisReadTool`/grep/find/ls cores + the QRY sql/jsonpath
+ *     DuckDB cores; the executor passes the args plus a workspace ctx. The jail is
+ *     for the orchestrate script; these are the daemon servicing a read for it, so
+ *     they run daemon-side but workspace-scoped.
  *   - WEB (`web_search`/`web_fetch`): run on the DAEMON's network with the
  *     DNS-PIN (WEB-02). `validateUrl` resolves+classifies the host, then
  *     `fetchPinned(url, validated.ip)` pins the undici connection to the
@@ -119,6 +120,10 @@ export interface ToolInvokeExecutorDeps {
     find: FileExecutor;
     ls: FileExecutor;
     jq: FileExecutor;
+    /** QRY-01: DuckDB SQL over a ResultRef (daemon-side, hardened). */
+    sql: FileExecutor;
+    /** QRY-02: JSONPath via DuckDB json_extract over a ResultRef (no eval lib). */
+    jsonpath: FileExecutor;
   };
   /** The injected daemon-side web-search core. */
   webSearch: WebSearchExecutor;
@@ -257,9 +262,9 @@ export function createToolInvokeExecutor(
     return { url, text, ...(title !== undefined ? { title } : {}), status: res.status };
   }
 
-  /** A file builtin (read/grep/find/ls/jq) run under the agent's workspace dir. */
+  /** A file builtin (read/grep/find/ls/jq/sql/jsonpath) run under the agent's workspace dir. */
   async function executeFileBuiltin(
-    tool: "read" | "grep" | "find" | "ls" | "jq",
+    tool: "read" | "grep" | "find" | "ls" | "jq" | "sql" | "jsonpath",
     args: Record<string, unknown>,
     lease: ToolInvokeLease,
   ): Promise<unknown> {
@@ -323,6 +328,8 @@ export function createToolInvokeExecutor(
       case "find":
       case "ls":
       case "jq":
+      case "sql":
+      case "jsonpath":
         return executeFileBuiltin(tool, args, lease);
       default:
         // Defensive default-deny: the dispatch allow-list (cap-map) already

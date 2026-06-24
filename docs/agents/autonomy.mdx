@@ -48,17 +48,74 @@ Set `autonomy.profile` to pick a posture. There are four:
 |---------|---------------|-------------|-------------|
 | `assistant` | **Off** -- zero orchestration surfaces, the agent only replies | n/a | A pure conversational agent; or the safe floor Comis downshifts to when the jail cannot be built |
 | `standard` _(default)_ | The nine floor capabilities (read, web, write, analyze, spawn, graph, cron, skill, message) | Budget ceiling, spawn-rate limit, concurrency cap, message quota -- all on | The default for almost everyone |
-| `unattended` | Same as `standard` in this release | Same | Reserved for long-running, no-human-present operation (the extra surfaces ship later) |
+| `unattended` | Same nine floor capabilities as `standard` (the cap set is clamped -- no over-grant) | Standard guard rails **plus** the never-hang mode behaviors (below) | Long-running, no-human-present operation: the run never stalls on a human and never retry-loops the budget away |
 | `max` | Same as `standard` in this release | Same | Reserved for the fullest coordinator posture (ships later) |
 
 <Info>
-**`unattended` and `max` resolve to `standard`-equivalent today.** Their extra
-surfaces -- a coordinator role, durable runs, and sandbox auto-allow -- are not
-in this release. Selecting either resolves to `standard`'s capability set and
-attaches an "available in a later milestone" notice (logged at boot). Comis
-**never silently grants** a capability whose enforcement floor is not yet built,
-so you are told rather than over-granted.
+**`unattended` is active; `max` ships later.** `unattended`'s capability **set**
+stays `standard`-equivalent (the structural floor still bounds every cap -- no
+over-grant), but its **mode behaviors are on in this release**: a run that would
+ask a human resolves to **deny + escalate** (never a blocking prompt), a
+**denial breaker** aborts a run that keeps hitting a floor block, and an operator
+can **evict** an in-flight run back to `default` -- see
+[The `unattended` profile](#the-unattended-profile) below. `max`'s extra surface
+(sandbox auto-allow) is **not** in this release: selecting it resolves to
+`standard`'s capability set and attaches an "available in a later milestone"
+notice (logged at boot). Comis **never silently grants** a capability whose
+enforcement floor is not yet built, so you are told rather than over-granted.
+(**Durable runs** are not one of the deferred surfaces -- they ship as an opt-in
+knob orthogonal to the profile; see [Durability & Resume](#durability-resume)
+below.)
 </Info>
+
+### The `unattended` profile
+
+`unattended` is for a run with **no human present** -- a long-lived cron pipeline,
+an overnight batch, a background coordinator. Its capability **set** is exactly
+`standard`'s (the structural floor bounds every cap; there is no over-grant), but
+its **mode** changes how the run behaves when it reaches a decision a human would
+normally make. The whole point is that such a run **never stalls waiting on a
+person** and **never burns its budget retry-looping** a thing it is not allowed to
+do.
+
+- **Never-hang: a would-ask becomes deny + escalate.** Under `standard`, an action
+  that needs approval pauses for a human. Under `unattended` there is no human to
+  pause for, so that same action **does not block** -- it resolves to a denial and
+  the platform **escalates it to your operator** out-of-band. The run keeps going
+  on what it *is* allowed to do; it does not sit on a prompt forever.
+- **Outward actions still escalate, never auto-send.** `unattended` does **not**
+  loosen the outward floor. A send to a new channel, a browser action, any
+  hard-to-reverse outward step is still **proposed** for approval, never
+  auto-decided -- exactly as under `standard`. Never-hang changes *waiting* into
+  *escalation*; it does not change *propose* into *send*.
+- **The denial breaker stops a retry-loop.** A run that keeps trying a blocked
+  capability would otherwise spin -- each attempt denied, the budget draining for
+  nothing. After [`denialBreakerN`](/reference/config-yaml#autonomy-agents-autonomy)
+  consecutive floor blocks (default **5**) on one run, the **denial breaker** trips:
+  the run is aborted (an `execution:aborted` with reason `denial_breaker`) and the
+  operator is told, rather than letting it retry-loop the budget away. An actual
+  allowed step in between resets the counter, so a single stray denial inside
+  productive work never accumulates to a trip.
+- **An operator can evict an in-flight run to `default`.** If an `unattended` run
+  misbehaves, an admin can call
+  [`autonomy.evict`](/reference/json-rpc#autonomy-evict) with its `rootRunId`. This
+  is **demote-but-continue**: the run is **not** killed -- it keeps running, but
+  **under `default`** from its next gated decision onward (so it reverts to the
+  conservative posture mid-flight, no waiting for a restart or the next spawn).
+  This is distinct from `lease.revoke` (cooperative stop) and `run.kill` (hard
+  stop).
+- **Fail-closed: an unresolvable mode is treated as `default`.** Mode resolution is
+  fail-closed. If the run's autonomy mode cannot be determined for any reason, it
+  is treated as `default` (the safe profile) -- **never** something broader. This
+  posture is controlled by
+  [`evictOnPolicyUnreachable`](/reference/config-yaml#autonomy-agents-autonomy)
+  (default **true**), and it is the same safe target the `autonomy.evict` demotion
+  lands on.
+
+The two `unattended` knobs are `denialBreakerN` (default `5`) and
+`evictOnPolicyUnreachable` (default `true`); both live in the
+[`autonomy.*` config table](/reference/config-yaml#autonomy-agents-autonomy) and
+apply to every profile, but they are the dials that matter most for a no-human run.
 
 ### What `standard` turns on
 
@@ -129,6 +186,92 @@ defaulting safe so a runaway agent is bounded out of the box:
 
 See the full field list in the [config reference](/reference/config-yaml#autonomy-agents-autonomy).
 
+## Durability & Resume
+
+By default an in-flight autonomy run lives only in the daemon's memory: kill the
+daemon mid-pipeline and that run is gone. Turn on
+[`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agents-autonomy)
+(**off by default** -- a default install builds no durable stores and is
+byte-identical) and a long-running run becomes **resumable across a restart**,
+with an **exactly-once** guarantee on everything it sends outward.
+
+```yaml title="~/.comis/config.yaml -- make a cron-fired pipeline survive a restart"
+agents:
+  default:
+    autonomy:
+      profile: standard
+      durability:
+        enabled: true          # opt-in; off by default
+```
+
+**What it gives you:**
+
+- **Resume or honest orphan -- never a silent vanish.** As a run advances it
+  stamps a checkpoint (its spawn tree, the consumed budget, a heartbeat) to
+  `memory.db`. On restart the daemon scans the live runs (after channels are up)
+  and **resumes** each one, or -- if its record cannot be trusted -- **orphans**
+  it and **notifies the operator** out-of-band. A run is never left in limbo. A
+  daemon-wide watchdog sweeps any run whose heartbeat has lapsed past
+  `staleHeartbeatMs` (the same fate: resume or orphan-and-notify).
+- **Exactly-once outward sends -- a crash never re-DMs or re-posts.** Every
+  agent-originated outward send is wrapped in a durable three-state ledger
+  (`send_attempt_started` → `unknown_after_send` → `committed`) keyed on a unique
+  `(rootRunId, step-index)` pair. A send that already committed is a no-op on
+  replay; a send that crashed *between* the attempt and the platform
+  acknowledgement is **reconciled** on recovery -- the owning channel is asked
+  "did this actually send?" -- rather than blind-replayed. This is security
+  invariant #12: **a restart mid-pipeline never double-sends.** It covers **both**
+  the direct [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)
+  path **and** the sub-agent completion-announcement path -- the announcement
+  dead-letter queue consults the same ledger on restart, so a recovered
+  announcement is never delivered twice.
+- **A resumed run never broadens its authority.** On resume the lease is
+  re-minted from the run's **persisted, already-attenuated** capabilities -- never
+  re-attenuated from a live parent (which could be broader), and never a superset
+  of what the run originally held. A [`lease.revoke` / `run.kill`](/reference/json-rpc#lease-revoke)
+  **poisons** the persisted record (flips it to `revoked`), so a later boot can
+  never resurrect pre-revoke capabilities -- a revoked record is orphaned on
+  resume, not re-minted.
+- **DAGs resume at node-boundary granularity.** A cron-fired multi-node
+  execution graph interrupted by a restart resumes its **incomplete** nodes;
+  already-completed nodes are **not** re-run, and any outward send a re-run node
+  repeats is deduped by the same ledger. (Intra-node LLM/tool state is not
+  checkpointed -- resume is per node, not mid-node.)
+
+**The config knobs** (all under `autonomy.durability`):
+
+| Field | Default | What it does |
+|-------|---------|--------------|
+| `enabled` | `false` | Master switch. Off → no durable stores, no watchdog, byte-identical install. |
+| `keepAliveMs` | `30000` | How often a live run stamps its heartbeat (independent of step/spawn completion, so a long child never looks stale). |
+| `staleHeartbeatMs` | `120000` | A run whose heartbeat is older than this is treated as crashed and orphan-swept. Default is 4× `keepAliveMs` -- the conservative ratio that keeps a transiently-slow run from being falsely failed (and its work duplicated). |
+| `recoveryBudgetMs` | `30000` | Wall-clock budget for one recovery pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass -- no thundering herd on a large crash backlog. |
+
+<Note>
+**Honest per-channel coverage of the exactly-once guarantee.** The "was this
+actually sent?" reconciliation needs a channel that can be **queried** for its
+recent sends. **Discord** and **Slack** can (they fetch recent history and match
+the bot's message), so a crashed-mid-send on those resolves cleanly to
+*sent* (acknowledge once, no replay) or *not-sent* (replay once). **iMessage,
+IRC, and Email cannot** be queried for their sent history -- so a crashed-mid-send
+on those resolves to **unresolved**, which Comis handles by **parking the send
+and escalating to the operator** rather than guessing. That is the safe,
+surfaced outcome: never a silent double-send, and never a silent drop -- you are
+told to decide. This is the truthful shape of invariant #12: the guarantee is
+*full and automatic* on queryable channels, and *parked-and-surfaced* on the
+ones that cannot answer.
+</Note>
+
+<Note>
+**M1 resume scope.** A resumed run is re-anchored under the bounded-autonomy
+meter (bounded, killable, and with its outward ledger reconciled across the
+restart) from its persisted checkpoint -- it is **not** re-entered into the agent
+loop from the exact step it was on. Resuming the model turn itself from a
+mid-run step needs a wider checkpoint and is a later enhancement; today's
+guarantee is "the run survives, stays bounded, and never double-sends," not "the
+model picks up its half-finished thought."
+</Note>
+
 ## Legible Boot Logging
 
 At startup Comis logs **one INFO line per agent** stating the resolved posture,
@@ -149,8 +292,11 @@ boot logs alone, without turning on debug logging:
 ```
 
 The `changeField` names the one config field that changes all of the above:
-`autonomy.profile`. For an `unattended` or `max` agent, the line also carries an
-`m1Notice` saying the extra surfaces arrive in a later milestone.
+`autonomy.profile`. The line also carries an `m1Notice` whose text is
+profile-specific: for an `unattended` agent it states that the never-hang mode
+behaviors are **active** (deny + escalate, the denial breaker, operator evict) and
+that the capability set stays `standard`-equivalent; for a `max` agent it states
+that the extra surface (sandbox auto-allow) arrives in a later milestone.
 
 ## Honest, Legible Degrade
 

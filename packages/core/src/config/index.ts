@@ -137,6 +137,13 @@ export {
   AUTONOMY_PROFILES,
   STANDARD_FLOOR_CAPABILITIES,
   resolveAutonomy,
+  // Phase 217: the EVICT-02 fail-closed mode resolver primitive — the Wave-2
+  // dispatch chokepoint runs the run's mode through this (absent/forged/unknown →
+  // "default", never broader). A VALUE export (it is a runtime function).
+  resolveEffectiveMode,
+  // Phase 216: the autonomy.durability sub-block schema (the daemon reads it for
+  // the boot-time durability resolution).
+  DurabilityConfigSchema,
   // Honest legible degrade (Phase 210 / PROFILE-03)
   degradeAutonomy,
 } from "./schema-agent/index.js";

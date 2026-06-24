@@ -90,6 +90,7 @@ vi.mock("@comis/skills", () => ({
 
 vi.mock("@comis/skills/tools", () => ({
   createExecTool: mockCreateExecTool,
+  createSleepTool: vi.fn(() => ({ name: "sleep" })),
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,
   createApplyPatchTool: mockCreateApplyPatchTool,

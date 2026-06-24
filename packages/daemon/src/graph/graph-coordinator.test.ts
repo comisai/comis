@@ -4,9 +4,12 @@ import { createGraphCoordinator, type GraphCoordinatorDeps } from "./graph-coord
 import {
   type ExecutionGraph,
   type ValidatedGraph,
+  type DurableRunPort,
+  type DurableRunRecord,
   validateAndSortGraph,
   TypedEventBus,
 } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 import { createNodeTypeRegistry } from "./node-type-registry.js";
 // v2.19: the graph-timeout makespan floor raises a too-low requested timeout to at
 // least the DAG's critical-path makespan (graph-timeout-floor.ts). Graphs whose
@@ -4010,6 +4013,253 @@ describe("createGraphCoordinator", () => {
       expect(logObj.graphCacheWriteTokens).toBe(150000);
       // 400000 / 550000 = 0.72727... rounds to 0.727
       expect(logObj.graphCacheEffectiveness).toBeCloseTo(0.727, 3);
+
+      await coordinator.shutdown();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 216 DUR-01/DUR-02 (Plan 11): DAG durability — node-boundary checkpoint
+// + resume-incomplete-nodes
+// ---------------------------------------------------------------------------
+
+/** In-memory DurableRunPort recording checkpoints (the only methods exercised). */
+function createRecordingDurableRuns(): DurableRunPort & {
+  _checkpoints(): DurableRunRecord[];
+  _completed(): string[];
+} {
+  const checkpoints: DurableRunRecord[] = [];
+  const completed: string[] = [];
+  let counter = -1;
+  return {
+    upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
+      checkpoints.push(JSON.parse(JSON.stringify(record)) as DurableRunRecord);
+      return ok(undefined);
+    }),
+    listResumable: vi.fn(async () => ok([] as DurableRunRecord[])),
+    getByRootRun: vi.fn(async () => ok(undefined)),
+    markOrphaned: vi.fn(async () => ok(undefined)),
+    markCompleted: vi.fn(async (rootRunId: string) => {
+      completed.push(rootRunId);
+      return ok(undefined);
+    }),
+    touchHeartbeat: vi.fn(async () => ok(undefined)),
+    invalidateForRevoke: vi.fn(async () => ok(undefined)),
+    allocateOutwardStep: vi.fn(async () => ok(++counter)),
+    _checkpoints: () => checkpoints,
+    _completed: () => completed,
+  };
+}
+
+describe("createGraphCoordinator — DAG durability (Phase 216, Plan 11)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fsMockFiles.clear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe("node-boundary checkpoint", () => {
+    it("checkpoints the snapshot → spawn_tree at node transitions, keyed on the tree-stable rootRunId", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        // Resolve a stable root for the graph run (the durable key).
+        resolveRootRunId: () => "root-graph-1",
+      });
+      const coordinator = createGraphCoordinator(deps);
+
+      const graph = buildGraph([{ nodeId: "A" }, { nodeId: "B", dependsOn: ["A"] }]);
+      await coordinator.run({ graph, callerSessionKey: "agent:t:default:c:web:s:sess" });
+
+      // A spawned (running boundary) → a checkpoint was written.
+      const aRun = runner._getSpawnCalls()[0]!._runId as string;
+      expect(durableRuns._checkpoints().length).toBeGreaterThan(0);
+      const firstCp = durableRuns._checkpoints()[0]!;
+      expect(firstCp.rootRunId).toBe("root-graph-1");
+      // spawn_tree is the DAG shape: object entries with a status field.
+      expect(Array.isArray(firstCp.spawnTree)).toBe(true);
+      const entryA = (firstCp.spawnTree as Array<{ nodeId: string; status: string }>).find(
+        (e) => e.nodeId === "A",
+      );
+      expect(entryA).toBeDefined();
+      expect(entryA!.status).toBe("running");
+
+      // Complete A → next checkpoint shows A completed.
+      runner._completeRun(aRun, "done A");
+      simulateCompletion(eventBus, aRun, true);
+      await waitForMicrotask();
+
+      const lastCp = durableRuns._checkpoints()[durableRuns._checkpoints().length - 1]!;
+      const finalA = (lastCp.spawnTree as Array<{ nodeId: string; status: string }>).find(
+        (e) => e.nodeId === "A",
+      );
+      expect(finalA!.status).toBe("completed");
+
+      await coordinator.shutdown();
+    });
+
+    it("does NOT checkpoint when no durableRuns store is wired (pre-216 behavior preserved)", async () => {
+      const { deps, runner } = createTestDeps({ resolveRootRunId: () => "root-x" });
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+      // No durableRuns → no throw, graph runs normally.
+      const res = await coordinator.run({ graph, callerSessionKey: "agent:t:default:c:web:s:s" });
+      expect(res.ok).toBe(true);
+      expect(runner._getSpawnCalls().length).toBe(1);
+      await coordinator.shutdown();
+    });
+
+    it("does NOT checkpoint when the run has no stable rootRunId (the durable key is absent)", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      // No resolveRootRunId → graphRootRunId is undefined.
+      const { deps } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+      await coordinator.run({ graph });
+      expect(durableRuns._checkpoints().length).toBe(0);
+      await coordinator.shutdown();
+    });
+
+    it("marks the durable record completed when the graph reaches terminal", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-done",
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+      await coordinator.run({ graph, callerSessionKey: "agent:t:default:c:web:s:s" });
+      const aRun = runner._getSpawnCalls()[0]!._runId as string;
+      runner._completeRun(aRun, "done");
+      simulateCompletion(eventBus, aRun, true);
+      await waitForMicrotask();
+      expect(durableRuns._completed()).toContain("root-done");
+      await coordinator.shutdown();
+    });
+  });
+
+  describe("resumeGraph — re-enters and DRIVES only incomplete nodes", () => {
+    it("re-runs ONLY the incomplete node; the completed node is not re-executed; the incomplete node's sub-agent spawn FIRES", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+
+      // A durable record: A completed, B incomplete (running at crash).
+      const record: DurableRunRecord = {
+        rootRunId: "root-resume-1",
+        spawnTree: [
+          { nodeId: "A", status: "completed", runId: "old-run-a" },
+          { nodeId: "B", status: "running", runId: "old-run-b" },
+        ],
+        caps: [],
+        leaseIds: [],
+        budgetConsumed: 0,
+        cronOrigin: null,
+        stepIndex: -1,
+        status: "running",
+        lastHeartbeatAt: Date.now(),
+      };
+
+      const res = await coordinator.resumeGraph(record);
+      expect(res.ok).toBe(true);
+
+      // The incomplete node B was DRIVEN — its sub-agent spawn fired.
+      const spawnCalls = runner._getSpawnCalls();
+      expect(spawnCalls.length).toBe(1);
+      expect(spawnCalls[0]!.nodeId).toBe("B");
+      // The completed node A was NOT re-executed.
+      expect(spawnCalls.some((c) => c.nodeId === "A")).toBe(false);
+      // Re-run node shares the tree-stable root (so the ONCE ledger dedups its sends).
+      expect(spawnCalls[0]!.rootRunId).toBe("root-resume-1");
+
+      await coordinator.shutdown();
+    });
+
+    it("drives ALL incomplete nodes (running + pending + ready), excludes terminal (completed/skipped/failed)", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner } = createTestDeps({ durableRuns, maxConcurrency: 10 });
+      const coordinator = createGraphCoordinator(deps);
+
+      const record: DurableRunRecord = {
+        rootRunId: "root-resume-2",
+        spawnTree: [
+          { nodeId: "A", status: "completed" },
+          { nodeId: "B", status: "skipped" },
+          { nodeId: "C", status: "failed" },
+          { nodeId: "D", status: "running", runId: "r-d" },
+          { nodeId: "E", status: "pending" },
+          { nodeId: "F", status: "ready" },
+        ],
+        caps: [],
+        leaseIds: [],
+        budgetConsumed: 0,
+        cronOrigin: null,
+        stepIndex: -1,
+        status: "running",
+        lastHeartbeatAt: Date.now(),
+      };
+
+      const res = await coordinator.resumeGraph(record);
+      expect(res.ok).toBe(true);
+
+      const spawnedNodeIds = runner._getSpawnCalls().map((c) => c.nodeId).sort();
+      expect(spawnedNodeIds).toEqual(["D", "E", "F"]);
+
+      await coordinator.shutdown();
+    });
+
+    it("re-runs nothing and marks the record completed when all nodes are terminal", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+
+      const record: DurableRunRecord = {
+        rootRunId: "root-resume-done",
+        spawnTree: [
+          { nodeId: "A", status: "completed" },
+          { nodeId: "B", status: "skipped" },
+        ],
+        caps: [],
+        leaseIds: [],
+        budgetConsumed: 0,
+        cronOrigin: null,
+        stepIndex: -1,
+        status: "running",
+        lastHeartbeatAt: Date.now(),
+      };
+
+      const res = await coordinator.resumeGraph(record);
+      expect(res.ok).toBe(true);
+      expect(runner._getSpawnCalls().length).toBe(0);
+      expect(durableRuns._completed()).toContain("root-resume-done");
+
+      await coordinator.shutdown();
+    });
+
+    it("rejects a cap-tampered record (the parse guard) and re-runs nothing", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+
+      // A foreign capability string fails parseDurableRunRecord (T-216-01).
+      const tampered = {
+        rootRunId: "root-evil",
+        spawnTree: [{ nodeId: "B", status: "running" }],
+        caps: ["root:everything"],
+        leaseIds: [],
+        budgetConsumed: 0,
+        cronOrigin: null,
+        stepIndex: -1,
+        status: "running",
+        lastHeartbeatAt: Date.now(),
+      } as unknown as DurableRunRecord;
+
+      const res = await coordinator.resumeGraph(tampered);
+      expect(res.ok).toBe(false);
+      expect(runner._getSpawnCalls().length).toBe(0);
 
       await coordinator.shutdown();
     });

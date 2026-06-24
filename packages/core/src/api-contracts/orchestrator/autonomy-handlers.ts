@@ -84,9 +84,44 @@ export const RunKillContract = defineContract({
   scopes: ["admin"] as const, // → ADMIN_METHODS → deny-by-origin
 });
 
+// ---------------------------------------------------------------------------
+// autonomy.evict
+// ---------------------------------------------------------------------------
+
 /**
- * autonomy-handlers slice (2 contracts — lease.revoke + run.kill). Spread
- * order matches the orchestrator contracts array byte for byte —
+ * `autonomy.evict` — DEMOTE an in-flight run to `default` (Phase 217-04,
+ * EVICT-01). Admin-scoped → deny-by-origin (an agent cannot self-un-evict).
+ * Handler path: autonomy-handlers.ts (daemon, Phase 217-04).
+ *
+ * SEMANTICALLY DISTINCT from `lease.revoke` (cooperative stop) and `run.kill`
+ * (hard stop): evict does NOT abort — the run CONTINUES under the `default`
+ * profile (which still escalates outward, never auto-sends). The handler marks
+ * the `rootRunId` in a daemon-wide evicted-set; the bounded-autonomy chokepoint
+ * consults it at the NEXT gate decision (EVICT-03 — mid-run, NOT at mint/next-
+ * spawn), so the demotion bites a runaway in flight.
+ *
+ * Request: `{ rootRunId }` — the root run to demote.
+ * Response: `{ evicted }` — true if the run is now demoted (whether THIS call
+ *   newly demoted it or it was already evicted; idempotent).
+ */
+export const AutonomyEvictContract = defineContract({
+  method: "autonomy.evict",
+  request: z.object({
+    rootRunId: z.string(),
+  }),
+  response: z.object({
+    evicted: z.boolean(),
+  }),
+  scopes: ["admin"] as const, // → ADMIN_METHODS → deny-by-origin (an agent cannot self-un-evict)
+});
+
+/**
+ * autonomy-handlers slice (3 contracts — lease.revoke + run.kill + autonomy.evict).
+ * Spread order matches the orchestrator contracts array byte for byte —
  * determinism-critical for codegen output stability.
  */
-export const AUTONOMY_HANDLERS_CONTRACTS = [LeaseRevokeContract, RunKillContract] as const;
+export const AUTONOMY_HANDLERS_CONTRACTS = [
+  LeaseRevokeContract,
+  RunKillContract,
+  AutonomyEvictContract,
+] as const;

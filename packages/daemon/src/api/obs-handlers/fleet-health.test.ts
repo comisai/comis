@@ -873,6 +873,373 @@ describe("buildFindings — GENQ-01 generation_quality dedicated finding", () =>
   });
 });
 
+// ---------------------------------------------------------------------------
+// FLEET-01/02/04 (Phase 220-03) — the AUTONOMY block on the FleetHealthReport.
+// The assembler reads DurableRunPort.countByStatus(sinceMs) (orphaned/revoked +
+// running/completed for the degraded-rate denominator) AND the health_signal
+// rows Plan 01 persists (resumed/killed counts + the worst rootRunId). The
+// breaker subset reads back from the synthetic-excluded reduceFleetWindow
+// (degradedByCause["denial_breaker"]), NEVER re-derived. Deterministic (one
+// clock read, no Date.now()), content-free, admin-gated unchanged.
+//
+// RED: there is no autonomy block, no durableRuns dep — every assertion fails on
+// the pre-patch code.
+// ---------------------------------------------------------------------------
+
+/** The `countByStatus` windowed shape (mirror DurableRunPort.countByStatus). */
+type DurableStatusCounts = { orphaned: number; revoked: number; running: number; completed: number };
+
+/**
+ * A fake DurableRunPort whose `countByStatus` returns a fixed windowed count. The
+ * assembler ONLY calls `countByStatus`; the other DurableRunPort methods are
+ * never reached, so they are stub `ok`-returns that throw if (unexpectedly) called.
+ */
+function fakeDurableRuns(counts: DurableStatusCounts): import("@comis/core").DurableRunPort {
+  const unexpected = (): never => {
+    throw new Error("fakeDurableRuns: only countByStatus is expected to be called");
+  };
+  return {
+    countByStatus: async (_sinceMs: number) => ({ ok: true as const, value: counts }),
+    upsertCheckpoint: unexpected,
+    listResumable: unexpected,
+    getByRootRun: unexpected,
+    markOrphaned: unexpected,
+    markCompleted: unexpected,
+    touchHeartbeat: unexpected,
+    invalidateForRevoke: unexpected,
+    allocateOutwardStep: unexpected,
+  } as unknown as import("@comis/core").DurableRunPort;
+}
+
+/** Insert a Plan-01 `durable_orphaned` health_signal row (closed reason + rootRunId). */
+function insertOrphanedRow(store: ObservabilityStore, ts: number, reason: string, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "durable:orphaned",
+    details: JSON.stringify({ signal: "durable_orphaned", reason, rootRunId }),
+  });
+}
+
+/** Insert a Plan-01 `durable_resumed` health_signal row (healthy recovery — info). */
+function insertResumedRow(store: ObservabilityStore, ts: number, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "info",
+    message: "durable:resumed",
+    details: JSON.stringify({ signal: "durable_resumed", stepIndex: 3, rootRunId }),
+  });
+}
+
+/** Insert a Plan-01 `autonomy_revoked` health_signal row (revoked count + rootRunId). */
+function insertRevokedRow(store: ObservabilityStore, ts: number, revoked: number, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:revoked",
+    details: JSON.stringify({ signal: "autonomy_revoked", revoked, rootRunId }),
+  });
+}
+
+/** Insert a Plan-01 `autonomy_killed` health_signal row (killed count + rootRunId). */
+function insertKilledRow(store: ObservabilityStore, ts: number, killed: number, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:killed",
+    details: JSON.stringify({ signal: "autonomy_killed", killed, rootRunId }),
+  });
+}
+
+/** Insert a FLEET-02 (220-05) `autonomy_denial_breaker` health_signal row — the
+ *  capability-denial breaker (Phase 217) tripped + aborted the run tree. Content-free:
+ *  the closed signal label + the rootRunId (an id) + count ONLY. This is the EVENT-
+ *  sourced source (an `execution:aborted{reason:"denial_breaker"}`-class abort), NOT a
+ *  session endReason / breakerTripCount — the existing `breakerTrips` read-back can
+ *  NEVER see it. */
+function insertDenialBreakerRow(store: ObservabilityStore, ts: number, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:denial_breaker_tripped",
+    details: JSON.stringify({ signal: "autonomy_denial_breaker", denialBreakerTrips: 1, rootRunId }),
+  });
+}
+
+/** A session_summary row for a real breaker-tripped run: breakerTripCount >= 1. The FLEET-02
+ *  breaker source is the summed breakerTripCount (→ breakerTripTotal), NOT the endReason —
+ *  `denial_breaker` is never a session endReason, only an execution:aborted event reason. */
+function insertBreakerDegradedRow(store: ObservabilityStore, ts: number, sessionKey: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "session_summary",
+    severity: "warning",
+    sessionKey,
+    message: "session:summary",
+    details: summaryDetails({ degraded: true, costUsd: 0.3, breakerTripCount: 1, endReason: "context_exhausted" }),
+  });
+}
+
+describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
+  it("FLEET-01: surfaces autonomy run counts + degradedRate from countByStatus (orphaned+revoked degraded; deterministic)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const dataDir = emptyDataDir();
+    // running:5 completed:12 orphaned:2 revoked:1 → total 20, degraded (orphaned+revoked) 3, rate 0.15.
+    const durableRuns = fakeDurableRuns({ orphaned: 2, revoked: 1, running: 5, completed: 12 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir, clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    expect(report.autonomy).toBeDefined();
+    expect(report.autonomy?.runs.total).toBe(20);
+    expect(report.autonomy?.runs.degraded).toBe(3);
+    expect(report.autonomy?.runs.degradedRate).toBeCloseTo(3 / 20);
+    expect(report.autonomy?.orphaned).toBe(2);
+    expect(report.autonomy?.revoked).toBe(1);
+    // degraded never exceeds total (T-220-11 metric integrity).
+    expect(report.autonomy!.runs.degraded).toBeLessThanOrEqual(report.autonomy!.runs.total);
+
+    // DETERMINISM: same input → byte-identical report (T-220-12).
+    const a = await assembleFleetHealthReport(
+      { obsStore: store, dataDir, clock: createFakeClock(now), durableRuns: fakeDurableRuns({ orphaned: 2, revoked: 1, running: 5, completed: 12 }) },
+      24,
+    );
+    const b = await assembleFleetHealthReport(
+      { obsStore: store, dataDir, clock: createFakeClock(now), durableRuns: fakeDurableRuns({ orphaned: 2, revoked: 1, running: 5, completed: 12 }) },
+      24,
+    );
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("FLEET-01: resumed + killed counts come from the health_signal rows (event-sourced; kill separable from revoke)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // countByStatus folds kill→revoked in the table; resumed/killed are event-sourced.
+    insertResumedRow(store, now - 100, "root-res1");
+    insertResumedRow(store, now - 200, "root-res2");
+    insertKilledRow(store, now - 300, 1, "root-kill1");
+    const durableRuns = fakeDurableRuns({ orphaned: 1, revoked: 2, running: 3, completed: 4 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // resumed from the 2 durable_resumed rows; killed from the 1 autonomy_killed row.
+    expect(report.autonomy?.resumed).toBe(2);
+    expect(report.autonomy?.killed).toBe(1);
+    // revoked stays the crash-surviving countByStatus value (2) — distinct from killed (1).
+    expect(report.autonomy?.revoked).toBe(2);
+    expect(report.autonomy?.killed).not.toBe(report.autonomy?.revoked);
+  });
+
+  it("FLEET-02: breakerTrips reads back the synthetic-excluded breakerTripTotal; budgetBreaches from the breach rows", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // Two breaker-tripped sessions (breakerTripCount:1 each) → breakerTripTotal = 2.
+    insertBreakerDegradedRow(store, now - 100, "b1");
+    insertBreakerDegradedRow(store, now - 200, "b2");
+    // A budget-breach health_signal (the node_budget_exceeded label is the breach source).
+    store.insertDiagnostic({
+      timestamp: now - 300,
+      category: "health_signal",
+      severity: "warning",
+      message: "subagent:budget_exceeded",
+      details: JSON.stringify({ signal: "node_budget_exceeded", capSource: "node" }),
+    });
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 2, completed: 2 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // breakerTrips equals the synthetic-excluded breakerTripTotal (2) — summed breakerTripCount.
+    expect(report.autonomy?.breakerTrips).toBe(2);
+    expect(report.breakerTripTotal).toBe(2); // the real read-back source (NOT a denial_breaker endReason).
+    // budgetBreaches reflects the node_budget_exceeded breach count (1).
+    expect(report.autonomy?.budgetBreaches).toBe(1);
+  });
+
+  // FLEET-02 (Phase 220-05) — the milestone-audit gap. A Phase-217 capability-DENIAL
+  // breaker trip (`execution:aborted{reason:"denial_breaker"}`) was INVISIBLE to
+  // `comis fleet`: its trip is never a session endReason and never a breakerTripCount,
+  // so the existing `breakerTrips` read-back (← breakerTripTotal ← summed
+  // breakerTripCount, the TOOL-failure breaker) ALWAYS shows 0, and the aborted run
+  // lands in durable status 'completed' (not orphaned/revoked) → 0 in every other
+  // count too. The fix EVENT-SOURCES it into a content-free `autonomy_denial_breaker`
+  // health_signal row → a SEPARATE `denialBreakerTrips` count (the `killed`-separable-
+  // from-`revoked` mold). RED: pre-patch there is no `denialBreakerTrips` field.
+  it("FLEET-02: a denial-breaker trip surfaces as denialBreakerTrips (event-sourced), SEPARABLE from the tool-breaker breakerTrips", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // Two denial-breaker-aborted run trees (the Phase-217 capability-denial breaker).
+    insertDenialBreakerRow(store, now - 100, "root-deny-1");
+    insertDenialBreakerRow(store, now - 200, "root-deny-2");
+    // A tool-failure breaker session (breakerTripCount:1) — the EXISTING breakerTrips
+    // source. It must NOT be conflated with the denial-breaker count.
+    insertBreakerDegradedRow(store, now - 300, "tool-b1");
+    // The aborted runs land in durable status 'completed' (NOT orphaned/revoked) —
+    // exactly the milestone finding: zero in runs.degraded/orphaned/revoked/killed.
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 0, completed: 5 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // The NEW count surfaces the 2 denial-breaker trips (event-sourced from the rows).
+    expect(report.autonomy?.denialBreakerTrips).toBe(2);
+    // SEPARABLE: the tool-breaker breakerTrips read-back is the summed breakerTripCount
+    // (1), UNREGRESSED and distinct from the denial-breaker count.
+    expect(report.autonomy?.breakerTrips).toBe(1);
+    expect(report.breakerTripTotal).toBe(1); // the tool-breaker read-back source.
+    expect(report.autonomy?.denialBreakerTrips).not.toBe(report.autonomy?.breakerTrips);
+    // The denial-breaker-aborted runs were 'completed' in the table — so the OTHER
+    // counts stay 0 (proving the gap: only denialBreakerTrips catches them).
+    expect(report.autonomy?.runs.degraded).toBe(0);
+    expect(report.autonomy?.orphaned).toBe(0);
+    expect(report.autonomy?.killed).toBe(0);
+    expect(report.autonomy?.revoked).toBe(0);
+  });
+
+  it("FLEET-02: a denial-breaker trip is a dedicated finding AND its worst rootRunId is drillable; CONTENT-FREE", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertDenialBreakerRow(store, now - 100, "root-deny-worst");
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // A dedicated finding names the denial-breaker trip + a copy-pasteable explain ref.
+    const denialFinding = report.findings.find((f) => f.code === "autonomy_denial_breaker");
+    expect(denialFinding).toBeDefined();
+    expect(denialFinding?.count).toBe(1);
+    expect(denialFinding?.hint).toMatch(/comis explain|denialBreakerN/);
+    // NOT double-counted as a generic `health_signal:autonomy_denial_breaker` rollup.
+    expect(report.findings.some((f) => f.code === "health_signal:autonomy_denial_breaker")).toBe(false);
+    // The worst-run pick CAN include the denial-breaker root (a degraded autonomy run).
+    expect(report.autonomy?.worstRootRunId).toBe("root-deny-worst");
+
+    // CONTENT-FREE: no bearer/secret/path leaks anywhere in the report JSON. (The
+    // dedicated finding's detail/hint carry STATIC operator guidance — authored
+    // constants, not echoed runtime bodies — so they legitimately name the breaker
+    // mechanism; that is identical to every other finding's static hint and is NOT
+    // a body leak.) The content-free invariant is enforced at the ROW: the persisted
+    // `autonomy_denial_breaker` details carry ONLY the closed triple (signal /
+    // denialBreakerTrips / rootRunId) — the engine's runtime free-text deny reason
+    // is NEVER persisted, so it can never reach the report from the data side.
+    const j = JSON.stringify(report);
+    expect(j).not.toMatch(/Bearer|sk-|secret/i);
+    expect(j).not.toMatch(/\/home\/|\/tmp\//);
+    // The row's details JSON (the data-sourced surface) is the closed triple ONLY —
+    // no runtime body field smuggled through (this is what an untrusted row could leak).
+    const denialRow = store
+      .queryDiagnostics({ category: "health_signal" })
+      .find((r) => r.message === "autonomy:denial_breaker_tripped");
+    const details = JSON.parse(denialRow?.details ?? "{}") as Record<string, unknown>;
+    expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
+  });
+
+  it("FLEET-02: round-trips FleetHealthReportSchema.parse() with denialBreakerTrips (additive-optional, no drift)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertDenialBreakerRow(store, now - 100, "root-deny-rt");
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+    const parsed = FleetHealthReportSchema.parse(report);
+    expect(parsed.autonomy?.denialBreakerTrips).toBe(1);
+  });
+
+  it("FLEET-04: names the worst autonomy run's rootRunId AND a verdict suggests `comis explain <rootRunId>`", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // A degraded autonomy run (orphaned) carries a rootRunId.
+    insertOrphanedRow(store, now - 100, "not_resumable", "root-worst-abc");
+    const durableRuns = fakeDurableRuns({ orphaned: 1, revoked: 0, running: 2, completed: 5 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // The block names the worst rootRunId (a real id from the orphaned row).
+    expect(report.autonomy?.worstRootRunId).toBe("root-worst-abc");
+    // AND a FLEET verdict names it in a `comis explain <id>` suggestion (likelyRootCause
+    // or a finding — at least one surface points the operator at the worst run).
+    const verdictText = [
+      report.likelyRootCause?.detail ?? "",
+      ...(report.likelyRootCause?.suggestedNextSteps ?? []),
+      ...report.findings.flatMap((f) => [f.detail, f.hint]),
+    ].join(" | ");
+    expect(verdictText).toMatch(/comis explain/);
+    expect(report.likelyRootCause?.code).toBe("fleet_autonomy_degradation");
+    expect(report.likelyRootCause?.detail).toContain("root-worst-abc");
+  });
+
+  it("CONTENT-FREE: the whole report JSON carries no body/secret even with autonomy rows present", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertOrphanedRow(store, now - 100, "invalid_caps", "root-x");
+    insertRevokedRow(store, now - 200, 1, "root-y");
+    const durableRuns = fakeDurableRuns({ orphaned: 1, revoked: 1, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+    const json = JSON.stringify(report);
+    // No bearer/secret/path/free-text reason sentence anywhere.
+    expect(json).not.toMatch(/Bearer|sk-|secret-lease/i);
+    expect(json).not.toMatch(/\/home\/|\/tmp\//);
+    expect(json).not.toMatch(/dropped its heartbeat at/i);
+  });
+
+  it("HONEST DEGRADATION: with no durableRuns dep AND no autonomy rows, the autonomy block is OMITTED (offline-style boot)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    seedStore(store, now); // non-autonomy health_signal rows only.
+
+    // No durableRuns dep (the offline CLI / non-durability boot).
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now) },
+      24,
+    );
+    expect(report.autonomy).toBeUndefined();
+  });
+
+  it("admin gate + report shape unchanged: the report still round-trips FleetHealthReportSchema.parse() with the autonomy block", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertOrphanedRow(store, now - 100, "resume_failed", "root-p");
+    const durableRuns = fakeDurableRuns({ orphaned: 1, revoked: 0, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+    // The autonomy block SURVIVES the wire parse (schema/daemon drift guard).
+    const parsed = FleetHealthReportSchema.parse(report);
+    expect(parsed.autonomy?.orphaned).toBe(1);
+    expect(parsed.autonomy?.worstRootRunId).toBe("root-p");
+  });
+});
+
 describe("bindFleetHealthHandlers (H1 — admin dual-layer gate)", () => {
   it("admin gate: missing _trustLevel:admin throws", async () => {
     const handlers = bindFleetHealthHandlers(makeDeps({ obsStore: makeStore(), clock: createFakeClock(systemNowMs()) }));

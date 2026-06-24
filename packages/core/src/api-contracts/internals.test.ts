@@ -52,18 +52,49 @@ describe("stripInternalFields()", () => {
     expect(Object.keys(result)).toHaveLength(0);
   });
 
-  it("exposes 16 dispatcher-injected internal field names in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(16);
+  it("exposes 18 dispatcher-injected internal field names in sorted order", () => {
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(18);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
 
-  it("includes `_capabilities` (the 16th field) and projects it away from external callers (T-210-02)", () => {
+  it("includes `_capabilities` and projects it away from external callers (T-210-02)", () => {
     // An external WS/REST caller must NOT be able to forge orchestration caps:
     // `_capabilities` is dispatcher-injected, so the strip drops it.
     expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_capabilities");
     const result = stripInternalFields({ _capabilities: ["orch:spawn"], foo: 1 });
     expect(result).toEqual({ foo: 1 });
     expect(result._capabilities).toBeUndefined();
+  });
+
+  it("includes `_outwardStepIndex` and strips a forged inbound value (Phase 216 NEW-3/HIGH-1)", () => {
+    // A jailed script must NOT be able to forge the outward-send index to
+    // self-collide its own send (inverting ONCE-02) or perturb ordering. The
+    // strip drops any inbound `_outwardStepIndex` BEFORE the trusted cap
+    // chokepoint re-injects the allocated one (strip-then-inject, like _agentId).
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_outwardStepIndex");
+    const result = stripInternalFields({ _outwardStepIndex: 999, foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._outwardStepIndex).toBeUndefined();
+  });
+
+  it("includes `_autonomyMode` and strips a forged inbound value (Phase 217 UNATT-01/EVICT-02)", () => {
+    // A jailed/external caller must NOT be able to forge `_autonomyMode: "max"`
+    // to perturb the chokepoint's deny-vs-escalate decision. The strip drops any
+    // inbound `_autonomyMode` BEFORE the chokepoint reads it; the trusted in-process
+    // leg re-injects the server-resolved mode (strip-then-inject, like _agentId).
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_autonomyMode");
+    const result = stripInternalFields({ _autonomyMode: "max", foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._autonomyMode).toBeUndefined();
+  });
+
+  it("places `_autonomyMode` immediately after `_agentId` (the canonical sort order)", () => {
+    // The array is maintained in JS `.sort()`/localeCompare alphabetical order
+    // (asserted by the sorted-order test above). "_agentId" < "_autonomyMode"
+    // (2nd char 'g' < 'u'), so `_autonomyMode` is index 1, right after `_agentId`.
+    // Catches an accidental mis-insertion of the new entry.
+    expect(INTERNAL_FIELD_NAMES[0]).toBe("_agentId");
+    expect(INTERNAL_FIELD_NAMES[1]).toBe("_autonomyMode");
   });
 });

@@ -6,7 +6,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -16,6 +16,7 @@ import {
   safePath,
   formatSessionKey,
   systemNowMs,
+  resolveAutonomy,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
@@ -51,6 +52,7 @@ import {
   createProcessTool,
   createProcessRegistry,
   createApplyPatchTool,
+  createSleepTool,
   createFileStateTracker,
   sanitizeImageForApi,
   createMediaPersistenceService,
@@ -95,6 +97,7 @@ import type { BrokerContextDeps } from "./setup-broker-activation.js";
 // orchestrate-assembly bodies are in setup-tools-autonomy.ts (file-size cap).
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
+import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // COORD-01 (218-01)
 
 
 // Deps / Result types
@@ -106,6 +109,11 @@ import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
+  /** Phase 216 (HIGH-1 / NEW-4): durable store + rootRunId resolver → the agent
+   *  rpcCall factory so an in-process OUTWARD send gets a monotonic `_outwardStepIndex`.
+   *  Both optional; absent ⇒ no index → the Plan-05 wrap is a pass-through (pre-216). */
+  durableRuns?: DurableRunPort;
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
   /** WR-04 (Phase 174-04): resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
@@ -152,20 +160,11 @@ export interface ToolsDeps {
    * without a daemon restart — do NOT cache the result.
    */
   getMcpServerEntries: () => readonly McpServerEntry[];
-  /**
-   * Per-agent ToolCapabilityPort resolver. Populated by daemon.ts from the
-   * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
-   * inside setupSingleAgent). Used by exec / process tools to consult the
-   * live install-detour mode + connected MCP servers + visible skills, and
-   * to read operator-supplied cluster hints. The closure may throw or fall
-   * back to the default agent's port for unknown agentIds -- daemon.ts
-   * decides the contract.
-   *
-   * Consumed via the single mandated form `deps.getCapabilityPortForAgent(agentId)`
-   * inside assembleToolsForAgent (mirrors the deps.<field> direct-access
-   * convention used for nearby fields like deps.eventBus, deps.skillsLogger,
-   * deps.linkRunner, deps.subprocessEnv).
-   */
+  /** Per-agent ToolCapabilityPort resolver (daemon.ts populates it from
+   *  AgentsResult.toolCapabilityPorts). Exec/process tools consult the live
+   *  install-detour mode + MCP servers + visible skills + cluster hints; the
+   *  closure may throw or fall back to the default agent for unknown agentIds.
+   *  Consumed as `deps.getCapabilityPortForAgent(agentId)` in assembleToolsForAgent. */
   getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
@@ -293,17 +292,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
    * daemon startup (detectSandboxProvider runs once). */
   const warnedNoSandboxAgents = new Set<string>();
 
-  /**
-   * Platform-tool descriptor registry -- single source of truth for the 45
-   * platform-tools. Constructed once at `setupTools` invocation (the set is
-   * static at module-load time). Daemon's per-agent assembly filters the
-   * registry by `conditional` predicates and invokes each surviving
-   * descriptor's `build(ctx)` callback with a runtime context. This replaces
-   * the prior 175-line `agentPlatformTools` closure that hand-enumerated
-   * 38 `createXTool(agentRpc, ...)` factory calls. The exec / process /
-   * apply-patch tools stay enumerated inline below — they are `./tools`
-   * subpath (built-in non-platform).
-   */
+  // Platform-tool descriptor registry — SSOT for the 45 platform-tools, built once
+  // (static set). Per-agent assembly filters by `conditional` predicates + invokes
+  // each surviving descriptor's `build(ctx)`. Exec/process/apply-patch tools stay
+  // enumerated inline below (`./tools` subpath, built-in non-platform).
   const PLATFORM_TOOL_REGISTRY = createPlatformToolRegistry();
 
   function getOrCreateRegistry(agentId: string): ProcessRegistry {
@@ -334,7 +326,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // Agent-scoped rpcCall factory (the _capabilities injection point, CAP-03)
   // extracted to setup-tools-capabilities.ts (file-size cap). createAgentRpcCall
   // is the per-agent builder; behavior is byte-identical to the prior inline form.
-  const createAgentRpcCall = makeCreateAgentRpcCall({ rpcCall, agents, defaultAgentId });
+  const createAgentRpcCall = makeCreateAgentRpcCall({
+    rpcCall, agents, defaultAgentId,
+    // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+  });
 
   /** Create MCP tools from connected servers (extracted to bypass profile filtering). */
   function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>): ReturnType<PlatformToolProvider> {
@@ -622,6 +619,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
 
+      // Sleep primitive (STREAM-03) -- always included; the model paces between
+      // turns (defers for the ~5-min cache TTL) instead of polling. Stateless; see sleep-tool.ts.
+      tools.push(createSleepTool());
+
       // Orchestrate tool (Phase 212 Plan 04, ORCH-01) — built by buildAutonomyToolWiring above.
       if (orchestrateTool) tools.push(orchestrateTool);
 
@@ -638,28 +639,27 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
+    // COORD-01 (218-01): narrow a role:coordinator lead (selector + rationale in
+    // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
+    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
+    const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
+    if (coordinatorNarrowed) {
+      skillsLogger.debug(
+        { agentId, role: resolvedAutonomy.role, toolGroups: effectiveGroups, step: "tool-assembly" },
+        "coordinator role narrowed the tool surface to the orchestration set",
+      );
+    }
+
     // Determine platform tool provider based on options
     let platformToolProvider: PlatformToolProvider | undefined;
     if (!includePlatform) {
       platformToolProvider = undefined;
-    } else if (toolGroups && toolGroups.length > 0 && !toolGroups.includes("full")) {
-      // Build allowed tool name set from all requested profiles AND groups
-      const allowedNames = new Set<string>();
-      for (const group of toolGroups) {
-        const profileTools = TOOL_PROFILES[group];
-        if (profileTools) {
-          for (const t of profileTools) allowedNames.add(t);
-        }
-        // Also check TOOL_GROUPS (e.g., "web" -> ["web_fetch", "web_search", "browser"])
-        const groupKey = group.startsWith("group:") ? group : `group:${group}`;
-        const groupTools = TOOL_GROUPS[groupKey];
-        if (groupTools) {
-          for (const t of groupTools) allowedNames.add(t);
-        }
-      }
+    } else if (effectiveGroups && effectiveGroups.length > 0 && !effectiveGroups.includes("full")) {
+      // Build the allowed tool-name set from the effective profiles AND groups.
+      const allowedNames = expandToolGroupsToNames([...effectiveGroups], TOOL_PROFILES, TOOL_GROUPS);
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {
-      // No toolGroups or "full" in toolGroups -- return all platform tools unfiltered
+      // No effectiveGroups or "full" in effectiveGroups -- return all platform tools unfiltered
       platformToolProvider = agentPlatformTools;
     }
 

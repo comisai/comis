@@ -41,6 +41,30 @@ export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } fr
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
 export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
+// Phase 216: the durable-run + resume engine wiring (stores + boot recovery +
+// watchdog + shutdown) + the daemon composition helpers. Gated behind
+// autonomy.durability.enabled.
+export {
+  setupDurableResume,
+  buildDurableStores,
+  buildDurableResume,
+  type DurableResumeResult,
+  type DurableResumeConfig,
+  type SetupDurableResumeDeps,
+  type DurableStoresResult,
+  type DurableResumeWiring,
+} from "./setup-durable-resume.js";
+export {
+  createWorktreeRegistry,
+  toLifecycleGitExec,
+  setupWorktreeSweep,
+  discoverWorktreeOrphans,
+  type WorktreeRegistry,
+  type RegisterWorktreeInput,
+  type SetupWorktreeSweepDeps,
+  type WorktreeSweepHandle,
+  type DiscoverWorktreeOrphansDeps,
+} from "./setup-worktree-sweep.js";
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";

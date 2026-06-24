@@ -33,6 +33,13 @@ import {
 } from "./sub-agent-result-processor.js";
 import { createDeliveryDedup } from "./announce-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import {
+  attenuateCaps,
+  AGENT_CAPABILITIES,
+  resolveWorkspaceDir,
+  type AgentCapability,
+  type AgentConfig,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
@@ -533,6 +540,45 @@ describe("createSubAgentRunner", () => {
     expect(metadata.taskDescription).toBe("metadata test");
     expect(metadata.modelOverride).toBe("claude-3-opus");
     expect(metadata.runId).toBeDefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // WT-01: the worktree request flag survives the spawn round-trip onto the
+  // child session metadata, so executeSubAgent (which only sees the persisted
+  // metadata, never SpawnParams) can read it and run the child in an isolated
+  // git worktree. Without this thread the `spawn --worktree` flag is a silent
+  // no-op (the gap this plan closes — the contract field + the lifecycle module
+  // exist, but nothing carries the request to the runner that runs the child).
+  // -----------------------------------------------------------------------
+  it("persists the worktree request flag onto child session metadata (WT-01)", () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "worktree flag test",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      callerAgentId: "orchestrator",
+      worktree: true,
+    });
+
+    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.worktree).toBe(true);
+  });
+
+  it("defaults the worktree metadata flag to false when not requested (WT-01)", () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "no worktree test",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      callerAgentId: "orchestrator",
+    });
+
+    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.worktree).toBe(false);
   });
 
   // -----------------------------------------------------------------------
@@ -3491,6 +3537,217 @@ describe("persistFailureRecord integration", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SUMREF-02: materializeFullOutput — the child's full output becomes a
+// structured ResultRef (summary + handle) in the announcement, never the
+// full body. Real timers: the completion path awaits real fs/async ticks.
+// ---------------------------------------------------------------------------
+
+describe("materializeFullOutput child-output ResultRef in completion path", () => {
+  // A response large enough that re-injecting it would defeat the longevity
+  // invariant; the announcement must NEVER contain this verbatim.
+  const LARGE_RESPONSE = "X".repeat(50_000);
+
+  function makeMaterializeDeps(): SubAgentRunnerDeps {
+    const localDeps = createMockDeps();
+    localDeps.logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    // The condenser produces the bounded summary (SUMREF-01); both run.
+    localDeps.resultCondenser = {
+      condense: vi.fn().mockResolvedValue({
+        level: 1,
+        result: { taskComplete: true, summary: "bounded summary", conclusions: ["ok"] },
+        originalTokens: 5000,
+        condensedTokens: 50,
+        compressionRatio: 100,
+        diskPath: "/tmp/condensed-r1.json",
+      }),
+    };
+    vi.mocked(localDeps.executeAgent).mockResolvedValue({
+      response: LARGE_RESPONSE,
+      tokensUsed: { total: 5000 },
+      cost: { total: 0.1 },
+      finishReason: "stop",
+      stepsExecuted: 7,
+    });
+    return localDeps;
+  }
+
+  it("embeds the bounded summary plus the ResultRef handle but never the full body", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi.fn().mockResolvedValue({
+      ref: "results/r1.json",
+      kind: "json",
+      bytes: 1_048_576,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "produce a megabyte report",
+      agentId: "default",
+      callerAgentId: "parent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(localDeps.sendToChannel).toHaveBeenCalledTimes(1);
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    // SUMREF-01 summary is present...
+    expect(text).toContain("bounded summary");
+    // ...AND the structured handle (ref + bytes + kind)...
+    expect(text).toContain("results/r1.json");
+    expect(text).toContain("1048576");
+    expect(text).toContain("json");
+    // ...but the full child body NEVER enters the lead's window.
+    expect(text).not.toContain(LARGE_RESPONSE);
+  });
+
+  it("calls materializeFullOutput with the spawn runId and the full child response", async () => {
+    const localDeps = makeMaterializeDeps();
+    const materializeMock = vi.fn().mockResolvedValue({
+      ref: "results/r2.json",
+      kind: "json",
+      bytes: 2048,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    localDeps.materializeFullOutput = materializeMock;
+
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    const [content, ctx] = materializeMock.mock.calls[0]!;
+    expect(content).toBe(LARGE_RESPONSE);
+    expect(ctx.runId).toBe(runId);
+    expect(typeof ctx.nowMs).toBe("number");
+  });
+
+  it("passes the child agentId in the ctx so the daemon targets the CHILD's jailed workspace", async () => {
+    // Security (T-218-08): the materialize target MUST be the child's own jailed
+    // workspace, never the lead's — the daemon resolves it from this agentId.
+    const localDeps = makeMaterializeDeps();
+    const materializeMock = vi.fn().mockResolvedValue({
+      ref: "results/r3.json",
+      kind: "json",
+      bytes: 100,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    localDeps.materializeFullOutput = materializeMock;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    const ctx = materializeMock.mock.calls[0]![1];
+    expect(ctx.agentId).toBe("researcher");
+  });
+
+  it("falls back to summary plus diskPath when materializeFullOutput is absent", async () => {
+    const localDeps = makeMaterializeDeps();
+    // No materializeFullOutput dep — the worker/no-autonomy path.
+    delete (localDeps as { materializeFullOutput?: unknown }).materializeFullOutput;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    expect(text).not.toContain(LARGE_RESPONSE);
+  });
+
+  it("degrades to summary plus diskPath and WARNs on a MaterializeError refusal", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi
+      .fn()
+      .mockResolvedValue({ error: "result_ref_too_large: 9000000 > 8388608" });
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Completion path did not crash — announcement degraded to summary + diskPath.
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    // A WARN with errorKind:"resource" was emitted on the refusal branch.
+    const warnCalls = vi.mocked(localDeps.logger!.warn).mock.calls;
+    const resourceWarn = warnCalls.find(
+      (c) => (c[0] as { errorKind?: string }).errorKind === "resource",
+    );
+    expect(resourceWarn).toBeDefined();
+  });
+
+  it("degrades silently without a resource WARN when materializeFullOutput returns undefined", async () => {
+    const localDeps = makeMaterializeDeps();
+    localDeps.materializeFullOutput = vi.fn().mockResolvedValue(undefined);
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "default",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const text = vi.mocked(localDeps.sendToChannel).mock.calls[0]![2];
+    expect(text).toContain("bounded summary");
+    expect(text).toContain("/tmp/condensed-r1.json");
+    // No double-report: the store already logged the contained write failure,
+    // so the runner emits NO errorKind:"resource" WARN on the undefined branch.
+    const warnCalls = vi.mocked(localDeps.logger!.warn).mock.calls;
+    const resourceWarn = warnCalls.find(
+      (c) => (c[0] as { errorKind?: string }).errorKind === "resource",
+    );
+    expect(resourceWarn).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ANNOUNCE_PARENT_TIMEOUT_MS constant
 // ---------------------------------------------------------------------------
 
@@ -4594,5 +4851,196 @@ describe("createSubAgentRunner killByRootRun tree fan-out", () => {
     runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
 
     expect(runner.killByRootRun("no-such-root")).toEqual({ killed: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COORD-03: the ~30s read-only progress fork lifecycle in the spawn path
+// ---------------------------------------------------------------------------
+//
+// The runner starts the read-only progress fork when a child run begins and
+// stops it on the run's terminal settle (the completion finally) so it never
+// outlives the child (T-218-15: no leaked timer). vi.useFakeTimers() drives the
+// injected clock/timers (testClock/testTimers delegate to the faked globals).
+
+describe("COORD-03 progress fork lifecycle (sub-agent-runner)", () => {
+  let deps: SubAgentRunnerDeps;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("emits a content-free session:sub_agent_progress ~30s into a long-running child", async () => {
+    // A never-resolving exec keeps the child in-flight so the fork can tick.
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "long research",
+      agentId: "child-long",
+      callerSessionKey: "default:user1:channel1",
+    });
+
+    // No progress before the first tick.
+    expect(emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress")).toHaveLength(0);
+
+    // Advance ~30s → exactly one progress tick.
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const progress = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress");
+    expect(progress).toHaveLength(1);
+    const payload = progress[0]![1] as {
+      runId: string; agentId: string; progressLine: string;
+      elapsedMs: number; stepsExecuted: number; timestamp: number;
+    };
+    expect(payload.agentId).toBe("child-long");
+    expect(typeof payload.runId).toBe("string");
+    expect(payload.elapsedMs).toBeGreaterThanOrEqual(30_000);
+    expect(payload.progressLine.length).toBeGreaterThan(0);
+    // Content-free: only the 6 bounded status keys, no child output/body.
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "elapsedMs", "progressLine", "runId", "stepsExecuted", "timestamp"].sort(),
+    );
+    // No explicit shutdown: the fork interval is .unref()'d so it never blocks
+    // exit; afterEach's vi.useRealTimers() reclaims the faked timer. (Awaiting
+    // shutdown() here would hang on the never-resolving exec under fake timers.)
+  });
+
+  it("stops the fork on the completion finally — no progress after the child settles", async () => {
+    // Default mock exec resolves immediately → the run completes, the fork stops.
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({ task: "quick task", agentId: "child-quick" });
+
+    // Drive the completion path (the terminal finally stops the fork).
+    await vi.advanceTimersByTimeAsync(0);
+
+    const before = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress").length;
+
+    // Advance well past the interval AFTER completion → no further progress.
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    const after = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress").length;
+    expect(after).toBe(before); // fork was stopped — no new ticks
+  });
+
+  it("ticks repeatedly while the child stays in-flight (~90s ⇒ 3 progress events)", async () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({ task: "very long", agentId: "child-vlong" });
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    const progress = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress");
+    expect(progress.length).toBe(3);
+    // No shutdown await (never-resolving exec) — the .unref()'d interval is
+    // reclaimed by afterEach's vi.useRealTimers().
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COORD-03 security: window isolation is NOT escalation
+// ---------------------------------------------------------------------------
+//
+// Each fresh-window coordinator child inherits an ATTENUATED lease (parent ∩
+// requested — never broader, T-218-16) and writes to its OWN jailed workspace,
+// distinct from the lead's (T-218-17). The lease mint lives in daemon wiring
+// (setup-broker-activation.ts via attenuateCaps); the runner consumes the
+// already-minted params.caps verbatim and NEVER broadens them. We assert the
+// invariant directly against the security primitives (the single source of
+// truth) plus a runner-level check that a spawn carries no cap outside the
+// parent set.
+
+describe("COORD-03 attenuated lease + own jailed workspace (no escalation)", () => {
+  it("attenuateCaps yields a subset of the parent caps — never broader (T-218-16)", () => {
+    const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
+    // A coordinator child requests a SUPERSET (incl. caps the parent lacks).
+    const requested: AgentCapability[] = ["orch:read", "orch:write", "orch:spawn", "orch:cron"];
+
+    const childLease = attenuateCaps(parent, requested);
+
+    // Every minted cap is held by the parent (subset).
+    for (const cap of childLease) {
+      expect(parent).toContain(cap);
+    }
+    // The result is exactly parent ∩ requested — the cross-window broadening
+    // (orch:write, orch:cron) is dropped; window isolation is not escalation.
+    expect([...childLease].sort()).toEqual(["orch:read", "orch:spawn"].sort());
+    // And it never holds a cap the parent does not.
+    expect(childLease).not.toContain("orch:write");
+    expect(childLease).not.toContain("orch:cron");
+  });
+
+  it("a coordinator child cannot mint a cap outside the full capability set", () => {
+    // Even requesting EVERY known capability, a narrow parent stays narrow.
+    const narrowParent: AgentCapability[] = ["orch:read"];
+    const childLease = attenuateCaps(narrowParent, [...AGENT_CAPABILITIES]);
+    expect(childLease).toEqual(["orch:read"]); // intersection with a singleton parent
+  });
+
+  it("each child resolves its OWN jailed workspace, distinct from the lead's (T-218-17)", () => {
+    const cfg: AgentConfig = {} as AgentConfig; // no explicit workspacePath → suffixed-by-agentId
+    const dataDir = "/data/.comis";
+    const leadWorkspace = resolveWorkspaceDir(cfg, "lead", dataDir);
+    const childA = resolveWorkspaceDir(cfg, "coordinator-child-a", dataDir);
+    const childB = resolveWorkspaceDir(cfg, "coordinator-child-b", dataDir);
+
+    // Each agent's workspace is its own — a child never resolves the lead's dir.
+    expect(childA).not.toBe(leadWorkspace);
+    expect(childB).not.toBe(leadWorkspace);
+    expect(childA).not.toBe(childB);
+    expect(childA).toContain("coordinator-child-a");
+    expect(leadWorkspace).toContain("lead");
+  });
+
+  it("the runner consumes params.caps verbatim — it never broadens the child lease", async () => {
+    // The runner threads the ALREADY-minted (attenuated) caps it is given onto
+    // the durable checkpoint — it does not add to them. Capture what it persists.
+    const deps = createMockDeps();
+    vi.useFakeTimers();
+    try {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+      const upsertCheckpoint = vi.fn().mockResolvedValue({ ok: true });
+      deps.durableRuns = {
+        upsertCheckpoint,
+        touchHeartbeat: vi.fn().mockResolvedValue({ ok: true }),
+        markCompleted: vi.fn().mockResolvedValue({ ok: true }),
+      } as unknown as NonNullable<SubAgentRunnerDeps["durableRuns"]>;
+
+      const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
+      const mintedChildLease = attenuateCaps(parent, ["orch:read", "orch:write"]); // ["orch:read"]
+
+      const runner = createSubAgentRunner(deps);
+      runner.spawn({
+        task: "isolated child",
+        agentId: "coordinator-child",
+        depth: 1,
+        rootRunId: "root-COORD",
+        caps: mintedChildLease,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(upsertCheckpoint).toHaveBeenCalled();
+      const persisted = upsertCheckpoint.mock.calls[0]![0] as { caps: AgentCapability[] };
+      // The runner persisted EXACTLY the minted (attenuated) lease — no broadening.
+      expect([...persisted.caps].sort()).toEqual([...mintedChildLease].sort());
+      for (const cap of persisted.caps) {
+        expect(parent).toContain(cap); // still a subset of the parent
+      }
+      expect(persisted.caps).not.toContain("orch:write"); // the dropped cross-window cap
+      // No shutdown await (never-resolving exec) — fake timers reclaimed below.
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

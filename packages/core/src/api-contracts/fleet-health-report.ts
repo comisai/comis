@@ -138,6 +138,59 @@ export const FleetHealthReportSchema = z.object({
   pipelineAuthoringGate: z
     .object({ buildAuthor: z.boolean(), reason: z.string() })
     .optional(),
+  /**
+   * FLEET-01/02/04 (Phase 220): the cross-run AUTONOMY-health slice. Counts + an
+   * id ONLY (the worst rootRunId to drill into via `comis explain`) — NO
+   * body/reason/secret (the smuggled-key test proves the non-strict z.object
+   * strips any extra field; T-220-10). Optional (schemaVersion stays 1) —
+   * additive; pre-220 constructors omit it.
+   *
+   * Sourced from `DurableRunPort.countByStatus` (autonomy runs ARE durable_runs
+   * by construction — no synthetic notion, no session-rollup schema change) +
+   * the synthetic-excluded `reduceFleetWindow` breaker/cost read-back. The block
+   * is ABSENT when the durable store is unwired (e.g. the daemon-less offline
+   * CLI) — honest degradation, not a divergence.
+   *
+   * `costUsd` is the window's autonomy-inclusive operator cost (the
+   * synthetic-excluded `fleet.costUsd` read-back — NOT a separate re-derivation
+   * over raw rows, which would re-introduce WR-01). A stricter autonomy-only
+   * cost is a later follow-up; FLEET-01 requires an aggregate cost, satisfied
+   * here.
+   */
+  autonomy: z
+    .object({
+      runs: z.object({ total: z.number(), degraded: z.number(), degradedRate: z.number() }),
+      orphaned: z.number(),
+      resumed: z.number(),
+      revoked: z.number(),
+      killed: z.number(),
+      /** The TOOL-FAILURE breaker subset of breakerTripTotal (the synthetic-excluded
+       *  session-rollup `breakerTripCount` read-back). DISTINCT from `denialBreakerTrips`
+       *  below — the tool-failure breaker and the capability-denial breaker are
+       *  separate Phase-217 mechanisms and must not be conflated. */
+      breakerTrips: z.number(),
+      /**
+       * FLEET-02 (Phase 220-05): the CAPABILITY-DENIAL breaker trip count — N
+       * consecutive floor-blocks aborted + killed an unattended run tree (Phase
+       * 217). EVENT-SOURCED from the content-free `autonomy_denial_breaker`
+       * health_signal rows, NOT the session-rollup `breakerTripCount`: a
+       * denial-breaker abort is NEVER a session endReason and NEVER a
+       * breakerTripCount, so `breakerTrips` (the tool-failure read-back) can never
+       * see it — and the aborted run lands in durable status 'completed', so it is
+       * 0 in orphaned/revoked/killed too. This separable count is the ONLY fleet
+       * surface for the denial breaker (the milestone-audit FLEET-02 gap). Counts
+       * only — never the engine's free-text deny reason. The assembler always
+       * emits it within the (optional) autonomy block; a `denial_breaker`-aborted
+       * run's id can also surface as `worstRootRunId` + an `autonomy_denial_breaker`
+       * finding code.
+       */
+      denialBreakerTrips: z.number(),
+      budgetBreaches: z.number(),
+      costUsd: z.number(),
+      /** FLEET-04: the worst autonomy run to drill into via `comis explain`. */
+      worstRootRunId: z.string().optional(),
+    })
+    .optional(),
 });
 
 /** The `obs.fleet.health` response (the cross-session fleet digest). Inferred from the Zod schema. */

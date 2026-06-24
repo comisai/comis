@@ -261,7 +261,51 @@ export interface ChannelPort {
     action: string,
     params: Record<string, unknown>,
   ): Promise<Result<unknown, Error>>;
+
+  /**
+   * Reconcile a crash-interrupted outward send (Phase 216, ONCE-03): query the
+   * platform for "did this send actually land?" so recovery can decide commit vs
+   * replay for an `unknown_after_send` ledger row.
+   *
+   * OPTIONAL — adapters that cannot query the platform for "did this send?" OMIT
+   * it; recovery treats absence as `unresolved` → park+escalate (ONCE-03).
+   * NEVER return not_sent for a channel that cannot actually tell (Pitfall 2 —
+   * that is a double-send dressed as a reconcile).
+   *
+   * @param query - The content digest + time window to match against platform history
+   * @returns The closed sent/not_sent/unresolved outcome, or an error
+   */
+  reconcileSend?(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>>;
 }
+
+/**
+ * The lookup key for {@link ChannelPort.reconcileSend} — a content digest plus
+ * the time window to scan platform history for. Content-free: the `contentDigest`
+ * (sha256), never the body.
+ */
+export interface ReconcileSendQuery {
+  /** Target channel/chat/room identifier. */
+  readonly channelId: string;
+  /** sha256 of the sent content — matched against platform history, never the body. */
+  readonly contentDigest: string;
+  /** Lower bound (epoch ms) of the send window to scan. */
+  readonly sentAfterMs: number;
+  /** Upper bound (epoch ms) of the send window to scan. */
+  readonly sentBeforeMs: number;
+}
+
+/**
+ * The closed-union verdict of a {@link ChannelPort.reconcileSend} (ONCE-03):
+ *   - `sent`       — the message is present on the platform; `platformMessageId` is the id.
+ *   - `not_sent`   — the platform was queried and the message is definitively absent.
+ *   - `unresolved` — the platform could not tell (the honest "cannot determine").
+ * `unresolved` is a first-class designed outcome, NOT a failure — there is no
+ * silent default-to-`sent`/`not_sent`.
+ */
+export type ReconcileSendOutcome =
+  | { readonly kind: "sent"; readonly platformMessageId: string }
+  | { readonly kind: "not_sent" }
+  | { readonly kind: "unresolved" };
 
 /**
  * Options for sending a message. Channel adapters may support different subsets.

@@ -25,6 +25,14 @@ import {
   HANDLER_CAPABILITY_MAP,
   CapabilityDeniedError,
   parseFormattedSessionKey,
+  // Phase 217-05 (the keystone): the never-hang mode-aware deny decision.
+  // resolveEffectiveMode = the EVICT-02 fail-closed primitive (Plan 01);
+  // resolveAutonomy = the jail-leg server-side mode resolve (Plan 03); systemNowMs
+  // = the execution:aborted timestamp (mirrors bridge-safety-controls.ts).
+  resolveEffectiveMode,
+  resolveAutonomy,
+  systemNowMs,
+  type AutonomyMode,
 } from "@comis/core";
 // ORIGIN-01 deny-by-origin chokepoint: the in-process agent loop dispatches
 // straight through this closure (bypassing the gateway scope-router's
@@ -256,6 +264,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ? createAutonomyHandlers({
           ...deps,
           leaseManager: deps.leaseManager,
+          // FLEET-03: the LIVE autonomy:revoked/killed bus (the same typed bus the
+          // execution:aborted emit uses below, ~:678) + systemNowMs as the
+          // wiring-layer clock (globals-gate-safe; no Date.now() here). Without
+          // this the handler's optional eventBus? is absent in prod → the daemon
+          // emits nothing → Plan 03's counts are silently zero.
+          eventBus: deps.container.eventBus,
+          now: systemNowMs,
         })
       : {}),
     // INTRO-01/02 (Phase 215-04): capabilities.introspect (the `comis whoami`
@@ -593,6 +608,33 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // unresolvable (never fabricated, G1).
       const shouldAudit = isCapGated && agentOrigin !== undefined;
 
+      // Phase 217-05 (the keystone): the run's EFFECTIVE autonomy mode at THIS gate
+      // decision (research Pattern 3 + EVICT-02/03). The order is load-bearing:
+      //   1. evicted (operator's autonomy.evict) → "default" FIRST — the demotion
+      //      overrides any injected/resolved mode and takes effect at the NEXT gate
+      //      decision (mid-run, EVICT-03), not next spawn.
+      //   2. else the trusted in-process-injected `_autonomyMode` (Plan 03) →
+      //      resolveEffectiveMode (valid passthrough; absent/forged/unknown →
+      //      "default", EVICT-02 fail-closed).
+      //   3. else (the jail leg injects no mode — Plan 03) → server-resolve from
+      //      deps.agents[agentOrigin] (this chokepoint HAS deps.agents in scope,
+      //      unlike the boot file) → resolveEffectiveMode (unresolvable → "default").
+      // TODO(2026-06-24, T-217-06/T-217-15): wire evictRegistry.clear + denialBreaker.evict on NORMAL run-end (not just the trip/kill path). The chokepoint is per-call and has no clean run-end hook; the durable run-lifecycle / sessionEnd seam (setup-durable-resume / the runner's run-complete) is the right place to drop a completed root's breaker counter + evict flag so the in-memory maps cannot grow under a storm of per-cron-fire roots. The trip/kill path already clears; this TODO covers the happy-path completion only.
+      const effectiveMode = (): AutonomyMode => {
+        if (rootRunId !== undefined && deps.evictRegistry?.isEvicted(rootRunId)) return "default";
+        const injected = params._autonomyMode;
+        if (typeof injected === "string") return resolveEffectiveMode(injected);
+        // Jail leg: no injected mode → server-resolve from deps.agents. Fail-CLOSED
+        // (EVICT-02): an absent agents map or a missing/unresolvable agent entry
+        // yields `undefined` → resolveEffectiveMode → "default" (never the broader
+        // standard profile resolveAutonomy(undefined) would return).
+        const agentEntry =
+          agentOrigin !== undefined ? deps.agents?.[agentOrigin] : undefined;
+        const serverMode =
+          agentEntry !== undefined ? resolveAutonomy(agentEntry.autonomy).mode : undefined;
+        return resolveEffectiveMode(serverMode);
+      };
+
       try {
         const result = await handler(params);
         if (shouldAudit) {
@@ -606,6 +648,10 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             decision: "allow",
           });
         }
+        // Phase 217-05 (BREAK reset): a successful gated call resets the per-root
+        // consecutive-floor-block counter, so a single deny inside a PRODUCTIVE
+        // loop never accumulates to a trip (the productive run is not aborted).
+        if (rootRunId !== undefined) deps.denialBreaker?.recordAllow(rootRunId);
         return result;
       } catch (innerErr) {
         // A capability denial (the handler's requireCapability) is a first-class
@@ -619,6 +665,75 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
             ...(rootRunId !== undefined ? { rootRunId } : {}),
             decision: "deny",
           });
+        }
+        // Phase 217-05 (the keystone): the mode-aware deny-vs-escalate + breaker
+        // drive. COUNT-ONLY-FLOOR-BLOCKS — this branch fires ONLY for a genuine
+        // CapabilityDeniedError. `assertNotAgentOrigin` (admin deny-by-origin)
+        // throws a PLAIN Error and a generic handler error is a non-CapabilityDeniedError,
+        // so neither reaches recordDenial (research recommendation #5, BY CONSTRUCTION
+        // via this instanceof guard). The throw at the end is UNCHANGED — the run
+        // ALWAYS sees the deny and adapts (never hangs); NO escalation is awaited.
+        if (innerErr instanceof CapabilityDeniedError) {
+          const mode = effectiveMode();
+          if (rootRunId !== undefined && deps.denialBreaker) {
+            const verdict = deps.denialBreaker.recordDenial(rootRunId);
+            if (verdict.tripped) {
+              // BREAK-02: the Nth consecutive floor-block → ABORT the tree (not an
+              // infinite retry loop) + escalate. Mirror bridge-safety-controls.ts's
+              // execution:aborted emit shape; the obs layer consumes the reason.
+              if (parsedKey !== undefined) {
+                deps.container.eventBus.emit("execution:aborted", {
+                  sessionKey: parsedKey,
+                  reason: "denial_breaker",
+                  agentId: agentOrigin ?? "",
+                  timestamp: systemNowMs(),
+                });
+              }
+              // FLEET-02 (Phase 220-05): ALSO emit the dedicated content-free
+              // autonomy:denial_breaker_tripped event so `comis fleet` surfaces the
+              // trip as a separable `denialBreakerTrips` count. The execution:aborted
+              // emit above flips a UI phase only (no fleet-ingestion path) and its
+              // `denial_breaker` reason is never a session endReason/breakerTripCount,
+              // so the trip would otherwise be INVISIBLE to the fleet lens (the
+              // milestone-audit gap). rootRunId is in scope (the `!== undefined` guard
+              // above); systemNowMs is the globals-gate-safe wiring clock (no Date.now).
+              // Content-free: the rootRunId (an id) + timestamp ONLY — the deny reason
+              // rides the escalate() below, never the typed event.
+              deps.container.eventBus.emit("autonomy:denial_breaker_tripped", {
+                rootRunId,
+                timestamp: systemNowMs(),
+              });
+              deps.subAgentRunner.killByRootRun(rootRunId);
+              deps.escalate?.({
+                kind: "denial_breaker_tripped",
+                rootRunId,
+                reason: "consecutive floor-blocks reached denialBreakerN",
+                hint: "the run was aborted to avoid burning the budget on a deny loop (autonomy.denialBreakerN)",
+              });
+              // LOW-2: the tree is now dead — drop its per-root breaker + evict state
+              // so the in-memory maps cannot leak (the trip/kill cleanup path).
+              deps.evictRegistry?.clear(rootRunId);
+              deps.denialBreaker.evict(rootRunId);
+            } else if (mode === "unattended") {
+              // UNATT-01/03: a would-ask deny under unattended escalates (out-of-band
+              // + auditable) and the run CONTINUES (the re-throw below). Content-free.
+              deps.escalate?.({
+                kind: "would_ask_denied",
+                rootRunId,
+                reason: `capability/quota denied: ${classification}`,
+                hint: "an unattended run hit a ceiling; the platform escalated to the operator and the run continues (adapt or await operator action)",
+              });
+            }
+          } else if (mode === "unattended" && deps.escalate) {
+            // No rootRunId (no breaker scope) but unattended → still escalate the
+            // would-ask deny (the never-hang escalate is not gated on a tree root).
+            deps.escalate({
+              kind: "would_ask_denied",
+              rootRunId: "",
+              reason: `capability/quota denied: ${classification}`,
+              hint: "unattended deny escalated",
+            });
+          }
         }
         throw innerErr;
       }

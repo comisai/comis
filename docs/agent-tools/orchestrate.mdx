@@ -70,10 +70,46 @@ const head = await page.read(0, 40);       // read a 40-line/byte slice
 console.log(JSON.stringify(ids));          // only this slice re-enters context
 ```
 
+For **tabular** results — a high-volume CSV/JSONL/JSON payload — query it precisely with SQL
+(DuckDB) or JSONPath instead of grepping; only the row slice re-enters context:
+
+```typescript
+const rows = await comis_tools.web_fetch({ url: "https://example.com/data.jsonl" });
+
+// SQL over the materialized CSV/JSONL/JSON (DuckDB, read-only, daemon-side).
+const top = await rows.sql(
+  "SELECT id, price FROM read_json_auto('" + rows.ref + "') WHERE price > 100 ORDER BY price DESC LIMIT 5",
+);
+// Precise JSON extraction via a JSONPath $-expression (DuckDB json_extract — no eval library).
+const firstPrice = await rows.jsonpath("$.items[0].price");
+
+console.log(JSON.stringify(top));          // only the 5-row slice re-enters context
+```
+
 A `ResultRef` carries `{ ref, kind, bytes, rows?, schema?, preview, expiresAt }` plus the
-in-jail `.read(offset?, limit?)` / `.grep(pattern)` / `.jq(expr)` extraction methods. The
-`results/` directory is bounded (a per-file cap, a per-run aggregate cap, and a TTL) and
-auto-cleaned when the run ends.
+in-jail `.read(offset?, limit?)` / `.grep(pattern)` / `.jq(expr)` / `.sql(query)` /
+`.jsonpath(expr)` extraction methods. The `results/` directory is bounded (a per-file cap, a
+per-run aggregate cap, and a TTL) and auto-cleaned when the run ends.
+
+<Note>
+The `.sql()` and `.jsonpath()` helpers run the **DuckDB** CLI **daemon-side** (the jail stays
+`--unshare-net`), hardened to a read-only slicer **confined to the run's workspace**. The
+daemon-side DuckDB is spawned with the workspace as its only readable directory:
+`SET allowed_directories=['<workspace>']`, then `SET enable_external_access=false` and
+`SET lock_configuration=true` (set **before** the model query so it cannot widen them). That
+master switch blocks every local-file table function (`read_text`/`read_blob`/`glob`/…),
+`ATTACH`/`COPY`, and remote readers **wholesale** — except reads under the workspace — so a
+query like `read_text('/etc/passwd')` or `read_blob('~/.comis/config.yaml')` is refused, not
+served. As defense in depth, `--readonly :memory:`, extension auto-install/auto-load disabled,
+the `INSTALL`/`LOAD`/`ATTACH`/`COPY`/`EXPORT`/`PRAGMA` verbs, the pure-exfil readers
+(`read_text`/`read_blob`/`glob`/`getenv`/`parquet_metadata`), and remote (`http(s)://`/`s3://`)
+readers are all refused **before** DuckDB is ever spawned. The legitimate tabular readers the
+contract uses — `read_json_auto`/`read_csv`/`read_parquet` over the `results/` ResultRef — keep
+working (the workspace is the allow-root). DuckDB is a single static binary the daemon host must
+provide on `PATH` (the official Docker image installs it; it is not in the Debian apt repos). If
+`duckdb` is absent, `.sql()`/`.jsonpath()` honest-degrade to an `{ error }` — `.jq()`/`.grep()`/
+`.read()` (which use the always-present `jq` / built-in readers) keep working.
+</Note>
 
 ## Worked example — research in one turn
 

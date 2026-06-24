@@ -17,8 +17,10 @@
  *
  * Returns a heading-first `string[]`: the `## Autonomy` heading followed by
  * one paragraph of prose (authored as concatenated fragments for readability)
- * stating the routing rule, the autonomy envelope, the contract truth, and how
- * to read a denial.
+ * stating the routing rule, the delegate-then-synthesize rule (COORD-02 —
+ * heavy/long/high-volume work goes to a fresh-window child, the lead synthesizes
+ * its returned summary + `ResultRef`), the autonomy envelope, the contract
+ * truth, and how to read a denial.
  *
  * The capability claim is PROFILE-CONDITIONAL by phrasing, not by plumbing: the
  * opener says "When your agent profile grants autonomy capabilities (the
@@ -44,10 +46,19 @@ export function buildAutonomyDoctrineSection(): string[] {
       "schedule your own cron jobs, research the web, and message your origin channel — all " +
       "budget-capped, rate-limited, and revocable (long runs may be clamped or stopped, and do not " +
       "resume across a daemon restart). Route by shape: a single step is a direct tool call; a " +
-      "multi-step read/fetch/synthesize/fan-out chain is one `orchestrate(script)` turn. You are " +
+      "multi-step read/fetch/synthesize/fan-out chain is one `orchestrate(script)` turn. Route by " +
+      "weight too: delegate heavy, long-running, or high-volume work to a fresh-window child via " +
+      "`sessions_spawn` — each child runs an isolated context with its own budget and returns a " +
+      "bounded summary plus a `ResultRef` handle to its full output, which you then synthesize " +
+      "(drilling into the `ResultRef` on demand) rather than doing the heavy work inline and " +
+      "burning your own window. A `coordinator`-role lead MUST delegate such work (it holds only " +
+      "the orchestration surface); any other autonomy-bearing agent SHOULD, to keep its window " +
+      "lean. You are " +
       "confined to your workspace; you cannot read secrets, mint tokens, change config, or reach the " +
       "control plane — don't try. A `CapabilityDeniedError` — or any quota, budget, or rate-limit " +
-      "denial — means you lack that capability or hit a ceiling: do not retry or escalate, adapt or " +
-      "report.",
+      "denial — means you lack that capability or hit a ceiling: adapt or report — do not retry the " +
+      "same blocked call in a loop. (Under an unattended profile the platform escalates a blocked " +
+      "irreversible action to your operator for you; you still adapt and continue, you do not wait on " +
+      "it.)",
   ];
 }

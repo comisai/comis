@@ -4496,7 +4496,7 @@ describe("selective tool-type clearing in microcompact", () => {
     expect(toolMsgs[0].content[0].text).toBe("A".repeat(1500));
   });
 
-  it("clears exec_tool result", async () => {
+  it("clears exec tool_result (compactable emitted name)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -4514,12 +4514,13 @@ describe("selective tool-type clearing in microcompact", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      makePayloadWithNamedToolResult("exec_tool", "tu_exec", "A".repeat(1500)),
+      // EFF-02: "exec" is Comis's emitted shell tool name (was "exec_tool", a dead alias).
+      makePayloadWithNamedToolResult("exec", "tu_exec", "A".repeat(1500)),
       model,
     );
 
     const toolMsgs = (result.messages as any[]).filter((m: any) => m.role === "tool");
-    // exec_tool is a compactable tool -- result should be cleared
+    // exec is a compactable tool -- result should be cleared
     expect(toolMsgs[0].content[0].text).toContain("[Stale tool result cleared");
   });
 });
@@ -4572,7 +4573,7 @@ describe("dual-category tool clearing", () => {
     };
   }
 
-  it("clears file_read tool_result (existing compactable behavior)", async () => {
+  it("clears read tool_result (existing compactable behavior)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -4590,12 +4591,13 @@ describe("dual-category tool clearing", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      makePayloadWithToolUseAndResult("file_read", "tu_read", { path: "/foo" }, "A".repeat(1500)),
+      // EFF-02: "read" is Comis's emitted file-read tool name (was "file_read", a dead alias).
+      makePayloadWithToolUseAndResult("read", "tu_read", { path: "/foo" }, "A".repeat(1500)),
       model,
     );
 
     const toolMsgs = (result.messages as any[]).filter((m: any) => m.role === "tool");
-    // file_read is a compactable tool -- result should be cleared
+    // read is a compactable tool -- result should be cleared
     expect(toolMsgs[0].content[0].text).toContain("[Stale tool result cleared");
   });
 
@@ -5602,7 +5604,10 @@ describe("token-ceiling microcompact", () => {
       {
         getCacheRetention: () => "short",
         getElapsedSinceLastResponse: () => 100_000,
-        observationKeepWindow: 1,
+        // keepWindow large enough to protect BOTH tool results, so neither the ceiling
+        // trigger NOR the every-turn pass (EFF-01) clears them — isolating the assertion
+        // to "the ceiling trigger is inert when microcompactTokenCeiling is undefined".
+        observationKeepWindow: 10,
         onContentModification,
         sessionKey: "test-ceiling-disabled",
         // microcompactTokenCeiling NOT set
@@ -5631,7 +5636,7 @@ describe("token-ceiling microcompact", () => {
 
     await onPayload(payload, model);
 
-    // No ceiling configured -- should not trigger
+    // No ceiling configured + everything within keepWindow -- nothing cleared.
     expect(onContentModification).not.toHaveBeenCalled();
   });
 });
@@ -6338,19 +6343,19 @@ describe("fence-aware microcompaction", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (p: any, m: any) => Promise<any>;
 
-    // Use "file_read" (in COMPACTABLE_TOOL_NAMES) and role: "tool" (Anthropic API format)
+    // Use "read" (in COMPACTABLE_TOOL_NAMES — EFF-02 emitted name) and role: "tool" (Anthropic API format)
     const result = await onPayload({
       system: [{ type: "text", text: "System" }],
       tools: [],
       messages: [
         { role: "user", content: [{ type: "text", text: "user 1" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t1", content: [{ type: "text", text: longText }] }, // idx 2 — protected by fence
         { role: "user", content: [{ type: "text", text: "user 2" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t2", content: [{ type: "text", text: longText }] }, // idx 5 — beyond fence
         { role: "user", content: [{ type: "text", text: "user 3" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t3", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t3", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t3", content: [{ type: "text", text: longText }] }, // idx 8 — within keepWindow
       ],
     }, model);
@@ -6362,6 +6367,84 @@ describe("fence-aware microcompaction", () => {
     expect(msgs[5].content[0].text).toContain("Stale tool result cleared");
     // idx 8: Within keepWindow — preserved
     expect(msgs[8].content[0].text).toBe(longText);
+  });
+
+  // -------------------------------------------------------------------------
+  // EFF-03: every-turn microcompact is clone-safe + cache-stable at the pipeline level
+  // -------------------------------------------------------------------------
+  describe("every-turn microcompact in onPayload — clone-safe + byte-stable (EFF-03)", () => {
+    const longRead = "x".repeat(2000);
+    const STALE_PLACEHOLDER = "[Stale tool result cleared: idle > TTL]";
+
+    /**
+     * A payload with stale `read` results beyond the keepWindow and NO TTL/ceiling
+     * condition (no getElapsedSinceLastResponse over TTL, no microcompactTokenCeiling).
+     * Pre-EFF-01 the pipeline cleared nothing here; the every-turn pass clears the
+     * stale reads outside the keep window.
+     */
+    function makeStaleReadPayload(): Record<string, unknown> {
+      return {
+        system: [{ type: "text", text: "System" }],
+        tools: [],
+        messages: [
+          { role: "user", content: [{ type: "text", text: "u1" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "r1", name: "read", input: { path: "/a" } }] },
+          { role: "tool", tool_use_id: "r1", content: [{ type: "text", text: longRead }] }, // idx 2 — stale, cleared
+          { role: "user", content: [{ type: "text", text: "u2" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "r2", name: "read", input: { path: "/b" } }] },
+          { role: "tool", tool_use_id: "r2", content: [{ type: "text", text: longRead }] }, // idx 5 — recent, within keepWindow
+        ],
+      };
+    }
+
+    function makeInjector() {
+      const base = createMockStreamFn();
+      const wrapper = createRequestBodyInjector(
+        {
+          getCacheRetention: () => "short",
+          observationKeepWindow: 1, // protect only the last tool_result (idx 5)
+          sessionKey: "test-every-turn-pipeline",
+          // NOTE: no getElapsedSinceLastResponse / microcompactTokenCeiling → TTL+ceiling inert.
+        },
+        createMockLogger(),
+      );
+      const wrappedFn = wrapper(base);
+      const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
+      wrappedFn(model, makeContext([]), {});
+      const onPayload = (base.mock.calls[0][2] as Record<string, unknown>).onPayload as
+        (p: any, m: any) => Promise<any>;
+      return { onPayload, model };
+    }
+
+    it("clears stale read at the pipeline level WITHOUT mutating the SDK-owned params.messages", async () => {
+      const { onPayload, model } = makeInjector();
+      const params = makeStaleReadPayload();
+
+      const result = await onPayload(params, model);
+
+      // (a) The SDK-owned params.messages is NOT mutated — the clearing ran on the clone.
+      expect((params.messages as any[])[2].content[0].text).toBe(longRead);
+      // (b) result.messages has the stale read (idx 2) replaced by the byte-stable placeholder.
+      expect((result.messages as any[])[2].content[0].text).toBe(STALE_PLACEHOLDER);
+      // The recent read (idx 5, within keepWindow) is preserved on the clone.
+      expect((result.messages as any[])[5].content[0].text).toBe(longRead);
+      // The clone is a distinct array instance from params.messages.
+      expect(result.messages).not.toBe(params.messages);
+    });
+
+    it("two onPayload calls with identical input yield byte-identical placeholder text (frozen by tool-call-id → cache-stable)", async () => {
+      const { onPayload, model } = makeInjector();
+
+      const r1 = await onPayload(makeStaleReadPayload(), model);
+      const r2 = await onPayload(makeStaleReadPayload(), model);
+
+      const p1 = (r1.messages as any[])[2].content[0].text;
+      const p2 = (r2.messages as any[])[2].content[0].text;
+      // (c) The placeholder for tool_use_id r1 is byte-identical across turns — no per-turn
+      // counter / timestamp leaks into it, so the cached prefix never mutates.
+      expect(p1).toBe(STALE_PLACEHOLDER);
+      expect(p2).toBe(p1);
+    });
   });
 
   // -------------------------------------------------------------------------

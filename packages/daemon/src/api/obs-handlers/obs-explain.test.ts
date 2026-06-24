@@ -473,4 +473,90 @@ describe("assembleIncidentReportFromSources", () => {
     expect(child.parentLeaseId).toBe("L-root");
     expect(child.denials).toContain("orch:web");
   });
+
+  // -------------------------------------------------------------------------
+  // FLEET-05 — the fleet→explain drill-down by rootRunId. fleet (Plan 03) names
+  // the worst run's rootRunId; pasting it into obs.explain must resolve to the
+  // run's sessionKey and render its spawn-tree. The rootRunId arm is FIRST in
+  // the 3-way resolution; an unresolvable rootRunId yields the WR-04 not-found
+  // marker (not a clean-looking empty report). REAL session-index layout per
+  // AGENTS §2.10 — the day-key PATH resolution is exercised, not just the LOGIC.
+  // -------------------------------------------------------------------------
+
+  it("FLEET-05: assemble by rootRunId resolves the run's sessionKey and renders its spawnTree (REAL layout)", async () => {
+    const ROOT_RUN_ID = "run-fleet-05-headline";
+    const SESSION_KEY = "default:unattended:unattended:peer:7";
+    // Seed a REAL <dataDir>/logs/session-index.<dayKey>.jsonl carrying a
+    // capability.audited record that maps the rootRunId → the run's runId
+    // (≈ sessionKey), so resolveRootRunToSession canonicalizes ROOT_RUN_ID →
+    // SESSION_KEY against the actual nested file layout.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-"));
+    const logsDir = path.join(dataDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+      JSON.stringify({
+        traceSchema: "comis-trajectory",
+        type: "capability.audited",
+        data: { rootRunId: ROOT_RUN_ID, runId: SESSION_KEY, decision: "allow" },
+      }) + "\n",
+      "utf-8",
+    );
+
+    // The trajectory records for the resolved session — a 2-level spawn tree under
+    // the SAME rootRunId. The reader returns them ONLY for the resolved sessionKey,
+    // proving the rootRunId actually resolved (not a pass-through).
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "capability.audited",
+        agentId: "default",
+        data: { leaseId: "L-root", rootRunId: ROOT_RUN_ID, capability: "orch:read", tool: "memory_search", decision: "allow" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "capability.audited",
+        agentId: "default",
+        data: { leaseId: "L-child", parentLeaseId: "L-root", rootRunId: ROOT_RUN_ID, capability: "orch:web", tool: "web_fetch", decision: "deny" },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async (key) => (key === SESSION_KEY ? records : []),
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "default" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: ROOT_RUN_ID,
+      depth: "summary",
+    });
+
+    // The run resolved (not session_not_found) and its spawn-tree rendered.
+    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect(report.spawnTree).toBeDefined();
+    expect(report.spawnTree!.length).toBeGreaterThan(0);
+    const root = report.spawnTree!.find((n) => n.leaseId === "L-root")!;
+    expect(root).toBeDefined();
+    expect(root.rootRunId).toBe(ROOT_RUN_ID);
+  });
+
+  it("FLEET-05: an unresolvable rootRunId yields the WR-04 not-found marker (not a clean session)", async () => {
+    // Empty dataDir → no session-index → resolveRootRunToSession returns "" (and
+    // the id is not a synthetic root). The report must SIGNAL unresolvability.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-nope-"));
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => null,
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: "run-nope-does-not-exist",
+    });
+    expect(report.likelyRootCause?.code).toBe("session_not_found");
+    expect(report.failures).toEqual([]);
+  });
 });

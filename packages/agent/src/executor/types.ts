@@ -94,6 +94,13 @@ export interface ExecutionResult {
 }
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
+// @optional-field-count: 13 — ExecutionOverrides is the per-EXECUTION override bag;
+// every `?` field is an independent per-run knob the caller MAY set (stepCounter/
+// tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
+// graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
+// promptTimeout, and WT-01's workspaceDir for an isolated worktree run). They are
+// not a cluster-split candidate — each describes ONE execution's override surface,
+// applied at distinct executor chokepoints; `operationType` is the only required field.
 export interface ExecutionOverrides {
   /** Override the shared StepCounter with a fresh instance.
    *  When provided, this counter is used instead of the deps.stepCounter. */
@@ -140,6 +147,17 @@ export interface ExecutionOverrides {
    *  enriched with delegation routing hints. Omit for top-level
    *  agents where all tools are reachable. */
   activeToolGroups?: string[];
+  /**
+   * WT-01: per-run workspace override — the child's file-tool jail cwd for THIS
+   * execution. A `spawn --worktree` child runs in an ISOLATED git worktree, so the
+   * daemon passes the worktree dir here; the executor uses it as the SDK session
+   * cwd + the resource-loader / command-handler / context-engine workspace root,
+   * so exec/read/write/edit resolve inside the worktree (still attenuated + jailed
+   * — the worktree is confined under the agent's own jailed workspace, T-219-11).
+   * Absent ⇒ `deps.workspaceDir` (the agent's shared workspace — today's path,
+   * byte-identical).
+   */
+  workspaceDir?: string;
 }
 
 /** Agent executor interface. */

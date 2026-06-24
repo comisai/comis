@@ -232,13 +232,23 @@ Source: `packages/daemon/src/wiring/setup-broker-activation.ts:79`
 
 **Internal use only.** The filesystem path of the loopback capability endpoint's Unix socket (`0600`, owner-only), bind-mounted into the jail and injected alongside [`COMIS_CAP_LEASE`](#comis_cap_lease). The jailed surface dials this socket, presents the lease bearer, and the endpoint resolves the lease's capabilities and dispatches through the same handler gates as every other origin. Set internally by the daemon per jail — operators do not set this variable directly. Like `COMIS_CAP_LEASE`, it rides the trusted inherited path and is preserved by the env scrub while the `COMIS_*` prefix is blocked from a workspace `.env`.
 
+### `COMIS_AGENT_BIN`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The jailed `orchestrate(script)` surface (daemon-spawned, sandboxed) |
+| **Format** | Absolute path to the in-jail `comis-agent` binary |
+| **Default** | (set internally by the daemon per jail, only when the binary resolves) |
+
+**Internal use only.** The in-jail path of the thin, capability-scoped [`comis-agent` CLI](/reference/comis-agent-cli) binary. The daemon binds the binary **read-only** (`--ro-bind`) into the jail and sets `COMIS_AGENT_BIN` to that same path so the in-jail CLI resolves. The binary is **sha256-pinned** against a committed build manifest: at jail construction the daemon re-hashes the bound bytes and **refuses to bind a mismatched/tampered binary** (a writable or swapped binary would be a host-RCE vector — the bind is always read-only). **Honest-degrade:** when the binary is missing or its hash does not match the pin, the daemon emits a loud WARN, leaves `COMIS_AGENT_BIN` **unset**, and the `comis-agent` CLI surface is unavailable — the `orchestrate` **script** surface still works. Set internally by the daemon per jail — operators do not set this variable directly. Like `COMIS_CAP_LEASE` / `COMIS_ORCH_SOCKET`, it rides the trusted inherited path (merged after the scrub) and is preserved while the `COMIS_*` prefix is blocked from a workspace `.env`.
+
 ### Child-env scrub (jailed surfaces)
 
 When the daemon spawns a sandboxed child — a driven CLI via the [terminal-driver](/agent-tools/terminal-driver), or the jailed `orchestrate(script)` surface — it **scrubs the spawn environment** before the jail starts, because bubblewrap inherits the spawner env by default. The scrub is a blocklist (strip the known-dangerous keys, keep the rich env a TUI needs):
 
 - **Interpreter-control vars are stripped unconditionally** — `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `PYTHONSTARTUP`, `RUBYOPT`, `PERL5OPT`, the JVM `*_OPTIONS` set, and the prefix families **`LD_*`**, **`DYLD_*`**, **`PIP_*`**, **`UV_*`**. These instruct a runtime to load attacker-controlled code at startup (dynamic-linker preload, package-index redirection) → remote code execution, so they never reach the child regardless of where they came from.
 - **The `COMIS_*` prefix is fail-closed-blocked from an untrusted workspace `.env`.** A `COMIS_`-prefixed key loaded from workspace content is dropped, so attacker-supplied workspace content cannot forge a runtime-control variable (e.g. a fake `COMIS_CAP_LEASE`) into the jail.
-- **The daemon's own injection is preserved.** `COMIS_CAP_LEASE` / `COMIS_ORCH_SOCKET` minted by the daemon ride a separate trusted path and **survive** the scrub — blocking them would break the capability socket. Only the untrusted workspace source is blocked; the trusted daemon-injected source is allowed.
+- **The daemon's own injection is preserved.** `COMIS_CAP_LEASE` / `COMIS_ORCH_SOCKET` / `COMIS_AGENT_BIN` set by the daemon ride a separate trusted path and **survive** the scrub — blocking them would break the capability socket or the in-jail `comis-agent` CLI. Only the untrusted workspace source is blocked; the trusted daemon-injected source is allowed.
 
 Source: `packages/skills/src/tools/builtin/terminal-driver/terminal-env-scrub.ts`
 

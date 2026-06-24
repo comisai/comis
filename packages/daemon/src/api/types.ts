@@ -98,14 +98,11 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
-  /** LCD lossless-store write+run surface — the `session.reset_conversation`
-   *  handler (Phase 164-06) calls `deleteConversationLcd` inside
-   *  `runOnConversation` to clear a conversation's lcd_* rows. Optional:
-   *  the handler fails-closed (throws "LCD store not available") when absent,
-   *  never silently returning a 0 count. The same ContextStorePort instance is
-   *  also on MemoryApiDeps; the SessionsApiDeps copy here lets the
-   *  session-archive.ts handler access it without widening the consumption type
-   *  to the full MemoryApiDeps slice. */
+  /** LCD lossless-store write+run surface — `session.reset_conversation` (164-06)
+   *  calls `deleteConversationLcd` in `runOnConversation` to clear lcd_* rows.
+   *  Optional: the handler fails-closed (throws "LCD store not available") when
+   *  absent, never a silent 0 count. Same instance as MemoryApiDeps; the copy here
+   *  lets session-archive.ts access it without widening to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
   /** MemoryPort for session-archive --memory reset (DIST-05). The concrete
    *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
@@ -255,9 +252,8 @@ export interface MemoryApiDeps {
  */
 export interface ChannelsApiDeps {
   adaptersByType: Map<string, ChannelPort>;
-  /** Resolves daemon NormalizedMessage.id UUIDs back to platform-native
-   *  message ids for message.delete/edit/react. Optional for backward compat
-   *  with daemon configs that disable channel adapters entirely. */
+  /** Resolves daemon NormalizedMessage.id UUIDs back to platform-native message
+   *  ids for message.delete/edit/react. Optional when channel adapters are disabled. */
   inboundMessageIdResolver?: import("../wiring/inbound-message-id-resolver.js").InboundMessageIdResolver;
   channelConfig: Record<string, { enabled: boolean }>;
   // Gateway attachment deps -- set after gateway init via mutable ref
@@ -270,9 +266,8 @@ export interface ChannelsApiDeps {
   deliveryService: import("@comis/core").DeliveryService;
   // Channel health monitor
   healthMonitor?: import("@comis/channels").ChannelHealthMonitor;
-  // Channel plugins for capabilities RPC. Required: the production composition
-  // root (setup-channels-adapters.ts) always wires this Map with ≥9 plugin
-  // entries before `buildRpcDispatchDeps` runs. Tests pass a Map (possibly empty).
+  // Channel plugins for capabilities RPC. Required: the production composition root
+  // (setup-channels-adapters.ts) wires ≥9 plugin entries before buildRpcDispatchDeps. Tests may pass an empty Map.
   channelPlugins: Map<string, import("@comis/core").ChannelPluginPort>;
   /** message-handlers reads deps.defaultAgentId, deps.defaultWorkspaceDir,
    *  deps.workspaceDirs, deps.logger. channel-handlers reads deps.persistDeps. */
@@ -281,10 +276,12 @@ export interface ChannelsApiDeps {
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
   persistDeps?: PersistToConfigDeps;
-  /** Phase 213 (QUOTA-01/02): the bounded-autonomy service. message.send/reply/react
-   *  consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional;
-   *  absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
+  /** Phase 213 (QUOTA-01/02): the bounded-autonomy service. message.send/reply/react consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional; absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
   boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
+  /** Phase 216 ONCE-01/02: tree-stable rootRunId resolver (same as SessionsApiDeps.resolveRootRunId, already spread into the flat dispatch deps). message.send/reply/react derive the outward-ledger idempotency key from it; absent ⇒ the wrap is a pass-through. */
+  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
+  /** Phase 216 ONCE-01: the three-state outward ledger; absent ⇒ no exactly-once wrap (older/non-autonomy daemon) */
+  outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
 }
 
 /**
@@ -327,14 +324,14 @@ export interface AgentsApiDeps {
 /**
  * Dependencies for cron-handlers + graph-handlers + heartbeat-handlers + subagent-handlers
  * (cron.list/run, graph.list/run, heartbeat.list/run, subagent.list).
+ * @optional-field-count: 14 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the Phase-217 autonomy plane denialBreaker/evictRegistry/escalate). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent (byte-identical pre-217). Keep until a structural slice split.
  */
 export interface OrchestratorApiDeps {
   getAgentCronScheduler: (agentId: string) => CronScheduler;
   cronSchedulers: Map<string, CronScheduler>;
   executionTrackers: Map<string, ExecutionTracker>;
   wakeCoalescer: WakeCoalescer;
-  // Graph coordinator deps
-  graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator;
+  graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator; // Graph coordinator deps
   // Named graph persistence deps
   namedGraphStore?: import("@comis/memory").NamedGraphStore;
   /** Node type registry for driver config validation (structurally compatible with the graph-local / @comis/scheduler NodeTypeRegistry). */
@@ -359,8 +356,11 @@ export interface OrchestratorApiDeps {
   /** subagent-handlers reads deps.subAgentRunner.list/kill/steer; autonomy-handlers (213-06) reads killByRootRun for run.kill. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
-  // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
-  eventBus?: AppContainer["eventBus"];
+  /** Phase 216 DUR-03: the durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when Plan 07 wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
+  denialBreaker?: import("../autonomy/denial-breaker.js").DenialBreaker; // 217-05 BREAK-02 (see the @optional-field-count JSDoc above). OPTIONAL ⇒ pre-217 byte-identical.
+  evictRegistry?: import("../autonomy/evict-registry.js").EvictRegistry; // 217-05 EVICT-01/03: isEvicted→demote; flows into createAutonomyHandlers via `...deps` (activates autonomy.evict).
+  escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // 217-05 UNATT-03: content-free NotifyFn, fired NEVER-awaited.
+  eventBus?: AppContainer["eventBus"]; // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 
@@ -698,9 +698,8 @@ export interface MediaApiDeps {
 
 /**
  * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
- * @optional-field-count: 13 — a composition-root deps bag; each optional field is a
- * distinct obs source present iff that subsystem is wired (absent ⇒ that RPC honest-
- * degrades). +1 per new obs source (spendSnapshot added in 179 — WEBUI-02 live spend).
+ * @optional-field-count: 14 — a composition-root deps bag; each optional field is a
+ * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source (spendSnapshot 179; durableRuns 220-03 autonomy).
  */
 export interface ObservabilityApiDeps {
   // Observability bridge deps
@@ -749,6 +748,7 @@ export interface ObservabilityApiDeps {
    * because 161-02 always populates it, and the fleet tests inject a fakeClock.
    */
   clock?: import("@comis/core").ClockPort;
+  /** FLEET-01/02/04 (220-03): the durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).

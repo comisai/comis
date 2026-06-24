@@ -912,4 +912,83 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership (RATE-01/02)
     await endpoint.handleCapCall(bearer, "cron.add", { payload_kind: "agent_turn", schedule: "x" });
     expect(rpcCall).toHaveBeenCalledTimes(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 216 (HIGH-1 / NEW-3): the jail leg allocates a monotonic
+  // _outwardStepIndex for an OUTWARD message method (orch:message) and strips a
+  // forged inbound value before re-injecting the trusted allocated one.
+  // -------------------------------------------------------------------------
+
+  /** A durableRuns stub whose allocateOutwardStep returns a monotonic 0,1,… per root. */
+  function makeAllocStore() {
+    const counters = new Map<string, number>();
+    return {
+      allocateOutwardStep: vi.fn(async (rootRunId: string) => {
+        const next = counters.has(rootRunId) ? counters.get(rootRunId)! + 1 : 0;
+        counters.set(rootRunId, next);
+        return { ok: true as const, value: next };
+      }),
+    } as never;
+  }
+
+  it("HIGH-1: two outward message.send calls in one run get _outwardStepIndex 0 then 1 and BOTH dispatch", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    // orch:message is the audience for message.send/reply/react.
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const durableRuns = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "one" });
+    await endpoint.handleCapCall(bearer, "message.reply", { channelId: "c", text: "two" });
+
+    expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
+    expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
+    expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
+  });
+
+  it("NEW-3: a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const durableRuns = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+
+    // The jailed client forges _outwardStepIndex: 999 to try to self-collide /
+    // perturb ordering. The strip drops it; the allocated 0 replaces it.
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x", _outwardStepIndex: 999 });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBe(0); // trusted allocation, NOT the forged 999
+  });
+
+  it("does NOT inject _outwardStepIndex for a non-outward method (cron.add)", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-cron");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const durableRuns = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+
+    await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBeUndefined();
+    expect((durableRuns as { allocateOutwardStep: ReturnType<typeof vi.fn> }).allocateOutwardStep).not.toHaveBeenCalled();
+  });
+
+  it("is a pass-through (no index) when no durableRuns store is wired", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall }); // no durableRuns
+
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._outwardStepIndex).toBeUndefined();
+  });
 });

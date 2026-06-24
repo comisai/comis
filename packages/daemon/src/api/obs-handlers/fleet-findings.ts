@@ -34,15 +34,14 @@ import {
   scriptZeroHitFromRow,
   servedBelowConfiguredFromRow,
   voiceDegradedFromRow,
+  type Finding,
 } from "./fleet-findings-extractors.js";
+import { buildAutonomyFindings } from "./fleet-autonomy.js";
 
-/** One report finding. Shape-identical to `FleetHealthReport.findings[number]`. */
-export interface Finding {
-  code: string;
-  detail: string;
-  count: number;
-  hint: string;
-}
+// `Finding` is declared in the leaf `fleet-findings-extractors.ts` (so the
+// `fleet-autonomy.ts` sibling can import it without a cycle) and re-exported here
+// for this module's existing consumers (fleet-health.ts imports `type Finding`).
+export type { Finding };
 
 /**
  * TELEM-01 (Plan 173-03): the pipeline-authoring aggregate the Phase-174 gate
@@ -300,6 +299,13 @@ export function buildFindings(
       hint: "graph nodes are being cut off by their token budget; raise the binding knob — the node's own `tokenBudget`, the operator default `security.agentToAgent.tokenBudget`, or the graph `budget.maxTokens` (inherit-share). run `comis explain` for the per-node numbers",
     });
   }
+
+  // FLEET-01 (Phase 220-03): the three dedicated autonomy findings (durable_orphaned
+  // / autonomy_revoked / autonomy_killed; kill separable from revoke) — extracted to
+  // the `fleet-autonomy.ts` sibling (the obs-handlers 500-line subdir cap). Each has
+  // its own zero-traffic guard inside the helper; the returned findings inherit the
+  // FLEET_FINDINGS_CAP bound + the highest-count-first sort below.
+  findings.push(...buildAutonomyFindings(healthSignals));
 
   // OBS-04 (Phase 196): dedicated voice_health finding — the degraded STT/TTS
   // turn count + the DOMINANT voice errorKind (the closed domain SttErrorKind),

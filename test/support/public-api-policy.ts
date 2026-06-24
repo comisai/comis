@@ -2260,6 +2260,49 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HANDLER_CAPABILITY_MAP",
       "HandlerCapabilityClassification",
       "GatedMethodName",
+      // SELF_SCOPED_AGENT_READS (Phase 219, CLI-01/02): the tight cap-socket
+      // audience exception. The VALUE const is consumed cross-package by the
+      // @comis/infra lease audience (lease-manager.ts), so it has a real
+      // name-importer and is NOT tracked here. SelfScopedAgentRead is the const's
+      // erased member type (runtime-free, never named cross-package yet) — tracked
+      // here beside GatedMethodName until a real type-importer lands.
+      "SelfScopedAgentRead",
+      // CliSubcommand (Phase 219, CLI-01): the comis-agent subcommand→{tool|method}
+      // table's `keyof typeof` key type, erased at runtime and never named
+      // cross-package yet — tracked here beside GatedMethodName until a real
+      // cross-package type-importer lands. The VALUE const CLI_SUBCOMMAND_MAP and
+      // the CliCallTarget shape type are NOT tracked here: the @comis/skills
+      // comis-agent-cli.ts name-imports both from @comis/core (real consumers).
+      "CliSubcommand",
+      // ── Durability-resume engine (Phase 216, interface-first Wave 1) ──
+      // The DurableRunPort (run checkpoint store) + OutwardSendLedgerPort
+      // (three-state outward-send ledger) + the DurableRunRecord domain type +
+      // the ChannelPort.reconcileSend? query/outcome types land FIRST (Plan
+      // 216-01) so every downstream plan implements against one contract: the
+      // SQLite stores (Wave 2), the resume engine + adapters (Wave 3), the boot
+      // wiring (Wave 4). Until those land, the only callers are this plan's own
+      // domain test (intra-core, excluded from the consumer scan). Shrink each
+      // entry as a real cross-package production consumer lands — the SQLite
+      // adapter (@comis/memory, Wave 2) consumes the port + record types, the
+      // daemon resume wiring (Wave 4) consumes the ports, and the channel
+      // adapters consume ReconcileSendQuery/ReconcileSendOutcome. Mirrors the
+      // Phase 212 tool.invoke + Phase 211 validateBindMount + Phase 199 REACT-01
+      // interface-first precedents above. parseDurableRunRecord/the *Schema
+      // values are part of the documented durability API surface.
+      "DurableRunPort",
+      "DurableRunStatusSchema",
+      "DurableRunStatus",
+      "DurableRunRecordSchema",
+      "DurableRunRecord",
+      "parseDurableRunRecord",
+      "AgentCapabilitySchema",
+      "OutwardSendLedgerPort",
+      "OutwardSendState",
+      "ReconcileOutcome",
+      "OutwardSendRecord",
+      "OutwardSendBeginInput",
+      "ReconcileSendQuery",
+      "ReconcileSendOutcome",
     ])],
     // @comis/daemon: baseline orphans tracked here. All three
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -2419,6 +2462,39 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // only sqlite + the session-index JSONL (never daemon.log).
       // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts (Plan 162-01)
       "assembleFleetHealthReport",
+      // Outward-send crash-injection seam (Phase 216 Plan 08, MED-6) — re-exported
+      // from the daemon barrel so the exactly-once chaos test can arm/disarm a
+      // REAL mid-send crash (BETWEEN markUnknown and commit) and assert the
+      // sentinel propagates. INERT in production (__crashHook is never armed; the
+      // setter is the only writer). Same rationale as the _resetSigusr1Timer /
+      // _resetMutationFence process-state seams above: the consumers import these
+      // statically from @comis/daemon under test/** (the in-process chaos test),
+      // which the public-export-consumers AST walker excludes, so this orphan list
+      // is the canonical place to record the test-only public export.
+      // OutwardSendCrashHookMode is the setter's argument type (the two crash
+      // variants); the walker classifies the re-export as a value, so it is tracked
+      // here alongside the value exports.
+      // Consumer: test/integration/durable-resume-e2e.test.ts:66 (static import)
+      "__setOutwardSendCrashHookForTest",
+      "OUTWARD_SEND_CRASH_SENTINEL",
+      "OutwardSendCrashHookMode",
+      // Cap-socket denylist RE-PROVE seam (Phase 219-05, CLI-02/03) — re-exported
+      // from the TOP-LEVEL daemon barrel so the comis-agent-same-gate /
+      // comis-agent-no-admin arch-tests DERIVE the denylisted-method set from the
+      // SAME source the cap endpoint's pre-check uses (not a hand-copied literal
+      // that drifts). @comis/core CANNOT import it (a package cycle), so the
+      // cross-check must live in the architecture suite. Exact analog of
+      // assembleFleetHealthReport above: the sole external consumers import it
+      // statically from @comis/daemon under test/architecture/**, which the
+      // public-export-consumers AST walker (it scans packages/ only) excludes — so
+      // this orphan list is the canonical place to record the test-only export.
+      // SECURITY: read-only widening — DENYLISTED_RPC_METHODS is an inert
+      // closed-door const (the SUB_AGENT_TOOL_DENYLIST soundness loop is
+      // unchanged); exporting it grants no new authority and the cap-socket
+      // denylist pre-check is untouched.
+      // Consumer: test/architecture/comis-agent-same-gate.test.ts +
+      //           test/architecture/comis-agent-no-admin.test.ts (Plan 219-05)
+      "DENYLISTED_RPC_METHODS",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -2517,6 +2593,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // barrel anymore. The 5 entries below document this transient state.
     ["@comis/memory", new Set<string>([
       "initSchema",
+      // Durable run checkpoint store (v2.30, Phase 216 Plan 02, DUR-01). The
+      // SQLite DurableRunPort adapter `createSqliteDurableRunStore`, its options
+      // type `DurableRunStoreOptions`, and the idempotent DDL `ensureDurableRunTable`
+      // are surfaced ahead of their consumer: the daemon composition root wires the
+      // store (and the chaos test calls ensureDurableRunTable) in Plan 07. These are
+      // interface-first planned orphans that SHRINK OUT once that wiring lands
+      // (mirror the createSqliteOutcomeStore / lifecycle / tuned-alpha factory-orphan
+      // dance below + the Phase 216 Plan 01 @comis/core interface-first entries;
+      // allowlist-shrink.test.ts enforces shrink-only).
+      "createSqliteDurableRunStore",
+      "DurableRunStoreOptions",
+      "ensureDurableRunTable",
+      // Outward-send exactly-once ledger (v2.30, Phase 216 Plan 03, ONCE-01..04).
+      // The SQLite OutwardSendLedgerPort adapter `createSqliteOutwardSendLedger`
+      // and the idempotent DDL `ensureOutwardLedgerTable` are surfaced ahead of
+      // their consumer: the send-wrap site (Plan 05) + the resume reconcile loop
+      // (Plan 04) + the daemon composition root (Plan 07) wire them in later waves.
+      // Interface-first planned orphans that SHRINK OUT once that wiring lands
+      // (mirror the Plan-02 durable-run entries above; allowlist-shrink enforces
+      // shrink-only).
+      "createSqliteOutwardSendLedger",
+      "ensureOutwardLedgerTable",
       // NOTE (v2.12, Phase 126 Plan 04): createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.

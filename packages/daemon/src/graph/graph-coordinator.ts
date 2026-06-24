@@ -7,10 +7,11 @@
  */
 
 import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import { safePath, type GraphStatus, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext, parseFormattedSessionKey } from "@comis/core";
+import { safePath, type GraphStatus, type ValidatedGraph, type DurableRunRecord, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext, parseFormattedSessionKey, validateAndSortGraph, parseDurableRunRecord, ExecutionGraphSchema } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
+import { snapshotToSpawnTree, incompleteNodes } from "./graph-durable-checkpoint.js";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
 import { getModel, completeSimple } from "@earendil-works/pi-ai";
@@ -73,6 +74,19 @@ export interface GraphCoordinator {
   /** Direct notification when a graph-owned subagent is killed.
    *  Bypasses event bus for reliability during session cleanup. Idempotent. */
   notifyNodeFailed(graphId: string, nodeId: string, runId: string, error: string): void;
+  /**
+   * Phase 216 DUR-01/DUR-02 (Plan 11): resume a DAG run from its durable
+   * checkpoint after a daemon restart. Re-enters ONLY the nodes that were NOT
+   * terminal at crash time (`incompleteNodes(record.spawnTree)`) and DRIVES them
+   * to execution via the node-lifecycle path (`spawnReadyNodes` → `spawnNode`),
+   * so the re-entered node's sub-agent spawn actually fires — it does not merely
+   * re-mark the node ready. Completed/skipped/failed nodes are NOT re-run; a
+   * re-run node's outward sends are deduped by the ONCE ledger (Plans 05/07), so
+   * node-boundary resume is exactly-once-safe without persisting intra-node
+   * state. The durable resume engine (Plan 04) routes a DAG-shaped record here;
+   * Plan 12 wires this into the engine's resume dispatch (NEW-2).
+   */
+  resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>>;
 }
 
 /** Create a graph coordinator that executes validated graphs end-to-end. */
@@ -99,7 +113,64 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     spawnQueue: [],
   };
 
-  // Callback wiring: bind module functions with closed-over state/deps/config
+  /**
+   * Phase 216 DUR-01/DUR-02 (Plan 11): checkpoint the graph's per-node
+   * completion state to the durable run store at a NODE boundary. Persists the
+   * GraphExecutionSnapshot → `spawn_tree` keyed on the graph's tree-stable
+   * `rootRunId` (CR-01). A no-op when no store is wired or the run has no stable
+   * root (the durable key). On a terminal graph it flips the record to
+   * `completed` so resume skips it. Store errors are logged (WARN, hint +
+   * errorKind) but NEVER crash the graph — durability is best-effort overlay on
+   * the live run, never a blocker for it.
+   */
+  function checkpointGraph(gs: GraphRunState): void {
+    if (!deps.durableRuns || gs.rootRunId === undefined) return;
+    const store = deps.durableRuns;
+    const rootRunId = gs.rootRunId;
+    const terminal = gs.stateMachine.isTerminal();
+    if (terminal) {
+      void store.markCompleted(rootRunId).then((res) => {
+        if (!res.ok) {
+          deps.logger?.warn(
+            { graphId: gs.graphId, rootRunId, err: res.error, hint: "durable markCompleted failed; the run stays resumable and will be re-scanned on next boot", errorKind: "resource" as const },
+            "Graph durable markCompleted failed",
+          );
+        }
+      });
+      return;
+    }
+    // Source the run context the same way Plan 07 does for flat runs. The graph
+    // run carries no per-node lease/caps record here (those are minted per node),
+    // so the checkpoint persists the node-completion snapshot + the stable root;
+    // the caps/leaseIds the resumed run rehydrates come from the run record the
+    // outward-send path already wrote (NEW-1 outward_step is owned by
+    // allocateOutwardStep — this upsert deliberately never touches it).
+    const record: DurableRunRecord = {
+      rootRunId,
+      spawnTree: snapshotToSpawnTree(gs.stateMachine.snapshot()),
+      caps: [],
+      leaseIds: [],
+      budgetConsumed: gs.cumulativeCost,
+      cronOrigin: null,
+      stepIndex: -1,
+      status: "running",
+      lastHeartbeatAt: systemNowMs(),
+    };
+    void store.upsertCheckpoint(record).then((res) => {
+      if (!res.ok) {
+        deps.logger?.warn(
+          { graphId: gs.graphId, rootRunId, err: res.error, hint: "durable upsertCheckpoint failed; this node transition is not persisted, resume may re-run more nodes than necessary", errorKind: "resource" as const },
+          "Graph durable checkpoint failed",
+        );
+      }
+    });
+  }
+
+  // Callback wiring: bind module functions with closed-over state/deps/config.
+  // Phase 216 (Plan 11): the node-transition entry points (spawnNode →
+  // markNodeRunning; handleSubAgentCompleted → markNodeCompleted/markNodeFailed;
+  // markNodeFailed) each `checkpointGraph(gs)` AFTER the transition so the
+  // durable spawn_tree tracks node completion at every boundary.
   const callbacks = {
     spawnReadyNodes: (gs: GraphRunState) =>
       spawnReadyNodesFn(state, deps, config, gs, {
@@ -107,7 +178,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
           callbacks.spawnNode(gs2, nodeId),
       }),
 
-    spawnNode: (gs: GraphRunState, nodeId: string) =>
+    spawnNode: (gs: GraphRunState, nodeId: string) => {
       spawnNodeFn(state, deps, config, gs, nodeId, {
         markNodeFailed: (gs2, nid, error) => callbacks.markNodeFailed(gs2, nid, error),
         startDriverNode: (gs2, nid, node, driver, task) =>
@@ -119,13 +190,18 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
               handleDriverTimeoutFn(state, deps, config, gs3, nid2, driverCallbacks),
           }),
         spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
-      }),
+      });
+      // markNodeRunning fired inside spawnNodeFn (running boundary) — persist it.
+      checkpointGraph(gs);
+    },
 
-    markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) =>
+    markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) => {
       markNodeFailedFn(state, deps, gs, nodeId, error, {
         spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
         handleGraphCompletion: (gs2) => callbacks.handleGraphCompletion(gs2),
-      }),
+      });
+      checkpointGraph(gs);
+    },
 
     handleGraphCompletion: (gs: GraphRunState) =>
       handleGraphCompletionFn(state, deps, gs),
@@ -133,12 +209,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     handleBudgetExceeded: (gs: GraphRunState, reason: string) =>
       handleBudgetExceededFn(state, deps, gs, reason),
 
-    handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) =>
+    handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => {
       handleSubAgentCompletedFn(state, deps, config, gs, event, {
         spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
         handleGraphCompletion: (gs2) => callbacks.handleGraphCompletion(gs2),
         handleBudgetExceeded: (gs2, reason) => callbacks.handleBudgetExceeded(gs2, reason),
-      }),
+      });
+      // markNodeCompleted / markNodeFailed fired inside — persist the boundary.
+      checkpointGraph(gs);
+    },
   };
 
   // Driver-specific callbacks (shared between driver handler functions)
@@ -530,5 +609,128 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     callbacks.handleSubAgentCompleted(gs, { runId, success: false });
   }
 
-  return { run, getStatus, cancel, listGraphs, shutdown, getConcurrencyStats, notifyNodeFailed };
+  /**
+   * Phase 216 DUR-01/DUR-02 (Plan 11): resume a DAG run from its durable
+   * checkpoint after a restart. Re-enters ONLY the incomplete nodes and DRIVES
+   * them via the node-lifecycle path so each re-entered node's sub-agent spawn
+   * actually fires (LOW-1 — not a bare re-mark-ready). Completed nodes are not
+   * re-run; a re-run node's outward sends dedupe via the ONCE ledger.
+   *
+   * The durable record carries node-completion STATE (`spawn_tree`) but not the
+   * original graph topology/tasks (out of scope for 216 — full mid-node DAG
+   * state persistence is deferred). So resume reconstructs a reduced graph from
+   * the incomplete frontier: each incomplete node becomes an independent root
+   * (dependsOn=[]), immediately `ready`, and is driven to re-execute. Already-
+   * terminal nodes (completed/skipped/failed) are excluded from the reconstructed
+   * graph, so they are provably not re-run (DoS bound — resume work is the
+   * unfinished frontier, not the whole DAG).
+   */
+  async function resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>> {
+    // Cap/shape guard: a tampered or column-drifted record must not rehydrate
+    // (T-216-01). parseDurableRunRecord permits the stepIndex=-1 never-sent
+    // sentinel, so a legitimate not-yet-sent DAG checkpoint passes.
+    const parsed = parseDurableRunRecord(record);
+    if (!parsed.ok) {
+      return err(new Error(`resumeGraph: record failed parse (cap/shape guard): ${parsed.error.message}`));
+    }
+    const validRecord = parsed.value;
+    const rootRunId = validRecord.rootRunId;
+
+    const toResume = incompleteNodes(validRecord.spawnTree as Array<{ nodeId: string; status: string }>);
+
+    // Nothing incomplete ⇒ the graph already finished; flip it to completed so a
+    // later boot scan skips it (markCompleted territory — no nodes to re-run).
+    if (toResume.length === 0) {
+      if (deps.durableRuns) {
+        const res = await deps.durableRuns.markCompleted(rootRunId);
+        if (!res.ok) return err(res.error);
+      }
+      deps.logger?.info(
+        { rootRunId, hint: "DAG resume: no incomplete nodes — already complete" },
+        "Graph durable resume: nothing to re-enter",
+      );
+      return ok(undefined);
+    }
+
+    // Reconstruct a reduced graph from the incomplete frontier (each node a
+    // root). Parse a minimal raw input through ExecutionGraphSchema first to
+    // apply node + graph-level defaults (retries=0 here so a re-run does not
+    // re-multiply attempts), then topo-sort. validateAndSortGraph does NOT apply
+    // defaults — it only sorts — so the parse step is required.
+    const parsedGraph = ExecutionGraphSchema.safeParse({
+      nodes: toResume.map((nodeId) => ({
+        nodeId,
+        task: `Resume graph node "${nodeId}" (rootRunId ${rootRunId}) after daemon restart`,
+        dependsOn: [],
+        retries: 0,
+      })),
+      onFailure: "continue",
+    });
+    if (!parsedGraph.success) {
+      return err(new Error(`resumeGraph: could not build resume graph: ${parsedGraph.error.message}`));
+    }
+    const reducedGraph = validateAndSortGraph(parsedGraph.data);
+    if (!reducedGraph.ok) {
+      return err(new Error(`resumeGraph: could not sort resume graph: ${reducedGraph.error.message}`));
+    }
+    const validated: ValidatedGraph = reducedGraph.value;
+
+    const graphId = randomUUID();
+    const graphTraceId = randomUUID();
+    const sharedDir = safePath(deps.dataDir, "graph-runs", graphId);
+    mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
+
+    const stateMachine = createGraphStateMachine(validated);
+
+    const gs: GraphRunState = {
+      graphId,
+      graphTraceId,
+      rootRunId, // the tree-stable durable key — re-run nodes share it so the ONCE ledger dedups their outward sends
+      graph: validated,
+      stateMachine,
+      runIdToNode: new Map(),
+      nodeOutputs: new Map(),
+      nodeTimers: new Map(),
+      retryTimers: new Map(),
+      graphTimer: undefined,
+      startedAt: systemNowMs(),
+      runningCount: 0,
+      resolvedLanguage: tryGetContext()?.resolvedLanguage,
+      nodeProgress: false,
+      skippedNodesEmitted: new Set(),
+      cumulativeTokens: 0,
+      cumulativeCost: validRecord.budgetConsumed,
+      sharedDir,
+      driverStates: new Map(),
+      driverRunIdMap: new Map(),
+      waitHandlers: new Map(),
+      syntheticRunResults: new Map(),
+      nodeCacheData: new Map(),
+      nodeTokenSpend: new Map(),
+      nodeCost: new Map(),
+      maxAnnouncementChars: config.maxAnnouncementChars,
+    };
+
+    state.graphs.set(graphId, gs);
+
+    deps.logger?.info(
+      { graphId, rootRunId, resumedNodeCount: toResume.length, totalNodeCount: validRecord.spawnTree.length },
+      "Graph durable resume: re-entering incomplete nodes",
+    );
+    deps.eventBus.emit("graph:started", {
+      graphId,
+      label: validated.graph.label,
+      nodeCount: validated.graph.nodes.length,
+      timestamp: systemNowMs(),
+    });
+
+    // DRIVE the incomplete nodes (LOW-1): spawnReadyNodes → spawnNode →
+    // subAgentRunner.spawn + markNodeRunning. The re-entered node actually
+    // re-executes; it is NOT merely set ready.
+    callbacks.spawnReadyNodes(gs);
+
+    return ok(undefined);
+  }
+
+  return { run, getStatus, cancel, listGraphs, shutdown, getConcurrencyStats, notifyNodeFailed, resumeGraph };
 }

@@ -9,7 +9,18 @@
  * Extracted from daemon.ts inline session.send handler for testability.
  */
 
-import { parseFormattedSessionKey, type SessionKey, type TypedEventBus, type AgentToAgentConfig, systemNowMs, systemSetTimeout } from "@comis/core";
+import { createHash } from "node:crypto";
+import {
+  parseFormattedSessionKey,
+  isPermanentError,
+  type SessionKey,
+  type TypedEventBus,
+  type AgentToAgentConfig,
+  type OutwardSendLedgerPort,
+  type DurableRunPort,
+  systemNowMs,
+  systemSetTimeout,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -32,6 +43,28 @@ export interface CrossSessionSenderDeps {
   sendToChannel: (channelType: string, channelId: string, text: string) => Promise<boolean>;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
+  /**
+   * HIGH-2 (ONCE-01/02) — the three-state outward-send ledger. When present
+   * (alongside {@link CrossSessionSenderDeps.durableRuns} + a resolvable
+   * rootRunId), the completion-announcement send is routed through the SAME
+   * exactly-once ledger as `message.send`, so a restart-driven re-announce of an
+   * already-committed announcement is a no-op (no double-notify). `undefined` on
+   * a non-autonomy daemon ⇒ the announce is a pass-through (unchanged behavior).
+   * Wired by Plan 12 (the sole daemon.ts editor for this injection).
+   */
+  outwardLedger?: OutwardSendLedgerPort;
+  /**
+   * HIGH-2 — allocates the stable per-announce `stepIndex` (the other half of the
+   * `(rootRunId, stepIndex)` idempotency key) ONCE via `allocateOutwardStep`.
+   * `undefined` ⇒ pass-through. Wired by Plan 12.
+   */
+  durableRuns?: DurableRunPort;
+  /**
+   * HIGH-2 — resolves the announce origin's `rootRunId` from the (parsed) caller
+   * session key, the SAME resolver the message handlers use. `undefined` (or an
+   * unresolvable key) ⇒ pass-through. Wired by Plan 12.
+   */
+  resolveRootRunId?: (sessionKey: SessionKey) => string;
 }
 
 export interface CrossSessionSendParams {
@@ -64,12 +97,120 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
   // Private helpers
   // -----------------------------------------------------------------------
 
+  /**
+   * Resolve the announce origin's rootRunId from the caller session key, using
+   * the SAME `resolveRootRunId ∘ parseFormattedSessionKey` chain the message
+   * handlers use. Returns `undefined` for an absent/malformed key or when the
+   * resolver dep is not wired (⇒ a pass-through, non-ledgered announce).
+   */
+  function resolveAnnounceRootRunId(callerSessionKey: string | undefined): string | undefined {
+    if (!callerSessionKey || !deps.resolveRootRunId) return undefined;
+    const parsed = parseFormattedSessionKey(callerSessionKey);
+    return parsed ? deps.resolveRootRunId(parsed) : undefined;
+  }
+
+  /**
+   * Send the completion announcement through the SAME three-state ONCE ledger as
+   * `message.send` (HIGH-2). The lifecycle written around the single
+   * `deps.sendToChannel` call mirrors `wrapOutwardSend` (Plan 05) exactly:
+   *   lookup (committed → no-op) → begin (send_attempt_started, the SOLE INSERT)
+   *   → markUnknown (unknown_after_send) → sendToChannel → commit.
+   * A committed `(rootRunId, stepIndex)` short-circuits to a no-op (the announce
+   * already landed across a restart — no double-notify). A begin UNIQUE-collision
+   * is "already in flight" (NO second send). A permanent failure → markFailed
+   * (no retry, ONCE-04); a transient failure leaves the row `unknown_after_send`
+   * for the Plan-04 recovery scan. Content-free (T-216-03): only a sha256 digest
+   * reaches the ledger, never the announcement body. The agentId for the row is
+   * the caller's resolved agent (the announce origin).
+   */
+  async function ledgeredAnnounce(
+    ledger: OutwardSendLedgerPort,
+    rootRunId: string,
+    stepIndex: number,
+    agentId: string,
+    channelType: string,
+    channelId: string,
+    text: string,
+  ): Promise<boolean> {
+    // ONCE-02 dedup read: a committed row short-circuits a replay to a no-op —
+    // deps.sendToChannel is never reached (no restart double-notify).
+    const existing = await ledger.lookup(rootRunId, stepIndex);
+    if (existing.ok && existing.value?.state === "committed") {
+      return true; // the announcement already landed
+    }
+
+    // Content-free key (T-216-03): only the sha256 slice — never the body.
+    const contentDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+    // ONCE-01: send_attempt_started BEFORE the platform call. A UNIQUE
+    // (rootRunId, stepIndex) collision means another attempt owns this send →
+    // do NOT issue a second platform call (no double-notify).
+    const begun = await ledger.begin({ rootRunId, stepIndex, agentId, channelType, channelId, contentDigest });
+    if (!begun.ok) {
+      return true; // already in flight — another attempt owns it
+    }
+
+    // unknown_after_send — written BEFORE the platform-call window closes so a
+    // crash mid-announce leaves a durable row the recovery scan reconciles.
+    await ledger.markUnknown(rootRunId, stepIndex);
+
+    let success = false;
+    let sendErr: Error | undefined;
+    try {
+      success = await deps.sendToChannel(channelType, channelId, text);
+    } catch (err) {
+      sendErr = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (success) {
+      // The announcement has no platform-message-id surface (sendToChannel
+      // returns boolean), so commit with a "delivered" sentinel.
+      await ledger.commit(rootRunId, stepIndex, "delivered");
+      return true;
+    }
+
+    // A permanent failure is terminal (ONCE-04): markFailed, skip retry. A
+    // transient failure (or a false return) leaves the row unknown_after_send for
+    // the Plan-04 recovery scan — never a blind replay.
+    if (sendErr && isPermanentError(sendErr.message)) {
+      await ledger.markFailed(rootRunId, stepIndex, "permanent");
+    }
+    return false;
+  }
+
   async function announce(
     channelType: string | undefined,
     channelId: string | undefined,
     text: string,
+    callerSessionKey: string | undefined,
   ): Promise<boolean> {
     if (!channelType || !channelId) return false;
+
+    // HIGH-2: route the announce through the ONCE ledger when the ledger +
+    // durableRuns deps are wired AND the caller resolves to a rootRunId. Allocate
+    // the stepIndex ONCE for this announce (the stable key across a restart).
+    const rootRunId = resolveAnnounceRootRunId(callerSessionKey);
+    if (deps.outwardLedger && deps.durableRuns && rootRunId !== undefined) {
+      const allocated = await deps.durableRuns.allocateOutwardStep(rootRunId);
+      if (allocated.ok) {
+        const parsed = parseFormattedSessionKey(callerSessionKey!);
+        const agentId = parsed?.agentId ?? "default";
+        return ledgeredAnnounce(
+          deps.outwardLedger,
+          rootRunId,
+          allocated.value,
+          agentId,
+          channelType,
+          channelId,
+          text,
+        );
+      }
+      // allocation failed → fall through to a direct (unledgered) send rather
+      // than dropping the announcement.
+    }
+
+    // Pass-through (non-autonomy / unwired / unresolvable rootRunId): the send is
+    // unchanged.
     return deps.sendToChannel(channelType, channelId, text);
   }
 
@@ -148,7 +289,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
         const announced = hadSkip
           ? false
-          : await announce(params.announceChannelType, params.announceChannelId, stripped);
+          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerSessionKey);
         return {
           sent: true,
           response: stripped,
@@ -202,7 +343,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
       const announced = hadSkip
         ? false
-        : await announce(params.announceChannelType, params.announceChannelId, stripped);
+        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerSessionKey);
 
       return {
         sent: true,

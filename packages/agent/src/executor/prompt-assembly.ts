@@ -81,6 +81,7 @@ import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
 import { FAIL_CLOSED_PROFILE, type ModelProfile } from "./model-profile.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
+import { economiseForReadOnlyChild } from "../spawn/child-prompt-economy.js";
 import * as os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -970,7 +971,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     const { bootstrapContextFiles: reuseBootstrapFiles } = await resolveBootstrapContextFiles(reusePromptMode);
     const reuseUserLanguage = extractUserLanguage(reuseBootstrapFiles);
 
-    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined, userLanguage: reuseUserLanguage };
+    // STRIP-01/02 (cache-reuse path): the reused prefix is the PARENT's full
+    // frozen prompt, so a read-only child drops the heavy blocks here too (else
+    // the dominant same-model sub-agent path leaks the full inherited context).
+    const reuseEconomised = deps.spawnPacket
+      ? economiseForReadOnlyChild(parentCache.frozenSystemPrompt, parentCache.frozenSystemPromptBlocks, mergedCustomTools.map((t) => t.name))
+      : { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks };
+
+    return { systemPrompt: reuseEconomised.systemPrompt, systemPromptBlocks: reuseEconomised.systemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined, userLanguage: reuseUserLanguage };
   }
 
   // 1. Resolve promptMode
@@ -1631,6 +1639,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       systemPrompt = compactPrompt;
       systemPromptBlocks = assembleRichSystemPromptBlocks(compactParams);
     }
+  }
+
+  // STRIP-01/02: read-only-child input economy. Gating + drop logic all live in
+  // spawn/child-prompt-economy.ts (blocks are always defined on this path).
+  if (deps.spawnPacket) {
+    const economised = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, stableToolNames);
+    systemPrompt = economised.systemPrompt;
+    if (economised.systemPromptBlocks) systemPromptBlocks = economised.systemPromptBlocks;
   }
 
   // 6. Run before_agent_start hook

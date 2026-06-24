@@ -404,6 +404,158 @@ describe("comis fleet table view renders the degraded-by-cause breakdown (QT2/QT
   });
 });
 
+describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and omits it when absent", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  // The autonomy block (Plan 03's FleetHealthReportSchema.autonomy?) — counts +
+  // the worst run's id ONLY. Populated so the render's Autonomy line + the
+  // copy-pasteable `comis explain <worstRootRunId>` drill-down line both fire.
+  const REPORT_WITH_AUTONOMY = {
+    ...FAKE_REPORT,
+    autonomy: {
+      runs: { total: 20, degraded: 3, degradedRate: 0.15 },
+      orphaned: 2,
+      resumed: 4,
+      revoked: 1,
+      killed: 0,
+      breakerTrips: 1,
+      // FLEET-02 (Phase 220-05): the capability-denial breaker trip count, separable
+      // from the tool-failure `breakerTrips` above.
+      denialBreakerTrips: 2,
+      budgetBreaches: 0,
+      costUsd: 0.42,
+      worstRootRunId: "root-2f9c1a",
+    },
+  };
+
+  it("renders the 'Autonomy:' line + the copy-pasteable 'comis explain <worstRootRunId>' drill-down when the block is present", async () => {
+    // Pre-fix the renderer emitted NO autonomy line at all (the block was only on
+    // --format json), so this FAILS on the pre-patch code (RED).
+    const client: RpcClient = {
+      call: () => Promise.resolve(REPORT_WITH_AUTONOMY),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // The autonomy counts line (run total + degraded rate + lifecycle counts).
+    expect(output).toContain("Autonomy:");
+    expect(output).toContain("20 run(s)");
+    expect(output).toContain("3 degraded");
+    expect(output).toContain("orphaned=2");
+    expect(output).toContain("resumed=4");
+    expect(output).toContain("revoked=1");
+    expect(output).toContain("killed=0");
+    expect(output).toContain("breaker=1");
+    // FLEET-02 (Phase 220-05): the capability-denial breaker count renders SEPARATELY
+    // from the tool-failure breaker (so a denial-breaker-aborted run is fleet-visible).
+    expect(output).toContain("denialBreaker=2");
+    expect(output).toContain("budgetBreaches=0");
+    // FLEET-04: the worst-run drill-down line names `comis explain <rootRunId>`.
+    expect(output).toContain("comis explain root-2f9c1a");
+    // Content-free: the worst run is named by its id only — no body/reason leaks
+    // (the block carries no free-text field to leak in the first place).
+    expect(output).not.toContain("undefined");
+  });
+
+  it("OMITS the autonomy block entirely when report.autonomy is absent (the guard — offline / non-durability boot)", async () => {
+    // FAKE_REPORT carries no autonomy block (the daemon-less / non-durability
+    // case). The render must NOT emit an Autonomy line — honest omission, not a
+    // zero-filled block.
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    // Sanity: the table still rendered (so the omission is the guard, not a crash).
+    expect(output).toContain("Sessions");
+    expect(output).not.toContain("Autonomy:");
+    expect(output).not.toContain("worst run");
+  });
+
+  it("OMITS the worst-run drill-down line when the block is present but worstRootRunId is absent", async () => {
+    // A window with autonomy runs but NONE degraded → no worstRootRunId. The
+    // Autonomy counts line still renders; the `comis explain` pointer is dropped.
+    const noWorst = {
+      ...REPORT_WITH_AUTONOMY,
+      autonomy: {
+        ...REPORT_WITH_AUTONOMY.autonomy,
+        runs: { total: 20, degraded: 0, degradedRate: 0 },
+        orphaned: 0,
+        revoked: 0,
+        killed: 0,
+        worstRootRunId: undefined,
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(noWorst),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Autonomy:");
+    expect(output).toContain("20 run(s)");
+    // No degraded run → no drill-down pointer.
+    expect(output).not.toContain("worst run");
+    expect(output).not.toContain("comis explain");
+  });
+
+  it("emits the autonomy block on the --format json path when present", async () => {
+    // The json branch emits the WHOLE report; the autonomy block must survive the
+    // callTyped response parse (a non-strict z.object would strip an UNDECLARED
+    // field — the schema declares it, so the round-trip proves it reaches json).
+    const client: RpcClient = {
+      call: () => Promise.resolve(REPORT_WITH_AUTONOMY),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerFleetCommand(program);
+    await program.parseAsync(["node", "test", "fleet", "--format", "json"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    const parsed = JSON.parse(output) as {
+      autonomy?: {
+        runs?: { total?: number; degraded?: number };
+        orphaned?: number;
+        worstRootRunId?: string;
+      };
+    };
+    expect(parsed.autonomy?.runs?.total).toBe(20);
+    expect(parsed.autonomy?.runs?.degraded).toBe(3);
+    expect(parsed.autonomy?.orphaned).toBe(2);
+    expect(parsed.autonomy?.worstRootRunId).toBe("root-2f9c1a");
+  });
+});
+
 describe("registerFleetCommand registers a command named 'fleet', DISTINCT from 'health'", () => {
   it("adds a 'fleet' command (the remote admin RPC) — NOT 'health' (the local doctor)", () => {
     const program = createTestProgram();

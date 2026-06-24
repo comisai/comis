@@ -15,6 +15,11 @@ import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
+  durableOrphanedEventToRow,
+  durableResumedEventToRow,
+  autonomyRevokedEventToRow,
+  autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import {
@@ -984,6 +989,148 @@ describe("nodeBudgetExceededEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// FLEET-03 (Phase 220-01): the four typed autonomy/durable lifecycle events →
+// content-free health_signal rows (obs-autonomy-rows.ts). Closed signal label +
+// closed reason enum / count + rootRunId ONLY — never a free-text reason / body.
+// ---------------------------------------------------------------------------
+
+describe("durableOrphanedEventToRow (FLEET-03)", () => {
+  it("maps a durable:orphaned payload to a warning health_signal row (closed signal + enum reason + rootRunId)", () => {
+    const row = durableOrphanedEventToRow({
+      rootRunId: "root-orphan",
+      reason: "not_resumable",
+      timestamp: 5000,
+    });
+
+    expect(row.timestamp).toBe(5000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("durable:orphaned");
+    expect(row.traceId).toBeUndefined();
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("durable_orphaned");
+    expect(details.reason).toBe("not_resumable");
+    expect(details.rootRunId).toBe("root-orphan");
+  });
+
+  it("CONTENT-FREE (T-220-01): the orphaned-row details carries the closed enum ONLY — no engine free-text substring", () => {
+    // Even if a caller somehow passed a free-ish reason, the EVENT type is the
+    // closed enum; the row-builder must never echo any of the engine's free-text
+    // orphan strings ("not resumable", "reconcile", "status=", "resume failed").
+    const row = durableOrphanedEventToRow({
+      rootRunId: "root-x",
+      reason: "reread_failed",
+      timestamp: 1,
+    });
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toMatch(/not resumable|reconcile|status=|resume failed|re-read failed/i);
+    // The details key-set is exactly the closed triple.
+    expect(Object.keys(JSON.parse(row.details ?? "{}")).sort()).toEqual([
+      "reason",
+      "rootRunId",
+      "signal",
+    ]);
+  });
+
+  it("carries each closed reason enum verbatim (4-member union)", () => {
+    for (const reason of ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const) {
+      const row = durableOrphanedEventToRow({ rootRunId: "r", reason, timestamp: 1 });
+      expect(JSON.parse(row.details ?? "{}").reason).toBe(reason);
+    }
+  });
+});
+
+describe("durableResumedEventToRow (FLEET-03)", () => {
+  it("maps a durable:resumed payload to an info health_signal row (stepIndex + rootRunId, no body)", () => {
+    const row = durableResumedEventToRow({
+      rootRunId: "root-resumed",
+      stepIndex: 4,
+      timestamp: 6000,
+    });
+
+    expect(row.timestamp).toBe(6000);
+    expect(row.category).toBe("health_signal");
+    // A resume is healthy recovery, not degradation → info (does not inflate the fleet degrade count).
+    expect(row.severity).toBe("info");
+    expect(row.message).toBe("durable:resumed");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("durable_resumed");
+    expect(details.stepIndex).toBe(4);
+    expect(details.rootRunId).toBe("root-resumed");
+    expect(Object.keys(details).sort()).toEqual(["rootRunId", "signal", "stepIndex"]);
+  });
+});
+
+describe("autonomyRevokedEventToRow (FLEET-03)", () => {
+  it("maps an autonomy:revoked payload to a warning health_signal row (revoked count + rootRunId, no bearer/body)", () => {
+    const row = autonomyRevokedEventToRow({
+      rootRunId: "root-rev",
+      revoked: 3,
+      timestamp: 7000,
+    });
+
+    expect(row.timestamp).toBe(7000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("autonomy:revoked");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(details.signal).toBe("autonomy_revoked");
+    expect(details.revoked).toBe(3);
+    expect(details.rootRunId).toBe("root-rev");
+    // Content-free: the closed triple ONLY — never a lease bearer/selector/body.
+    expect(Object.keys(details).sort()).toEqual(["revoked", "rootRunId", "signal"]);
+  });
+});
+
+describe("autonomyKilledEventToRow (FLEET-03)", () => {
+  it("maps an autonomy:killed payload to a warning health_signal row (killed count + rootRunId, separable from revoke)", () => {
+    const row = autonomyKilledEventToRow({
+      rootRunId: "root-kill",
+      killed: 2,
+      timestamp: 8000,
+    });
+
+    expect(row.timestamp).toBe(8000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("autonomy:killed");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // The signal label is DISTINCT from autonomy_revoked (the killed/revoked separator).
+    expect(details.signal).toBe("autonomy_killed");
+    expect(details.killed).toBe(2);
+    expect(details.rootRunId).toBe("root-kill");
+    expect(Object.keys(details).sort()).toEqual(["killed", "rootRunId", "signal"]);
+  });
+});
+
+describe("autonomyDenialBreakerEventToRow (FLEET-02, Phase 220-05)", () => {
+  it("maps an autonomy:denial_breaker_tripped payload to a warning health_signal row (count + rootRunId, no deny-reason body)", () => {
+    const row = autonomyDenialBreakerEventToRow({
+      rootRunId: "root-deny",
+      timestamp: 9000,
+    });
+
+    expect(row.timestamp).toBe(9000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("autonomy:denial_breaker_tripped");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // A DISTINCT signal label — the capability-DENIAL breaker, separate from the
+    // TOOL-failure breaker (breakerTripCount → breakerTripTotal) and from kill/revoke.
+    expect(details.signal).toBe("autonomy_denial_breaker");
+    expect(details.denialBreakerTrips).toBe(1); // each trip is one event → count 1.
+    expect(details.rootRunId).toBe("root-deny");
+    // Content-free: the closed triple ONLY — never the engine's free-text deny reason.
+    expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -1150,21 +1297,32 @@ describe("setupObsPersistence", () => {
     eventBus.emit("subagent:budget_exceeded", {
       graphId: "g", nodeId: "greedy", agentId: "researcher", tokenBudget: 5000, tokensUsed: 17770, capSource: "node", timestamp: 1008,
     });
+    // j-m. FLEET-03: the four autonomy/durable lifecycle signals.
+    eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
+    eventBus.emit("durable:resumed", { rootRunId: "root-2", stepIndex: 3, timestamp: 1010 });
+    eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
+    eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
+    eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (9 total), each with the right message.
+    // Exactly one health_signal row per event (14 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(9);
+    expect(healthRows).toHaveLength(14);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
+      "autonomy:denial_breaker_tripped",
+      "autonomy:killed",
+      "autonomy:revoked",
       "context:dag_degraded",
       "context:script_zero_hit",
       "context:summary_language_mismatch",
+      "durable:orphaned",
+      "durable:resumed",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
       "pipeline:authored",
@@ -1172,6 +1330,16 @@ describe("setupObsPersistence", () => {
       "subagent:budget_exceeded",
       "subagent:delivery_deadlettered",
     ]);
+    // The FLEET-03 + FLEET-02 autonomy rows carry their closed signal labels.
+    expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
+    expect(JSON.parse(healthRows.find((r) => r.message === "durable:resumed")!.details ?? "{}").signal).toBe("durable_resumed");
+    expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:revoked")!.details ?? "{}").signal).toBe("autonomy_revoked");
+    expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:killed")!.details ?? "{}").signal).toBe("autonomy_killed");
+    expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:denial_breaker_tripped")!.details ?? "{}").signal).toBe("autonomy_denial_breaker");
+    // The orphaned row carries the closed enum reason, NEVER a free-text substring (T-220-01).
+    const orphanRow = healthRows.find((r) => r.message === "durable:orphaned")!;
+    expect(orphanRow.details ?? "").not.toMatch(/not resumable|reconcile|status=/i);
+    expect(JSON.parse(orphanRow.details ?? "{}").reason).toBe("not_resumable");
     // The pipeline-authoring row carries the closed signal label.
     const pipelineRow = healthRows.find((r) => r.message === "pipeline:authored")!;
     expect(JSON.parse(pipelineRow.details ?? "{}").signal).toBe("pipeline_authoring");

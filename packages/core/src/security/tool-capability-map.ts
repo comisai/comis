@@ -26,9 +26,9 @@
  *     non-existent-method route (the `session.get` 404 class) is a BUILD
  *     failure, not a VPS-only runtime 404.
  *   - `{kind:"executor"}` — the tool is an in-process AgentTool with NO RPC
- *     registration (`read`/`grep`/`find`/`ls`/`jq`, the daemon-side
- *     `web_search`/`web_fetch`). Plan 02's daemon-side executor runs it under
- *     the agent's jailed workspace (DNS-pinned for the web pair).
+ *     registration (`read`/`grep`/`find`/`ls`/`jq`/`sql`/`jsonpath`, the
+ *     daemon-side `web_search`/`web_fetch`). Plan 02's daemon-side executor runs
+ *     it under the agent's jailed workspace (DNS-pinned for the web pair).
  *
  * @allow-throw: module-load invariant (mirrors handler-capability-map.ts +
  * setup-capability-endpoint.ts:171-177). The assertion block below throws at
@@ -68,6 +68,18 @@ export const TOOL_CAPABILITY_MAP = {
   find: "orch:read",
   ls: "orch:read",
   jq: "orch:read",
+  // orch:read — the full ResultRef query engine (QRY-01/02): DuckDB-SQL over
+  // CSV/JSONL + JSONPath over JSON, run DAEMON-side (like jq) over the
+  // run-scoped results/ file; only the slice re-enters context. Read-only —
+  // the daemon-side DuckDB is CONFINED to the run's workspace
+  // (allowed_directories=[<ws>] + enable_external_access=false +
+  // lock_configuration, set before the model query) and hardened
+  // (--readonly :memory:, no autoload, INSTALL/LOAD/ATTACH/COPY/EXPORT, the
+  // pure-exfil readers read_text/read_blob/glob/getenv, and url-readers
+  // rejected before spawn) so this cap can never read a host file outside the
+  // workspace or become an SSRF/exfil egress (T-221-QRY-01..06 / CR-01).
+  sql: "orch:read",
+  jsonpath: "orch:read",
   // orch:web — daemon-side, DNS-pinned (the jail stays --unshare-net)
   web_search: "orch:web",
   web_fetch: "orch:web",
@@ -103,6 +115,8 @@ export const TOOL_ROUTE_MAP = {
   find: { kind: "executor" },
   ls: { kind: "executor" },
   jq: { kind: "executor" },
+  sql: { kind: "executor" },
+  jsonpath: { kind: "executor" },
   web_search: { kind: "executor" },
   web_fetch: { kind: "executor" },
 } as const satisfies Record<ToolName, ToolRoute>;

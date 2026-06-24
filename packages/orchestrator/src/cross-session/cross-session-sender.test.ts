@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok, type Result } from "@comis/shared";
+import type {
+  OutwardSendLedgerPort,
+  OutwardSendRecord,
+  OutwardSendBeginInput,
+  DurableRunPort,
+  SessionKey,
+} from "@comis/core";
 import {
   createCrossSessionSender,
   type CrossSessionSenderDeps,
@@ -355,5 +363,236 @@ describe("createCrossSessionSender", () => {
         mode: "fire-and-forget",
       }),
     ).rejects.toThrow("Session not found");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HIGH-2 (ONCE-01/02): the completion-announcement / cross-session outward send
+// (announce → deps.sendToChannel) must go through the SAME three-state ONCE
+// ledger as message.send — NOT a second un-ledgered path. A stable allocated
+// (rootRunId, stepIndex) keys the announcement so a restart-driven re-announce
+// of an already-committed announcement is a no-op (no double-notify). The text
+// is content-free at the ledger (only a sha256 digest), and the SAME injected
+// sendToChannel (the quota-gated path) is the only send — no parallel path.
+// ---------------------------------------------------------------------------
+
+/**
+ * A stub ledger that records every method call (name) in `calls` so a test can
+ * assert call ORDER. Per-method outcomes are overridable. The begin input is
+ * captured so the content-free assertion can inspect it. Mirrors the daemon
+ * outward-ledger-wrap.test.ts stub shape (one ledger contract, one test double).
+ */
+function makeStubLedger(
+  overrides: Partial<{
+    lookupResult: Result<OutwardSendRecord | undefined, Error>;
+    beginResult: Result<void, Error>;
+  }> = {},
+): { ledger: OutwardSendLedgerPort; calls: string[]; readonly beginInput: OutwardSendBeginInput | undefined } {
+  const calls: string[] = [];
+  const state = { beginInput: undefined as OutwardSendBeginInput | undefined };
+  const ledger: OutwardSendLedgerPort = {
+    lookup: vi.fn(async () => {
+      calls.push("lookup");
+      return overrides.lookupResult ?? ok(undefined);
+    }),
+    begin: vi.fn(async (input: OutwardSendBeginInput) => {
+      calls.push("begin");
+      state.beginInput = input;
+      return overrides.beginResult ?? ok(undefined);
+    }),
+    markUnknown: vi.fn(async () => {
+      calls.push("markUnknown");
+      return ok(undefined);
+    }),
+    commit: vi.fn(async () => {
+      calls.push("commit");
+      return ok(undefined);
+    }),
+    markFailed: vi.fn(async () => {
+      calls.push("markFailed");
+      return ok(undefined);
+    }),
+    resolveReconcile: vi.fn(async () => ok(undefined)),
+    listUnreconciled: vi.fn(async () => ok([])),
+  };
+  return {
+    ledger,
+    calls,
+    get beginInput() {
+      return state.beginInput;
+    },
+  };
+}
+
+/** A committed ledger row for a given idempotency key (the already-landed announce). */
+function committedRow(rootRunId: string, stepIndex: number, platformMessageId?: string): OutwardSendRecord {
+  return {
+    id: `${rootRunId}:${stepIndex}`,
+    rootRunId,
+    stepIndex,
+    agentId: "default",
+    channelType: "discord",
+    channelId: "guild-channel-42",
+    state: "committed",
+    platformMessageId,
+    contentDigest: "deadbeefdeadbeef",
+    attemptCount: 1,
+  };
+}
+
+/** A DurableRunPort stub that allocates a fixed stepIndex (records every call). */
+function makeStubDurableRuns(stepIndex = 7): { durableRuns: DurableRunPort; allocCalls: string[] } {
+  const allocCalls: string[] = [];
+  const durableRuns = {
+    allocateOutwardStep: vi.fn(async (rootRunId: string) => {
+      allocCalls.push(rootRunId);
+      return ok(stepIndex);
+    }),
+  } as unknown as DurableRunPort;
+  return { durableRuns, allocCalls };
+}
+
+describe("createCrossSessionSender announce is ledgered (HIGH-2, ONCE-01/02)", () => {
+  let deps: CrossSessionSenderDeps;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+  });
+
+  const ledgeredParams: CrossSessionSendParams = {
+    targetSessionKey: "default:user1:channel1",
+    text: "question",
+    mode: "wait",
+    callerSessionKey: "default:user2:channel2",
+    announceChannelType: "discord",
+    announceChannelId: "guild-channel-42",
+  };
+
+  it("ledgered happy path: announce runs lookup→begin→markUnknown→sendToChannel→commit in order; returns announced", async () => {
+    const { ledger, calls } = makeStubLedger();
+    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
+    const sender = createCrossSessionSender({
+      ...deps,
+      outwardLedger: ledger,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(true);
+    // The step is allocated ONCE for this announce, keyed by the resolved rootRunId.
+    expect(allocCalls).toEqual(["root-user2"]);
+    // The three-state lifecycle ran around the (single) sendToChannel call.
+    expect(calls).toEqual(["lookup", "begin", "markUnknown", "commit"]);
+    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
+    expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "test response");
+  });
+
+  it("ONCE-02 committed → no-op: an already-committed (rootRunId, stepIndex) does NOT call sendToChannel; still announced", async () => {
+    const { ledger, calls } = makeStubLedger({
+      lookupResult: ok(committedRow("root-user2", 7, "msg-prior")),
+    });
+    const { durableRuns } = makeStubDurableRuns(7);
+    const sender = createCrossSessionSender({
+      ...deps,
+      outwardLedger: ledger,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    // The announcement already landed across a restart — never re-send (no double-notify).
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(calls).toEqual(["lookup"]); // short-circuit at the dedup read
+    // It is still reported as announced (the prior send succeeded).
+    expect(result.announced).toBe(true);
+  });
+
+  it("pass-through: NO ledger dep → sendToChannel called directly, no ledger usage (non-autonomy unchanged)", async () => {
+    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
+    // outwardLedger omitted entirely.
+    const sender = createCrossSessionSender({
+      ...deps,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    const result = await sender.send(ledgeredParams);
+
+    expect(result.announced).toBe(true);
+    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
+    // No ledger ⇒ no step allocation either (pure pass-through).
+    expect(allocCalls).toEqual([]);
+  });
+
+  it("pass-through: NO callerSessionKey → no resolvable rootRunId → direct send, ledger untouched", async () => {
+    const { ledger, calls } = makeStubLedger();
+    const { durableRuns, allocCalls } = makeStubDurableRuns(7);
+    const sender = createCrossSessionSender({
+      ...deps,
+      outwardLedger: ledger,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    const result = await sender.send({
+      // Self-target NOT allowed in wait mode; use a distinct target with NO callerSessionKey.
+      targetSessionKey: "default:user1:channel1",
+      text: "question",
+      mode: "wait",
+      announceChannelType: "discord",
+      announceChannelId: "guild-channel-42",
+      // callerSessionKey omitted ⇒ no rootRunId ⇒ pass-through.
+    });
+
+    expect(result.announced).toBe(true);
+    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([]); // ledger never touched
+    expect(allocCalls).toEqual([]);
+  });
+
+  it("content-free: only a sha256 digest reaches the ledger; the announcement text is never passed to a ledger method", async () => {
+    // NB: keep the stub object — `beginInput` is a getter (live), so destructuring
+    // it here would freeze it to its pre-send `undefined` value.
+    const stub = makeStubLedger();
+    const { durableRuns } = makeStubDurableRuns(7);
+    vi.mocked(deps.executeInSession).mockResolvedValue({
+      response: "SECRET-ANNOUNCEMENT-BODY",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+    });
+    const sender = createCrossSessionSender({
+      ...deps,
+      outwardLedger: stub.ledger,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    await sender.send(ledgeredParams);
+
+    // The digest is a 16-hex-char sha256 slice, not the body.
+    expect(stub.beginInput?.contentDigest).toMatch(/^[0-9a-f]{16}$/);
+    // The raw text never appears in ANY argument passed to a ledger method.
+    expect(JSON.stringify(stub.beginInput)).not.toContain("SECRET-ANNOUNCEMENT-BODY");
+    // The real body still reached the (single) sendToChannel.
+    expect(deps.sendToChannel).toHaveBeenCalledWith("discord", "guild-channel-42", "SECRET-ANNOUNCEMENT-BODY");
+  });
+
+  it("quota: the ledgered path routes through the SAME injected sendToChannel (no parallel send)", async () => {
+    const { ledger } = makeStubLedger();
+    const { durableRuns } = makeStubDurableRuns(7);
+    const sender = createCrossSessionSender({
+      ...deps,
+      outwardLedger: ledger,
+      durableRuns,
+      resolveRootRunId: (k: SessionKey) => `root-${k.userId}`,
+    });
+
+    await sender.send(ledgeredParams);
+
+    // Exactly one send, and it is the injected (quota-gated) deps.sendToChannel.
+    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
   });
 });

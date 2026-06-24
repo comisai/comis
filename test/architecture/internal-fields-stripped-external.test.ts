@@ -186,8 +186,8 @@ describe("ORIGIN-02 — setup-gateway-api strips internal fields at the external
       /stripInternalFields\(params \?\? \{\}\),\s*_trustLevel:\s*["']admin["']/,
     );
     // The rpc branch strips FIRST, then spreads the CAP-03 server-side cap
-    // injection (...capInject) AFTER — so a forged client `_capabilities` is
-    // stripped before the trusted one is added (strip-THEN-inject).
+    // injection (...capInject) AFTER (#240) — so a forged client `_capabilities`
+    // is stripped before the trusted one is added (strip-THEN-inject).
     expect(code).toMatch(
       /rpcCall\(\s*c\.method,\s*\{\s*\.\.\.stripInternalFields\(params \?\? \{\}\),\s*\.\.\.capInject\s*\}\s*\)/,
     );

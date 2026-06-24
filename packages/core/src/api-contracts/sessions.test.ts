@@ -469,6 +469,39 @@ describe("SessionSpawnContract", () => {
     expect(() => SessionSpawnContract.request.parse({})).toThrow();
   });
 
+  it("accepts and preserves worktree:true (WT-01 isolated-worktree opt-in)", () => {
+    const parsed = SessionSpawnContract.request.parse({ task: "x", worktree: true });
+    expect(parsed.worktree).toBe(true);
+  });
+
+  it("accepts worktree:false (explicit opt-out)", () => {
+    const parsed = SessionSpawnContract.request.parse({ task: "x", worktree: false });
+    expect(parsed.worktree).toBe(false);
+  });
+
+  it("leaves worktree undefined when omitted (optional — non-worktree callers unchanged)", () => {
+    const parsed = SessionSpawnContract.request.parse({ task: "x" });
+    expect(parsed.worktree).toBeUndefined();
+  });
+
+  it("rejects a non-boolean worktree", () => {
+    expect(() =>
+      SessionSpawnContract.request.parse({ task: "x", worktree: "yes" }),
+    ).toThrow();
+  });
+
+  it("keeps async optional alongside worktree (WT-03: --async rides the already-async-only spawn)", () => {
+    const withAsync = SessionSpawnContract.request.parse({
+      task: "x",
+      async: true,
+      worktree: true,
+    });
+    expect(withAsync.async).toBe(true);
+    expect(withAsync.worktree).toBe(true);
+    // async stays optional — omitting it is still valid (the spawn is async-only).
+    expect(SessionSpawnContract.request.parse({ task: "x" }).async).toBeUndefined();
+  });
+
   it("accepts loose response (async-running variant)", () => {
     expect(SessionSpawnContract.response.parse({
       runId: "r1",

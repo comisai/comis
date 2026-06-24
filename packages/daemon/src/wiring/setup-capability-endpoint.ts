@@ -7,56 +7,30 @@
 /**
  * `createCapabilityEndpoint` — the loopback capability endpoint that
  * authenticates the jailed script surface (ENDPOINT-01 / ENDPOINT-02; v8 §4.2).
- *
- * The endpoint is a NEAR-CLONE of the in-process `createAgentRpcCall`
- * (setup-tools-capabilities.ts): validate the bearer against the LeaseManager
+ * A NEAR-CLONE of the in-process `createAgentRpcCall`: validate the bearer
  * (timing-safe, not-expired, not-revoked, audience-bound — 211-01) → STRIP the
- * attacker-controlled wire params' internal `_X` fields (ORIGIN-02) → resolve
- * caps to `_capabilities` → inject `_agentId` → dispatch through the SAME
- * `createRpcDispatch` sink. The differences from the in-process path: the caps
- * come from a VALIDATED LEASE (not `resolveAutonomy(config)`), the transport is
- * a 0600 unix socket (not in-process), and — because the params are RAW WIRE
- * BYTES, not typed in-process tool args — the endpoint MUST `stripInternalFields`
- * before injecting the trusted fields (the in-process path can skip that strip;
- * this boundary cannot).
+ * attacker-controlled wire `_X` fields (ORIGIN-02) → inject `_capabilities` (from
+ * the VALIDATED LEASE, not `resolveAutonomy`) + `_agentId` → dispatch through the
+ * SAME `createRpcDispatch` sink. Unlike the in-process path it MUST strip before
+ * injecting (the params are RAW WIRE BYTES, not typed tool args).
  *
- * Because it injects `_agentId`, the shipped `createRpcDispatch` chokepoint runs
- * `assertNotAgentOrigin` for ADMIN_METHODS automatically (deny-by-origin —
- * RESEARCH Pitfall 2). Because it injects `_capabilities`, the per-handler
- * `requireCapability` gates fire unchanged. So ENDPOINT-02's deny matrix is
- * MOSTLY the automatic consequence of the two injections + a denylist pre-check
- * + the validate function — NOT new gate code:
- *   - bad/expired/revoked/audience-mismatch lease → `validate` returns null → deny.
- *   - cap-not-held → the lease caps are injected verbatim → the handler's
- *     `requireCapability` throws `CapabilityDeniedError` (NO second gate here).
- *   - denylisted tool → the `SUB_AGENT_TOOL_DENYLIST` pre-check denies BEFORE dispatch.
- *   - unknown method → the dispatch sink's own `if (!handler) throw` (the endpoint
- *     routes the method through faithfully; it does NOT pre-filter unknown methods,
- *     so the shipped sink owns that deny — distinct from the denylist pre-check).
- *   - admin method → `assertNotAgentOrigin` (because `_agentId` is injected).
+ * The deny matrix is MOSTLY the automatic consequence of the two injections + a
+ * denylist pre-check + validate (NOT new gate code): bad/expired/revoked/audience-
+ * mismatch lease → validate null → deny; cap-not-held → the handler's
+ * `requireCapability` throws (no second gate); denylisted tool → SUB_AGENT_TOOL_DENYLIST
+ * pre-check; unknown method → the sink's `if (!handler) throw`; admin method →
+ * `assertNotAgentOrigin` (because `_agentId` is injected). The strip-THEN-inject
+ * order is load-bearing: a forged inbound `_X` is dropped first, so the injected
+ * lease values are the ONLY ones the sink sees (the endpoint adds no new INTERNAL_FIELD_NAME).
  *
- * The endpoint adds NO new INTERNAL_FIELD_NAME — it strips ALL inbound `_X`
- * names then reuses the shipped `_agentId` + `_capabilities` (internals.ts
- * explicitly names "the 211 lease endpoint" as a legitimate injector). The
- * strip-THEN-inject order is load-bearing: a forged inbound `_agentId`/
- * `_capabilities` (or any other `_X` gate) is dropped first, so the injected
- * lease values are the ONLY ones the sink ever sees. The rate-limit on the endpoint is wired
- * in Phase 213; the operator-facing revoke RPC + cascade are Phase 213. The
- * bwrap cap-socket bind is 211-05.
- *
- * Phase 212 adds the `tool.invoke` ONE-ROUTE dispatch (`handleToolInvoke` —
- * DISPATCH-01/02): the generalization of the per-method validate. `tool.invoke`
- * carries `{tool, args}`; the dispatch gates in the v8 §6.2 order — cap-map
- * allow-list (unmapped → `CapabilityDeniedError`, default-deny) → denylist →
- * deny-by-origin (automatic on the rpc route) → `requireCapability` → route. The
- * route split (Gap 1) is the load-bearing addition: `{kind:"rpc"}` tools
- * (`memory_*`/`extract_document`/`session_*`) strip-then-inject and forward to
- * the SAME sink (so deny-by-origin + `requireCapability` fire unchanged), while
- * `{kind:"executor"}` tools (`read`/`grep`/`find`/`ls`/`jq` + the daemon-side
- * `web_*`) route to the injected `toolInvokeExecutor` — a real RPC method does
- * not exist for them, so a forged `{kind:"rpc"}` route would 404. The lease
- * audience binds `tool.invoke` to `TOOL_CAPABILITY_MAP[innerTool]` (Pitfall 2),
- * so a captured lease cannot dispatch a tool whose cap it lacks.
+ * Phase 212 adds the `tool.invoke` ONE-ROUTE dispatch (`handleToolInvoke`): gates in
+ * v8 §6.2 order — cap-map allow-list (unmapped → CapabilityDeniedError) → denylist →
+ * deny-by-origin → requireCapability → route. The route split (Gap 1): `{kind:"rpc"}`
+ * tools strip-then-inject to the SAME sink; `{kind:"executor"}` tools route to the
+ * injected `toolInvokeExecutor`. The lease audience binds tool.invoke to
+ * TOOL_CAPABILITY_MAP[innerTool] (Pitfall 2) — a captured lease cannot dispatch a
+ * tool whose cap it lacks. Phase 216 (HIGH-1): an OUTWARD message method gets a
+ * monotonic `_outwardStepIndex` allocated here (the exactly-once ledger key).
  *
  * @module
  */
@@ -72,6 +46,7 @@ import {
   requireCapability,
   CapabilityDeniedError,
   type ResolvedAutonomy,
+  type DurableRunPort,
 } from "@comis/core";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
@@ -106,39 +81,30 @@ const MAX_LINE_BYTES = 64 * 1024;
  * `orch:cron` audience, so a cap-lease cannot reach it at all (the validate denies
  * it) — there is nothing for the endpoint to re-identify.
  */
-const CRON_MUTATION_METHODS: ReadonlySet<string> = new Set([
-  "cron.add",
-  "cron.update",
-  "cron.run",
-  "cron.remove",
-]);
+const CRON_MUTATION_METHODS: ReadonlySet<string> = new Set(["cron.add", "cron.update", "cron.run", "cron.remove"]);
+
+/** The OUTWARD message methods (Phase 216, HIGH-1) — the genuinely-outward subset
+ *  (§3.5) that gets a monotonic `_outwardStepIndex` allocated HERE (the trusted
+ *  chokepoint, stripped-then-re-injected per NEW-3) so a second send in one run
+ *  gets a UNIQUE index (0 then 1) and the Plan-05 wrap does not collide+drop it
+ *  (inverting ONCE-02). Mirrors the wrapOutwardSend call sites in message-handlers.ts. */
+const OUTWARD_MESSAGE_METHODS: ReadonlySet<string> = new Set(["message.send", "message.reply", "message.react"]);
 
 /**
- * The EXACT RPC methods dispatched by the 10 `SUB_AGENT_TOOL_DENYLIST`
- * management tools, mapped to the denylist tool name that owns each. The
- * denylist keys are TOOL names (e.g. `skills_manage`), not RPC methods (e.g.
- * `skills.create`); this map is the method-precise bridge so the endpoint's
- * pre-check denies a management method WITHOUT over-denying its sibling
- * read/orchestration methods that ride the same namespace.
+ * The EXACT RPC methods dispatched by the 10 `SUB_AGENT_TOOL_DENYLIST` management
+ * tools, mapped to the owning denylist TOOL name. Method-precise (not a coarse
+ * namespace block) so the pre-check denies a management method WITHOUT
+ * over-denying a sibling read/orchestration method on the same namespace. Most of
+ * these are already admin (deny-by-origin) AND out of the lease's `orch:*`
+ * audience; the LOAD-BEARING class is `skills.create/update/delete/import/upload`
+ * (orch:skill, not admin → only `skills_manage` stops the SIGUSR2 skill mutations).
+ * A coarse `skills.*`/`memory.*` block would wrongly deny `skills.list`/`memory.search`.
  *
- * Why method-precise, NOT a coarse namespace block: most of these methods are
- * already admin-scoped (so the dispatch sink's deny-by-origin denies them once
- * `_agentId` is injected) AND out of the lease's `orch:*` audience (so `validate`
- * denies them too). The ONE class the denylist pre-check is LOAD-BEARING for is
- * `skills.create/update/delete/import/upload`: those map to `orch:skill` (so a
- * lease holding `orch:skill` PASSES audience) AND are NOT admin (so
- * `assertNotAgentOrigin` does NOT fire) — the `skills_manage` denylist is the
- * only thing that stops a lease from reaching the SIGUSR2-triggering skill
- * mutations. A coarse `skills.*` namespace block would WRONGLY deny `skills.list`
- * (a read); a coarse `memory.*` block would WRONGLY deny `memory.search` (an
- * orchestration read the lease legitimately holds). So we enumerate methods.
- *
- * DRIFT NOTE: this set mirrors the per-tool RPC method lists in
- * `packages/skills/src/platform-tools/tools/<tool>-tool.ts`. If a management
- * tool gains/renames a method, add it here. Every value is asserted at module
- * load to be a member of SUB_AGENT_TOOL_DENYLIST so a denylist rename fails loud.
+ * DRIFT NOTE: mirrors the per-tool RPC method lists in
+ * `packages/skills/src/platform-tools/tools/<tool>-tool.ts`. Every value is
+ * asserted at module load to be a SUB_AGENT_TOOL_DENYLIST member (a rename fails loud).
  */
-const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
+export const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
   // gateway (config.* + env.* + gateway.* — config persistence → SIGUSR2)
   "config.apply": "gateway",
   "config.diff": "gateway",
@@ -286,6 +252,12 @@ export interface CapabilityEndpointDeps {
    * unaffected). NEVER fabricate when absent — degrade to no-audit, not a fake.
    */
   container?: EmitCapabilityAuditDeps["container"];
+  /** Phase 216 (HIGH-1): the durable-run store — the SOLE source of the monotonic
+   *  `_outwardStepIndex` (allocateOutwardStep). For an OUTWARD message method the
+   *  endpoint allocates a UNIQUE per-root index + injects it beside `_agentId` so the
+   *  Plan-05 wrap reads distinct `(rootRunId, stepIndex)` per send. Optional; absent ⇒
+   *  no index injected → the wrap is a pass-through (byte-identical pre-216). */
+  durableRuns?: DurableRunPort;
 }
 
 /** The minimal wire payload the jailed SDK sends over the cap socket. */
@@ -407,6 +379,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
           // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
           // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
           // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
+          // Phase 217: no `_autonomyMode` here — the chokepoint server-resolves the jail-leg mode (see the general dispatch below).
           await rpcCall(route.method, {
             ...stripInternalFields(args),
             _agentId: lease.agentId,
@@ -645,15 +618,42 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // emits the per-cap audit (allow + a downstream cap-deny) with the real lease
     // tuple — previously unaudited (no _callerSessionKey → dispatch-closure audit
     // unreachable), silently dropping the spawn-tree's most important edges.
+    // HIGH-1 (Phase 216): for an OUTWARD message method, allocate a UNIQUE monotonic
+    // `_outwardStepIndex` (the SOLE source) + inject it beside `_agentId` (strip-then-
+    // inject — stripInternalFields above dropped any forged inbound value, NEW-3). Two
+    // sends in one run get 0 then 1; absent store / non-outward method ⇒ no index.
+    const outwardStep = await allocateOutwardStepIfNeeded(method, lease.rootRunId);
+    // Phase 217 (UNATT-01/EVICT-02): the jail leg injects NO `_autonomyMode` — the
+    // Lease carries caps/agentId/rootRunId but not mode. The rpc-dispatch chokepoint
+    // (Plan 05) server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
+    // (absent ⇒ server resolve ⇒ fail-closed "default"), kept in lockstep with the
+    // in-process leg's INJECTED mode there — NOT by widening the Lease schema (wrong layer).
     return dispatchAudited(
       method,
       {
         ...stripInternalFields(params),
         _agentId: lease.agentId,
         _capabilities: lease.caps,
+        ...(outwardStep !== undefined ? { _outwardStepIndex: outwardStep } : {}),
       },
       lease,
     );
+  }
+
+  /** HIGH-1: allocate the monotonic outward-send index for an OUTWARD message method,
+   *  else `undefined` (no index → pass-through). Best-effort — an allocation error
+   *  WARN-logs + returns undefined (never blocks the send, never substitutes a colliding 0). */
+  async function allocateOutwardStepIfNeeded(method: string, rootRunId: string): Promise<number | undefined> {
+    if (!deps.durableRuns || !OUTWARD_MESSAGE_METHODS.has(method)) return undefined;
+    const allocated = await deps.durableRuns.allocateOutwardStep(rootRunId);
+    if (!allocated.ok) {
+      log?.warn(
+        { submodule: "capability-endpoint", method, err: allocated.error, hint: "outward-step allocation failed — the send proceeds un-ledgered", errorKind: "dependency" as const },
+        "Capability endpoint: allocateOutwardStep failed (degrading to pass-through)",
+      );
+      return undefined;
+    }
+    return allocated.value;
   }
 
   // --- 0600 unix socket server (mirrors mitm-broker.startUnixSocket lifecycle) ---
