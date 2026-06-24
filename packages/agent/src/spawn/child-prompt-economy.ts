@@ -62,6 +62,7 @@
 
 import { isReadOnlyTool } from "../executor/tool-parallelism.js";
 import { SECTION_SEPARATOR } from "../bootstrap/index.js";
+import type { SystemPromptBlocks } from "../bootstrap/index.js";
 
 // ---------------------------------------------------------------------------
 // The drop / keep heading contract
@@ -172,4 +173,58 @@ export function economiseChildPrompt(assembledPrompt: string): string {
   // Preserve byte-identity when nothing was dropped (no spurious re-join diff).
   if (kept.length === sections.length) return assembledPrompt;
   return kept.join(SECTION_SEPARATOR);
+}
+
+// ---------------------------------------------------------------------------
+// Spawn-side wiring (STRIP-02)
+// ---------------------------------------------------------------------------
+
+/** The economised child prompt — the input window the child boots with. */
+export interface EconomisedChildPrompt {
+  /** The (possibly stripped) full system-prompt string. */
+  systemPrompt: string;
+  /** The (possibly stripped) cache blocks; undefined passes through untouched. */
+  systemPromptBlocks?: SystemPromptBlocks;
+}
+
+/**
+ * Apply the read-only-child prompt economy on the SPAWN side (STRIP-02): if the
+ * child is read-only, drop the heavy inherited blocks from BOTH the assembled
+ * `systemPrompt` string AND the `systemPromptBlocks.semiStableBody`; otherwise
+ * pass everything through byte-identically (a mutating or unknown-tool child
+ * gets the full prompt — conservative, T-221-STRIP-02).
+ *
+ * Both representations must be stripped because the multi-block path
+ * (request-body/breakpoint-orchestration.ts) builds the system message from
+ * `staticPrefix`/`attribution`/`semiStableBody` when blocks are present, which
+ * OVERRIDES the flat string — stripping only the string would be a no-op at the
+ * wire. The heavy sections all live in `semiStableBody` (identity/persona →
+ * staticPrefix, safety/language → attribution, everything else → body per the
+ * assembler's block boundaries), and the safety-core sections that live in the
+ * body (config-secret/sender-trust/autonomy) are NOT in the drop set, so they
+ * survive. `staticPrefix`/`attribution` are passed through unchanged.
+ *
+ * Single chokepoint so the call site in the (capped) prompt-assembly.ts stays a
+ * one-liner per assembly path.
+ *
+ * @param systemPrompt - The child's assembled system-prompt string.
+ * @param systemPromptBlocks - The child's cache blocks (may be undefined).
+ * @param childToolNames - The child's resolved tool surface.
+ * @param role - Optional explicit role (e.g. "read-only").
+ */
+export function economiseForReadOnlyChild(
+  systemPrompt: string,
+  systemPromptBlocks: SystemPromptBlocks | undefined,
+  childToolNames: readonly string[],
+  role?: string,
+): EconomisedChildPrompt {
+  if (!isReadOnlyChild(childToolNames, role)) {
+    return { systemPrompt, systemPromptBlocks };
+  }
+  return {
+    systemPrompt: economiseChildPrompt(systemPrompt),
+    systemPromptBlocks: systemPromptBlocks
+      ? { ...systemPromptBlocks, semiStableBody: economiseChildPrompt(systemPromptBlocks.semiStableBody) }
+      : undefined,
+  };
 }
