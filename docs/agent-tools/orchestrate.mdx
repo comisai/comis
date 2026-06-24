@@ -70,10 +70,38 @@ const head = await page.read(0, 40);       // read a 40-line/byte slice
 console.log(JSON.stringify(ids));          // only this slice re-enters context
 ```
 
+For **tabular** results — a high-volume CSV/JSONL/JSON payload — query it precisely with SQL
+(DuckDB) or JSONPath instead of grepping; only the row slice re-enters context:
+
+```typescript
+const rows = await comis_tools.web_fetch({ url: "https://example.com/data.jsonl" });
+
+// SQL over the materialized CSV/JSONL/JSON (DuckDB, read-only, daemon-side).
+const top = await rows.sql(
+  "SELECT id, price FROM read_json_auto('" + rows.ref + "') WHERE price > 100 ORDER BY price DESC LIMIT 5",
+);
+// Precise JSON extraction via a JSONPath $-expression (DuckDB json_extract — no eval library).
+const firstPrice = await rows.jsonpath("$.items[0].price");
+
+console.log(JSON.stringify(top));          // only the 5-row slice re-enters context
+```
+
 A `ResultRef` carries `{ ref, kind, bytes, rows?, schema?, preview, expiresAt }` plus the
-in-jail `.read(offset?, limit?)` / `.grep(pattern)` / `.jq(expr)` extraction methods. The
-`results/` directory is bounded (a per-file cap, a per-run aggregate cap, and a TTL) and
-auto-cleaned when the run ends.
+in-jail `.read(offset?, limit?)` / `.grep(pattern)` / `.jq(expr)` / `.sql(query)` /
+`.jsonpath(expr)` extraction methods. The `results/` directory is bounded (a per-file cap, a
+per-run aggregate cap, and a TTL) and auto-cleaned when the run ends.
+
+<Note>
+The `.sql()` and `.jsonpath()` helpers run the **DuckDB** CLI **daemon-side** (the jail stays
+`--unshare-net`), hardened to a read-only slicer: `--readonly :memory:`, extension
+auto-install/auto-load disabled, and any `INSTALL`/`LOAD`/`ATTACH`/`COPY`/`EXPORT`/`PRAGMA`
+statement or remote (`http(s)://`/`s3://`) reader is refused before DuckDB is ever spawned, so
+the query can only read the run-scoped `results/` file. DuckDB is a single static binary the
+daemon host must provide on `PATH` (the official Docker image installs it; it is not in the
+Debian apt repos). If `duckdb` is absent, `.sql()`/`.jsonpath()` honest-degrade to an
+`{ error }` — `.jq()`/`.grep()`/`.read()` (which use the always-present `jq` / built-in readers)
+keep working.
+</Note>
 
 ## Worked example — research in one turn
 

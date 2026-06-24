@@ -65,14 +65,19 @@ interface CapReply {
 /**
  * A ResultRef decorated with the §23.9 in-jail extraction helpers (REF-02). The
  * big (untrusted) payload stays materialized on the jailed workspace as DATA;
- * these helpers slice it IN-JAIL via the `orch:read`-gated read/grep/jq tools so
- * only the relevant rows/lines re-enter context — the full payload never does.
+ * these helpers slice it IN-JAIL via the `orch:read`-gated read/grep/jq/sql/
+ * jsonpath tools so only the relevant rows/lines re-enter context — the full
+ * payload never does.
  */
 export interface WrappedResultRef extends ResultRef {
   /** Grep the materialized file for `pattern`; returns the matching lines (orch:read). */
   grep(pattern: string): Promise<string>;
   /** Run a jq `expr` over the materialized JSON/JSONL; returns the result (orch:read). */
   jq(expr: string): Promise<unknown>;
+  /** Run DuckDB SQL over the materialized CSV/JSONL/JSON; returns the row slice (orch:read). */
+  sql(query: string): Promise<unknown>;
+  /** Extract a precise value via a JSONPath `$`-expr (DuckDB json_extract) (orch:read). */
+  jsonpath(expr: string): Promise<unknown>;
   /** Read a bounded slice of the materialized file (`offset`/`limit`) (orch:read). */
   read(offset?: number, limit?: number): Promise<string>;
 }
@@ -193,6 +198,12 @@ export function wrapResultRef(ref: ResultRef): WrappedResultRef {
     },
     jq(expr: string): Promise<unknown> {
       return invoke("jq", { path: ref.ref, expr });
+    },
+    sql(query: string): Promise<unknown> {
+      return invoke("sql", { path: ref.ref, query });
+    },
+    jsonpath(expr: string): Promise<unknown> {
+      return invoke("jsonpath", { path: ref.ref, expr });
     },
     read(offset?: number, limit?: number): Promise<string> {
       return invoke("read", { path: ref.ref, offset, limit }) as Promise<string>;

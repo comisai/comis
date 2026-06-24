@@ -47,6 +47,8 @@ describe("tool.invoke default-deny by absence", () => {
       "find",
       "ls",
       "jq",
+      "sql",
+      "jsonpath",
       "web_search",
       "web_fetch",
     ]);

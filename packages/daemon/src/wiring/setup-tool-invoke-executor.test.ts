@@ -85,6 +85,8 @@ function makeDeps(over: Record<string, unknown> = {}) {
       find: vi.fn(async () => ({ kind: "find", paths: [] })),
       ls: vi.fn(async () => ({ kind: "ls", entries: [] })),
       jq: vi.fn(async () => ({ kind: "jq", value: 1 })),
+      sql: vi.fn(async () => ({ kind: "sql", rows: [] })),
+      jsonpath: vi.fn(async () => ({ kind: "jsonpath", value: 1 })),
     },
     webSearch: vi.fn(async () => ({ kind: "search", results: [] })),
     ...over,
@@ -254,7 +256,7 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-
     expect((ctx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
   });
 
-  it("routes grep/find/ls/jq to their injected cores", async () => {
+  it("routes grep/find/ls/jq/sql/jsonpath to their injected cores", async () => {
     const deps = makeDeps();
     const exec = createToolInvokeExecutor(deps);
 
@@ -262,11 +264,20 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped (READ-
     await exec("find", { glob: "*.ts" }, LEASE);
     await exec("ls", { dir: "." }, LEASE);
     await exec("jq", { ref: "results/x.jsonl", expr: ".[0]" }, LEASE);
+    // QRY-01/02 — the sql + jsonpath query cores route through the SAME
+    // workspace-scoped file-builtin dispatch as jq (daemon-side, not RPC).
+    await exec("sql", { path: "results/x.jsonl", query: "SELECT 1" }, LEASE);
+    await exec("jsonpath", { path: "results/x.json", expr: "$.items[0]" }, LEASE);
 
     expect(deps.fileExecutors.grep).toHaveBeenCalledTimes(1);
     expect(deps.fileExecutors.find).toHaveBeenCalledTimes(1);
     expect(deps.fileExecutors.ls).toHaveBeenCalledTimes(1);
     expect(deps.fileExecutors.jq).toHaveBeenCalledTimes(1);
+    expect(deps.fileExecutors.sql).toHaveBeenCalledTimes(1);
+    expect(deps.fileExecutors.jsonpath).toHaveBeenCalledTimes(1);
+    // The sql core received the agent's resolved workspace ctx (READ-02 scoping).
+    const [, sqlCtx] = deps.fileExecutors.sql.mock.calls[0];
+    expect((sqlCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
   });
 
   it("routes web_search to the injected daemon-side search core", async () => {
