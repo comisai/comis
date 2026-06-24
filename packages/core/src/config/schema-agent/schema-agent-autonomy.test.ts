@@ -4,6 +4,7 @@ import {
   AutonomyConfigSchema,
   AUTONOMY_PROFILES,
   resolveAutonomy,
+  resolveEffectiveMode,
 } from "./schema-agent-autonomy.js";
 // PROFILE-03 honest-degrade moved to its own leaf (213-03 file-size split).
 import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy-degrade.js";
@@ -535,5 +536,47 @@ describe("resolveAutonomy (217 — both scalars surface on every resolved profil
   it("EVICT-02-S1: an explicit evictOnPolicyUnreachable:false is HONORED (the fold uses ?? not ||, so false is not coerced to the default true)", () => {
     const r = resolveAutonomy({ profile: "standard", evictOnPolicyUnreachable: false });
     expect(r.evictOnPolicyUnreachable).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EVICT-02 (Phase 217): the PURE `resolveEffectiveMode` fail-closed primitive.
+// Given a (possibly absent/forged/unparseable) mode value — the chokepoint's
+// injected `_autonomyMode`, or a future external policy read — return the SAFE
+// mode. A recognized AutonomyMode passes through; ANYTHING else (undefined, a
+// non-string, an unknown string) collapses to "default", NEVER to a broader
+// profile (T-217-02 elevation-of-privilege). This is the single fail-closed
+// point EVICT-02's "unreachable policy source -> default" contract is tested
+// against. PURE (no env/clock/fs).
+//
+// These cases are RED until the helper is exported — the named import is
+// unresolvable on the pre-patch tree.
+// ---------------------------------------------------------------------------
+describe("resolveEffectiveMode (EVICT-02 — fail-closed mode resolution)", () => {
+  it("EVICT-02-S2: a recognized mode 'unattended' passes through unchanged", () => {
+    expect(resolveEffectiveMode("unattended")).toBe("unattended");
+  });
+
+  it("EVICT-02-S3: every valid AutonomyMode (default/accept-reversible/unattended/max) passes through", () => {
+    for (const mode of ["default", "accept-reversible", "unattended", "max"] as const) {
+      expect(resolveEffectiveMode(mode)).toBe(mode);
+    }
+  });
+
+  it("EVICT-02-S4: an absent mode (undefined) fail-closes to 'default' (unreachable policy source)", () => {
+    expect(resolveEffectiveMode(undefined)).toBe("default");
+  });
+
+  it("EVICT-02-S5: an unknown string 'bogus' fail-closes to 'default', NEVER a broader mode (T-217-02)", () => {
+    expect(resolveEffectiveMode("bogus")).toBe("default");
+  });
+
+  it("EVICT-02-S6: a non-string (a forged numeric mode) fail-closes to 'default'", () => {
+    expect(resolveEffectiveMode(123 as never)).toBe("default");
+  });
+
+  it("EVICT-02-S7: null / an object likewise fail-close to 'default' (never throws on a hostile value)", () => {
+    expect(resolveEffectiveMode(null)).toBe("default");
+    expect(resolveEffectiveMode({ mode: "max" } as never)).toBe("default");
   });
 });
