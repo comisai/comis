@@ -29,7 +29,7 @@
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
-import { jsonResult, readNumberParam } from "../../platform-tools/tool-helpers.js";
+import { jsonResult } from "../../platform-tools/tool-helpers.js";
 
 /**
  * Upper bound on a single sleep, in milliseconds. Chosen to match the ~5-minute
@@ -84,18 +84,43 @@ const defaultTimer: SleepTimer = {
 };
 
 /**
+ * Read a duration param tolerantly (WR-02): a finite number is taken as-is, a
+ * NUMERIC STRING (LLMs commonly emit `{ ms: "1500" }`) is coerced, and anything
+ * else — absent, null, non-finite, or an unparseable string (`"abc"`) — returns
+ * `undefined` so the caller falls back to the clamped default. NEVER throws (the
+ * shared `readNumberParam` throws on a present-but-non-number value, which would
+ * escape `execute()` and break the "never a throw" invariant).
+ *
+ * @param params - The tool params record.
+ * @param key - `"ms"` or `"seconds"`.
+ * @returns The numeric value, or `undefined` if not coercible to a finite number.
+ */
+function readMaybeNumber(params: Record<string, unknown>, key: string): number | undefined {
+  const v = params[key];
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined; // unparseable → treat as absent
+  }
+  return undefined;
+}
+
+/**
  * Resolve the requested duration to a clamped millisecond value. `ms` wins over
- * `seconds`. A non-finite / missing request defaults to {@link MAX_SLEEP_MS}
- * (the cache-window pace) rather than throwing — a sleep with no argument means
- * "defer for the cache TTL". The result is always within `[0, MAX_SLEEP_MS]`.
+ * `seconds`. A non-finite / missing / unparseable request defaults to
+ * {@link MAX_SLEEP_MS} (the cache-window pace) rather than throwing — a sleep
+ * with no usable argument means "defer for the cache TTL". The result is always
+ * within `[0, MAX_SLEEP_MS]`. Tolerant of stringly-typed args (WR-02): it reads
+ * via {@link readMaybeNumber}, NOT the throwing shared helper, so a bad value
+ * can never escape `execute()`.
  */
 function resolveClampedMs(params: Record<string, unknown>): number {
-  const msParam = readNumberParam(params, "ms", false);
-  const secParam = readNumberParam(params, "seconds", false);
+  const msParam = readMaybeNumber(params, "ms");
+  const secParam = readMaybeNumber(params, "seconds");
   let requested: number;
-  if (msParam !== undefined && Number.isFinite(msParam)) {
+  if (msParam !== undefined) {
     requested = msParam;
-  } else if (secParam !== undefined && Number.isFinite(secParam)) {
+  } else if (secParam !== undefined) {
     requested = secParam * 1000;
   } else {
     // No usable duration supplied → pace for the full cache window.
