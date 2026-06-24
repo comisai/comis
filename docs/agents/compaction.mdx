@@ -247,7 +247,7 @@ Every pipeline run logs structured metrics so you can see exactly what the conte
 
 ## Advanced compaction strategies
 
-Beyond the ten pipeline layers, Comis includes three additional strategies that improve compaction quality and cache efficiency.
+Beyond the ten pipeline layers, Comis includes four additional strategies that improve compaction quality and cache efficiency.
 
 ### Middle-out compaction
 
@@ -264,6 +264,28 @@ This approach prevents cache breaks when new turns are added, saving significant
 Session-level adaptive TTL that optimizes cache slot usage. New sessions start with a short cache TTL (5 minutes). As the session proves active with more turns, the TTL automatically promotes to a longer duration (1 hour). This saves costs on cold-start conversations -- abandoned sessions do not waste expensive long-TTL cache slots.
 
 Controlled by the `adaptiveCacheRetention` boolean on agent config (default: true).
+
+### Tier-0 micro-compaction (every turn)
+
+A no-LLM, zero-cost pass that runs on **every turn** (not only after an idle gap
+or a token ceiling). It evicts stale tool **results** for the read-only tool
+allowlist -- `read`, `grep`, `find`, `ls`, `exec`, `web_fetch`, `web_search` --
+keeping the last `observationKeepWindow` (default 25, the "last K"). It replaces
+each cleared result with a lightweight placeholder and **never** touches user or
+assistant messages, thinking blocks, or recalled memory.
+
+The placeholder is **cache-stable**: it is frozen by tool-call-id and any result
+at or below the cache fence (the cached prefix) is skipped, so a cleared result is
+byte-identical turn-over-turn and the pass never invalidates the prompt cache. It
+signals a *deliberate* content modification to the cache-break detector (so the
+change is not mis-flagged as a cache bust) but does not reset adaptive cache
+retention -- the cache may still be warm. This keeps a long-running coordinator's
+context flat continuously rather than only recovering after an idle period.
+
+This is the read-time *stream-wrapper* counterpart to step 5 (masking old tool
+results) and is distinct from the write-time microcompaction guard below: step 5
+and this Tier-0 pass operate on the in-flight request body; the guard operates at
+write time on the stored transcript.
 
 ### Microcompaction guard
 

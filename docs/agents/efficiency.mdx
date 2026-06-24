@@ -57,6 +57,24 @@ the same coordinator run for days. (This invariant is pinned by an architecture
 test, so a refactor that lets a child's transcript leak into the lead window
 turns the build red.)
 
+### Tier-0 micro-compaction (every turn)
+
+Underneath the periodic compaction, a **Tier-0 micro-compaction pass runs on
+every turn** -- no LLM, no cost. It evicts stale **tool results** for the
+read-only tool set (`read`, `grep`, `find`, `ls`, `exec`, `web_fetch`,
+`web_search`), keeping the **last K** (the
+[`observationKeepWindow`](/reference/config-yaml) knob, default 25). It never
+touches user or assistant messages, thinking blocks, or recalled memory -- only
+the ephemeral tool output beyond the keep window.
+
+Unlike the TTL-expiry and token-ceiling triggers (which only fire after an idle
+gap or once the context crosses a size ceiling), this runs unconditionally so the
+long-running coordinator's context stays flat *continuously*, not only after an
+idle period. The replacement placeholder is **cache-stable**: frozen by
+tool-call-id and protected behind the cache fence, so a cleared result is
+byte-identical turn-over-turn and never busts the prompt cache (see
+[the cache-stable prompt architecture](/agents/compaction#cache-stable-prompt-architecture)).
+
 ## `autonomy.role: coordinator`
 
 Set the role in config -- it is a single field on the
@@ -160,18 +178,36 @@ Full result (drill in with read/grep/jq): <ref> (<bytes>B, <kind>)
 ```
 
 The lead reads the summary to decide what to do next, and only if it actually
-needs the detail does it drill into the handle -- with `read`, `grep`, or `jq` on
-the referenced file, all of which are on the coordinator's read-only surface. It
-pulls in just the slice it needs, not the whole artifact. A megabyte child grows
-the lead's window by a summary and a handle; the megabyte stays on disk.
+needs the detail does it drill into the handle. It pulls in just the slice it
+needs, not the whole artifact. A megabyte child grows the lead's window by a
+summary and a handle; the megabyte stays on disk.
 
-<Tip>
-**Drill-in gets a query engine later.** Today the lead drills into a `ResultRef`
-with `read`/`grep`/`jq`. A later phase extends `ResultRef` with a full query
-engine (structured `SELECT`/path queries over a child's output) -- the same
-handle, richer ways to interrogate it. The summary-plus-handle return shape does
-not change.
-</Tip>
+A `ResultRef` carries a full **query engine** -- five in-jail extraction methods,
+all on the coordinator's read-only surface:
+
+| Method | What it does |
+|--------|--------------|
+| `read(offset?, limit?)` | A byte/line slice of the materialized file |
+| `grep(pattern)` | Lines matching a pattern |
+| `jq(expr)` | A `jq` filter over JSON |
+| `sql(query)` | A **DuckDB** `SELECT` over a CSV/JSONL/JSON payload -- precise structured queries (`WHERE`/`ORDER BY`/`LIMIT`/aggregates) |
+| `jsonpath(expr)` | A precise `$`-rooted JSON extraction (DuckDB `json_extract`, no `eval`) |
+
+```typescript
+// A megabyte of tabular rows came back as a ResultRef. Query the slice you need:
+const top = await rows.sql(
+  "SELECT id, price FROM read_json_auto('" + rows.ref + "') WHERE price > 100 LIMIT 5",
+);
+// only the 5-row slice re-enters context -- the megabyte stays on disk.
+```
+
+The `sql`/`jsonpath` methods run the DuckDB CLI **daemon-side** (the jail stays
+`--unshare-net`), hardened to a read-only slicer: `--readonly :memory:`, extension
+auto-load disabled, and any extension/file-write/network statement refused before
+DuckDB is ever spawned. DuckDB is a prerequisite the daemon host provides; if it is
+absent, `sql`/`jsonpath` honest-degrade and `read`/`grep`/`jq` keep working. See
+[the orchestrate tool reference](/agent-tools/orchestrate#resultref-high-volume-returns)
+for the full extraction API and the hardening details.
 
 ## 30-second progress fork
 

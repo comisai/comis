@@ -112,6 +112,33 @@ Sites verified bypassed on a Hostinger VPS with `--with-cloakbrowser`: bot.incol
 
 See [agent-tools/browser](/agent-tools/browser#stealth-mode-anti-bot-detection) for the full flag matrix, sandbox details, and license terms (CloakBrowser's binary is free for self-hosted use; OEM license needed for redistributing to third-party customers).
 
+### Optional: DuckDB for SQL/JSONPath result queries
+
+The [`orchestrate`](/agent-tools/orchestrate#resultref-high-volume-returns) tool's
+`ResultRef.sql()` / `ResultRef.jsonpath()` helpers run the **DuckDB** CLI
+daemon-side to query a high-volume tabular result without re-entering the whole
+payload into context. DuckDB is **optional**: if it is absent, `sql`/`jsonpath`
+honest-degrade to an `{ error }` and the other extraction methods
+(`read`/`grep`/`jq`) keep working.
+
+DuckDB is **not** in the Debian/Ubuntu apt repositories (`apt-get install duckdb`
+fails), so fetch the pinned **static binary** from the DuckDB release page and put
+it on the daemon's `PATH`:
+
+```bash
+# Fetch the pinned DuckDB static CLI (amd64 shown; use the aarch64 asset on arm64).
+curl -fsSL -o /tmp/duckdb.zip \
+  https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip
+sudo unzip -o /tmp/duckdb.zip -d /usr/local/bin && rm /tmp/duckdb.zip
+duckdb --version   # confirm it is on PATH
+```
+
+The official Docker image already provisions this static binary, so containerized
+deployments need no extra step. The query surface is hardened to a read-only
+slicer (`--readonly :memory:`, extension auto-load off, extension/file-write/network
+statements refused before spawn) -- see the
+[orchestrate tool reference](/agent-tools/orchestrate#resultref-high-volume-returns).
+
 ## Step 3: Switch to the comis user
 
 The daemon runs under its own system user. Switch to it for all Comis commands:
