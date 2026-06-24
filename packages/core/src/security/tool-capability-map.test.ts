@@ -44,6 +44,19 @@ describe("TOOL_CAPABILITY_MAP", () => {
     expect(TOOL_CAPABILITY_MAP.jq).toBe("orch:read");
   });
 
+  it("maps the sql + jsonpath ResultRef query cores to orch:read (QRY-01/02, never write/admin/web)", () => {
+    // QRY-01 (DuckDB-over-CSV/JSONL) + QRY-02 (json_extract, no-eval) are
+    // read-only slicers over a materialized results/ file — mirror jq.
+    expect(TOOL_CAPABILITY_MAP.sql).toBe("orch:read");
+    expect(TOOL_CAPABILITY_MAP.jsonpath).toBe("orch:read");
+    // A query engine must NEVER carry a write/admin/web cap — confine it to the
+    // read surface so the default-deny gate authorizes only an in-jail read
+    // (T-221-QRY-05). orch:read / orch:web are the only two caps on this surface,
+    // so "not orch:web" pins both off the write/web side.
+    expect(TOOL_CAPABILITY_MAP.sql).not.toBe("orch:web");
+    expect(TOOL_CAPABILITY_MAP.jsonpath).not.toBe("orch:web");
+  });
+
   it("maps the daemon-side web tools to orch:web", () => {
     expect(TOOL_CAPABILITY_MAP.web_fetch).toBe("orch:web");
     expect(TOOL_CAPABILITY_MAP.web_search).toBe("orch:web");
@@ -110,11 +123,19 @@ describe("TOOL_ROUTE_MAP", () => {
     expect(TOOL_ROUTE_MAP.web_search).toEqual({ kind: "executor" });
   });
 
+  it("routes the sql + jsonpath query cores to the executor kind (QRY-01/02, daemon-side like jq)", () => {
+    // The cores run DAEMON-side (DuckDB via execFile), not as an RPC handler —
+    // so they MUST route {kind:"executor"}; a {kind:"rpc"} route would 404 at
+    // the sink (no registered sql/jsonpath method).
+    expect(TOOL_ROUTE_MAP.sql).toEqual({ kind: "executor" });
+    expect(TOOL_ROUTE_MAP.jsonpath).toEqual({ kind: "executor" });
+  });
+
   it("never routes a builtin tool through a non-existent RPC method", () => {
     // session.get is NOT a registered RPC method — a regression to it (or any
     // builtin via {kind:"rpc"}) would 404 at the sink. The arch-test pins the
     // full registered-method membership; here we pin that builtins stay executor.
-    const builtins: ToolName[] = ["read", "grep", "find", "ls", "jq", "web_fetch", "web_search"];
+    const builtins: ToolName[] = ["read", "grep", "find", "ls", "jq", "sql", "jsonpath", "web_fetch", "web_search"];
     for (const tool of builtins) {
       expect(TOOL_ROUTE_MAP[tool].kind).toBe("executor");
     }

@@ -26,11 +26,18 @@ function makeWorkspace(): string {
   return mkdtempSync(join(tmpdir(), "orch-cores-"));
 }
 
+/** Capture the logger.child(...) spy so a test can assert errorKind on a WARN. */
+function makeLoggerWithCapture(): { logger: ComisLogger; child: Record<string, ReturnType<typeof vi.fn>> } {
+  const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const logger = { child: vi.fn(() => child), ...child } as unknown as ComisLogger;
+  return { logger, child };
+}
+
 describe("createOrchestrateExecutorCores", () => {
-  it("exposes the 5 file cores (read/grep/find/ls/jq) + a web_search core", () => {
+  it("exposes the 7 file cores (read/grep/find/ls/jq/sql/jsonpath) + a web_search core", () => {
     const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
     expect(Object.keys(cores.fileExecutors).sort()).toEqual(
-      ["find", "grep", "jq", "ls", "read"],
+      ["find", "grep", "jq", "jsonpath", "ls", "read", "sql"],
     );
     expect(typeof cores.webSearch).toBe("function");
   });
@@ -159,6 +166,74 @@ describe("createOrchestrateExecutorCores", () => {
         expect(result.replace(/\s+/g, " ").trim()).toBe("1 2");
       } else {
         expect(result).toEqual({ error: expect.stringMatching(/jq/i) });
+      }
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // QRY-01: the `sql` (DuckDB-over-CSV/JSONL) core — Task 1 wiring skeleton.
+  // The dev host has NO duckdb (CLAUDE.md: jq is at /usr/bin/jq, duckdb is not),
+  // so the spawn ENOENT-degrades to { error } errorKind:"precondition" — never a
+  // throw, never a silent success. The real DuckDB round-trip is the VPS
+  // orchestrate-jail.linux.test.ts.
+  // -------------------------------------------------------------------------
+
+  it("sql honest-degrades to an { error } when no path is given (never throws)", async () => {
+    const ws = makeWorkspace();
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = await cores.fileExecutors.sql({ query: "SELECT 1" }, { workspaceDir: ws });
+      expect(result).toEqual({ error: expect.stringContaining("path") });
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("sql refuses a path that escapes the workspace ({ error }, no spawn) — T-221-QRY-02", async () => {
+    const ws = makeWorkspace();
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = await cores.fileExecutors.sql(
+        { path: "../../../etc/passwd", query: "SELECT * FROM read_json_auto('x')" },
+        { workspaceDir: ws },
+      );
+      expect(result).toEqual({ error: expect.stringContaining("escape") });
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("sql honest-degrades when duckdb is absent (precondition, never a throw)", async () => {
+    const ws = makeWorkspace();
+    try {
+      mkdirSync(join(ws, "results"), { recursive: true });
+      writeFileSync(
+        join(ws, "results", "rows.jsonl"),
+        '{"id":1,"price":150}\n{"id":2,"price":50}\n',
+        "utf8",
+      );
+      const { logger, child } = makeLoggerWithCapture();
+      const cores = createOrchestrateExecutorCores({ logger });
+      const result = await cores.fileExecutors.sql(
+        { path: "results/rows.jsonl", query: "SELECT id FROM read_json_auto('results/rows.jsonl')" },
+        { workspaceDir: ws },
+      );
+      // duckdb present on the host → a JSON-rows slice (string); duckdb absent →
+      // a content-free { error } naming duckdb with errorKind:"precondition".
+      // The dev host (and CI) has no duckdb, so the precondition branch fires.
+      if (typeof result === "string") {
+        // (VPS / a host with duckdb installed) — the slice is the JSON rows.
+        expect(result).toMatch(/id/);
+      } else {
+        expect(result).toEqual({ error: expect.stringMatching(/duckdb/i) });
+        // The degrade is logged as a precondition (unmet host prerequisite), not
+        // a validation error — mirrors the jq ENOENT branch.
+        const preconditionWarn = child.warn.mock.calls.find(
+          ([fields]) => (fields as { errorKind?: string })?.errorKind === "precondition",
+        );
+        expect(preconditionWarn, "expected a precondition WARN on the duckdb-absent path").toBeDefined();
       }
     } finally {
       rmSync(ws, { recursive: true, force: true });
