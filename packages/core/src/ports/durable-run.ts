@@ -81,4 +81,18 @@ export interface DurableRunPort {
    * `outward_step` 0.
    */
   allocateOutwardStep(rootRunId: string): Promise<Result<number, Error>>;
+
+  /**
+   * FLEET-03 (Phase 220) — windowed status counts read DIRECTLY from
+   * `durable_runs`. Crash-surviving: the row IS the durability, so this count
+   * survives a hard crash that would lose an in-process lifecycle event. Counts
+   * ONLY rows with `updated_at_ms >= sinceMs` (the fleet window), grouped by
+   * status; absent statuses default to 0. The `comis fleet` assembler (Plan 03)
+   * reads this for the orphaned/resumed/revoked/running counts alongside the
+   * `health_signal` rows. Mirrors the obs store's `getRollingSpendUsd`
+   * windowed-aggregate (`WHERE … >= ?`) precedent.
+   */
+  countByStatus(
+    sinceMs: number,
+  ): Promise<Result<{ orphaned: number; revoked: number; running: number; completed: number }, Error>>;
 }

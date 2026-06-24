@@ -45,7 +45,7 @@ import {
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
-import type { DurableRunPort } from "@comis/core";
+import type { DurableRunPort, EventMap } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
 import type { ComisLogger } from "@comis/infra";
 
@@ -103,6 +103,24 @@ export interface AutonomyHandlerDeps {
    * unknown-method path) — no build break, no half-wired handler.
    */
   evictRegistry?: EvictRegistry;
+  /**
+   * FLEET-03 (Phase 220-01): the typed event bus. OPTIONAL — when wired, the
+   * handlers emit a content-free `autonomy:revoked` (lease.revoke by rootRunId) /
+   * `autonomy:killed` (run.kill) BESIDE the existing INFO line so `comis fleet`
+   * surfaces the revoke/kill counts. **Absent ⇒ no emit, byte-identical pre-220
+   * boot** (mirrors the `durableRuns?`/`evictRegistry?` optional-dep convention).
+   * The PRODUCTION construction site (rpc-dispatch.ts createAutonomyHandlers)
+   * MUST supply `deps.container.eventBus` — otherwise the live daemon emits
+   * nothing and Plan 03's counts are silently zero.
+   */
+  eventBus?: { emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): void };
+  /**
+   * FLEET-03: the wiring-layer clock for the emitted-event timestamp. Supplied as
+   * `systemNowMs` by the construction site (the globals-gate-safe wiring clock the
+   * execution:aborted emit uses) — NEVER `Date.now()`/`new Date()` here. Only read
+   * when `eventBus` is present (the production site supplies both together).
+   */
+  now?: () => number;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
 }
@@ -174,6 +192,17 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         "Capability lease(s) revoked",
       );
 
+      // FLEET-03: a typed content-free event BESIDE the INFO line — only on a
+      // rootRunId revoke (a by-leaseId revoke has no rootRunId). Carries the COUNT
+      // + the id + timestamp ONLY (T-220-02). Absent eventBus ⇒ no emit.
+      if (rootRunId) {
+        deps.eventBus?.emit("autonomy:revoked", {
+          rootRunId,
+          revoked,
+          timestamp: deps.now?.() ?? 0,
+        });
+      }
+
       const result = { revoked };
       if (IS_DEV) LeaseRevokeContract.response.parse(result);
       return result;
@@ -202,6 +231,16 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         { method: RunKillContract.method, killed },
         "Spawn tree killed (hard stop) and its leases revoked",
       );
+
+      // FLEET-03: a DISTINCT autonomy:killed event (separate from revoke — kill
+      // flips durable status to 'revoked' INDISTINGUISHABLY from a cooperative
+      // revoke, so the event is the only separator for the killed count). COUNT +
+      // id + timestamp ONLY (T-220-02). Absent eventBus ⇒ no emit.
+      deps.eventBus?.emit("autonomy:killed", {
+        rootRunId,
+        killed,
+        timestamp: deps.now?.() ?? 0,
+      });
 
       const result = { killed };
       if (IS_DEV) RunKillContract.response.parse(result);
