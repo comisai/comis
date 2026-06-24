@@ -313,6 +313,56 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   // -----------------------------------------------------------------------
+  // FLEET-03 (Phase 220-01): countByStatus(sinceMs) — crash-surviving windowed
+  // status counts read DIRECTLY from durable_runs (the row IS the durability; an
+  // in-process event can be lost across a hard crash). Counts ONLY rows with
+  // updated_at_ms >= sinceMs.
+  // -----------------------------------------------------------------------
+
+  describe("countByStatus (FLEET-03 windowed status counts)", () => {
+    it("returns per-status counts read directly from the table (orphaned/revoked/running/completed)", async () => {
+      // All writes stamp updated_at_ms at `now` (the injected clock) = the beforeEach value.
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-run-1", status: "running" }));
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-run-2", status: "running" }));
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-done", status: "completed" }));
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-orph", status: "orphaned" }));
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-rev", status: "running" }));
+      await store.invalidateForRevoke("r-rev"); // → status 'revoked'
+
+      const res = await store.countByStatus(0); // sinceMs=0 → all rows
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.running).toBe(2);
+      expect(res.value.completed).toBe(1);
+      expect(res.value.orphaned).toBe(1);
+      expect(res.value.revoked).toBe(1);
+    });
+
+    it("WINDOWED: excludes rows whose updated_at_ms is OLDER than sinceMs", async () => {
+      // An OLD row written at t=now (the beforeEach base).
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-old", status: "running" }));
+      // Advance the injected clock; a NEW row lands at the later updated_at_ms.
+      now = 1_700_000_900_000;
+      await store.upsertCheckpoint(makeRecord({ rootRunId: "r-new", status: "running" }));
+
+      // A cutoff BETWEEN the two writes excludes the old row, includes the new one.
+      const sinceMs = 1_700_000_500_000;
+      const res = await store.countByStatus(sinceMs);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // Only r-new (updated_at_ms = 1_700_000_900_000 >= sinceMs) is counted.
+      expect(res.value.running).toBe(1);
+    });
+
+    it("defaults every status key to 0 (a window with no rows yields all-zero, not undefined)", async () => {
+      const res = await store.countByStatus(0);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toEqual({ orphaned: 0, revoked: 0, running: 0, completed: 0 });
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Corrupt-row degrade — every read returns Result, never throws (T-216-08)
   // -----------------------------------------------------------------------
 
@@ -437,6 +487,12 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
 
   it("allocateOutwardStep returns err on a driver failure (no throw)", async () => {
     const r = await makeClosedStore().allocateOutwardStep("run-err");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+
+  it("countByStatus returns err on a driver failure (no throw)", async () => {
+    const r = await makeClosedStore().countByStatus(0);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
