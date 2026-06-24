@@ -41,8 +41,6 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
-  ObsExplainContract,
-  ObsFleetHealthContract,
   type SecretStorePort,
   type CredentialStorageMode,
   type ToolCapabilityPort,
@@ -135,10 +133,7 @@ import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js
 import { resolveGraphConcurrencyDefaults } from "./graph/graph-capability-defaults.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
-// 154-03: the shared obs.explain assembler + production reader, for the
-// trust-flag-FREE obsExplainForMcpClient closure (obs_explain MCP tool runs the
-// assembler directly under daemon authority — no admin RPC, no admin trust).
-import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "./api/obs-handlers/index.js";
+import { buildObsMcpClientClosures } from "./wiring/obs-mcp-closures.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, SessionStoreBridge } from "./daemon-types.js";
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
@@ -175,11 +170,9 @@ import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, 
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
 import { runPreflightDoctor } from "./wiring/preflight-doctor.js";
-import { emitAutonomyBootLog } from "./wiring/emit-autonomy-boot-log.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
-import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
-import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
+import { emitStartupBanner } from "./wiring/emit-startup-banner.js";
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 import { checkStorageModeConsistency } from "./wiring/setup-storage-mismatch-warn.js";
 import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
@@ -1123,69 +1116,7 @@ function wireHealthLogging(deps: {
  * daemon-lifecycle.test.ts). The startup-banner-manifest sub-object is
  * inlined directly into the log call.
  */
-function emitStartupBanner(deps: {
-  container: BootContext["container"];
-  daemonLogger: BootContext["daemonLogger"];
-  daemonVersion: BootContext["daemonVersion"];
-  agents: NonNullable<BootContext["agentsConfig"]>;
-  adaptersByType: NonNullable<BootContext["adaptersByType"]>;
-  configPaths: BootContext["configPaths"];
-  db: BootContext["db"];
-  secretStore: BootContext["secretStore"];
-  cachedPort: BootContext["cachedPort"];
-  ttsAdapter: BootContext["ttsAdapter"];
-  visionRegistry: BootContext["visionRegistry"];
-  startupStartMs: number;
-  instanceId: string;
-  /** PROFILE-03 host preflight RESULT (see emitAutonomyBootLog). Defaults true in M1; Phase 211 (JAIL-03) supplies the real value. */
-  namespacePreflightOk?: boolean;
-}): void {
-  const {
-    container, daemonLogger, daemonVersion, agents, adaptersByType, configPaths,
-    db, secretStore, cachedPort, ttsAdapter, visionRegistry,
-    startupStartMs, instanceId,
-  } = deps;
-  const gwConfig = container.config.gateway;
-  // Inlined buildStartupBannerManifest: secrets/memory/agents/skills/gateway sub-object.
-  const manifest: Record<string, unknown> = {
-    secrets: { encrypted: !!secretStore },
-    memory: { embedding: !!cachedPort, dbPath: db.name },
-    agents: Object.fromEntries(
-      Object.entries(agents).map(([id, cfg]) => [id, { model: cfg.model }]),
-    ),
-    skills: {
-      tts: !!ttsAdapter,
-      vision: visionRegistry ? [...visionRegistry.keys()] : [],
-      linkUnderstanding: container.config.integrations.media.linkUnderstanding.enabled,
-    },
-    gateway: {
-      enabled: gwConfig.enabled,
-      port: gwConfig.enabled ? gwConfig.port : undefined,
-      tls: !!gwConfig.tls?.certPath,
-    },
-  };
-  daemonLogger.info({
-    version: daemonVersion, agents: Object.keys(agents),
-    channels: Array.from(adaptersByType.keys()),
-    port: gwConfig.enabled ? gwConfig.port : undefined, instanceId,
-    startupDurationMs: Date.now() - startupStartMs, configPaths, dbPath: db.name,
-    logLevel: container.config.logLevel ?? "debug", nodeVersion: process.versions.node,
-    manifest,
-  }, "Comis daemon started");
-  // PROFILE-03 — legible resolved-autonomy boot logging (per-agent INFO + the
-  // optional namespace-downshift WARN), extracted to emit-autonomy-boot-log.ts.
-  emitAutonomyBootLog({ daemonLogger, agents, namespacePreflightOk: deps.namespacePreflightOk });
-  // Docker-only: surface restart-policy requirement immediately after the
-  // startup banner. No-op outside containers. Wired here so the WARN lands
-  // in `docker logs` next to the banner, where operators look first.
-  emitDockerRestartPolicyWarn(daemonLogger);
-  // Boot-time TLS preflight against auth.openai.com.
-  // Fire-and-forget -- daemon is already serving by this point; the WARN
-  // is purely advisory. Skipped when no OAuth-using agent is configured.
-  if (hasAnyOAuthAgent(container.config.agents)) {
-    void emitOAuthTlsPreflightWarn(daemonLogger);
-  }
-}
+// emitStartupBanner → wiring/emit-startup-banner.ts (daemon.ts ≤3000 line cap).
 
 // ---------------------------------------------------------------------------
 // Stage 1: foundation
@@ -2570,47 +2501,18 @@ async function bootGateway(
   // 7. Gateway server
   const gwConfig = container.config.gateway;
 
-  // 154-03: the trust-flag-FREE obs.explain assembler closure for the
-  // operator-allowlisted obs_explain MCP tool. SECURITY — this closure runs the
-  // SAME assembler the admin RPC handler delegates to, DIRECTLY under daemon
-  // authority: it does NOT go through the admin-gated obs.explain RPC, does NOT
-  // inject _trustLevel:"admin", and is NOT reached via daemonRpcForMcpClient.
-  // Its only authorization boundary is the per-client mcpClient.allowlist (the
-  // MCP dispatcher's registration filter + live re-check) plus the digest-only/
-  // bounded report. `params` arrive already _trustLevel-stripped (the MCP
-  // dispatcher strips for every tool); the contract request.parse validates the
-  // {sessionKey?,traceId?,depth?} shape (its .refine rejects a neither-id call →
-  // the dispatcher's try/catch turns the throw into a generic dispatch_error
-  // sentinel, no raw leak) before the assembler reads any source.
-  // Use the ABSOLUTE boot data dir as the fallback (NOT "."). makeRealReader
-  // builds safePath(dataDir, "sessions"|"logs") eagerly, and safePath rejects a
-  // relative base — a "." here crashes boot with PathTraversalError. bootDataDir
-  // is always absolute (~/.comis or $COMIS_DATA_DIR). Mirrors daemon.ts:703.
-  const obsExplainDataDir = container.config.dataDir || bootDataDir;
-  const obsExplainReader = makeRealReader(obsExplainDataDir, obsStore);
-  const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
-    const parsed = ObsExplainContract.request.parse(params);
-    return assembleIncidentReportFromSources(obsExplainReader, obsExplainDataDir, parsed);
-  };
-
-  // 161-02: the cross-session fleet sibling of obsExplainForMcpClient — same
-  // never-inject-admin posture. boot.clock is the SAME ClockPort wired into the
-  // RPC handler deps below (buildRpcDispatchDeps clock: c.clock); load-bearing (deps.clock!).
-  const obsFleetHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
-    const parsed = ObsFleetHealthContract.request.parse(params);
-    return assembleFleetHealthReport(
-      // FLEET-01/02/04 (Phase 220-03): thread the live durable-run store for the
-      // autonomy block. This closure bypasses buildRpcDispatchDeps (the RPC path
-      // already wires durableRuns at :893), so it is the NET-NEW thread. Use
-      // `boot.durableRunStore` (set at :2190 from durableResume.durableRunStore, in
-      // scope here since this closure already reads boot.clock) — NOT `c.durableRunStore`
-      // (`c` is the buildRpcDispatchDeps-local alias, out of scope here). The SAME live
-      // store as the RPC path's c.durableRunStore. Absent (durability off) ⇒ honest
-      // degradation (the block is omitted), byte-identical with the offline path.
-      { obsStore, dataDir: obsExplainDataDir, clock: boot.clock, durableRuns: boot.durableRunStore },
-      parsed.sinceHours ?? 24,
-    );
-  };
+  // 154-03 / 161-02: the trust-flag-FREE obs.explain + obs.fleet.health MCP-client
+  // closures, extracted to wiring/obs-mcp-closures.ts (daemon.ts ≤3000 line cap).
+  // SECURITY (never-inject-admin; allowlist-only authorization) + the durableRuns
+  // NET-NEW-thread rationale (boot.durableRunStore — the live store the RPC path wires
+  // at :893) live in that helper. dataDir MUST be the absolute boot dir (else
+  // makeRealReader → PathTraversalError); clock is the load-bearing boot ClockPort.
+  const { obsExplainForMcpClient, obsFleetHealthForMcpClient } = buildObsMcpClientClosures({
+    dataDir: container.config.dataDir || bootDataDir,
+    obsStore,
+    clock: boot.clock,
+    durableRuns: boot.durableRunStore,
+  });
 
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
