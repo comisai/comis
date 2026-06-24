@@ -36,7 +36,7 @@ function createMockDeps(): AutonomyHandlerDeps {
       mintLease: vi.fn(),
       validate: vi.fn(),
       renew: vi.fn(),
-      revoke: vi.fn(),
+      revoke: vi.fn().mockReturnValue({ revoked: 1 }),
       cascadeRevoke: vi.fn(),
       revokeByRootRun: vi.fn().mockReturnValue({ revoked: 0 }),
     },
@@ -65,6 +65,15 @@ describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", ()
     expect(deps.leaseManager.revoke).toHaveBeenCalledWith("L1");
     expect(deps.leaseManager.revokeByRootRun).not.toHaveBeenCalled();
     expect(result).toEqual({ revoked: 1 });
+  });
+
+  // REVOKE-01 honesty (live VPS finding): a by-leaseId revoke of an UNKNOWN id
+  // must surface the LeaseManager's HONEST count (0), never a phantom revoked:1.
+  it("lease.revoke by an unknown leaseId returns the honest { revoked: 0 } (not a phantom 1)", async () => {
+    vi.mocked(deps.leaseManager.revoke).mockReturnValue({ revoked: 0 });
+    const result = await handlers["lease.revoke"]!({ leaseId: "unknown-id" });
+    expect(deps.leaseManager.revoke).toHaveBeenCalledWith("unknown-id");
+    expect(result).toEqual({ revoked: 0 });
   });
 
   // -------------------------------------------------------------------------
