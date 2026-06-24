@@ -66,6 +66,12 @@ import {
   MAX_M1_CLAMP_NOTICE,
   type AutonomyMode,
 } from "./schema-agent-autonomy-mode.js";
+// 218-01 (COORD-01): the §23.10 lean-coordinator role vocabulary + the pure
+// `coordinator → coordinatorToolGroups` expansion live in a sibling leaf (file-size cap).
+import { AUTONOMY_ROLES, resolveCoordinatorToolGroups, type AutonomyRole } from "./schema-agent-autonomy-role.js";
+// 218-01 (file-size cap): the §22.3 always-escalate floor cap-set + the per-cap
+// `capIsAutoApprovable` predicate live in a sibling leaf (one-way import, no cycle).
+import { capIsAutoApprovable } from "./schema-agent-autonomy-escalate.js";
 
 /**
  * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
@@ -99,28 +105,6 @@ export const STANDARD_FLOOR_CAPABILITIES = [
   "orch:message",
 ] as const satisfies readonly AgentCapability[];
 
-/**
- * The structural-floor caps that are `autoApprovable:false` in EVERY profile
- * forever (v8 §22.3): outward + irreversible. They are escalate-not-auto —
- * no mode, trust-graduation, or LLM-judge may ever auto-decide them. A profile
- * that opts one IN (e.g. an explicit `browse: true`) still resolves it with
- * `autoApprovable:false`.
- *
- * `orch:browse` (the browser) is the always-escalate cap-LITERAL member.
- * `orch:message` is deliberately NOT here: per §22.3 the floor item is
- * "orch:message to a NON-ORIGIN channel", and that target scoping rides the
- * `message.channels` config (`["origin"]` default + the §8.4 per-target grant),
- * NOT the cap literal. The cap-literal `orch:message` is auto-approvable to the
- * agent's OWN origin channel under quota (the §3.8 capable default), so it
- * resolves `autoApprovable:true` here while the non-origin send is gated by the
- * message config — modeling it as an always-escalate cap-literal would
- * incorrectly forbid even origin sends. `report:issue` is a Phase-215 deputy cap
- * outside this milestone's `orch:*` vocabulary.
- */
-const ALWAYS_ESCALATE_CAPABILITIES = ["orch:browse"] as const satisfies readonly AgentCapability[];
-
-const ALWAYS_ESCALATE_SET: ReadonlySet<AgentCapability> = new Set(ALWAYS_ESCALATE_CAPABILITIES);
-
 // ── The autonomy config schema (§3.3 knob surface, §6.4 defaulting) ──────────
 
 /** Per-agent autonomy posture. `accept-reversible` is the `standard` mode. */
@@ -151,6 +135,13 @@ export const AutonomyMessageConfigSchema = z.strictObject({
 export const AutonomyConfigSchema = z.strictObject({
   /** §3.8 posture: assistant | standard (default) | unattended | max. */
   profile: z.enum(AUTONOMY_PROFILE_NAMES).default("standard"),
+  /**
+   * §23.10 lean-coordinator role (COORD-01; full doc + expansion in
+   * `schema-agent-autonomy-role.ts`). `worker` (default) ⇒ byte-identical to
+   * today; `coordinator` NARROWS the resolved tool surface only (never a cap).
+   * Operator-set; the agent CANNOT self-raise (like `mode`).
+   */
+  role: z.enum(AUTONOMY_ROLES).default("worker"),
   /**
    * Whether autonomy surfaces are on. Optional at the config layer — the
    * resolver fills it from the profile when omitted (`standard` → true,
@@ -368,6 +359,10 @@ export interface ResolvedCapability {
 /** The fully-resolved autonomy posture a consumer (Plan 04/06) reads. */
 export interface ResolvedAutonomy {
   readonly profile: AutonomyProfileName;
+  /** §23.10 lean-coordinator role (COORD-01) — narrows the tool surface only; caps are role-invariant. */
+  readonly role: AutonomyRole;
+  /** `["coordinator"]` when `role:coordinator` (the allowlist `setup-tools` applies); `undefined` for `worker`. */
+  readonly coordinatorToolGroups?: readonly string[];
   readonly enabled: boolean;
   /** The resolved orch:* caps (deduped). */
   readonly capabilities: readonly AgentCapability[];
@@ -394,11 +389,6 @@ export interface ResolvedAutonomy {
   readonly outward: AutonomyOutwardConfig; // origin/grants/volume (QUOTA-01/02)
   /** Present for `unattended` (mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
-}
-
-/** Is this resolved cap auto-allowable? `false` for the §22.3 always-escalate floor. */
-function capIsAutoApprovable(cap: AgentCapability): boolean {
-  return !ALWAYS_ESCALATE_SET.has(cap);
 }
 
 /**
@@ -460,8 +450,15 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
   // resolved source at the meter/semaphore).
   const bounds = resolveAutonomyBounds(cfg, base);
 
+  // COORD-01: the role NARROWS the tool surface only (the cap set above is
+  // untouched); `worker` omits `coordinatorToolGroups` (see *-role.ts).
+  const role: AutonomyRole = cfg?.role ?? "worker";
+  const coordinatorToolGroups = resolveCoordinatorToolGroups(role);
+
   const resolved: ResolvedAutonomy = {
     profile: profileName,
+    role,
+    ...(coordinatorToolGroups !== undefined ? { coordinatorToolGroups } : {}),
     enabled: cfg?.enabled ?? base.enabled,
     capabilities: orderedCaps,
     resolvedCapabilities,

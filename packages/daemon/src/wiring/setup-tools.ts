@@ -16,6 +16,7 @@ import {
   safePath,
   formatSessionKey,
   systemNowMs,
+  resolveAutonomy,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
@@ -95,6 +96,7 @@ import type { BrokerContextDeps } from "./setup-broker-activation.js";
 // orchestrate-assembly bodies are in setup-tools-autonomy.ts (file-size cap).
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
+import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // COORD-01 (218-01)
 
 
 // Deps / Result types
@@ -632,28 +634,27 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
+    // COORD-01 (218-01): narrow a role:coordinator lead (selector + rationale in
+    // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
+    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
+    const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
+    if (coordinatorNarrowed) {
+      skillsLogger.debug(
+        { agentId, role: resolvedAutonomy.role, toolGroups: effectiveGroups, step: "tool-assembly" },
+        "coordinator role narrowed the tool surface to the orchestration set",
+      );
+    }
+
     // Determine platform tool provider based on options
     let platformToolProvider: PlatformToolProvider | undefined;
     if (!includePlatform) {
       platformToolProvider = undefined;
-    } else if (toolGroups && toolGroups.length > 0 && !toolGroups.includes("full")) {
-      // Build allowed tool name set from all requested profiles AND groups
-      const allowedNames = new Set<string>();
-      for (const group of toolGroups) {
-        const profileTools = TOOL_PROFILES[group];
-        if (profileTools) {
-          for (const t of profileTools) allowedNames.add(t);
-        }
-        // Also check TOOL_GROUPS (e.g., "web" -> ["web_fetch", "web_search", "browser"])
-        const groupKey = group.startsWith("group:") ? group : `group:${group}`;
-        const groupTools = TOOL_GROUPS[groupKey];
-        if (groupTools) {
-          for (const t of groupTools) allowedNames.add(t);
-        }
-      }
+    } else if (effectiveGroups && effectiveGroups.length > 0 && !effectiveGroups.includes("full")) {
+      // Build the allowed tool-name set from the effective profiles AND groups.
+      const allowedNames = expandToolGroupsToNames([...effectiveGroups], TOOL_PROFILES, TOOL_GROUPS);
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {
-      // No toolGroups or "full" in toolGroups -- return all platform tools unfiltered
+      // No effectiveGroups or "full" in effectiveGroups -- return all platform tools unfiltered
       platformToolProvider = agentPlatformTools;
     }
 

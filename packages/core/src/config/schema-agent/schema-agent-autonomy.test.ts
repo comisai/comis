@@ -560,6 +560,72 @@ describe("resolveAutonomy (217 — both scalars surface on every resolved profil
 // These cases are RED until the helper is exported — the named import is
 // unresolvable on the pre-patch tree.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// COORD-01 (Phase 218): the lean-coordinator `autonomy.role` posture. A net-new
+// `role: z.enum(["worker","coordinator"]).default("worker")` field on
+// AutonomyConfigSchema that `resolveAutonomy` expands into a
+// `coordinatorToolGroups` allowlist (`["coordinator"]` when role:coordinator,
+// undefined for worker). `role` NARROWS the resolved TOOL SURFACE only — it
+// NEVER changes the resolved capability set (the §22.3 over-grant guard: the
+// resolved `capabilities[]` must be IDENTICAL with and without `role` for the
+// same profile). Default `worker` ⇒ byte-identical to today (no BC shim).
+//
+// These cases are RED until the field + the resolver expansion land: the schema
+// rejects nothing for `role`, and `resolved.role` / `resolved.coordinatorToolGroups`
+// are absent from the resolved type and `undefined` at runtime.
+// ---------------------------------------------------------------------------
+describe("AutonomyConfigSchema (COORD-01 — the role field is a closed worker|coordinator enum)", () => {
+  it("COORD-01-S1: parse({}) resolves role to the default 'worker' (zero-config byte-identical default)", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    expect(parsed.role).toBe("worker");
+  });
+
+  it("COORD-01-S2: round-trips an explicit role:coordinator", () => {
+    expect(AutonomyConfigSchema.parse({ role: "coordinator" }).role).toBe("coordinator");
+  });
+
+  it("COORD-01-S3: rejects a bogus role (closed enum, strictObject typo guard)", () => {
+    expect(AutonomyConfigSchema.safeParse({ role: "bogus" }).success).toBe(false);
+  });
+});
+
+describe("resolveAutonomy (COORD-01 — role expands into coordinatorToolGroups; narrows-only)", () => {
+  it("COORD-01-S4: role:coordinator resolves role 'coordinator' + a non-empty coordinatorToolGroups containing 'coordinator'", () => {
+    const r = resolveAutonomy({ profile: "unattended", role: "coordinator" });
+    expect(r.role).toBe("coordinator");
+    expect(Array.isArray(r.coordinatorToolGroups)).toBe(true);
+    expect(r.coordinatorToolGroups!.length).toBeGreaterThan(0);
+    expect(r.coordinatorToolGroups).toContain("coordinator");
+  });
+
+  it("COORD-01-S5: role:worker (default) resolves role 'worker' + NO coordinatorToolGroups (no narrowing)", () => {
+    const r = resolveAutonomy({ profile: "standard" });
+    expect(r.role).toBe("worker");
+    expect(r.coordinatorToolGroups).toBeUndefined();
+  });
+
+  it("COORD-01-S6: zero-config (resolveAutonomy(undefined)) defaults role to 'worker'", () => {
+    expect(resolveAutonomy(undefined).role).toBe("worker");
+    expect(resolveAutonomy({}).role).toBe("worker");
+  });
+
+  it("COORD-01-S7: role NARROWS the surface, NEVER the caps — the resolved capabilities are IDENTICAL with and without role (the §22.3 over-grant guard)", () => {
+    const withoutRole = resolveAutonomy({ profile: "unattended" });
+    const withRole = resolveAutonomy({ profile: "unattended", role: "coordinator" });
+    expect([...withRole.capabilities].sort()).toEqual([...withoutRole.capabilities].sort());
+    // The autoApprovable bits must be unchanged too — role touches no cap.
+    expect(withRole.resolvedCapabilities).toEqual(withoutRole.resolvedCapabilities);
+  });
+
+  it("COORD-01-S8: every profile resolves a role field — the resolved type is TOTAL (worker by default)", () => {
+    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+      const r = resolveAutonomy({ profile });
+      expect(r.role, `${profile} must resolve a role`).toBe("worker");
+      expect(r.coordinatorToolGroups, `${profile} worker has no narrowing`).toBeUndefined();
+    }
+  });
+});
+
 describe("resolveEffectiveMode (EVICT-02 — fail-closed mode resolution)", () => {
   it("EVICT-02-S2: a recognized mode 'unattended' passes through unchanged", () => {
     expect(resolveEffectiveMode("unattended")).toBe("unattended");
