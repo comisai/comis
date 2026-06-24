@@ -204,6 +204,48 @@ describe("createSleepTool — STREAM-03 sleep primitive", () => {
     await p;
   });
 
+  it("WR-02: a NUMERIC-STRING ms (LLMs emit `{ ms: \"1500\" }`) is coerced, not thrown", async () => {
+    const fake = createFakeTimer();
+    const tool = createSleepTool({ timer: fake.timer });
+
+    // readNumberParam(...,false) THROWS on a present-but-non-number value, which
+    // would escape execute() (no try/catch) — contradicting the "never a throw"
+    // invariant. A numeric string must coerce to its number and schedule.
+    const p = tool.execute("call-str-ms", { ms: "1500" });
+    await Promise.resolve();
+    expect(fake.scheduled).toHaveLength(1);
+    expect(fake.scheduled[0].ms).toBe(1500);
+    fake.advance(1500);
+    await expect(p).resolves.toBeDefined();
+  });
+
+  it("WR-02: an UNPARSEABLE string duration falls back to the clamped default, never a throw", async () => {
+    const fake = createFakeTimer();
+    const tool = createSleepTool({ timer: fake.timer });
+
+    // `{ seconds: "abc" }` is present but not a number → must NOT throw; it falls
+    // back to the MAX_SLEEP_MS cache-window default (the documented invariant).
+    const p = tool.execute("call-bad-sec", { seconds: "abc" });
+    await Promise.resolve();
+    expect(fake.scheduled).toHaveLength(1);
+    expect(fake.scheduled[0].ms).toBe(MAX_SLEEP_MS);
+    fake.advance(MAX_SLEEP_MS);
+    await expect(p).resolves.toBeDefined();
+  });
+
+  it("WR-02: a numeric-string `seconds` coerces (and ms-string still wins over seconds-string)", async () => {
+    const fake = createFakeTimer();
+    const tool = createSleepTool({ timer: fake.timer });
+
+    const p = tool.execute("call-str-sec", { seconds: "2", ms: "500" });
+    await Promise.resolve();
+    expect(fake.scheduled).toHaveLength(1);
+    // ms takes precedence over seconds even when both arrive as strings.
+    expect(fake.scheduled[0].ms).toBe(500);
+    fake.advance(500);
+    await expect(p).resolves.toBeDefined();
+  });
+
   it("surfaces the ~5-min prompt-cache TTL and the sleep-once-not-poll guidance in its description", () => {
     const tool = createSleepTool({ timer: createFakeTimer().timer });
     const desc = tool.description.toLowerCase();
