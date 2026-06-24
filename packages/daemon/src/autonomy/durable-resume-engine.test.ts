@@ -30,6 +30,7 @@ import type {
 import {
   reconcileLedgerRow,
   createDurableResumeEngine,
+  orphanReasonToEnum,
   type ReconcileLedgerDeps,
   type DurableResumeEngineDeps,
 } from "./durable-resume-engine.js";
@@ -594,5 +595,125 @@ describe("createDurableResumeEngine (DUR-02/03/04, HB-02/03)", () => {
 
     const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
     expect(bus.events.some((e) => e.event === "durable:resumed")).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLEET-03 (Phase 220-01): the durable:* events carry a CLOSED-enum reason + a
+// numeric timestamp — never the engine's free text (T-220-01 content-free
+// observability). The free string stays on the WARN log / notify only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The closed reason union the durable:orphaned EVENT may carry (events-orchestration.ts). */
+const ORPHAN_ENUM = ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const;
+
+describe("orphanReasonToEnum (FLEET-03 content-free reason map, TOTAL over string)", () => {
+  it("maps each known engine free-text reason to its closed enum member (never echoes the input)", () => {
+    // The four free-text reasons the engine passes to orphan() today.
+    expect(orphanReasonToEnum("re-read failed")).toBe("reread_failed");
+    expect(orphanReasonToEnum("not resumable: status=revoked")).toBe("not_resumable");
+    expect(orphanReasonToEnum("not resumable: status=missing")).toBe("not_resumable");
+    expect(orphanReasonToEnum("invalid caps")).toBe("invalid_caps");
+    expect(orphanReasonToEnum("resume failed")).toBe("resume_failed");
+    // Each result is a member of the closed union, never the raw free text.
+    for (const free of [
+      "re-read failed",
+      "not resumable: status=revoked",
+      "invalid caps",
+      "resume failed",
+    ]) {
+      expect(ORPHAN_ENUM).toContain(orphanReasonToEnum(free));
+      expect(orphanReasonToEnum(free)).not.toBe(free);
+    }
+  });
+
+  it("is TOTAL: an unmapped brand-new reason STILL returns an enum member (the default arm), never the raw free text", () => {
+    const brandNew = "some brand-new unmapped reason that matches no branch 0xDEADBEEF";
+    const mapped = orphanReasonToEnum(brandNew);
+    // The content-free invariant AT THE SOURCE: every input maps to an enum; the
+    // function can never echo an unmapped free-text reason out onto the event.
+    expect(ORPHAN_ENUM).toContain(mapped);
+    expect(mapped).not.toBe(brandNew);
+    expect(mapped).toBe("resume_failed"); // the default arm
+    // Even the empty string is total.
+    expect(ORPHAN_ENUM).toContain(orphanReasonToEnum(""));
+  });
+});
+
+describe("durable:orphaned / durable:resumed event payloads (FLEET-03 typed, content-free)", () => {
+  it("durable:orphaned carries a CLOSED-enum reason (∈ the 4-member union, ≠ the free string) + a numeric timestamp", async () => {
+    // A status='revoked' re-read drives the orphan path with the free-text reason
+    // `not resumable: status=revoked` — the EVENT must carry the enum, not that string.
+    const running = durableRecord({ rootRunId: "root-orphan-ev", status: "running" });
+    const revoked = durableRecord({ rootRunId: "root-orphan-ev", status: "revoked" });
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({
+        resumable: [running],
+        byRootRun: new Map([["root-orphan-ev", revoked]]),
+      }),
+      nowMs: () => 1_234_567,
+    });
+
+    await createDurableResumeEngine(deps).resumeAll();
+
+    const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
+    const orphanEvent = bus.events.find((e) => e.event === "durable:orphaned");
+    expect(orphanEvent).toBeDefined();
+    const payload = orphanEvent!.payload;
+    // The reason is one of the closed enum members — NEVER the engine's free text.
+    expect(ORPHAN_ENUM).toContain(payload.reason);
+    expect(payload.reason).toBe("not_resumable");
+    expect(payload.reason).not.toBe("not resumable: status=revoked");
+    // A numeric timestamp rides the event (from the engine's injected clock).
+    expect(payload.timestamp).toBe(1_234_567);
+    expect(payload.rootRunId).toBe("root-orphan-ev");
+    // Content-free: the payload key-set is exactly {rootRunId, reason, timestamp} —
+    // no `hint`, no free-text reason field leaked onto the event.
+    expect(Object.keys(payload).sort()).toEqual(["reason", "rootRunId", "timestamp"]);
+  });
+
+  it("durable:orphaned reason for a resume failure maps to resume_failed (not the free string)", async () => {
+    const record = durableRecord({ rootRunId: "root-resfail" });
+    const resumeRun = vi.fn(async () => err(new Error("no live channel")));
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({
+        resumable: [record],
+        byRootRun: new Map([["root-resfail", record]]),
+      }),
+      resumeRun,
+      nowMs: () => 42,
+    });
+
+    await createDurableResumeEngine(deps).resumeAll();
+
+    const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
+    const orphanEvent = bus.events.find((e) => e.event === "durable:orphaned");
+    expect(orphanEvent?.payload.reason).toBe("resume_failed");
+    expect(orphanEvent?.payload.reason).not.toBe("resume failed");
+    expect(orphanEvent?.payload.timestamp).toBe(42);
+  });
+
+  it("durable:resumed carries a numeric stepIndex + timestamp", async () => {
+    const record = durableRecord({ rootRunId: "root-resumed-ev", stepIndex: 7 });
+    const deps = makeEngineDeps({
+      durableRuns: makeDurableRuns({
+        resumable: [record],
+        byRootRun: new Map([["root-resumed-ev", record]]),
+      }),
+      nowMs: () => 9_999,
+    });
+
+    await createDurableResumeEngine(deps).resumeAll();
+
+    const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
+    const resumedEvent = bus.events.find((e) => e.event === "durable:resumed");
+    expect(resumedEvent).toBeDefined();
+    const payload = resumedEvent!.payload;
+    expect(payload.stepIndex).toBe(7);
+    expect(typeof payload.stepIndex).toBe("number");
+    expect(payload.timestamp).toBe(9_999);
+    expect(payload.rootRunId).toBe("root-resumed-ev");
+    // Content-free: exactly {rootRunId, stepIndex, timestamp}.
+    expect(Object.keys(payload).sort()).toEqual(["rootRunId", "stepIndex", "timestamp"]);
   });
 });
