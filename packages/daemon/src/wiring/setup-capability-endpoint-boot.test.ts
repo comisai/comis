@@ -155,7 +155,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
   // reaches the constructed per-root meter.
   it("populates the late-bound boundedAutonomyBudget holder with the per-root reserve after construction", async () => {
     const dataDir = tempDataDir();
-    const holder: { current?: { reserveBudget: (...a: unknown[]) => { kind: string }; registerRoot: (...a: unknown[]) => void } } = {};
+    const holder: { current?: { reserveBudget: (...a: unknown[]) => { kind: string }; registerRoot: (...a: unknown[]) => void; evictRootIfIdle?: (...a: unknown[]) => void } } = {};
     const deps = {
       ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
       boundedAutonomyHolder: holder,
@@ -166,6 +166,13 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     expect(holder.current).toBeDefined();
     const outcome = holder.current!.reserveBudget("root-x", "_web", "_web", 0, 0);
     expect(outcome.kind).toBeDefined();
+    // KEYING-01 (built-but-not-wired guard): the holder.current literal MUST also
+    // expose evictRootIfIdle — the bridge calls it once per turn to re-anchor a
+    // session root's wall-clock. Omitting it (the literal only bound reserve +
+    // register) silently no-ops the per-turn re-anchor LIVE while the bridge unit
+    // test still passes on its mock. It must delegate to the composite (no throw).
+    expect(typeof holder.current!.evictRootIfIdle).toBe("function");
+    expect(() => holder.current!.evictRootIfIdle!("root-x")).not.toThrow();
   });
 
   // The resolver returns a STABLE rootRunId per session: an unregistered (top-level,

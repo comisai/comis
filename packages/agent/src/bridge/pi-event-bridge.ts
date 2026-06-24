@@ -212,6 +212,14 @@ export interface BoundedAutonomyBudgetPort {
   ): SpendGateOutcome;
   /** Anchor a tree root's wall-clock deadline + the rootRunId↔leaseId correlation. */
   registerRoot(rootRunId: string, leaseId: string, parentLeaseId?: string): void;
+  /** KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+   *  boundary — the bridge calls this once per turn so an interactive
+   *  `root-session-*` root (which acquires no spawn slot, so `releaseSpawn` never
+   *  evicts it) does NOT accumulate its wall-clock across the whole conversation
+   *  and falsely abort turns after `wallClockMs`. A no-op when the root has a LIVE
+   *  spawn (the runaway-tree backstop holds); preserves the $ aggregate. Optional
+   *  on the port (older stubs omit it; the daemon composite provides it). */
+  evictRootIfIdle?(rootRunId: string): void;
 }
 
 /**
@@ -1989,6 +1997,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const perRoot = deps.boundedAutonomyBudget?.current;
             if (perRoot && deps.resolveRootRunId && !m.aborted) {
               const rootRunId = deps.resolveRootRunId(deps.sessionKey);
+              // KEYING-01: re-anchor the per-root wall-clock + token limbs ONCE per
+              // turn (this metrics state is per-turn, so the flag fires on the turn's
+              // FIRST per-root reserve). An interactive session root (`root-session-*`)
+              // acquires no spawn slot, so `releaseSpawn` never evicts it and its
+              // anchor would accumulate across the WHOLE conversation — falsely
+              // aborting a turn after wallClockMs of wall-clock AGE (live finding
+              // 2026-06-24). evictRootIfIdle is a NO-OP when a live spawn shares the
+              // root (the runaway-tree backstop holds) and preserves the $ aggregate;
+              // the reserveBudget below then re-anchors THIS turn from its own start
+              // (the IN-02 first-reserve write in per-root-budget.ts).
+              if (!m.perRootReanchored) {
+                perRoot.evictRootIfIdle?.(rootRunId);
+                m.perRootReanchored = true;
+              }
               // The SAME real per-call locals the sibling ceiling consumes: the live
               // model (a manual /model switch updates getCurrentModel), the provider,
               // the conservative perTurnMax est $ (0 when spend is unconfigured — the

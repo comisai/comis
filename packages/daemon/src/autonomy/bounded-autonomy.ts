@@ -73,6 +73,15 @@ export interface BoundedAutonomy {
   /** Release one spawn slot for `rootRunId` (paired with a prior `tryAcquireSpawn`). */
   releaseSpawn(rootRunId: string): void;
   /**
+   * KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+   * boundary (the bridge calls this once per turn). A no-op when `rootRunId` has a
+   * LIVE spawn (`activeCount > 0`) so a runaway-tree backstop is never weakened;
+   * preserves the $ accumulator + the leaseId index (unlike `releaseSpawn`). Fixes
+   * the interactive `root-session-*` root accumulating its wall-clock across the
+   * whole conversation (it acquires no spawn slot, so `releaseSpawn` never evicts it).
+   */
+  evictRootIfIdle(rootRunId: string): void;
+  /**
    * Record one cap-socket call (RATE-01). Composes the per-root AND per-socket
    * sliding-window limits — denies if EITHER trips: the per-root key on
    * `config.rate.perRootCallsPerSec`, the per-socket key on its OWN
@@ -244,6 +253,25 @@ export function createBoundedAutonomy(deps: {
       if (semaphore.activeCount(rootRunId) === 0) {
         budget.evictRoot(rootRunId);
         leaseIdsByRoot.delete(rootRunId);
+      }
+    },
+
+    evictRootIfIdle(rootRunId): void {
+      // KEYING-01: re-anchor an IDLE root's wall-clock + token limbs at a turn
+      // boundary. An interactive SESSION root (`root-session-*`) acquires NO spawn
+      // slot, so `releaseSpawn` never fires for it and its wall-clock/token anchors
+      // would accumulate across the WHOLE conversation — a session alive >
+      // wallClockMs then falsely aborts EVERY subsequent turn (live finding
+      // 2026-06-24). The bridge calls this once per turn so each turn re-anchors
+      // from its own start (the next reserveBudget re-anchors via the IN-02
+      // first-reserve write). GUARD: only when `activeCount === 0` — a root with a
+      // LIVE spawn is NOT reset, so the genuine runaway-TREE wall-clock backstop
+      // holds. Drops ONLY the budget meter's wall-clock + token maps (via
+      // budget.evictRoot); the $ accumulator is untouched (a per-session spend cap
+      // stays cumulative) and the leaseId correlation is preserved (unlike
+      // releaseSpawn — the session's live leases must survive a turn boundary).
+      if (semaphore.activeCount(rootRunId) === 0) {
+        budget.evictRoot(rootRunId);
       }
     },
 
