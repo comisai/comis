@@ -1,12 +1,12 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 169 JSON-RPC methods across 41 namespaces"
+description: "Complete reference for all 170 JSON-RPC methods across 41 namespaces"
 icon: "code"
 ---
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 169 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 170 methods across 41 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, autonomy live-control (lease-revoke / run-kill / autonomy-evict), platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
 
 Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
 
@@ -3964,7 +3964,7 @@ Rate-limited to one steer per `target` every 2 seconds (shared across both modes
 
 <Accordion title="capabilities (1 method)">
 
-The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` are the write side).
+The read-only, **agent-reachable** introspection of the [bounded-autonomy](/agents/autonomy) posture — "what can I do + how much budget/quota is left". The companion of the operator-facing live-control methods below (the read side; `lease.revoke` / `run.kill` / `autonomy.evict` are the write side).
 
 | Method | Scope | Description |
 |--------|-------|-------------|
@@ -4005,14 +4005,15 @@ Read-only and **not capability-gated** (an agent reading its OWN posture needs n
 
 </Accordion>
 
-<Accordion title="autonomy / live control (2 methods)">
+<Accordion title="autonomy / live control (3 methods)">
 
-Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop a runaway or misbehaving spawn tree. Both methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke or un-kill itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these two methods are the manual override.
+Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop, hard-stop, or demote a runaway or misbehaving spawn tree. All three methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke, un-kill, or un-evict itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these methods are the manual override.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `lease.revoke` | `admin` | Cooperative stop — revoke a capability lease so the bearer's next RPC is denied |
 | `run.kill` | `admin` | Hard stop — kill a whole spawn tree by `rootRunId` (abort each SDK session) and revoke its leases |
+| `autonomy.evict` | `admin` | Demote-but-continue — drop an in-flight run to the `default` profile by `rootRunId` (it keeps running, but under the safe posture) |
 
 ### `lease.revoke`
 
@@ -4065,6 +4066,34 @@ Hard stop: aborts every running/queued SDK session of the tree (by `rootRunId`) 
 {
   "jsonrpc": "2.0",
   "result": { "killed": 4 },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `autonomy.evict`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` (deny-by-origin) |
+| **Parameters** | `{ rootRunId: string }` — the root run to demote |
+| **Returns** | `{ evicted: boolean }` — `true` once the run is demoted (whether this call newly demoted it or it was already evicted; idempotent) |
+
+Demote-but-continue: unlike `lease.revoke` (cooperative stop) and `run.kill` (hard stop), evict does **not** abort the run. It marks the `rootRunId` in a daemon-wide evicted-set; the bounded-autonomy chokepoint consults that set at the run's **next gate decision** and resolves its effective profile to `default` — so an over-eager [`unattended`](/agents/autonomy#the-unattended-profile) run reverts to the conservative posture **mid-flight** (not at the next mint or spawn). The run keeps going under `default` (which still escalates outward, never auto-sends). `default` is also the fail-closed target [`evictOnPolicyUnreachable`](/reference/config-yaml#autonomy-agents-autonomy) lands on when a mode cannot be resolved.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "autonomy.evict",
+  "params": { "rootRunId": "root-agent-1-abc" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": { "evicted": true },
   "id": 1
 }
 ```
