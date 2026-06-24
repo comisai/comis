@@ -7753,6 +7753,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "minLength": 1
         },
+        "rootRunId": {
+          "type": "string",
+          "minLength": 1
+        },
         "depth": {
           "type": "string",
           "enum": [
@@ -8968,6 +8972,66 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "required": [
             "buildAuthor",
             "reason"
+          ],
+          "additionalProperties": false
+        },
+        "autonomy": {
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "degraded": {
+                  "type": "number"
+                },
+                "degradedRate": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "total",
+                "degraded",
+                "degradedRate"
+              ],
+              "additionalProperties": false
+            },
+            "orphaned": {
+              "type": "number"
+            },
+            "resumed": {
+              "type": "number"
+            },
+            "revoked": {
+              "type": "number"
+            },
+            "killed": {
+              "type": "number"
+            },
+            "breakerTrips": {
+              "type": "number"
+            },
+            "budgetBreaches": {
+              "type": "number"
+            },
+            "costUsd": {
+              "type": "number"
+            },
+            "worstRootRunId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runs",
+            "orphaned",
+            "resumed",
+            "revoked",
+            "killed",
+            "breakerTrips",
+            "budgetBreaches",
+            "costUsd"
           ],
           "additionalProperties": false
         }

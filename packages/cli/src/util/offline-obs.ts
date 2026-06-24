@@ -117,7 +117,11 @@ export async function assembleFleetHealthReportOffline(
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
     return await assembleFleetHealthReport(
-      { obsStore: store, dataDir, clock: systemClock },
+      // FLEET-01/02/04 (Phase 220-03): the offline CLI is daemon-less — there is no
+      // durable-run store edge here, so pass `durableRuns: undefined` explicitly. The
+      // assembler soft-fails and the autonomy block is honestly OMITTED (the documented
+      // coverage degradation, NOT a divergence from the RPC/MCP surfaces, which DO wire it).
+      { obsStore: store, dataDir, clock: systemClock, durableRuns: undefined },
       sinceHours,
     );
   } finally {

@@ -17,6 +17,19 @@
  */
 import type { DiagnosticRow } from "@comis/memory";
 
+/**
+ * One report finding. Shape-identical to `FleetHealthReport.findings[number]`.
+ * Declared in this leaf module (no back-imports) so both `fleet-findings.ts` and
+ * the `fleet-autonomy.ts` sibling can import it without a cycle; `fleet-findings.ts`
+ * re-exports it for its existing consumers.
+ */
+export interface Finding {
+  code: string;
+  detail: string;
+  count: number;
+  hint: string;
+}
+
 export function healthSignalLabel(row: DiagnosticRow): string {
   if (row.details === undefined) return "unknown";
   try {
