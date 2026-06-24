@@ -460,3 +460,80 @@ describe("AutonomyConfigSchema (216 — durability sub-block defaults off)", () 
     expect(AutonomyConfigSchema.safeParse({ durability: { recoveryBudgetMs: 1.5 } }).success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 217 (BREAK-01 / EVICT-02 / UNATT-01): the two FLAT never-hang config
+// scalars the denial breaker + the evict fail-closed path read. Per v8 §22.6
+// (line 720-721) these are flat siblings of `mode`/`cronSelfMax` (RESEARCH A1 —
+// KISS, no sub-block for two scalars), threaded through the same five-touch
+// pattern every scalar follows (schema field + ProfileEntry + STANDARD_GUARDS +
+// ResolvedAutonomy + the resolveAutonomy fold). They MUST default-safe so a
+// default install is byte-identical: the breaker is inert until a deny happens
+// (`denialBreakerN: 5`), and `evictOnPolicyUnreachable: true` IS the already-safe
+// fail-closed behavior.
+//
+// These cases are RED until the five touches land: the fields are absent from
+// the resolved type and `undefined` at runtime, and the schema rejects/accepts
+// nothing for them yet.
+// ---------------------------------------------------------------------------
+describe("AutonomyConfigSchema (217 — denialBreakerN + evictOnPolicyUnreachable defaults + validation)", () => {
+  it("BREAK-01-S1: parse({}) resolves denialBreakerN to the default 5 and evictOnPolicyUnreachable to default true", () => {
+    const parsed = AutonomyConfigSchema.parse({});
+    expect(parsed.denialBreakerN).toBe(5);
+    expect(parsed.evictOnPolicyUnreachable).toBe(true);
+  });
+
+  it("BREAK-01-S2: round-trips an explicit denialBreakerN + evictOnPolicyUnreachable override", () => {
+    const parsed = AutonomyConfigSchema.parse({ denialBreakerN: 3, evictOnPolicyUnreachable: false });
+    expect(parsed.denialBreakerN).toBe(3);
+    expect(parsed.evictOnPolicyUnreachable).toBe(false);
+  });
+
+  it("BREAK-01-S3: rejects denialBreakerN = 0 (T-217-01 — a 0 would disable the breaker; must fail closed)", () => {
+    expect(AutonomyConfigSchema.safeParse({ denialBreakerN: 0 }).success).toBe(false);
+  });
+
+  it("BREAK-01-S4: rejects a negative denialBreakerN (must be a positive consecutive-block count)", () => {
+    expect(AutonomyConfigSchema.safeParse({ denialBreakerN: -2 }).success).toBe(false);
+  });
+
+  it("BREAK-01-S5: rejects a non-integer denialBreakerN (consecutive blocks are whole)", () => {
+    expect(AutonomyConfigSchema.safeParse({ denialBreakerN: 2.5 }).success).toBe(false);
+  });
+});
+
+describe("resolveAutonomy (217 — both scalars surface on every resolved profile, default-safe)", () => {
+  it("BREAK-01-S6: zero-config (→ standard) exposes denialBreakerN 5 + evictOnPolicyUnreachable true on the resolved posture", () => {
+    const r = resolveAutonomy(undefined);
+    expect(r.denialBreakerN).toBe(5);
+    expect(r.evictOnPolicyUnreachable).toBe(true);
+  });
+
+  it("UNATT-01-S1: the unattended profile exposes both scalars AND still resolves mode 'unattended' (the activation signal is intact, not clamped away)", () => {
+    const un = resolveAutonomy({ profile: "unattended" });
+    expect(un.denialBreakerN).toBe(5);
+    expect(un.evictOnPolicyUnreachable).toBe(true);
+    expect(un.mode).toBe("unattended");
+  });
+
+  it("BREAK-01-S7: every profile surfaces a numeric denialBreakerN + boolean evictOnPolicyUnreachable — the resolved type is TOTAL", () => {
+    for (const profile of ["assistant", "standard", "unattended", "max"] as const) {
+      const r = resolveAutonomy({ profile });
+      expect(typeof r.denialBreakerN, `${profile} denialBreakerN`).toBe("number");
+      expect(r.denialBreakerN).toBeGreaterThan(0);
+      expect(typeof r.evictOnPolicyUnreachable, `${profile} evictOnPolicyUnreachable`).toBe(
+        "boolean",
+      );
+    }
+  });
+
+  it("BREAK-01-S8: an explicit denialBreakerN OVERRIDES the profile default (progressive disclosure)", () => {
+    const r = resolveAutonomy({ profile: "standard", denialBreakerN: 9 });
+    expect(r.denialBreakerN).toBe(9);
+  });
+
+  it("EVICT-02-S1: an explicit evictOnPolicyUnreachable:false is HONORED (the fold uses ?? not ||, so false is not coerced to the default true)", () => {
+    const r = resolveAutonomy({ profile: "standard", evictOnPolicyUnreachable: false });
+    expect(r.evictOnPolicyUnreachable).toBe(false);
+  });
+});
