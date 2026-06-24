@@ -10,14 +10,20 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 
 import { join } from "node:path";
 
 import { safePath, validateBindMount } from "@comis/core";
 
-import type { JailNodeResolution, SandboxOptions, SandboxProvider } from "./types.js";
+import type {
+  JailAgentCliResolution,
+  JailNodeResolution,
+  SandboxOptions,
+  SandboxProvider,
+} from "./types.js";
 
 /**
  * JAIL-04 / v8 §4.6 — Node-runtime honesty. Surfaces 2/3 (orchestrate / CLI)
@@ -65,6 +71,72 @@ export function resolveJailNode(opts: {
       "binary is bindable. There is NEVER a bundled Node and NEVER a silent " +
       "unjailed fallback.",
   };
+}
+
+/**
+ * CLI-05/06 — comis-agent CLI-binary honesty. The `comis-agent` CLI surface
+ * needs its `#!/usr/bin/env node` entry (`comis-agent-entry.js`) bound into the
+ * jail, sha256-PINNED against the committed build manifest so a swapped/modified
+ * binary is never bound (T-219-22 tampering). Resolve in two honest modes:
+ *   1. BIND — the entry exists AND its sha256 matches `expectedSha` (the manifest
+ *      pin) → RO-bind it (src==dest, so COMIS_AGENT_BIN/PATH resolves it in-jail).
+ *   2. UNAVAILABLE — the entry is MISSING, or present but its bytes do NOT match
+ *      the pin (tamper) → the CLI surface is UNAVAILABLE with a LOUD, content-free
+ *      hint (CLI-06). The caller (orchestrate-tool) degrades ONLY the CLI surface
+ *      — the orchestrate SCRIPT surface still runs (unlike resolveJailNode, an
+ *      unavailable comis-agent binary does NOT refuse the whole jail).
+ *
+ * Content-free (§2.7): the hint names the CAUSE (missing | hash-mismatch) and the
+ * operator action — it NEVER echoes the expected hash or the binary bytes.
+ *
+ * PURE: the only I/O is the injected `exists` predicate (defaults to existsSync)
+ * and `readFile` (defaults to readFileSync), so the resolver is macOS-unit-
+ * testable with a fake binary + a fake hash — no real fs, no real binary.
+ */
+export function resolveJailAgentCli(opts: {
+  /** The resolved comis-agent-entry.js path to bind. */
+  readonly binPath: string;
+  /** The committed manifest sha256 pin (lowercase hex) the bytes must match. */
+  readonly expectedSha: string;
+  /** Existence predicate (defaults to fs.existsSync) — injected for unit tests. */
+  readonly exists?: (p: string) => boolean;
+  /** File reader (defaults to fs.readFileSync) — injected for unit tests. */
+  readonly readFile?: (p: string) => Buffer;
+}): JailAgentCliResolution {
+  const exists = opts.exists ?? existsSync;
+  const readFile = opts.readFile ?? readFileSync;
+
+  // 1. MISSING — the binary is not on disk. The CLI surface is unavailable; the
+  //    orchestrate SCRIPT surface is independent and still runs.
+  if (!exists(opts.binPath)) {
+    return {
+      mode: "unavailable",
+      hint:
+        "The comis-agent CLI binary was not found where it is expected in the " +
+        "skills dist — the comis-agent CLI surface is UNAVAILABLE inside the jail " +
+        "(the orchestrate SCRIPT surface still works). Rebuild (pnpm build) so the " +
+        "comis-agent entry rides into dist. There is NEVER a silent unbound CLI.",
+    };
+  }
+
+  // 2. HASH MISMATCH (tamper) — present but its bytes diverge from the manifest
+  //    pin. REFUSE to bind a tampered binary (T-219-22); the CLI surface is
+  //    unavailable. The hint NEVER echoes the hash or the bytes (content-free).
+  const actualSha = createHash("sha256").update(readFile(opts.binPath)).digest("hex");
+  if (actualSha !== opts.expectedSha) {
+    return {
+      mode: "unavailable",
+      hint:
+        "The comis-agent CLI binary's sha256 does NOT match the committed build " +
+        "manifest — refusing to bind a tampered/mismatched binary (the comis-agent " +
+        "CLI surface is UNAVAILABLE; the orchestrate SCRIPT surface still works). " +
+        "Rebuild and regenerate the manifest (pnpm build && pnpm agent-cli:manifest).",
+    };
+  }
+
+  // 3. BIND — exists AND the bytes match the pin. RO-bind it (read-only — a
+  //    writable binary is a host-RCE vector).
+  return { mode: "bind", binPath: opts.binPath };
 }
 
 /**
@@ -301,6 +373,19 @@ export class BwrapProvider implements SandboxProvider {
     // (resolveJailNode), never a live fs probe inside this pure arg generator.
     if (opts.jailNode?.mode === "bind") {
       args.push("--ro-bind", opts.jailNode.execPath, opts.jailNode.execPath);
+    }
+
+    // -- comis-agent CLI binary (CLI-05) --
+    // When the resolved CLI mode is "bind", RO-bind the sha256-pinned comis-agent
+    // entry so the in-jail `comis-agent` CLI resolves (the caller sets
+    // COMIS_AGENT_BIN to this same path). READ-ONLY only — a writable binary is a
+    // host-RCE vector (the §4.7 .linux audit proves a write to it from the jail
+    // fails). src==dest so COMIS_AGENT_BIN/PATH resolves it in-jail. The mode is a
+    // RESOLVED INPUT (resolveJailAgentCli — hash-verified), never a live fs probe.
+    // "unavailable" (missing/tampered) emits NO bind — the caller degrades ONLY
+    // the CLI surface (the script surface is unaffected).
+    if (opts.jailAgentCli?.mode === "bind") {
+      args.push("--ro-bind", opts.jailAgentCli.binPath, opts.jailAgentCli.binPath);
     }
 
     // -- Isolation flags --

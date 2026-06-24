@@ -43,7 +43,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
@@ -58,8 +58,12 @@ import {
 } from "@comis/core";
 import { createToolResultSizeGuard } from "@comis/agent";
 
-import { resolveJailNode, SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
-import type { JailNodeResolution, SandboxProvider } from "../sandbox/types.js";
+import { resolveJailAgentCli, resolveJailNode, SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
+import type {
+  JailAgentCliResolution,
+  JailNodeResolution,
+  SandboxProvider,
+} from "../sandbox/types.js";
 import { loadSeccompProfileFd, closeSeccompProfileFd } from "../sandbox/seccomp-profile.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 import type { CleanupRunContext, GcRunContext, MaterializeContext } from "./result-ref-store.js";
@@ -160,6 +164,14 @@ export interface OrchestrateToolDeps {
   readonly spawnFn?: OrchestrateSpawnFn;
   /** The jail-node resolver (default the real `resolveJailNode`). */
   readonly resolveJailNodeFn?: () => JailNodeResolution;
+  /**
+   * The comis-agent CLI-binary resolver (default `defaultResolveJailAgentCli`,
+   * which resolves the dist entry + reads the committed manifest sha via
+   * `import.meta.url` and calls `resolveJailAgentCli`). CLI-05/06: a missing or
+   * tampered binary makes ONLY the CLI surface unavailable (a loud WARN, no bind,
+   * no COMIS_AGENT_BIN) — the orchestrate SCRIPT surface still runs.
+   */
+  readonly resolveJailAgentCliFn?: () => JailAgentCliResolution;
   /** The seccomp-fd loader (default the real `loadSeccompProfileFd`; null on macOS). */
   readonly loadSeccompFdFn?: () => number | null;
   /** Injected wall clock (default `systemNowMs`). */
@@ -179,6 +191,12 @@ export interface OrchestrateToolDeps {
 
 /** The SDK asset filenames copied into the jail workspace (Plan 03 + Task 1). */
 const SDK_ASSETS = ["comis_tools.d.ts", "comis_tools.js", "orchestrate-sdk-runtime.js"] as const;
+
+/** The comis-built comis-agent entry that is sha256-pinned + RO-bound (CLI-05). */
+const COMIS_AGENT_ENTRY_FILENAME = "comis-agent-entry.js";
+
+/** The committed manifest (rides into dist via the asset-copy) holding the pin. */
+const COMIS_AGENT_MANIFEST_FILENAME = "comis-agent-manifest.json";
 
 /** Max stdout characters that re-enter context — the rest is size-bounced. */
 const STDOUT_MAX_CHARS = 30_000;
@@ -284,6 +302,8 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
   const loadSeccompFd = deps.loadSeccompFdFn ?? loadSeccompProfileFd;
   const now = deps.now ?? systemNowMs;
   const sdkAssetsDir = deps.sdkAssetsDir ?? dirname(fileURLToPath(import.meta.url));
+  const resolveAgentCli =
+    deps.resolveJailAgentCliFn ?? (() => defaultResolveJailAgentCli(sdkAssetsDir));
 
   return {
     name: "orchestrate",
@@ -344,6 +364,21 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           );
         }
 
+        // 3b. CLI-05/06 honest-degrade: resolve the sha256-pinned comis-agent
+        //     binary. UNLIKE the node resolve, an unavailable (missing/tampered)
+        //     binary does NOT refuse the whole jail — it degrades ONLY the
+        //     comis-agent CLI surface (the orchestrate SCRIPT surface is
+        //     independent and still runs). A LOUD content-free WARN names the
+        //     cause; we then omit the bind + COMIS_AGENT_BIN (never a silent bind
+        //     of a missing/tampered binary — T-219-22 / T-219-24).
+        const jailAgentCli = resolveAgentCli();
+        if (jailAgentCli.mode === "unavailable") {
+          log.warn(
+            { runId, errorKind: "precondition" as const, hint: jailAgentCli.hint },
+            "comis-agent CLI surface unavailable inside the jail (the orchestrate script surface still works)",
+          );
+        }
+
         // 4. Build the cap-socket jail args (--unshare-net + the cap socket
         //    --bind + the workspace-only FS; ~/.comis is never bound → masked).
         //    The provider binds the curated SYSTEM_RO_PATHS itself (so jq + node
@@ -351,6 +386,8 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //    .linux.test) — re-listing them here would route the curated
         //    allow-list through the JAIL-03 discovery screen (a false-positive on
         //    /etc/* paths that resolve into a blocked dir on some hosts).
+        //    `jailAgentCli` is passed verbatim — buildArgs RO-binds the binary
+        //    ONLY on mode "bind", omits it otherwise (CLI-05).
         const args = deps.sandbox.buildArgs({
           workspacePath,
           sharedPaths: [],
@@ -360,6 +397,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           network: { mode: "cap-socket", capSocketPath: deps.capSocketPath },
           seccompFd,
           jailNode,
+          jailAgentCli,
         });
         // The jailed command runs the script with node, from the workspace cwd.
         const command = `node ${scriptName}`;
@@ -371,6 +409,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         const childEnv: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv);
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
+        }
+        // 5b. CLI-05: expose COMIS_AGENT_BIN (the in-jail comis-agent path) ONLY
+        //     when the binary is bound. It is NOT a secret, so it is set AFTER the
+        //     scrub (like the lease vars). On "unavailable" it is intentionally
+        //     unset — the in-jail `comis-agent` then has no binary to resolve, the
+        //     loud WARN above already announced the scoped degrade (CLI-06).
+        if (jailAgentCli.mode === "bind") {
+          childEnv.COMIS_AGENT_BIN = jailAgentCli.binPath;
         }
 
         // 6. Spawn the jailed child; capture stdout ONLY (stderr/intermediate
@@ -544,4 +590,52 @@ function defaultResolveJailNode(): JailNodeResolution {
 /** Read `process.execPath` through a narrow boundary (the daemon's own node). */
 function readExecPath(): string {
   return process.execPath;
+}
+
+/**
+ * The default comis-agent CLI resolver (CLI-05/06). Resolve the built entry +
+ * the committed manifest from `assetDir` (the built module dir, which carries
+ * both via the copy-sandbox-assets step), read the pinned sha, and delegate to
+ * `resolveJailAgentCli` (which hash-verifies the bound bytes). When the manifest
+ * itself is absent (e.g. an old/partial build), honest-degrade to "unavailable"
+ * — the CLI surface is off, the orchestrate SCRIPT surface still runs, NEVER an
+ * unverified bind.
+ */
+function defaultResolveJailAgentCli(assetDir: string): JailAgentCliResolution {
+  const manifestPath = safePath(assetDir, COMIS_AGENT_MANIFEST_FILENAME);
+  if (!existsSync(manifestPath)) {
+    return {
+      mode: "unavailable",
+      hint:
+        "The comis-agent manifest is missing from the skills dist — the comis-agent " +
+        "CLI surface is UNAVAILABLE inside the jail (the orchestrate SCRIPT surface " +
+        "still works). Rebuild (pnpm build) so the manifest + entry ride into dist.",
+    };
+  }
+  // The manifest is a tiny build artifact in the trusted dist dir (not attacker-
+  // controlled); parse it for the sha pin. A malformed manifest honest-degrades.
+  let expectedSha: string;
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { sha256?: unknown };
+    if (typeof parsed.sha256 !== "string" || parsed.sha256.length === 0) {
+      return {
+        mode: "unavailable",
+        hint:
+          "The comis-agent manifest is malformed (no sha256 pin) — the comis-agent " +
+          "CLI surface is UNAVAILABLE (the orchestrate SCRIPT surface still works). " +
+          "Regenerate it (pnpm agent-cli:manifest).",
+      };
+    }
+    expectedSha = parsed.sha256;
+  } catch {
+    return {
+      mode: "unavailable",
+      hint:
+        "The comis-agent manifest could not be read/parsed — the comis-agent CLI " +
+        "surface is UNAVAILABLE (the orchestrate SCRIPT surface still works). " +
+        "Regenerate it (pnpm agent-cli:manifest).",
+    };
+  }
+  const binPath = safePath(assetDir, COMIS_AGENT_ENTRY_FILENAME);
+  return resolveJailAgentCli({ binPath, expectedSha });
 }

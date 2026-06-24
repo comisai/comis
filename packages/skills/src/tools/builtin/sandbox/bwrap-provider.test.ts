@@ -32,8 +32,14 @@ vi.mock(import("node:os"), async (importOriginal) => {
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
-import { BwrapProvider, resolveJailNode } from "./bwrap-provider.js";
+import { createHash } from "node:crypto";
+import { BwrapProvider, resolveJailNode, resolveJailAgentCli } from "./bwrap-provider.js";
 import type { SandboxOptions } from "./types.js";
+
+/** sha256 of the given bytes, lowercase hex — the manifest pin shape. */
+function shaHex(s: string): string {
+  return createHash("sha256").update(Buffer.from(s)).digest("hex");
+}
 
 function makeOpts(overrides?: Partial<SandboxOptions>): SandboxOptions {
   return {
@@ -781,6 +787,56 @@ describe("BwrapProvider", () => {
       });
     });
 
+    // -- §4.7 comis-agent CLI bind in buildArgs (CLI-05): --ro-bind the binary --
+
+    describe("comis-agent CLI bind in buildArgs (CLI-05)", () => {
+      const binPath = "/x/comis-agent-entry.js";
+
+      function hasRoBind(args: string[], target: string): boolean {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      it("RO-binds the comis-agent binary (src==dest) when jailAgentCli mode is 'bind'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ jailAgentCli: { mode: "bind", binPath } }),
+        );
+
+        // The bound binary triple is adjacent (so COMIS_AGENT_BIN/PATH resolves
+        // it in-jail) and READ-ONLY — a writable binary is a host-RCE vector.
+        expect(hasRoBind(args, binPath)).toBe(true);
+        // Never RW.
+        expect(args.some((a, i) => a === "--bind" && args[i + 1] === binPath)).toBe(false);
+      });
+
+      it("does NOT bind the comis-agent binary when jailAgentCli mode is 'unavailable'", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(
+          makeOpts({ jailAgentCli: { mode: "unavailable", hint: "comis-agent missing" } }),
+        );
+
+        expect(args).not.toContain(binPath);
+      });
+
+      it("does NOT bind the comis-agent binary when jailAgentCli is absent", () => {
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const provider = createAvailableProvider();
+        const args = provider.buildArgs(makeOpts());
+
+        expect(args).not.toContain(binPath);
+      });
+    });
+
     it("includes --chdir with opts.cwd", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 
@@ -1071,5 +1127,86 @@ describe("resolveJailNode (JAIL-04) — Node-runtime honesty", () => {
     vi.mocked(existsSync).mockImplementation((p) => String(p) === "/usr/bin/node");
     const result = resolveJailNode({ pathDirs: ["/usr/bin"], execPath: "/opt/node" });
     expect(result.mode).toBe("path");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveJailAgentCli (CLI-05/06) — the comis-agent binary honest-degrade.
+// PURE three-mode resolver: hash-verify the bound binary against the manifest
+// pin → bind / unavailable-missing / unavailable-hash-mismatch. macOS-unit-
+// testable via injected `exists` + `readFile` (no real fs, no real binary).
+// ---------------------------------------------------------------------------
+
+describe("resolveJailAgentCli (CLI-05/06) — comis-agent binary honest-degrade", () => {
+  const binPath = "/opt/skills/dist/.../comis-agent-entry.js";
+  const bytes = "the-real-comis-agent-entry-bytes";
+  const expectedSha = shaHex(bytes);
+
+  it("mode 'bind' when the file exists AND its sha256 matches the manifest pin", () => {
+    const result = resolveJailAgentCli({
+      binPath,
+      expectedSha,
+      exists: (p) => p === binPath,
+      readFile: () => Buffer.from(bytes),
+    });
+    expect(result.mode).toBe("bind");
+    if (result.mode === "bind") {
+      expect(result.binPath).toBe(binPath);
+    }
+  });
+
+  it("mode 'unavailable' (missing) when the file does NOT exist — the hint names comis-agent + the scoped degrade", () => {
+    const result = resolveJailAgentCli({
+      binPath,
+      expectedSha,
+      exists: () => false,
+      readFile: () => Buffer.from(bytes),
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      const h = result.hint.toLowerCase();
+      expect(h).toContain("comis-agent");
+      // The CLI surface degrades but the orchestrate SCRIPT surface still works.
+      expect(h).toMatch(/script surface|cli surface|still work|unavailable/);
+    }
+  });
+
+  it("mode 'unavailable' (hash MISMATCH / tamper) when the bytes do not match the pin — the hint names the mismatch", () => {
+    const result = resolveJailAgentCli({
+      binPath,
+      expectedSha,
+      exists: (p) => p === binPath,
+      readFile: () => Buffer.from("TAMPERED-bytes-different-from-the-pin"),
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      const h = result.hint.toLowerCase();
+      expect(h).toContain("comis-agent");
+      // The mismatch is named as a tamper / hash-mismatch signal (refuse to bind).
+      expect(h).toMatch(/mismatch|tamper/);
+    }
+  });
+
+  it("the unavailable hint NEVER echoes the expected hash or the binary bytes (content-free §2.7)", () => {
+    const result = resolveJailAgentCli({
+      binPath,
+      expectedSha,
+      exists: (p) => p === binPath,
+      readFile: () => Buffer.from("TAMPERED-bytes"),
+    });
+    expect(result.mode).toBe("unavailable");
+    if (result.mode === "unavailable") {
+      // Never leak the hash digest or the raw bytes into the hint.
+      expect(result.hint).not.toContain(expectedSha);
+      expect(result.hint).not.toContain("TAMPERED-bytes");
+    }
+  });
+
+  it("defaults to fs existsSync/readFileSync when no predicates are injected", () => {
+    // Production omits the predicates → the resolver uses the real fs (mocked
+    // here). The file is absent → unavailable (no throw on a missing binary).
+    vi.mocked(existsSync).mockReturnValue(false);
+    const result = resolveJailAgentCli({ binPath, expectedSha });
+    expect(result.mode).toBe("unavailable");
   });
 });

@@ -9,7 +9,7 @@
  * (`pnpm validate:full`) they run as live assertions against the genuine
  * `BwrapProvider.buildArgs` (not a hand-built arg list).
  *
- * The four classes (one `it` each):
+ * The five classes (one `it` each):
  *   1. TIOCSTI keystroke-injection (CVE-2017-5226) — the ioctl inside the jail
  *      errors (--new-session detaches the controlling TTY; --seccomp is the
  *      defense-in-depth backstop). T-211-17.
@@ -21,13 +21,16 @@
  *      T-211-20.
  *   4. CVE-2025-66479 egress — the --unshare-net jail cannot reach the network
  *      (hard cut, no allowlist-empty=allow-all failure mode). T-211-19.
+ *   5. CLI-05 bound-binary writable-path — the `--ro-bind`-bound comis-agent
+ *      binary is NOT writable from inside the jail (a writable binary is a
+ *      host-RCE vector). T-219-23.
  *
  * @module
  */
 
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
@@ -111,6 +114,51 @@ describe.skipIf(!hardeningAvailable)("bwrap §4.7 hardening — escape-class pro
       expect(out, `host config must not be creatable from the jail; got: ${out}`).not.toMatch(
         /exit:0\s*$/,
       );
+    },
+  );
+
+  // -- 2b. CLI-05 bound comis-agent binary is NOT writable (T-219-23) ---------
+  it(
+    "the --ro-bind-bound comis-agent binary is NOT writable from inside the jail",
+    { timeout: 15_000 },
+    () => {
+      // A writable interpreter/binary bind is a host-RCE vector. Bind a real temp
+      // comis-agent binary RO via the PRODUCTION path (jailAgentCli mode "bind"),
+      // then attempt to overwrite it from inside the jail — the write must fail
+      // (EROFS/EACCES), proving the bind is read-only (CLI-05 / §4.7 audit).
+      const dir = mkdtempSync(join(tmpdir(), "comis-agent-bin-"));
+      const binPath = join(dir, "comis-agent-entry.js");
+      try {
+        writeFileSync(binPath, "#!/usr/bin/env node\nconsole.log('agent');\n");
+        const provider = new BwrapProvider();
+        provider.available();
+        const args = provider.buildArgs({
+          workspacePath: "/tmp",
+          sharedPaths: [],
+          readOnlyPaths: [],
+          cwd: "/tmp",
+          tempDir: "/tmp",
+          jailAgentCli: { mode: "bind", binPath },
+        });
+        const result = spawnSync(
+          args[0],
+          [
+            ...args.slice(1),
+            "bash",
+            "-c",
+            `echo pwned > "${binPath}" 2>&1; echo "exit:$?"`,
+          ],
+          { encoding: "utf8", timeout: 15_000 },
+        );
+        const out = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+        // The write must NOT have succeeded (no `exit:0`); the RO bind rejects it.
+        expect(
+          out,
+          `the bound comis-agent binary must not be writable from the jail; got: ${out}`,
+        ).not.toMatch(/exit:0\s*$/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
   );
 
