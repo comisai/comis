@@ -178,6 +178,22 @@ export const AutonomyConfigSchema = z.strictObject({
   /** Max agent-authored cron jobs (§8). */
   cronSelfMax: z.number().int().positive().optional(),
   /**
+   * §8.8/§22.4 denial-limit circuit breaker (BREAK-01). The number of
+   * CONSECUTIVE structural-floor blocks within one root run after which the run
+   * aborts + escalates rather than retry-looping the budget away. A positive int
+   * (a 0 would disable the breaker — `z.number().int().positive()` rejects it so
+   * a malformed config fails CLOSED, T-217-01). Default 5; inert until a deny
+   * actually happens, so a default install is byte-identical.
+   */
+  denialBreakerN: z.number().int().positive().default(5),
+  /**
+   * §22.5 fail-closed evict posture (EVICT-02). When the per-run autonomy mode
+   * cannot be resolved (an unreachable/forged policy source), resolve to the
+   * `default` (SAFE) mode, never a broader profile. Default true — which IS the
+   * already-safe behavior, so a default install is byte-identical.
+   */
+  evictOnPolicyUnreachable: z.boolean().default(true),
+  /**
    * Capability-lease posture (§4.2 / LEASE-02). The nested `lease` sub-block —
    * `autonomy.lease.{ leaseMaxTtlMin }` — bounds how long a renewable lease can
    * live. `leaseMaxTtlMin` is the renewal CEILING in MINUTES (a positive int);
@@ -244,6 +260,10 @@ interface ProfileEntry {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate (BREAK-01, §8.8/§22.4). */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02, §22.5). */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -268,6 +288,11 @@ const STANDARD_GUARDS = {
   maxConcurrentSelfAgents: 4,
   maxSelfSpawnRatePerMin: 30,
   cronSelfMax: 8,
+  // 217 never-hang scalars (flow into all four profiles). Default-safe: the
+  // breaker is inert until a deny happens; evict fail-closed defaults to the
+  // already-safe `true`. Kept in SSOT lockstep with the schema `.default()`s.
+  denialBreakerN: 5,
+  evictOnPolicyUnreachable: true,
   // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
   // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
   leaseMaxTtlMin: 60,
@@ -354,6 +379,10 @@ export interface ResolvedAutonomy {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate; the denial breaker (BREAK-01) reads this. */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02); the chokepoint reads this. */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -442,6 +471,9 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     maxConcurrentSelfAgents: bounds.spawn.maxConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
+    denialBreakerN: cfg?.denialBreakerN ?? base.denialBreakerN,
+    // `??` (NOT `||`) so an explicit `false` is honored, not coerced to the default true.
+    evictOnPolicyUnreachable: cfg?.evictOnPolicyUnreachable ?? base.evictOnPolicyUnreachable,
     leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
     budget: bounds.budget,
