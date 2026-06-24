@@ -7,11 +7,14 @@
  * single agent session and prints it as a concise table or as JSON.
  *
  * Usage:
- *   comis explain <sessionKeyOrTraceId> [--format table|json] [--depth summary|full]
+ *   comis explain <sessionKey|traceId|rootRunId> [--format table|json] [--depth summary|full]
  *
- * Arg routing: a session key contains ':' (tenant:user:channel:ts) → {sessionKey};
- * a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId to its
- * sessionKey, so both produce the identical report.
+ * Arg routing (FLEET-05 adds the 3rd): a `root-` prefix → {rootRunId} (an
+ * autonomy run — the synthetic `root-session-<key>` or a real spawned root,
+ * checked FIRST); else a session key contains ':' (tenant:user:channel:ts) →
+ * {sessionKey}; a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId
+ * and a rootRunId to the run's sessionKey, so all three produce the identical
+ * report (and the rootRunId path renders the run's spawn-tree).
  *
  * Per the cli-uses-typed-rpc arch invariant: ONLY callTyped is used here —
  * never raw client.call. callTyped runs ObsExplainContract.request.parse on the
@@ -53,11 +56,17 @@ export function registerExplainCommand(program: Command): void {
       async (idArg: string, options: { format: string; depth: string; offline?: boolean }) => {
         try {
           const depth = options.depth as "summary" | "full";
-          // Route by arg shape: a sessionKey is tenant:user:channel:ts (has ':');
-          // a traceId is a UUID (no ':').
-          const params = idArg.includes(":")
-            ? { sessionKey: idArg, depth }
-            : { traceId: idArg, depth };
+          // Route by arg shape (FLEET-05 adds the 3rd): the `root-` prefix is the
+          // disambiguator for an autonomy run's rootRunId (a synthetic in-process
+          // root is `root-session-<key>`; a real spawned root is `root-…`) and is
+          // checked FIRST — a synthetic root contains ':' yet must NOT route to
+          // sessionKey. Otherwise: a sessionKey is tenant:user:channel:ts (has
+          // ':'); a traceId is a UUID (no ':').
+          const params = idArg.startsWith("root-")
+            ? { rootRunId: idArg, depth }
+            : idArg.includes(":")
+              ? { sessionKey: idArg, depth }
+              : { traceId: idArg, depth };
           // W14 (obs-llm-troubleshooting): the telemetry lives on LOCAL disk —
           // a post-mortem must not require a live gateway. --offline assembles
           // locally; an UNREACHABLE gateway falls back automatically. An

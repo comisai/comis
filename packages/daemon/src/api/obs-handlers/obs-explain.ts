@@ -32,7 +32,7 @@ import * as os from "node:os";
 import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
-import { resolveTraceToSession } from "./obs-explain-resolve.js";
+import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
 import { makeRealReader, type IncidentSourceReader } from "./obs-explain-readers.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
@@ -55,6 +55,15 @@ function defaultDataDir(): string {
 export interface AssembleIncidentReportParams {
   readonly sessionKey?: string;
   readonly traceId?: string;
+  /**
+   * FLEET-05: an autonomy run's rootRunId (the 3rd ref). Canonicalized to the
+   * run's sessionKey FIRST via {@link resolveRootRunToSession} — the synthetic
+   * in-process root by a pure prefix-strip, a real socket/spawned root by the
+   * session-index scan. An unresolvable rootRunId soft-fails to "" → the WR-04
+   * not-found marker (it never masquerades as a clean session). Lets the
+   * fleet→explain drill-down paste the worst run's rootRunId straight in.
+   */
+  readonly rootRunId?: string;
   readonly depth?: "summary" | "full";
   /**
    * D9 admin opt-in: when `true`, a `traceId` that resolves only through a
@@ -97,25 +106,33 @@ export async function assembleIncidentReportFromSources(
   dataDir: string,
   params: AssembleIncidentReportParams,
 ): Promise<IncidentReport> {
-  // Step 3 (X1): canonicalize a traceId to its sessionKey FIRST, so by-trace
-  // and by-session collapse to one assembler path. `sessionKey` is present
-  // when traceId is absent (the contract .refine guarantees one of the two).
-  const sessionKey = params.traceId
-    ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
-    : params.sessionKey!;
+  // Step 3 (X1): canonicalize a traceId OR a rootRunId to its sessionKey FIRST,
+  // so by-trace, by-rootRun, and by-session collapse to one assembler path. The
+  // rootRunId arm is checked FIRST (FLEET-05); `sessionKey` is present when both
+  // traceId and rootRunId are absent (the contract .refine guarantees one of the
+  // three). The resolver's two sources (synthetic-strip + session-index scan)
+  // need no store, so deps.durableRuns is not threaded here.
+  const sessionKey = params.rootRunId
+    ? await resolveRootRunToSession(dataDir, params.rootRunId)
+    : params.traceId
+      ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
+      : params.sessionKey!;
 
-  // WR-04: a traceId that resolves to "" (no row in today/yesterday's session
-  // index) is UNRESOLVABLE — distinct from a session that genuinely had zero
-  // tool activity. Without a marker both yield the same empty report keyed on
-  // "", so an admin can't tell a typo'd/expired traceId from a clean session.
-  // We stamp the marker (below, after we know the report is genuinely empty)
-  // rather than throw: the no-throw posture is preserved (the empty report is
-  // safe — no traversal, no leak). An empty RESOLVED session (a real
-  // sessionKey with no telemetry) is NOT flagged. Note the resolution missed
-  // the index; whether the report is actually empty is decided post-assembly
-  // (an injected reader may still surface telemetry for a "" key — then the
-  // session WAS effectively found and must keep its real rootCause).
-  const traceResolutionMissed = params.traceId !== undefined && sessionKey === "";
+  // WR-04: a traceId OR a rootRunId (FLEET-05) that resolves to "" (no row in
+  // today/yesterday's session index, and not a synthetic root) is UNRESOLVABLE —
+  // distinct from a session that genuinely had zero tool activity. Without a
+  // marker both yield the same empty report keyed on "", so an admin can't tell a
+  // typo'd/expired ref from a clean session. We stamp the marker (below, after we
+  // know the report is genuinely empty) rather than throw: the no-throw posture is
+  // preserved (the empty report is safe — no traversal, no leak). An empty
+  // RESOLVED session (a real sessionKey with no telemetry) is NOT flagged. Note
+  // the resolution missed the index; whether the report is actually empty is
+  // decided post-assembly (an injected reader may still surface telemetry for a ""
+  // key — then the session WAS effectively found and must keep its real rootCause).
+  const refResolutionMissed =
+    (params.traceId !== undefined || params.rootRunId !== undefined) && sessionKey === "";
+  // Which ref missed — drives the not-found detail + truncation field below.
+  const missedRefField = params.rootRunId !== undefined ? "rootRunId" : "traceId";
 
   // Step 4: read the four bounded sources (production reads files; tests
   // inject the fixture reader).
@@ -144,22 +161,24 @@ export async function assembleIncidentReportFromSources(
     report.breakerTimeline.length === 0 &&
     report.offloads.length === 0 &&
     Object.keys(report.toolStats).length === 0;
-  if (traceResolutionMissed && reportIsEmpty) {
+  if (refResolutionMissed && reportIsEmpty) {
     // WR-04: an honest not-found verdict + ledger note so the empty report
     // does not masquerade as a healthy zero-activity session. The bound pass
     // preserves both (it seeds truncations[] from the report and never
-    // overwrites likelyRootCause).
+    // overwrites likelyRootCause). The detail/field name the ref that missed
+    // (traceId or, for FLEET-05, rootRunId), so a typo'd autonomy-run id
+    // surfaces an honest not-found verdict instead of a clean-looking report.
     report.likelyRootCause = {
       code: "session_not_found",
-      detail: `traceId did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
+      detail: `${missedRefField} did not resolve to any session in the index (today/yesterday); it may be a typo, expired, or older than the 2-day resolution horizon`,
       suggestedNextSteps: [
-        "verify the traceId, or query by sessionKey directly",
+        `verify the ${missedRefField}, or query by sessionKey directly`,
         "confirm the session ended within the last two days (the session-index lookup window)",
       ],
     };
     report.truncations.push({
-      field: "traceId",
-      reason: "traceId not found in session index (today/yesterday) — empty report is unresolved, not a clean session",
+      field: missedRefField,
+      reason: `${missedRefField} not found in session index (today/yesterday) — empty report is unresolved, not a clean session`,
     });
   } else {
     // QT2/QT3: thread the mapped terminal endReason (the NAMED degradation cause)
