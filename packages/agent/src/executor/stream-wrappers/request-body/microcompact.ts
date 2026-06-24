@@ -2,16 +2,23 @@
 /**
  * Microcompaction orchestration.
  *
- * Two trigger paths consolidated here:
+ * Three trigger paths consolidated here:
  *  - `runTimeBasedMicrocompact`: TTL-expiry trigger. Runs when more than
  *    one TTL window has elapsed since the last assistant response. Calls
  *    `onAdaptiveRetentionReset` on success.
  *  - `runTokenCeilingMicrocompact`: token-budget trigger. Runs when the
  *    estimated context size exceeds the configured ceiling. Does NOT call
  *    `onAdaptiveRetentionReset` because the cache may still be warm.
+ *  - `runEveryTurnMicrocompact` (EFF-01): UNCONDITIONAL every-turn pass. Runs
+ *    on every turn regardless of TTL/ceiling so the long-running coordinator's
+ *    context stays flat, not only after an idle gap. Fence-protected (EFF-03)
+ *    and, like the ceiling trigger, does NOT reset adaptive retention (the cache
+ *    may still be warm). Clears tool results only — never thinking blocks, which
+ *    `stripReplayThinking` already handles on the cached prefix.
  *
- * Both delegate to `clearStaleToolResults` + `clearStaleThinkingBlocks`
- * (tool-result-clearing.ts) and protect messages at/below the cache fence.
+ * All delegate to `clearStaleToolResults` (+ `clearStaleThinkingBlocks` for the
+ * TTL/ceiling triggers, tool-result-clearing.ts) and protect messages at/below
+ * the cache fence.
  *
  * @module
  */
@@ -98,6 +105,50 @@ export function runTokenCeilingMicrocompact(
     logger.debug(
       { cleared, thinkingCleared, estimatedTokens: Math.round(estimatedTokens), ceiling: config.microcompactTokenCeiling, sessionKey: config.sessionKey },
       "Token-ceiling microcompact cleared stale content",
+    );
+  }
+}
+
+/**
+ * Every-turn microcompact (EFF-01) -- unconditional Tier-0 pass.
+ *
+ * Unlike the TTL and token-ceiling triggers (which only fire after an idle gap or
+ * once the context crosses a size ceiling), this runs on EVERY turn so a long-running
+ * coordinator's context stays flat continuously rather than only recovering after an
+ * idle period. It clears stale compactable tool results beyond the keep window.
+ *
+ * Cache-stable (EFF-03): threads `getCacheFenceIndex()` so it never clears at/below
+ * the cached prefix (a clear inside the fence would re-pay cache_creation on the whole
+ * suffix every turn), keeps the last `observationKeepWindow` results, and -- because the
+ * cleared-result placeholder is byte-stable and frozen by tool-call-id -- the cached
+ * prefix stays byte-identical turn-over-turn. Like `runTokenCeilingMicrocompact`, it
+ * does NOT call `onAdaptiveRetentionReset` (the cache may still be warm); it only signals
+ * `onContentModification` so the cache-break detector treats the change as deliberate.
+ *
+ * Tool results only -- thinking blocks on the cached prefix are handled by
+ * `stripReplayThinking` upstream in the onPayload pipeline.
+ */
+export function runEveryTurnMicrocompact(
+  result: Record<string, unknown>,
+  config: RequestBodyInjectorConfig,
+  logger: ComisLogger,
+): void {
+  if (!config.sessionKey || !Array.isArray(result.messages)) return;
+
+  const keepWindow = config.observationKeepWindow ?? 25;
+  const fence = config.getCacheFenceIndex?.() ?? -1;
+  const cleared = clearStaleToolResults(
+    result.messages as Array<Record<string, unknown>>,
+    keepWindow,
+    fence,
+  );
+  if (cleared > 0) {
+    config.onContentModification?.();
+    // NOTE: Do NOT call onAdaptiveRetentionReset -- the every-turn pass runs on a
+    // (possibly) warm cache, mirroring runTokenCeilingMicrocompact.
+    logger.debug(
+      { cleared, keepWindow, fence, sessionKey: config.sessionKey, step: "every-turn-microcompact" },
+      "Every-turn Tier-0 microcompact cleared stale results",
     );
   }
 }

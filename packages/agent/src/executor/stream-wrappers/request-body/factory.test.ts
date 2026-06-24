@@ -5604,7 +5604,10 @@ describe("token-ceiling microcompact", () => {
       {
         getCacheRetention: () => "short",
         getElapsedSinceLastResponse: () => 100_000,
-        observationKeepWindow: 1,
+        // keepWindow large enough to protect BOTH tool results, so neither the ceiling
+        // trigger NOR the every-turn pass (EFF-01) clears them — isolating the assertion
+        // to "the ceiling trigger is inert when microcompactTokenCeiling is undefined".
+        observationKeepWindow: 10,
         onContentModification,
         sessionKey: "test-ceiling-disabled",
         // microcompactTokenCeiling NOT set
@@ -5633,7 +5636,7 @@ describe("token-ceiling microcompact", () => {
 
     await onPayload(payload, model);
 
-    // No ceiling configured -- should not trigger
+    // No ceiling configured + everything within keepWindow -- nothing cleared.
     expect(onContentModification).not.toHaveBeenCalled();
   });
 });
