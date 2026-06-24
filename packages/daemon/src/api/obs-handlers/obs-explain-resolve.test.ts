@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import { resolveTraceToSession } from "./obs-explain-resolve.js";
+import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
 
 // The 678 fixture's two traceIds and the single canonical sessionKey.
 const TRACE_TURN_1 = "f942d38c-e372-43cc-99f1-ead4f0b8582f";
@@ -157,5 +157,92 @@ describe("resolveTraceToSession", () => {
     ]);
     const resolved = await resolveTraceToSession(dataDir, TRACE_TURN_1);
     expect(resolved).toBe(CANONICAL_SESSION_KEY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FLEET-05 — resolveRootRunToSession: the THIRD canonicalization arm. A
+// `rootRunId` (an autonomy run) is canonicalized to the run's sessionKey FIRST,
+// so the fleet→explain drill-down (paste the worst run's rootRunId) shares the
+// ONE assembler path. TWO honest sources:
+//   1. a SYNTHETIC in-process root (`root-session-<formattedKey>`,
+//      setup-capability-endpoint-boot.ts:101) — a pure prefix-strip, NO I/O.
+//   2. a REAL socket/spawned root — scan the day-keyed session-index for a
+//      capability.audited record (events-orchestration.ts:90-104 carries BOTH
+//      `rootRunId` + `runId`) and return its runId (≈sessionKey).
+// Soft-fail to "" on miss — NEVER fabricate a sessionKey (the G1 anti-pattern).
+// ---------------------------------------------------------------------------
+
+describe("resolveRootRunToSession", () => {
+  it("resolves a SYNTHETIC in-process root by pure prefix-strip (no I/O, no index needed)", async () => {
+    // `root-session-<formattedKey>` → the formattedKey IS the canonical sessionKey
+    // for the in-process leg. A pure string op — pass a dataDir with NO index at
+    // all to prove no file access is required.
+    const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-synthetic-"));
+    const resolved = await resolveRootRunToSession(
+      emptyDataDir,
+      "root-session-default:user:telegram:1717000000",
+    );
+    expect(resolved).toBe("default:user:telegram:1717000000");
+  });
+
+  it("resolves a REAL rootRunId by scanning a real nested session-index layout (AGENTS §2.10)", async () => {
+    // Build the ACTUAL <dataDir>/logs/session-index.<dayKey>.jsonl layout (not a
+    // flat fixture) so the day-key PATH resolution is exercised, not just the
+    // match LOGIC. The row is a capability.audited record carrying BOTH ids under
+    // `data` (the canonical trajectory-record shape the spawn-tree fold reads).
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceSchema: "comis-trajectory",
+        type: "capability.audited",
+        event: "capability_audited",
+        data: { rootRunId: "run-abc-123", runId: "default:u:c:42", decision: "allow" },
+      }),
+    ]);
+    const resolved = await resolveRootRunToSession(dataDir, "run-abc-123");
+    expect(resolved).toBe("default:u:c:42");
+  });
+
+  it("soft-fails to '' for an unknown rootRunId — NEVER fabricates a sessionKey (G1)", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        type: "capability.audited",
+        data: { rootRunId: "run-abc-123", runId: "default:u:c:42" },
+      }),
+    ]);
+    const resolved = await resolveRootRunToSession(dataDir, "run-does-not-exist");
+    expect(resolved).toBe("");
+  });
+
+  it("soft-fails to '' when the session-index file is entirely absent (no throw)", async () => {
+    const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-rootrun-empty-"));
+    const resolved = await resolveRootRunToSession(emptyDataDir, "run-abc-123");
+    expect(resolved).toBe("");
+  });
+
+  it("skips malformed JSONL lines and still resolves a later valid capability.audited row", async () => {
+    const dataDir = makeDataDirWithIndex([
+      "{ not valid json",
+      JSON.stringify({
+        type: "capability.audited",
+        data: { rootRunId: "run-xyz", runId: "default:u:c:9" },
+      }),
+      "}}}broken",
+    ]);
+    const resolved = await resolveRootRunToSession(dataDir, "run-xyz");
+    expect(resolved).toBe("default:u:c:9");
+  });
+
+  it("a synthetic-prefixed id wins by strip even if a same-named index row exists (the pure arm is first)", async () => {
+    // The `root-session-` prefix is the disambiguator: a synthetic root strips to
+    // its formattedKey WITHOUT consulting the index, so the index row is never read.
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        type: "capability.audited",
+        data: { rootRunId: "root-session-default:a:b:1", runId: "WRONG-FROM-INDEX" },
+      }),
+    ]);
+    const resolved = await resolveRootRunToSession(dataDir, "root-session-default:a:b:1");
+    expect(resolved).toBe("default:a:b:1");
   });
 });
