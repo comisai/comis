@@ -6370,6 +6370,84 @@ describe("fence-aware microcompaction", () => {
   });
 
   // -------------------------------------------------------------------------
+  // EFF-03: every-turn microcompact is clone-safe + cache-stable at the pipeline level
+  // -------------------------------------------------------------------------
+  describe("every-turn microcompact in onPayload — clone-safe + byte-stable (EFF-03)", () => {
+    const longRead = "x".repeat(2000);
+    const STALE_PLACEHOLDER = "[Stale tool result cleared: idle > TTL]";
+
+    /**
+     * A payload with stale `read` results beyond the keepWindow and NO TTL/ceiling
+     * condition (no getElapsedSinceLastResponse over TTL, no microcompactTokenCeiling).
+     * Pre-EFF-01 the pipeline cleared nothing here; the every-turn pass clears the
+     * stale reads outside the keep window.
+     */
+    function makeStaleReadPayload(): Record<string, unknown> {
+      return {
+        system: [{ type: "text", text: "System" }],
+        tools: [],
+        messages: [
+          { role: "user", content: [{ type: "text", text: "u1" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "r1", name: "read", input: { path: "/a" } }] },
+          { role: "tool", tool_use_id: "r1", content: [{ type: "text", text: longRead }] }, // idx 2 — stale, cleared
+          { role: "user", content: [{ type: "text", text: "u2" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "r2", name: "read", input: { path: "/b" } }] },
+          { role: "tool", tool_use_id: "r2", content: [{ type: "text", text: longRead }] }, // idx 5 — recent, within keepWindow
+        ],
+      };
+    }
+
+    function makeInjector() {
+      const base = createMockStreamFn();
+      const wrapper = createRequestBodyInjector(
+        {
+          getCacheRetention: () => "short",
+          observationKeepWindow: 1, // protect only the last tool_result (idx 5)
+          sessionKey: "test-every-turn-pipeline",
+          // NOTE: no getElapsedSinceLastResponse / microcompactTokenCeiling → TTL+ceiling inert.
+        },
+        createMockLogger(),
+      );
+      const wrappedFn = wrapper(base);
+      const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
+      wrappedFn(model, makeContext([]), {});
+      const onPayload = (base.mock.calls[0][2] as Record<string, unknown>).onPayload as
+        (p: any, m: any) => Promise<any>;
+      return { onPayload, model };
+    }
+
+    it("clears stale read at the pipeline level WITHOUT mutating the SDK-owned params.messages", async () => {
+      const { onPayload, model } = makeInjector();
+      const params = makeStaleReadPayload();
+
+      const result = await onPayload(params, model);
+
+      // (a) The SDK-owned params.messages is NOT mutated — the clearing ran on the clone.
+      expect((params.messages as any[])[2].content[0].text).toBe(longRead);
+      // (b) result.messages has the stale read (idx 2) replaced by the byte-stable placeholder.
+      expect((result.messages as any[])[2].content[0].text).toBe(STALE_PLACEHOLDER);
+      // The recent read (idx 5, within keepWindow) is preserved on the clone.
+      expect((result.messages as any[])[5].content[0].text).toBe(longRead);
+      // The clone is a distinct array instance from params.messages.
+      expect(result.messages).not.toBe(params.messages);
+    });
+
+    it("two onPayload calls with identical input yield byte-identical placeholder text (frozen by tool-call-id → cache-stable)", async () => {
+      const { onPayload, model } = makeInjector();
+
+      const r1 = await onPayload(makeStaleReadPayload(), model);
+      const r2 = await onPayload(makeStaleReadPayload(), model);
+
+      const p1 = (r1.messages as any[])[2].content[0].text;
+      const p2 = (r2.messages as any[])[2].content[0].text;
+      // (c) The placeholder for tool_use_id r1 is byte-identical across turns — no per-turn
+      // counter / timestamp leaks into it, so the cached prefix never mutates.
+      expect(p1).toBe(STALE_PLACEHOLDER);
+      expect(p2).toBe(p1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Breakpoint budget audit
   // -------------------------------------------------------------------------
 
