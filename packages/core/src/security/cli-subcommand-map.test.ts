@@ -41,6 +41,7 @@ describe("CLI_SUBCOMMAND_MAP", () => {
         "list",
         "ls",
         "read",
+        "run",
         "schedule",
         "search",
         "send",
