@@ -13,13 +13,22 @@
  *     (`subAgentRunner.killByRootRun` aborts each SDK session) AND revoke every
  *     lease of the tree (`leaseManager.revokeByRootRun`) so a survivor child can
  *     never keep operating (REVOKE-03). Returns the content-free killed COUNT.
+ *   - `autonomy.evict {rootRunId}` — DEMOTE (Phase 217-04, EVICT-01). Marks the
+ *     `rootRunId` in the daemon-wide evicted-set (`evictRegistry.mark`); the
+ *     bounded-autonomy chokepoint consults it at the NEXT gate decision (EVICT-03,
+ *     mid-run) to resolve the run's effective profile to `default`. UNLIKE
+ *     revoke/kill, evict does NOT abort — the run CONTINUES under `default` (which
+ *     still escalates outward, never auto-sends). Returns the content-free
+ *     `{ evicted }` boolean. Registered ONLY when the OPTIONAL `evictRegistry`
+ *     dep is wired (HIGH-1 — the Wave-2 composition root supplies it).
  *
  * DENY-BY-ORIGIN IS AUTOMATIC — there is NO manual agent-origin check here (it
  * would drift, and the single-chokepoint arch gate forbids per-handler scatter).
- * Both methods are `scopes:["admin"]` (Plan 03) → they land in the DERIVED
- * `ADMIN_METHODS` → the dispatch chokepoint's origin guard (rpc-dispatch.ts)
- * denies any agent-origin call BEFORE the handler runs. The autonomy-handlers
- * test proves the deny on the dispatch path.
+ * All three methods are `scopes:["admin"]` (Plan 03 / Plan 04) → they land in the
+ * DERIVED `ADMIN_METHODS` → the dispatch chokepoint's origin guard
+ * (rpc-dispatch.ts) denies any agent-origin call BEFORE the handler runs (an agent
+ * cannot self-un-evict — T-217-12). The autonomy-handlers test proves the deny on
+ * the dispatch path.
  *
  * Per-method pipeline mirrors `subagent-handlers.ts`: bespoke pre-Zod guard
  * FIRST (rawParams reads → user-friendly error) → stripInternalFields →
@@ -32,6 +41,7 @@
 import {
   LeaseRevokeContract,
   RunKillContract,
+  AutonomyEvictContract,
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
@@ -39,6 +49,7 @@ import type { DurableRunPort } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
 import type { ComisLogger } from "@comis/infra";
 
+import type { EvictRegistry } from "../autonomy/evict-registry.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +90,19 @@ export interface AutonomyHandlerDeps {
    * revoke RPC (the lease is already revoked — the cooperative/hard stop holds).
    */
   durableRuns?: DurableRunPort;
+  /**
+   * Phase 217-04 (EVICT-01): the daemon-wide evicted-`rootRunId` set. OPTIONAL —
+   * the sole call site (rpc-dispatch.ts, `createAutonomyHandlers({ ...deps,
+   * leaseManager: deps.leaseManager })`) does NOT supply it until the Wave-2
+   * composition root (Plan 05) constructs `createEvictRegistry` and threads it
+   * onto `deps`. CRITICAL (HIGH-1): it MUST stay OPTIONAL so the Wave-1 `pnpm
+   * build` compiles with the unchanged call site; the `autonomy.evict` handler is
+   * registered ONLY when this is present (mirrors how `leaseManager`/
+   * `boundedAutonomy` gate whole handler families). **Absent ⇒ the autonomy.evict
+   * method is simply not registered** (a stray call hits the dispatcher's
+   * unknown-method path) — no build break, no half-wired handler.
+   */
+  evictRegistry?: EvictRegistry;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
 }
@@ -110,6 +134,12 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       );
     }
   }
+
+  // HIGH-1: capture the OPTIONAL evictRegistry once so the conditional spread
+  // narrows it to non-undefined inside the evict handler closure (no `!`
+  // non-null assertion needed). Absent ⇒ the autonomy.evict key is omitted from
+  // the returned record entirely (the Wave-1 partial-boot state).
+  const evictRegistry = deps.evictRegistry;
 
   return {
     [LeaseRevokeContract.method]: async (rawParams) => {
@@ -177,5 +207,44 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       if (IS_DEV) RunKillContract.response.parse(result);
       return result;
     },
+
+    // HIGH-1: gate the autonomy.evict handler on the OPTIONAL evictRegistry
+    // (mirrors the dispatch-wiring convention of gating whole handler families on
+    // leaseManager/boundedAutonomy). Absent ⇒ the method key is omitted (Wave-1
+    // partial boot); present ⇒ the closure reads the narrowed non-undefined
+    // registry. The contract↔handler parity gate accepts this conditional
+    // registration (the capabilities.introspect precedent, rpc-dispatch.ts).
+    ...(evictRegistry
+      ? {
+          [AutonomyEvictContract.method]: async (rawParams: Record<string, unknown>) => {
+            // Bespoke pre-Zod guard FIRST (user-friendly message).
+            const rootRunId = rawParams.rootRunId as string | undefined;
+            if (!rootRunId) {
+              throw new Error("Missing required parameter: rootRunId");
+            }
+
+            const userParams = stripInternalFields(rawParams);
+            AutonomyEvictContract.request.parse(userParams);
+
+            // DEMOTE (NOT kill): mark the rootRunId so the chokepoint resolves the
+            // run's mode to `default` from the NEXT gate decision (EVICT-03). The
+            // run KEEPS GOING under default — evict does not abort. `newlyEvicted`
+            // reports whether THIS call changed state (the run is demoted either
+            // way, so the response is { evicted: true } regardless).
+            const { newlyEvicted } = evictRegistry.mark(rootRunId);
+
+            // §2.7: content-free completion line — method + the newly/already enum
+            // only, NEVER the selector body (rootRunId is an id, not a payload).
+            deps.logger.info(
+              { method: AutonomyEvictContract.method, newlyEvicted },
+              "Run demoted to default (evict-from-mode)",
+            );
+
+            const result = { evicted: true };
+            if (IS_DEV) AutonomyEvictContract.response.parse(result);
+            return result;
+          },
+        }
+      : {}),
   };
 }

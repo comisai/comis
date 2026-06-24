@@ -47,6 +47,15 @@ function createMockDeps(over: Partial<AutonomyHandlerDeps> = {}): AutonomyHandle
     durableRuns: {
       invalidateForRevoke: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
     },
+    // Phase 217-04 EVICT-01: a stub evicted-set whose mark/isEvicted/clear are
+    // observable. The OPTIONAL dep — present here so the default deps register the
+    // autonomy.evict handler; the gating test below omits it to prove the handler
+    // is then absent (HIGH-1).
+    evictRegistry: {
+      mark: vi.fn(() => ({ newlyEvicted: true })),
+      isEvicted: vi.fn(() => false),
+      clear: vi.fn(),
+    },
     logger: { info: vi.fn(), warn: vi.fn() },
     ...over,
   } as unknown as AutonomyHandlerDeps;
@@ -154,12 +163,78 @@ describe("createAutonomyHandlers — lease.revoke + run.kill (REVOKE-01/03)", ()
 });
 
 // ---------------------------------------------------------------------------
+// Phase 217-04 EVICT-01: the autonomy.evict handler (DEMOTE-to-default).
+//
+// evict MARKS the rootRunId in the OPTIONAL evictRegistry (the chokepoint reads
+// it at the next gate decision, EVICT-03) — it does NOT abort. The handler is
+// registered ONLY when evictRegistry is present (HIGH-1 — mirrors the
+// leaseManager/boundedAutonomy family gating), so the Wave-1 dispatch call site
+// (which does not yet supply evictRegistry) keeps building green.
+// ---------------------------------------------------------------------------
+
+describe("createAutonomyHandlers — autonomy.evict (EVICT-01, demote to default)", () => {
+  let deps: AutonomyHandlerDeps;
+  let handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    handlers = createAutonomyHandlers(deps);
+  });
+
+  it("marks the rootRunId in the evictRegistry and returns { evicted: true }", async () => {
+    const result = await handlers["autonomy.evict"]!({ rootRunId: "root-A" });
+    expect(deps.evictRegistry!.mark).toHaveBeenCalledWith("root-A");
+    expect(result).toEqual({ evicted: true });
+  });
+
+  it("with no rootRunId throws the bespoke pre-Zod Missing required parameter", async () => {
+    await expect(handlers["autonomy.evict"]!({})).rejects.toThrow(
+      "Missing required parameter: rootRunId",
+    );
+    expect(deps.evictRegistry!.mark).not.toHaveBeenCalled();
+  });
+
+  it("a SECOND evict of the same rootRunId still returns { evicted: true } (idempotent — already-evicted is still evicted)", async () => {
+    // The registry reports newlyEvicted:false on the second mark; the handler's
+    // response is { evicted: true } regardless (the run IS demoted either way).
+    vi.mocked(deps.evictRegistry!.mark)
+      .mockReturnValueOnce({ newlyEvicted: true })
+      .mockReturnValueOnce({ newlyEvicted: false });
+    await expect(handlers["autonomy.evict"]!({ rootRunId: "root-A" })).resolves.toEqual({ evicted: true });
+    await expect(handlers["autonomy.evict"]!({ rootRunId: "root-A" })).resolves.toEqual({ evicted: true });
+  });
+
+  it("logs content-free — method + a boolean/id only, never a param body (§2.7)", async () => {
+    await handlers["autonomy.evict"]!({ rootRunId: "root-A" });
+    expect(deps.logger.info).toHaveBeenCalled();
+    for (const [payload] of vi.mocked(deps.logger.info).mock.calls) {
+      const fields = payload as Record<string, unknown>;
+      expect(fields).not.toHaveProperty("body");
+      expect(fields).not.toHaveProperty("params");
+      expect(fields).not.toHaveProperty("rootRunId");
+    }
+  });
+
+  // HIGH-1: the handler is registered ONLY when evictRegistry is present.
+  it("HIGH-1: registers the autonomy.evict key ONLY when evictRegistry is present", () => {
+    const withRegistry = createAutonomyHandlers(createMockDeps());
+    expect(Object.keys(withRegistry)).toContain("autonomy.evict");
+
+    const withoutRegistry = createAutonomyHandlers(createMockDeps({ evictRegistry: undefined }));
+    expect(Object.keys(withoutRegistry)).not.toContain("autonomy.evict");
+    // lease.revoke / run.kill stay registered regardless (they gate on leaseManager).
+    expect(Object.keys(withoutRegistry)).toContain("lease.revoke");
+    expect(Object.keys(withoutRegistry)).toContain("run.kill");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 5: deny-by-origin on the REAL dispatch path (the load-bearing security
 // test). The methods are scopes:["admin"] → ADMIN_METHODS → assertNotAgentOrigin
 // denies an _agentId-bearing call BEFORE the handler runs. We mock every handler
 // factory so createRpcDispatch can be constructed without the full deps bag, then
-// dispatch lease.revoke / run.kill with _agentId and assert the deny; an
-// operator-origin call (no _agentId) reaches the (mocked) handler.
+// dispatch lease.revoke / run.kill / autonomy.evict with _agentId and assert the
+// deny; an operator-origin call (no _agentId) reaches the (mocked) handler.
 // ---------------------------------------------------------------------------
 
 vi.mock("./cron-handlers.js", () => ({ createCronHandlers: vi.fn(() => ({})) }));
@@ -214,6 +289,12 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
       cascadeRevoke: vi.fn(), revokeByRootRun: vi.fn().mockReturnValue({ revoked: 2 }),
     },
     subAgentRunner: { killByRootRun: vi.fn().mockReturnValue({ killed: 1 }) },
+    // 217-04: the evictRegistry so the autonomy.evict handler registers (the
+    // operator-origin call reaches it; an agent-origin call is denied at the
+    // chokepoint BEFORE the handler regardless).
+    evictRegistry: {
+      mark: vi.fn(() => ({ newlyEvicted: true })), isEvicted: vi.fn(() => false), clear: vi.fn(),
+    },
   } as never;
 
   beforeEach(() => {
@@ -234,8 +315,10 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
     return createRpcDispatch(mockDeps);
   }
 
-  it("denies an _agentId-bearing lease.revoke / run.kill on the in-process dispatch path (admin-derived, no manual check)", async () => {
-    for (const method of ["lease.revoke", "run.kill"]) {
+  it("denies an _agentId-bearing lease.revoke / run.kill / autonomy.evict on the in-process dispatch path (admin-derived, no manual check)", async () => {
+    // T-217-12: autonomy.evict joins the deny set — an agent cannot self-un-evict
+    // (or evict a sibling). The deny fires at the chokepoint BEFORE the handler.
+    for (const method of ["lease.revoke", "run.kill", "autonomy.evict"]) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
       await expect(
@@ -263,5 +346,11 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
     const dispatch = await getDispatch();
     const result = await dispatch("run.kill", { rootRunId: "R1" });
     expect(result).toEqual({ killed: 1 });
+  });
+
+  it("an operator-origin autonomy.evict (no _agentId) PASSES the chokepoint and reaches the handler", async () => {
+    const dispatch = await getDispatch();
+    const result = await dispatch("autonomy.evict", { rootRunId: "R1" });
+    expect(result).toEqual({ evicted: true });
   });
 });
