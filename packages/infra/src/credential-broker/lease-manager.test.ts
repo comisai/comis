@@ -129,6 +129,94 @@ describe("LeaseManager — audience binding (LEASE-03)", () => {
   });
 });
 
+describe("LeaseManager — self-scoped-read audience exception (CLI-01/02; v8 §15 whoami/status)", () => {
+  // The three ungated, self-_agentId-scoped, scopes:["rpc"] reads
+  // (capabilities.introspect / session.status / session.list) are in-audience
+  // for ANY valid lease — the cap-socket whoami/status path. The exception
+  // short-circuits ONLY the orch:* audience deny, AFTER the bearer/expiry/revoke
+  // authenticity gates, and grants reach to NOTHING else.
+
+  it("allows capabilities.introspect (whoami) for an orch:read-only lease (RED: was null)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // capabilities.introspect is "ungated" → pre-patch validate returned null
+    // (no orch:* cap). The audience exception lets any valid lease reach it.
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    const info = mgr.validate(bearer, "capabilities.introspect");
+    expect(info).not.toBeNull();
+    expect(info?.agentId).toBe("agent-1");
+    expect(info?.caps).toEqual(["orch:read"]);
+  });
+
+  it("allows session.status (status) for an orch:read-only lease (RED: was null)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    const info = mgr.validate(bearer, "session.status");
+    expect(info).not.toBeNull();
+    expect(info?.leaseId).toBeTruthy();
+    expect(info?.agentId).toBe("agent-1");
+  });
+
+  it("allows session.list (status) for an orch:read-only lease (RED: was null)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    expect(mgr.validate(bearer, "session.list")).not.toBeNull();
+  });
+
+  it("reaches the self-scoped read with a DIFFERENT held cap — the exception is independent of which orch:* cap the lease holds", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // A lease scoped to orch:cron (not orch:read) still reaches whoami — the
+    // exception is "any valid lease", not "a lease holding a particular cap".
+    const { bearer } = mgr.mintLease(baseInput(["orch:cron"]));
+    expect(mgr.validate(bearer, "capabilities.introspect")).not.toBeNull();
+  });
+
+  it("does NOT widen to a non-allowlisted ungated read (session.search stays denied — tightness)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    // session.search is "ungated" but NOT in SELF_SCOPED_AGENT_READS → the
+    // exception must not reach it; it stays out of audience (no orch:* cap).
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    expect(mgr.validate(bearer, "session.search")).toBeNull();
+  });
+
+  it("preserves the gated/admin denials — a self-scoped lease still cannot reach a foreign cap or a deny-by-origin method", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    // message.send (orch:message ∉ caps) STILL denied — no audience widening.
+    expect(mgr.validate(bearer, "message.send")).toBeNull();
+    // session.delete (deny-by-origin / scopes:["admin"]) STILL denied.
+    expect(mgr.validate(bearer, "session.delete")).toBeNull();
+  });
+
+  it("denies the self-scoped read for an EXPIRED lease — the exception is after the expiry gate", () => {
+    const deps = makeDeps({ defaultTtlMs: 1000 });
+    const mgr = createLeaseManager(deps);
+    const { bearer } = mgr.mintLease({
+      ...baseInput(["orch:read"]),
+      ttlMs: 1000,
+      maxTtlMs: 10_000,
+    });
+    deps.clock.advance(1001); // past soft expiry
+    expect(mgr.validate(bearer, "capabilities.introspect")).toBeNull();
+  });
+
+  it("denies the self-scoped read for a REVOKED lease — the exception is after the revoke gate", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { leaseId, bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    mgr.revoke(leaseId);
+    expect(mgr.validate(bearer, "capabilities.introspect")).toBeNull();
+  });
+
+  it("denies the self-scoped read for a FORGED bearer — the exception is after the tokenEquals gate", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const { bearer } = mgr.mintLease(baseInput(["orch:read"]));
+    const forged = "A".repeat(bearer.length); // right length, never minted
+    expect(mgr.validate(forged, "capabilities.introspect")).toBeNull();
+    // an empty bearer is likewise denied (length-guard, no throw)
+    expect(() => mgr.validate("", "capabilities.introspect")).not.toThrow();
+    expect(mgr.validate("", "capabilities.introspect")).toBeNull();
+  });
+});
+
 describe("LeaseManager — tool.invoke audience-on-inner-tool (Pitfall 2; DISPATCH-01)", () => {
   // tool.invoke is NOT a member of HANDLER_CAPABILITY_MAP — its required cap is
   // the INNER tool's cap from TOOL_CAPABILITY_MAP (shape (b), keeps caps+audience
