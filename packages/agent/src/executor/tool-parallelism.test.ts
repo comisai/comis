@@ -5,6 +5,7 @@ import {
   isReadOnlyTool,
   isConcurrencySafe,
   createMutationSerializer,
+  createOrderPreservingResultBuffer,
 } from "./tool-parallelism.js";
 import { registerToolMetadata } from "@comis/core";
 
@@ -404,6 +405,93 @@ describe("isReadOnlyTool fallback chain", () => {
 
   it("returns false for unknown tool with no metadata", () => {
     expect(isReadOnlyTool("par_test_unknown_xyz")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STREAM-01: order-preserving, cache-stable result buffer
+//
+// The SDK runs read-only tools concurrently (parallel mode) so their executes
+// resolve in COMPLETION order, which is nondeterministic. If concurrent
+// results were placed into the message array in completion order, the cached
+// prompt prefix would change turn-over-turn and bust the prompt cache
+// (T-221-STREAM-01). The order-preserving buffer indexes each result by its
+// TOOL-CALL position and flushes in that source order regardless of arrival
+// order — so the assembled result array is deterministic (cache-stable).
+// ---------------------------------------------------------------------------
+
+describe("createOrderPreservingResultBuffer — concurrent reads land in tool-call order (cache-stable)", () => {
+  it("flushes results in tool-call order even when completions arrive out of order [#3,#1,#2] → [#1,#2,#3]", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(3);
+    // Tool-calls issued in order [#1, #2, #3]; completions arrive [#3, #1, #2].
+    buffer.record(2, "read#3-result");
+    buffer.record(0, "read#1-result");
+    buffer.record(1, "read#2-result");
+    expect(buffer.flush()).toEqual([
+      "read#1-result",
+      "read#2-result",
+      "read#3-result",
+    ]);
+  });
+
+  it("flushes in tool-call order when completions arrive in order too (identity case)", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(3);
+    buffer.record(0, "a");
+    buffer.record(1, "b");
+    buffer.record(2, "c");
+    expect(buffer.flush()).toEqual(["a", "b", "c"]);
+  });
+
+  it("is cache-stable: the same tool-call set yields a byte-identical ordered array across runs", () => {
+    // Two independent runs of the SAME tool-call set with DIFFERENT completion
+    // interleavings must produce the identical ordered result array — the
+    // nondeterministic interleave never leaks into the cached prefix.
+    const runA = createOrderPreservingResultBuffer<string>(3);
+    runA.record(1, "y");
+    runA.record(2, "z");
+    runA.record(0, "x");
+
+    const runB = createOrderPreservingResultBuffer<string>(3);
+    runB.record(2, "z");
+    runB.record(0, "x");
+    runB.record(1, "y");
+
+    expect(JSON.stringify(runA.flush())).toBe(JSON.stringify(runB.flush()));
+    expect(runA.flush()).toEqual(["x", "y", "z"]);
+  });
+
+  it("reports completeness so the consumer flushes only when every tool-call has resolved", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(2);
+    expect(buffer.isComplete()).toBe(false);
+    buffer.record(1, "second");
+    expect(buffer.isComplete()).toBe(false);
+    buffer.record(0, "first");
+    expect(buffer.isComplete()).toBe(true);
+    expect(buffer.flush()).toEqual(["first", "second"]);
+  });
+
+  it("a zero-call turn is trivially complete and flushes an empty array", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(0);
+    expect(buffer.isComplete()).toBe(true);
+    expect(buffer.flush()).toEqual([]);
+  });
+
+  it("rejects an out-of-range index (a result with no matching tool-call slot)", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(2);
+    expect(() => buffer.record(2, "overflow")).toThrow(/index/i);
+    expect(() => buffer.record(-1, "underflow")).toThrow(/index/i);
+  });
+
+  it("flush before all results have arrived throws rather than emit a hole (no torn prefix)", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(3);
+    buffer.record(0, "only-one");
+    expect(() => buffer.flush()).toThrow(/incomplete|complete/i);
+  });
+
+  it("a late duplicate for an already-recorded slot is rejected (no silent overwrite)", () => {
+    const buffer = createOrderPreservingResultBuffer<string>(2);
+    buffer.record(0, "first");
+    expect(() => buffer.record(0, "again")).toThrow(/already|duplicate/i);
   });
 });
 
