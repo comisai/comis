@@ -122,6 +122,20 @@ export const AUTONOMY_MODES = ["default", "accept-reversible", "unattended", "ma
 export type AutonomyMode = (typeof AUTONOMY_MODES)[number];
 
 /**
+ * EVICT-02 fail-closed mode resolution. Given a (possibly absent/forged/unparseable)
+ * mode value — e.g. the chokepoint's injected `_autonomyMode`, or a future external
+ * policy read — return the SAFE mode. A recognized AutonomyMode passes through; anything
+ * else (undefined, non-string, an unknown string) collapses to "default", never to a
+ * broader profile. This is the single fail-closed point EVICT-02's "unreachable policy
+ * source -> default" contract is tested against. PURE (no env/clock/fs).
+ */
+export function resolveEffectiveMode(raw: unknown): AutonomyMode {
+  return typeof raw === "string" && (AUTONOMY_MODES as readonly string[]).includes(raw)
+    ? (raw as AutonomyMode)
+    : "default";
+}
+
+/**
  * The origin-channel message posture (§3.5/§8.4). `standard` resolves
  * `channels: ["origin"]` (own channel only) under an hourly quota; any NEW
  * target is an explicit per-target grant (`autoApprovable:false`).
