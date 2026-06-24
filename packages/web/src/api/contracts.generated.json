@@ -6352,7 +6352,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "memory.unpin": {

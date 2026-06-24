@@ -6474,7 +6474,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "memory.unpin": {

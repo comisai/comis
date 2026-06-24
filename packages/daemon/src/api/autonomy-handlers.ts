@@ -179,10 +179,11 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         // resurrect the pre-revoke caps (the resurrection-window close).
         await invalidatePersistedRecord(rootRunId, LeaseRevokeContract.method);
       } else if (leaseId) {
-        // Single-lease cooperative stop. The LeaseManager.revoke is a void flag;
-        // a successful call revokes exactly one lease.
-        deps.leaseManager.revoke(leaseId);
-        revoked = 1;
+        // Single-lease cooperative stop — report the HONEST count: 1 if the lease
+        // existed (now revoked), 0 for an unknown id (never a phantom revoke:1 —
+        // the live VPS finding where a nonexistent leaseId reported revoked:1
+        // while the rootRunId path honestly reported 0).
+        revoked = deps.leaseManager.revoke(leaseId).revoked;
       }
 
       // §2.7: content-free completion line — the COUNT + method only, never the

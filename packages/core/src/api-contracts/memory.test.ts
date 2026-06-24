@@ -68,7 +68,8 @@ describe("memory + context domain contracts", () => {
     // memory-handlers.ts scopes
     expect(MemorySearchFilesContract.scopes).toEqual(["rpc"]);
     expect(MemoryGetFileContract.scopes).toEqual(["rpc"]);
-    expect(MemoryStoreContract.scopes).toEqual(["admin"]);
+    // MD-02: memory.store is rpc-scoped (agent-reachable; the memory_store tool).
+    expect(MemoryStoreContract.scopes).toEqual(["rpc"]);
     expect(MemoryStatsContract.scopes).toEqual(["admin"]);
     expect(MemoryBrowseContract.scopes).toEqual(["admin"]);
     expect(MemoryDeleteContract.scopes).toEqual(["admin"]);

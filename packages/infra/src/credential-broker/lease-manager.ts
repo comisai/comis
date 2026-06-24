@@ -116,8 +116,9 @@ export interface LeaseManager {
   validate(rawBearer: string, requestedMethod: string, innerTool?: string): LeaseInfo | null;
   /** Renew the soft expiry, clamped to maxExpiresAt; null if revoked/at-ceiling/unknown. */
   renew(leaseId: string): { expiresAtMs: number } | null;
-  /** Mark the lease revoked — denies the next validate AND renew. */
-  revoke(leaseId: string): void;
+  /** Mark the lease revoked — denies the next validate AND renew. Returns the
+   * honest count: `{ revoked: 1 }` if the id existed, `{ revoked: 0 }` if unknown. */
+  revoke(leaseId: string): { revoked: number };
   /**
    * Cascade-revoke a lease and every descendant reachable via `parentLeaseId`
    * (REVOKE-02). Reaches grandchildren: revoking a parent revokes its children
@@ -180,15 +181,22 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
     }
   }
 
-  /** Per-lease revoke: flag the entry (do NOT delete) so validate denies it. */
-  function revokeLease(leaseId: string): void {
+  /**
+   * Per-lease revoke: flag the entry (do NOT delete) so validate denies it.
+   * Returns 1 when an entry existed (now revoked), 0 for an UNKNOWN id — so the
+   * exposed `revoke` reports an HONEST count to the operator and never a phantom
+   * revoke of an id that was never minted (REVOKE-01 honesty; the live finding).
+   */
+  function revokeLease(leaseId: string): number {
     // Keep the entry (do NOT delete) so validate's `revoked` check denies it;
     // the lazy-TTL reaper removes it once past maxExpiresAt, by which point
     // the bearer is dead anyway. A randomUUID() id is never reused.
     const entry = leases.get(leaseId);
     if (entry) {
       entry.revoked = true;
+      return 1;
     }
+    return 0;
   }
 
   return {
@@ -320,8 +328,9 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
       return { expiresAtMs: entry.expiresAtMs };
     },
 
-    revoke(leaseId: string): void {
-      revokeLease(leaseId);
+    revoke(leaseId: string): { revoked: number } {
+      // Honest count: 1 if the lease existed (now revoked), 0 for an unknown id.
+      return { revoked: revokeLease(leaseId) };
     },
 
     cascadeRevoke(leaseId: string, visited = new Set<string>()): void {

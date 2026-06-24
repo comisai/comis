@@ -482,6 +482,24 @@ describe("LeaseManager — cascadeRevoke reaches grandchildren via the at-mint a
   });
 });
 
+describe("LeaseManager — revoke(leaseId) returns an HONEST count (REVOKE-01 honesty)", () => {
+  // The by-leaseId cooperative stop must report what it actually revoked — the
+  // daemon `lease.revoke` handler surfaces this count to the operator. A revoke
+  // of an UNKNOWN id is a no-op and MUST report { revoked: 0 }, never a phantom
+  // { revoked: 1 } (the live VPS finding: a nonexistent leaseId returned 1 while
+  // rootRunId honestly returned 0). A security RPC must not over-report a stop.
+  it("returns { revoked: 1 } for an existing lease and denies it after", () => {
+    const mgr = createLeaseManager(makeDeps());
+    const lease = mgr.mintLease({ ...baseInput(["orch:graph"]), rootRunId: "root-R" });
+    expect(mgr.revoke(lease.leaseId)).toEqual({ revoked: 1 });
+    expect(mgr.validate(lease.bearer, "graph.execute")).toBeNull(); // denied after revoke
+  });
+  it("returns { revoked: 0 } for an UNKNOWN lease id (no phantom revoke count)", () => {
+    const mgr = createLeaseManager(makeDeps());
+    expect(mgr.revoke("not-a-real-lease-id")).toEqual({ revoked: 0 });
+  });
+});
+
 describe("LeaseManager — revokeByRootRun scans + cascades every lease of a root (REVOKE-01)", () => {
   // The by-rootRunId fan-out: scan on `rootRunId`, cascadeRevoke each match
   // through ONE shared visited set (so the count is distinct), leave other roots
