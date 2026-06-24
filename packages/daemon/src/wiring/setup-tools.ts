@@ -96,6 +96,7 @@ import type { BrokerContextDeps } from "./setup-broker-activation.js";
 // orchestrate-assembly bodies are in setup-tools-autonomy.ts (file-size cap).
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
+import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // COORD-01 (218-01)
 
 
 // Deps / Result types
@@ -633,22 +634,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
-    // COORD-01 (218-01): resolve the agent's autonomy posture and select the
-    // effective tool-group allowlist. A `role: coordinator` lead with NO explicit
-    // `tool_groups` is narrowed to the coordinator orchestration surface
-    // (resolveAutonomy().coordinatorToolGroups) — heavy/long work has nowhere to
-    // run inline (COORD-02). An explicit `tool_groups` (or "full") still wins
-    // (operator intent — progressive disclosure, T-218-04); role:worker (the
-    // default) leaves the surface untouched (byte-identical to today). This
-    // narrows the TOOL SURFACE only — the resolved capability set is unchanged
-    // (the §22.3 floor + requireCapability gate are not in this path).
+    // COORD-01 (218-01): narrow a role:coordinator lead (selector + rationale in
+    // setup-tools-coordinator.ts). Narrows the TOOL SURFACE only — caps unchanged.
     const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
-    const hasExplicitToolGroups = toolGroups !== undefined && toolGroups.length > 0;
-    const effectiveGroups =
-      resolvedAutonomy.role === "coordinator" && !hasExplicitToolGroups
-        ? resolvedAutonomy.coordinatorToolGroups
-        : toolGroups;
-    if (resolvedAutonomy.role === "coordinator" && !hasExplicitToolGroups) {
+    const { effectiveGroups, narrowed: coordinatorNarrowed } = selectEffectiveToolGroups(resolvedAutonomy, toolGroups);
+    if (coordinatorNarrowed) {
       skillsLogger.debug(
         { agentId, role: resolvedAutonomy.role, toolGroups: effectiveGroups, step: "tool-assembly" },
         "coordinator role narrowed the tool surface to the orchestration set",
@@ -660,20 +650,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     if (!includePlatform) {
       platformToolProvider = undefined;
     } else if (effectiveGroups && effectiveGroups.length > 0 && !effectiveGroups.includes("full")) {
-      // Build allowed tool name set from all requested profiles AND groups
-      const allowedNames = new Set<string>();
-      for (const group of effectiveGroups) {
-        const profileTools = TOOL_PROFILES[group];
-        if (profileTools) {
-          for (const t of profileTools) allowedNames.add(t);
-        }
-        // Also check TOOL_GROUPS (e.g., "web" -> ["web_fetch", "web_search", "browser"])
-        const groupKey = group.startsWith("group:") ? group : `group:${group}`;
-        const groupTools = TOOL_GROUPS[groupKey];
-        if (groupTools) {
-          for (const t of groupTools) allowedNames.add(t);
-        }
-      }
+      // Build the allowed tool-name set from the effective profiles AND groups.
+      const allowedNames = expandToolGroupsToNames([...effectiveGroups], TOOL_PROFILES, TOOL_GROUPS);
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {
       // No effectiveGroups or "full" in effectiveGroups -- return all platform tools unfiltered
