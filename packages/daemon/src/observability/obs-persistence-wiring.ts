@@ -34,6 +34,7 @@ import {
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
   autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
 } from "./obs-autonomy-rows.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
 
@@ -495,6 +496,7 @@ export {
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
   autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -723,6 +725,11 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("autonomy:killed", (payload) => {
     diagnosticBuffer.push(autonomyKilledEventToRow(payload));
+  });
+  // FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip → a content-free
+  // health_signal row (the SEPARABLE denialBreakerTrips count; see the mapper docstring).
+  eventBus.on("autonomy:denial_breaker_tripped", (payload) => {
+    diagnosticBuffer.push(autonomyDenialBreakerEventToRow(payload));
   });
 
   // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an obs_diagnostics

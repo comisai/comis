@@ -173,6 +173,9 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
         revoked: 1,
         killed: 1,
         breakerTrips: 2,
+        // FLEET-02 (Phase 220-05): the capability-denial breaker count, separable
+        // from the tool-failure `breakerTrips`.
+        denialBreakerTrips: 3,
         budgetBreaches: 1,
         costUsd: 0.42,
         worstRootRunId: "root-run-abc123",
@@ -186,6 +189,9 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsed.autonomy?.revoked).toBe(1);
     expect(parsed.autonomy?.killed).toBe(1);
     expect(parsed.autonomy?.breakerTrips).toBe(2);
+    // FLEET-02: the separable denial-breaker count survives .parse() (a non-strict
+    // z.object would STRIP it without the schema field — the milestone-audit fix).
+    expect(parsed.autonomy?.denialBreakerTrips).toBe(3);
     expect(parsed.autonomy?.budgetBreaches).toBe(1);
     expect(parsed.autonomy?.costUsd).toBeCloseTo(0.42);
     expect(parsed.autonomy?.worstRootRunId).toBe("root-run-abc123");
@@ -211,6 +217,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
         revoked: 0,
         killed: 0,
         breakerTrips: 0,
+        denialBreakerTrips: 0,
         budgetBreaches: 0,
         costUsd: 0,
       },
@@ -232,6 +239,7 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
         revoked: 0,
         killed: 0,
         breakerTrips: 0,
+        denialBreakerTrips: 0,
         budgetBreaches: 0,
         costUsd: 0,
         worstRootRunId: "root-run-xyz",

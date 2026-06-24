@@ -176,6 +176,11 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   "durable_resumed",
   "autonomy_revoked",
   "autonomy_killed",
+  // FLEET-02 (Phase 220-05): the capability-denial breaker trip gets a dedicated
+  // finding below (the denialBreakerN abort) — EXCLUDED from the generic rollup so
+  // it is not double-counted as `health_signal:autonomy_denial_breaker` (finding +
+  // entry MOVE TOGETHER; listing it here without the dedicated branch silently drops it).
+  "autonomy_denial_breaker",
 ]);
 
 /** OBS-04 (Phase 196): the closed domain `errorKind` (an `SttErrorKind`) carried
@@ -360,6 +365,31 @@ export function autonomyKilledFromRow(row: DiagnosticRow): { killed: number; roo
     const rootRunId =
       typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
     return rootRunId !== undefined ? { killed, rootRunId } : { killed };
+  } catch {
+    return null;
+  }
+}
+
+/** FLEET-02 (Phase 220-05): the per-event denial-breaker COUNT + the `rootRunId` from
+ *  an `autonomy_denial_breaker` health_signal row's details JSON. Defensive parse (the
+ *  autonomyKilledFromRow clone). A Phase-217 capability-DENIAL breaker trip is NEVER a
+ *  session endReason / breakerTripCount — so this DISTINCT signal label is the ONLY way
+ *  the fleet lens counts it SEPARABLY from the tool-failure breaker (breakerTripTotal),
+ *  the same separation discipline as kill≠revoke. The `denialBreakerTrips` count
+ *  defaults to 1 when absent/non-finite (each row is one trip). Counts/ids only — NEVER
+ *  the engine's free-text deny reason (the row never carried it). */
+export function autonomyDenialBreakerFromRow(row: DiagnosticRow): { denialBreakerTrips: number; rootRunId?: string } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; denialBreakerTrips?: unknown; rootRunId?: unknown };
+    if (parsed.signal !== "autonomy_denial_breaker") return null;
+    const denialBreakerTrips =
+      typeof parsed.denialBreakerTrips === "number" && Number.isFinite(parsed.denialBreakerTrips) && parsed.denialBreakerTrips > 0
+        ? parsed.denialBreakerTrips
+        : 1;
+    const rootRunId =
+      typeof parsed.rootRunId === "string" && parsed.rootRunId.length > 0 ? parsed.rootRunId : undefined;
+    return rootRunId !== undefined ? { denialBreakerTrips, rootRunId } : { denialBreakerTrips };
   } catch {
     return null;
   }

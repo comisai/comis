@@ -955,6 +955,22 @@ function insertKilledRow(store: ObservabilityStore, ts: number, killed: number, 
   });
 }
 
+/** Insert a FLEET-02 (220-05) `autonomy_denial_breaker` health_signal row — the
+ *  capability-denial breaker (Phase 217) tripped + aborted the run tree. Content-free:
+ *  the closed signal label + the rootRunId (an id) + count ONLY. This is the EVENT-
+ *  sourced source (an `execution:aborted{reason:"denial_breaker"}`-class abort), NOT a
+ *  session endReason / breakerTripCount — the existing `breakerTrips` read-back can
+ *  NEVER see it. */
+function insertDenialBreakerRow(store: ObservabilityStore, ts: number, rootRunId: string): void {
+  store.insertDiagnostic({
+    timestamp: ts,
+    category: "health_signal",
+    severity: "warning",
+    message: "autonomy:denial_breaker_tripped",
+    details: JSON.stringify({ signal: "autonomy_denial_breaker", denialBreakerTrips: 1, rootRunId }),
+  });
+}
+
 /** A session_summary row for a real breaker-tripped run: breakerTripCount >= 1. The FLEET-02
  *  breaker source is the summed breakerTripCount (→ breakerTripTotal), NOT the endReason —
  *  `denial_breaker` is never a session endReason, only an execution:aborted event reason. */
@@ -1051,6 +1067,103 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.breakerTripTotal).toBe(2); // the real read-back source (NOT a denial_breaker endReason).
     // budgetBreaches reflects the node_budget_exceeded breach count (1).
     expect(report.autonomy?.budgetBreaches).toBe(1);
+  });
+
+  // FLEET-02 (Phase 220-05) — the milestone-audit gap. A Phase-217 capability-DENIAL
+  // breaker trip (`execution:aborted{reason:"denial_breaker"}`) was INVISIBLE to
+  // `comis fleet`: its trip is never a session endReason and never a breakerTripCount,
+  // so the existing `breakerTrips` read-back (← breakerTripTotal ← summed
+  // breakerTripCount, the TOOL-failure breaker) ALWAYS shows 0, and the aborted run
+  // lands in durable status 'completed' (not orphaned/revoked) → 0 in every other
+  // count too. The fix EVENT-SOURCES it into a content-free `autonomy_denial_breaker`
+  // health_signal row → a SEPARATE `denialBreakerTrips` count (the `killed`-separable-
+  // from-`revoked` mold). RED: pre-patch there is no `denialBreakerTrips` field.
+  it("FLEET-02: a denial-breaker trip surfaces as denialBreakerTrips (event-sourced), SEPARABLE from the tool-breaker breakerTrips", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    // Two denial-breaker-aborted run trees (the Phase-217 capability-denial breaker).
+    insertDenialBreakerRow(store, now - 100, "root-deny-1");
+    insertDenialBreakerRow(store, now - 200, "root-deny-2");
+    // A tool-failure breaker session (breakerTripCount:1) — the EXISTING breakerTrips
+    // source. It must NOT be conflated with the denial-breaker count.
+    insertBreakerDegradedRow(store, now - 300, "tool-b1");
+    // The aborted runs land in durable status 'completed' (NOT orphaned/revoked) —
+    // exactly the milestone finding: zero in runs.degraded/orphaned/revoked/killed.
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 0, completed: 5 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // The NEW count surfaces the 2 denial-breaker trips (event-sourced from the rows).
+    expect(report.autonomy?.denialBreakerTrips).toBe(2);
+    // SEPARABLE: the tool-breaker breakerTrips read-back is the summed breakerTripCount
+    // (1), UNREGRESSED and distinct from the denial-breaker count.
+    expect(report.autonomy?.breakerTrips).toBe(1);
+    expect(report.breakerTripTotal).toBe(1); // the tool-breaker read-back source.
+    expect(report.autonomy?.denialBreakerTrips).not.toBe(report.autonomy?.breakerTrips);
+    // The denial-breaker-aborted runs were 'completed' in the table — so the OTHER
+    // counts stay 0 (proving the gap: only denialBreakerTrips catches them).
+    expect(report.autonomy?.runs.degraded).toBe(0);
+    expect(report.autonomy?.orphaned).toBe(0);
+    expect(report.autonomy?.killed).toBe(0);
+    expect(report.autonomy?.revoked).toBe(0);
+  });
+
+  it("FLEET-02: a denial-breaker trip is a dedicated finding AND its worst rootRunId is drillable; CONTENT-FREE", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertDenialBreakerRow(store, now - 100, "root-deny-worst");
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+
+    // A dedicated finding names the denial-breaker trip + a copy-pasteable explain ref.
+    const denialFinding = report.findings.find((f) => f.code === "autonomy_denial_breaker");
+    expect(denialFinding).toBeDefined();
+    expect(denialFinding?.count).toBe(1);
+    expect(denialFinding?.hint).toMatch(/comis explain|denialBreakerN/);
+    // NOT double-counted as a generic `health_signal:autonomy_denial_breaker` rollup.
+    expect(report.findings.some((f) => f.code === "health_signal:autonomy_denial_breaker")).toBe(false);
+    // The worst-run pick CAN include the denial-breaker root (a degraded autonomy run).
+    expect(report.autonomy?.worstRootRunId).toBe("root-deny-worst");
+
+    // CONTENT-FREE: no bearer/secret/path leaks anywhere in the report JSON. (The
+    // dedicated finding's detail/hint carry STATIC operator guidance — authored
+    // constants, not echoed runtime bodies — so they legitimately name the breaker
+    // mechanism; that is identical to every other finding's static hint and is NOT
+    // a body leak.) The content-free invariant is enforced at the ROW: the persisted
+    // `autonomy_denial_breaker` details carry ONLY the closed triple (signal /
+    // denialBreakerTrips / rootRunId) — the engine's runtime free-text deny reason
+    // is NEVER persisted, so it can never reach the report from the data side.
+    const j = JSON.stringify(report);
+    expect(j).not.toMatch(/Bearer|sk-|secret/i);
+    expect(j).not.toMatch(/\/home\/|\/tmp\//);
+    // The row's details JSON (the data-sourced surface) is the closed triple ONLY —
+    // no runtime body field smuggled through (this is what an untrusted row could leak).
+    const denialRow = store
+      .queryDiagnostics({ category: "health_signal" })
+      .find((r) => r.message === "autonomy:denial_breaker_tripped");
+    const details = JSON.parse(denialRow?.details ?? "{}") as Record<string, unknown>;
+    expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
+  });
+
+  it("FLEET-02: round-trips FleetHealthReportSchema.parse() with denialBreakerTrips (additive-optional, no drift)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    insertDenialBreakerRow(store, now - 100, "root-deny-rt");
+    const durableRuns = fakeDurableRuns({ orphaned: 0, revoked: 0, running: 1, completed: 1 });
+
+    const report = await assembleFleetHealthReport(
+      { obsStore: store, dataDir: emptyDataDir(), clock: createFakeClock(now), durableRuns },
+      24,
+    );
+    const parsed = FleetHealthReportSchema.parse(report);
+    expect(parsed.autonomy?.denialBreakerTrips).toBe(1);
   });
 
   it("FLEET-04: names the worst autonomy run's rootRunId AND a verdict suggests `comis explain <rootRunId>`", async () => {

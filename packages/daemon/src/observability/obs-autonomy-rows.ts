@@ -124,3 +124,38 @@ export function autonomyKilledEventToRow(payload: EventMap["autonomy:killed"]): 
     traceId: undefined,
   };
 }
+
+/**
+ * FLEET-02 (Phase 220-05): map an `autonomy:denial_breaker_tripped` event to a
+ * `health_signal` diagnostic row. A Phase-217 capability-DENIAL breaker trip
+ * (N consecutive floor-blocks aborted + killed the run tree) had NO fleet surface:
+ * the trip is never a session endReason and never a `breakerTripCount`, so the
+ * fleet lens's `breakerTrips` read-back (← `breakerTripTotal`, the TOOL-failure
+ * breaker) ALWAYS showed 0 for it, and the aborted run lands in durable status
+ * 'completed' (not orphaned/revoked) → 0 in every other count. The DISTINCT
+ * `autonomy_denial_breaker` signal label is the ONLY way the fleet lens counts the
+ * capability-denial breaker SEPARABLY from the tool-failure breaker (the same
+ * separation discipline as `autonomy_killed` vs `autonomy_revoked`). `details`
+ * carries the closed signal label + the per-event COUNT (1 — each trip is one
+ * event) + the rootRunId (an id) ONLY — NEVER the engine's free-text deny reason
+ * (which rides the escalate at the source — rpc-dispatch.ts). severity:"warning"
+ * (an aborted unattended run an admin must see in the fleet roll-up).
+ */
+export function autonomyDenialBreakerEventToRow(
+  payload: EventMap["autonomy:denial_breaker_tripped"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "autonomy:denial_breaker_tripped",
+    details: JSON.stringify({
+      signal: "autonomy_denial_breaker",
+      denialBreakerTrips: 1,
+      rootRunId: payload.rootRunId,
+    }),
+    traceId: undefined,
+  };
+}

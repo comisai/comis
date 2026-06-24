@@ -389,7 +389,14 @@ export async function assembleFleetHealthReport(
     topErrorKind: topErrorKinds[0]?.kind,
     // FLEET-04: the autonomy verdict keys on the DEGRADED autonomy run count +
     // the worst rootRunId (both from the slice above) — undefined-safe spread.
-    autonomyDegradedCount: autonomy?.runs.degraded ?? 0,
+    // FLEET-02: a denial-breaker-aborted run lands in durable status 'completed'
+    // (NOT orphaned/revoked), so it is invisible to `runs.degraded` — but it IS a
+    // degraded autonomy event (the run burned its denial budget and was force-
+    // aborted). Add `denialBreakerTrips` so the verdict fires + surfaces the worst
+    // rootRunId for the denial-breaker case too (the worst-run scan already promotes
+    // it at rank 3). The session-level rules still take precedence when no autonomy
+    // run degraded; this only widens the autonomy arm to its full degraded surface.
+    autonomyDegradedCount: (autonomy?.runs.degraded ?? 0) + (autonomy?.denialBreakerTrips ?? 0),
     ...(autonomy?.worstRootRunId !== undefined ? { worstRootRunId: autonomy.worstRootRunId } : {}),
   });
 

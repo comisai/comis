@@ -8891,6 +8891,9 @@
             "breakerTrips": {
               "type": "number"
             },
+            "denialBreakerTrips": {
+              "type": "number"
+            },
             "budgetBreaches": {
               "type": "number"
             },
@@ -8908,6 +8911,7 @@
             "revoked",
             "killed",
             "breakerTrips",
+            "denialBreakerTrips",
             "budgetBreaches",
             "costUsd"
           ],

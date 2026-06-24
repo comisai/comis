@@ -19,6 +19,7 @@ import {
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
   autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
   setupObsPersistence,
 } from "./obs-persistence-wiring.js";
 import {
@@ -1106,6 +1107,29 @@ describe("autonomyKilledEventToRow (FLEET-03)", () => {
   });
 });
 
+describe("autonomyDenialBreakerEventToRow (FLEET-02, Phase 220-05)", () => {
+  it("maps an autonomy:denial_breaker_tripped payload to a warning health_signal row (count + rootRunId, no deny-reason body)", () => {
+    const row = autonomyDenialBreakerEventToRow({
+      rootRunId: "root-deny",
+      timestamp: 9000,
+    });
+
+    expect(row.timestamp).toBe(9000);
+    expect(row.category).toBe("health_signal");
+    expect(row.severity).toBe("warning");
+    expect(row.message).toBe("autonomy:denial_breaker_tripped");
+
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    // A DISTINCT signal label — the capability-DENIAL breaker, separate from the
+    // TOOL-failure breaker (breakerTripCount → breakerTripTotal) and from kill/revoke.
+    expect(details.signal).toBe("autonomy_denial_breaker");
+    expect(details.denialBreakerTrips).toBe(1); // each trip is one event → count 1.
+    expect(details.rootRunId).toBe("root-deny");
+    // Content-free: the closed triple ONLY — never the engine's free-text deny reason.
+    expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
@@ -1278,18 +1302,20 @@ describe("setupObsPersistence", () => {
     eventBus.emit("durable:resumed", { rootRunId: "root-2", stepIndex: 3, timestamp: 1010 });
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
     eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
+    eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (13 total), each with the right message.
+    // Exactly one health_signal row per event (14 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(13);
+    expect(healthRows).toHaveLength(14);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
+      "autonomy:denial_breaker_tripped",
       "autonomy:killed",
       "autonomy:revoked",
       "context:dag_degraded",
@@ -1304,11 +1330,12 @@ describe("setupObsPersistence", () => {
       "subagent:budget_exceeded",
       "subagent:delivery_deadlettered",
     ]);
-    // The four FLEET-03 rows carry their closed signal labels.
+    // The FLEET-03 + FLEET-02 autonomy rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:resumed")!.details ?? "{}").signal).toBe("durable_resumed");
     expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:revoked")!.details ?? "{}").signal).toBe("autonomy_revoked");
     expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:killed")!.details ?? "{}").signal).toBe("autonomy_killed");
+    expect(JSON.parse(healthRows.find((r) => r.message === "autonomy:denial_breaker_tripped")!.details ?? "{}").signal).toBe("autonomy_denial_breaker");
     // The orphaned row carries the closed enum reason, NEVER a free-text substring (T-220-01).
     const orphanRow = healthRows.find((r) => r.message === "durable:orphaned")!;
     expect(orphanRow.details ?? "").not.toMatch(/not resumable|reconcile|status=/i);
