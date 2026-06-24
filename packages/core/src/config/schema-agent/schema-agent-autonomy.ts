@@ -152,6 +152,21 @@ export const AutonomyConfigSchema = z.strictObject({
   /** §3.8 posture: assistant | standard (default) | unattended | max. */
   profile: z.enum(AUTONOMY_PROFILE_NAMES).default("standard"),
   /**
+   * §23.10 lean-coordinator role (COORD-01). `worker` (default) = the full
+   * resolved tool surface for the profile. `coordinator` NARROWS the resolved
+   * tool surface to the orchestration set (sessions_spawn/pipeline/cron/message
+   * + the orch:read drill-in tools + obs_query) under a delegate-then-synthesize
+   * doctrine — heavy/long/high-volume work always routes to a fresh-window
+   * child, never inline. NARROWS the tool surface ONLY: it never adds a
+   * capability (the resolved `capabilities[]` set is role-invariant), and the
+   * §22.3 structural floor + the `requireCapability` gate are unchanged. Default
+   * `worker` ⇒ byte-identical to today (no migration code, no posture flag). The
+   * resolver expands `coordinator` into `coordinatorToolGroups`, which
+   * `setup-tools` applies as the effective tool-group allowlist for a lead that
+   * set no explicit `tool_groups`.
+   */
+  role: z.enum(["worker", "coordinator"]).default("worker"),
+  /**
    * Whether autonomy surfaces are on. Optional at the config layer — the
    * resolver fills it from the profile when omitted (`standard` → true,
    * `assistant` → false). An explicit value overrides the profile.
@@ -368,6 +383,20 @@ export interface ResolvedCapability {
 /** The fully-resolved autonomy posture a consumer (Plan 04/06) reads. */
 export interface ResolvedAutonomy {
   readonly profile: AutonomyProfileName;
+  /**
+   * The §23.10 lean-coordinator role (COORD-01). `worker` (default) leaves the
+   * tool surface untouched; `coordinator` narrows it via `coordinatorToolGroups`.
+   * Role NARROWS the tool surface only — the resolved `capabilities`/`resolvedCapabilities`
+   * sets are role-invariant (the §22.3 over-grant guard).
+   */
+  readonly role: "worker" | "coordinator";
+  /**
+   * When `role:coordinator`, the tool-group allowlist `setup-tools` applies as
+   * the effective groups for a lead with no explicit `tool_groups` (COORD-01).
+   * `undefined` for `worker` (no narrowing). This is the single source of truth
+   * the assembly seam + the COORD-01 arch-test read off the compiled resolver.
+   */
+  readonly coordinatorToolGroups?: readonly string[];
   readonly enabled: boolean;
   /** The resolved orch:* caps (deduped). */
   readonly capabilities: readonly AgentCapability[];
@@ -460,8 +489,17 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
   // resolved source at the meter/semaphore).
   const bounds = resolveAutonomyBounds(cfg, base);
 
+  // COORD-01: the lean-coordinator role NARROWS the resolved tool surface (never
+  // the cap set — `orderedCaps`/`resolvedCapabilities` above are untouched by it).
+  // `coordinator` expands into the `["coordinator"]` tool-group allowlist that
+  // `setup-tools` applies; `worker` (the default) omits the field, leaving it
+  // undefined so a default install resolves byte-identically to today.
+  const role: "worker" | "coordinator" = cfg?.role ?? "worker";
+
   const resolved: ResolvedAutonomy = {
     profile: profileName,
+    role,
+    ...(role === "coordinator" ? { coordinatorToolGroups: ["coordinator"] as const } : {}),
     enabled: cfg?.enabled ?? base.enabled,
     capabilities: orderedCaps,
     resolvedCapabilities,
