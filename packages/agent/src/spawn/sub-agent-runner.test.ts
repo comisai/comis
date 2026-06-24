@@ -543,6 +543,45 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
+  // WT-01: the worktree request flag survives the spawn round-trip onto the
+  // child session metadata, so executeSubAgent (which only sees the persisted
+  // metadata, never SpawnParams) can read it and run the child in an isolated
+  // git worktree. Without this thread the `spawn --worktree` flag is a silent
+  // no-op (the gap this plan closes — the contract field + the lifecycle module
+  // exist, but nothing carries the request to the runner that runs the child).
+  // -----------------------------------------------------------------------
+  it("persists the worktree request flag onto child session metadata (WT-01)", () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "worktree flag test",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      callerAgentId: "orchestrator",
+      worktree: true,
+    });
+
+    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.worktree).toBe(true);
+  });
+
+  it("defaults the worktree metadata flag to false when not requested (WT-01)", () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "no worktree test",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      callerAgentId: "orchestrator",
+    });
+
+    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.worktree).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
   // buildAnnouncementMessage formats success template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats success template with [System Message] prefix", () => {

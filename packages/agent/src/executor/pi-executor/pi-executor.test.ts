@@ -573,6 +573,26 @@ describe("PiExecutor", () => {
       );
     });
 
+    // WT-01: a `spawn --worktree` child runs IN an isolated git worktree, so the
+    // SDK session cwd (the file-tool jail for exec/read/write/edit) MUST be the
+    // worktree dir, NOT the agent's shared workspace. ExecutionOverrides.workspaceDir
+    // carries the per-run override; absent ⇒ deps.workspaceDir (byte-identical).
+    it("uses overrides.workspaceDir as the SDK session cwd when provided (WT-01)", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const worktreeDir = `${deps.workspaceDir}/.worktrees/wt-run-xyz`;
+
+      await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined,
+        { workspaceDir: worktreeDir } as never,
+      );
+
+      expect(createAgentSession).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: worktreeDir }),
+      );
+    });
+
     // Regression test: the SDK's `tools` field is an allowlist of tool *names*.
     // Empty array disables ALL tools (including customTools), which left the
     // agent tool-less from every entry point — fixed by passing customTool
