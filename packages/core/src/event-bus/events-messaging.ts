@@ -90,6 +90,26 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** Sub-agent progress (COORD-03 — the ~30s read-only progress fork).
+   *  A long-running child surfaces its advance every ~30s WITHOUT completing,
+   *  via a read-only state summary (coordinator-progress-fork.ts) — NOT a
+   *  re-execution: the fork never calls a tool, spawns, or re-runs the child.
+   *  §2.7 CONTENT-FREE (T-218-14): the payload carries ONLY a 3-5 word status
+   *  `progressLine` (e.g. "running, step 4"), the elapsed wall-clock, the steps
+   *  executed, and identifiers — NEVER the child's output, message body, or any
+   *  tool result. The `progressLine` is a status descriptor, not child content. */
+  "session:sub_agent_progress": {
+    runId: string;
+    agentId: string;
+    /** A 3-5 word progress status line (content-free, no payload). */
+    progressLine: string;
+    /** Wall-clock ms since the fork started (from the injected ClockPort). */
+    elapsedMs: number;
+    /** Steps executed so far (a count, never step content). */
+    stepsExecuted: number;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Subagent context lifecycle events
   // -------------------------------------------------------------------------
