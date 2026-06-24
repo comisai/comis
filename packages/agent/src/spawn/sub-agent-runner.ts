@@ -350,6 +350,8 @@ export interface SubAgentRunnerDeps {
       tokensUsed: number;
       cost: number;
       sessionKey: string;
+      /** Phase 218 (SUMREF-02): the materialized full-output handle, when produced. */
+      resultRef?: ResultRef;
     }): string;
   };
   /** Base data directory for locating subagent-results (e.g., ~/.comis). Optional — caller may omit. */
@@ -1768,10 +1770,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // "no store wired / no handle produced" path (no store to materialize
         // through, so the on-disk condensed result IS the handle — NOT a shim).
         let fullResultLine = condensedResult ? `\n\nFull result: ${condensedResult.diskPath}` : "";
+        // The successful handle (when produced) — threaded into the NarrativeCaster
+        // path too, so the production-default tagged announcement also carries the
+        // handle, not the diskPath (SUMREF-02 longevity invariant on every path).
+        let materializedRef: ResultRef | undefined;
         if (condensedResult && deps.materializeFullOutput) {
           const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now() });
           if (materialized && "ref" in materialized && typeof materialized.ref === "string") {
             // Success: the lead drills into the handle on demand (read/grep/jq).
+            materializedRef = materialized;
             fullResultLine = `\n\nFull result (drill in with read/grep/jq): ${materialized.ref} (${materialized.bytes}B, ${materialized.kind})`;
             deps.logger?.debug({
               runId, step: "child-result-materialize",
@@ -1955,6 +1962,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 tokensUsed: result.tokensUsed.total,
                 cost: result.cost.total,
                 sessionKey: formattedKey,
+                // SUMREF-02: the materialized handle (when produced) so the tagged
+                // announcement carries the drill-in handle, not the diskPath.
+                resultRef: materializedRef,
               });
             } else {
               // Legacy fallback: no condenser or no caster

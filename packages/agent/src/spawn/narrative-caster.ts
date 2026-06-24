@@ -12,7 +12,7 @@
  * @module
  */
 
-import type { CondensedResult } from "@comis/core";
+import type { CondensedResult, ResultRef } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +41,15 @@ export interface CastParams {
   cost: number;
   /** Sub-agent session key for reference. */
   sessionKey: string;
+  /**
+   * Phase 218 (SUMREF-02): the child's full output materialized to its jailed
+   * workspace as a structured handle. When present, the "Full result" line
+   * becomes the drill-in handle (ref + bytes + kind) the lead queries on demand
+   * (read/grep/jq), instead of the bare condenser diskPath — so the lead's
+   * window grows by a summary + a handle, never the megabyte body. Absent ⇒ the
+   * line falls back to `condensedResult.diskPath` (today's behavior).
+   */
+  resultRef?: ResultRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,11 +117,30 @@ function truncateLabel(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Full-result drill-in line (SUMREF-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * The "Full result" announcement line. When a materialized {@link ResultRef}
+ * handle is present, the lead drills into it on demand (read/grep/jq) so only a
+ * summary + a handle enter its window (the longevity invariant); otherwise the
+ * bare condenser `diskPath` is used (today's behavior — no store/handle, so the
+ * on-disk condensed result IS the pointer). Kept byte-aligned with the runner's
+ * buildAnnouncementMessage body so both announcement paths agree.
+ */
+function formatFullResultLine(diskPath: string, resultRef?: ResultRef): string {
+  if (resultRef) {
+    return `Full result (drill in with read/grep/jq): ${resultRef.ref} (${resultRef.bytes}B, ${resultRef.kind})`;
+  }
+  return `Full result: ${diskPath}`;
+}
+
+// ---------------------------------------------------------------------------
 // Tagged result format (enabled mode)
 // ---------------------------------------------------------------------------
 
 function formatTaggedResult(params: CastParams, tagPrefix: string): string {
-  const { condensedResult, task, runtimeMs, stepsExecuted, tokensUsed, cost, sessionKey } = params;
+  const { condensedResult, task, runtimeMs, stepsExecuted, tokensUsed, cost, sessionKey, resultRef } = params;
   const label = truncateLabel(params.label ?? task);
   const result = condensedResult.result;
 
@@ -188,8 +216,9 @@ function formatTaggedResult(params: CastParams, tagPrefix: string): string {
     `Ratio: ${condensedResult.compressionRatio.toFixed(2)}`,
   );
 
-  // 12. Full result disk path
-  sections.push(`Full result: ${condensedResult.diskPath}`);
+  // 12. Full result drill-in (the structured ResultRef handle when present —
+  // SUMREF-02 — else the condenser diskPath).
+  sections.push(formatFullResultLine(condensedResult.diskPath, resultRef));
 
   // 13. Session line
   sections.push(`Session: ${sessionKey}`);
@@ -206,7 +235,7 @@ function formatTaggedResult(params: CastParams, tagPrefix: string): string {
 // ---------------------------------------------------------------------------
 
 function formatUntaggedResult(params: CastParams): string {
-  const { condensedResult, task, runtimeMs, stepsExecuted, tokensUsed, cost, sessionKey } = params;
+  const { condensedResult, task, runtimeMs, stepsExecuted, tokensUsed, cost, sessionKey, resultRef } = params;
   const result = condensedResult.result;
 
   return [
@@ -219,7 +248,7 @@ function formatUntaggedResult(params: CastParams): string {
     ``,
     `---`,
     `Runtime: ${(runtimeMs / 1000).toFixed(1)}s | Steps: ${stepsExecuted} | Tokens: ${tokensUsed} | Cost: $${cost.toFixed(4)} | Session: ${sessionKey}`,
-    `Full result: ${condensedResult.diskPath}`,
+    formatFullResultLine(condensedResult.diskPath, resultRef),
     ``,
     TRAILING_INSTRUCTION,
   ].join("\n");
