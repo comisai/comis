@@ -20,6 +20,10 @@ export type { AgentCapability } from "../security/index.js";
 // HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
 export { HANDLER_CAPABILITY_MAP } from "../security/index.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "../security/index.js";
+// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02),
+// surfaced on the @comis/core barrel for the @comis/infra lease audience (Plan 02).
+export { SELF_SCOPED_AGENT_READS } from "../security/index.js";
+export type { SelfScopedAgentRead } from "../security/index.js";
 // TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP + ResultRef — the Phase 212 tool.invoke
 // surface single-source + the minimal result-handle, surfaced on the @comis/core
 // barrel for the daemon gate (Plan 02), the lease audience (Plan 02) and the
