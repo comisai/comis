@@ -306,6 +306,13 @@ export {
   // Plan 05 dormancy activation: the shipped daemon-side executor cores
   // (read/grep/find/ls/jq + web_search) the Plan-02 tool.invoke executor routes to.
   createOrchestrateExecutorCores,
+  // WT-01/WT-02 (Phase 219): the git-worktree lifecycle for `spawn --worktree`,
+  // consumed by the daemon's executeSubAgent + boot orphan-sweep (the daemon
+  // binds the real execFile-backed GitExec at the composition root).
+  createWorktree,
+  isWorktreeCleanIfUnchanged,
+  cleanIfUnchanged,
+  sweepOrphans,
 } from "./builtin/orchestrate/index.js";
 export type {
   OrchestrateToolDeps,
@@ -321,4 +328,11 @@ export type {
   OrchestrateFileCore,
   OrchestrateFileCoreContext,
   OrchestrateWebSearchCore,
+  // WT-01/WT-02 lifecycle types.
+  GitExec,
+  WorktreeEntry,
+  CreateWorktreeOptions,
+  CleanIfUnchangedResult,
+  SweepSummary,
+  SweepDeps,
 } from "./builtin/orchestrate/index.js";

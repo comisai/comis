@@ -55,3 +55,22 @@ export type {
 // cohesion; the in-jail import does NOT go through this barrel.
 export { invoke, wrapResultRef } from "./orchestrate-sdk-runtime.js";
 export type { WrappedResultRef } from "./orchestrate-sdk-runtime.js";
+
+// WT-01/WT-02 (Phase 219): the git-worktree lifecycle for `spawn --worktree`.
+// The daemon (executeSubAgent + the boot orphan-sweep) consumes these over the
+// injected GitExec seam — the @comis/skills package owns the lifecycle, the
+// daemon binds the real execFile-backed GitExec at the composition root.
+export {
+  createWorktree,
+  isWorktreeCleanIfUnchanged,
+  cleanIfUnchanged,
+  sweepOrphans,
+} from "./worktree-lifecycle.js";
+export type {
+  GitExec,
+  WorktreeEntry,
+  CreateWorktreeOptions,
+  CleanIfUnchangedResult,
+  SweepSummary,
+  SweepDeps,
+} from "./worktree-lifecycle.js";
