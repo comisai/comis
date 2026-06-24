@@ -138,6 +138,40 @@ export const FleetHealthReportSchema = z.object({
   pipelineAuthoringGate: z
     .object({ buildAuthor: z.boolean(), reason: z.string() })
     .optional(),
+  /**
+   * FLEET-01/02/04 (Phase 220): the cross-run AUTONOMY-health slice. Counts + an
+   * id ONLY (the worst rootRunId to drill into via `comis explain`) — NO
+   * body/reason/secret (the smuggled-key test proves the non-strict z.object
+   * strips any extra field; T-220-10). Optional (schemaVersion stays 1) —
+   * additive; pre-220 constructors omit it.
+   *
+   * Sourced from `DurableRunPort.countByStatus` (autonomy runs ARE durable_runs
+   * by construction — no synthetic notion, no session-rollup schema change) +
+   * the synthetic-excluded `reduceFleetWindow` breaker/cost read-back. The block
+   * is ABSENT when the durable store is unwired (e.g. the daemon-less offline
+   * CLI) — honest degradation, not a divergence.
+   *
+   * `costUsd` is the window's autonomy-inclusive operator cost (the
+   * synthetic-excluded `fleet.costUsd` read-back — NOT a separate re-derivation
+   * over raw rows, which would re-introduce WR-01). A stricter autonomy-only
+   * cost is a later follow-up; FLEET-01 requires an aggregate cost, satisfied
+   * here.
+   */
+  autonomy: z
+    .object({
+      runs: z.object({ total: z.number(), degraded: z.number(), degradedRate: z.number() }),
+      orphaned: z.number(),
+      resumed: z.number(),
+      revoked: z.number(),
+      killed: z.number(),
+      /** Autonomy-scoped subset of breakerTripTotal (FLEET-02 — the synthetic-excluded denial_breaker read-back). */
+      breakerTrips: z.number(),
+      budgetBreaches: z.number(),
+      costUsd: z.number(),
+      /** FLEET-04: the worst autonomy run to drill into via `comis explain`. */
+      worstRootRunId: z.string().optional(),
+    })
+    .optional(),
 });
 
 /** The `obs.fleet.health` response (the cross-session fleet digest). Inferred from the Zod schema. */

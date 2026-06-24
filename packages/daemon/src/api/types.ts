@@ -698,9 +698,8 @@ export interface MediaApiDeps {
 
 /**
  * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
- * @optional-field-count: 13 — a composition-root deps bag; each optional field is a
- * distinct obs source present iff that subsystem is wired (absent ⇒ that RPC honest-
- * degrades). +1 per new obs source (spendSnapshot added in 179 — WEBUI-02 live spend).
+ * @optional-field-count: 14 — a composition-root deps bag; each optional field is a
+ * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source (spendSnapshot 179; durableRuns 220-03 autonomy).
  */
 export interface ObservabilityApiDeps {
   // Observability bridge deps
@@ -749,6 +748,7 @@ export interface ObservabilityApiDeps {
    * because 161-02 always populates it, and the fleet tests inject a fakeClock.
    */
   clock?: import("@comis/core").ClockPort;
+  /** FLEET-01/02/04 (220-03): the durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).

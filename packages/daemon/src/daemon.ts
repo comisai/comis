@@ -2599,7 +2599,15 @@ async function bootGateway(
   const obsFleetHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsFleetHealthContract.request.parse(params);
     return assembleFleetHealthReport(
-      { obsStore, dataDir: obsExplainDataDir, clock: boot.clock },
+      // FLEET-01/02/04 (Phase 220-03): thread the live durable-run store for the
+      // autonomy block. This closure bypasses buildRpcDispatchDeps (the RPC path
+      // already wires durableRuns at :893), so it is the NET-NEW thread. Use
+      // `boot.durableRunStore` (set at :2190 from durableResume.durableRunStore, in
+      // scope here since this closure already reads boot.clock) — NOT `c.durableRunStore`
+      // (`c` is the buildRpcDispatchDeps-local alias, out of scope here). The SAME live
+      // store as the RPC path's c.durableRunStore. Absent (durability off) ⇒ honest
+      // degradation (the block is omitted), byte-identical with the offline path.
+      { obsStore, dataDir: obsExplainDataDir, clock: boot.clock, durableRuns: boot.durableRunStore },
       parsed.sinceHours ?? 24,
     );
   };

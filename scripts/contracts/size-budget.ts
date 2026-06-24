@@ -67,7 +67,15 @@ import { gzipSync } from "node:zlib";
 // request/response pair), and the gzipped total (13,045) stays far under the
 // 38 KB gzipped wire budget (12,864 → 13,045 — ample headroom; only the minified
 // cap needs the bump).
-export const BUDGET_MINIFIED_BYTES = 131_000;
+// 2026-06-24: v2.30 FLEET (Phase 220-03) — the obs.fleet.health autonomy block
+// (FLEET-01/02/04: the additive-optional run-counts/orphaned/resumed/revoked/
+// killed/breakerTrips/budgetBreaches/costUsd/worstRootRunId slice on
+// FleetHealthReportSchema) added +377 B → total 131,377, overflowing 131,000.
+// Bumped to 132,000 with headroom; the addition is bounded, additive, content-free
+// (the proven optional-section family — one nested object), and the gzipped total
+// (13,173) stays far under the 38 KB gzipped wire budget — ample headroom; only the
+// minified cap needs the bump.
+export const BUDGET_MINIFIED_BYTES = 132_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;
