@@ -1493,7 +1493,7 @@ comis cost export --provider openai --model gpt-4o-mini
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
 
-The positional argument is routed automatically: a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID to its session key first, so both forms produce the identical report.
+The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (`tenant:user:channel:ts`, contains `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis fleet` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis fleet`](#comis-fleet)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
 
 When the session included a transcription or synthesis, the report carries a `voice` block reconstructing that turn: the `provider`, whether it ran `keyless`, the `model`, `durationMs`, the `outcome`, the resolved selection `source` rung (with the `onSkip` reasons when `auto` skipped a higher rung), the `costUsd` (`0` for a keyless turn; omitted for a keyed turn — the audio ports return no per-call cost), and the failure `errorKind`. Content-free — ids, labels, and numbers only, never the audio or transcript text. See [Voice → Observability and cost](/media/voice#observability-and-cost).
 
@@ -1511,6 +1511,10 @@ comis explain "default:user123:telegram:1717000000"
 
 # Explain by trace ID, with the uncapped (full) report
 comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
+
+# Drill into an autonomy run by its rootRunId (the `comis fleet` worstRootRunId) —
+# resolves the run to its session and renders the run's spawn-tree
+comis explain "root-session-default:user123:telegram:1717000000"
 
 # Machine-readable output (includes the spawnTree array for an autonomous run)
 comis explain "default:user123:telegram:1717000000" --format json
@@ -1546,6 +1550,13 @@ This is the cross-session **sibling** of `comis explain` (single-session). It is
 ```bash
 # Fleet-health triage over the last 24h (default window)
 comis fleet
+#   …
+#   Breaker:    3 trips
+#   Autonomy:   20 run(s) (3 degraded, 15%) · orphaned=2 resumed=4 revoked=1 killed=0 · breaker=1 budgetBreaches=0
+#     → worst run: comis explain root-2f9c1a
+#   …
+# (the Autonomy line + the worst-run drill-down appear only when the daemon ran
+#  durable/unattended runs; absent under --offline / a non-durability boot)
 
 # Widen the window to 72h
 comis fleet --since 72
