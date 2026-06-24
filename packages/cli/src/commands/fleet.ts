@@ -109,6 +109,26 @@ export function registerFleetCommand(program: Command): void {
           );
         }
         info(`Breaker:    ${report.breakerTripTotal} trips`);
+        // FLEET-01/02/04 — the cross-run AUTONOMY-health slice. Guarded like
+        // degradedByCause (above): present ONLY when the daemon ran durable
+        // (unattended) runs and the durable store was wired; ABSENT under
+        // --offline / a non-durability boot (the assembler omits the block —
+        // honest coverage degradation, not a zero-filled stub). Counts + the
+        // worst run's id ONLY — never a lease bearer, an orphan-reason body, or a
+        // secret (the schema carries no free-text field to leak). The
+        // worstRootRunId line is a copy-pasteable `comis explain <rootRunId>` so
+        // the operator drills into the worst run's spawn-tree next (the two-tier
+        // fleet → explain workflow). --format json (above) emits the block
+        // automatically — this is the human-readable table render only.
+        if (report.autonomy) {
+          const a = report.autonomy;
+          info(
+            `Autonomy:   ${a.runs.total} run(s) (${a.runs.degraded} degraded, ${(a.runs.degradedRate * 100).toFixed(0)}%) · orphaned=${a.orphaned} resumed=${a.resumed} revoked=${a.revoked} killed=${a.killed} · breaker=${a.breakerTrips} budgetBreaches=${a.budgetBreaches}`,
+          );
+          if (a.worstRootRunId) {
+            info(`  → worst run: comis explain ${a.worstRootRunId}`);
+          }
+        }
         // WR-03: cost.costUsd is A1-sourced (session-summary store); the token
         // total is A3-sourced (session-index files) and degrades independently.
         // When A3 degraded (coverage.sessionIndex.daysMissing > 0) the token
