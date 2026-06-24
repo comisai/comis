@@ -511,10 +511,15 @@ export interface MessagingEvents {
    *  ADDITIVE, distinct from the token-budget `budget_exceeded` so the
    *  dollars-vs-tokens cause stays clear in the terminal. The unpriceable nuance
    *  rides the distinct `observability:spend_unpriceable` event, NOT a second
-   *  reason member (RESEARCH A3). */
+   *  reason member (RESEARCH A3).
+   *  BREAK-02 (Phase 217-02): `denial_breaker` is the denial-limit breaker abort —
+   *  N consecutive floor-blocks tripped the per-rootRunId breaker, so the run
+   *  aborts + escalates instead of retry-looping (the "never loop" guarantee).
+   *  ADDITIVE; distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
+   *  (provider cascade) — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
-    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded";
+    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
     timestamp: number;
   };
