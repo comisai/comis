@@ -2267,16 +2267,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // erased member type (runtime-free, never named cross-package yet) — tracked
       // here beside GatedMethodName until a real type-importer lands.
       "SelfScopedAgentRead",
-      // CLI_SUBCOMMAND_MAP + CliCallTarget + CliSubcommand (Phase 219, CLI-01):
-      // the comis-agent subcommand→{tool|method} 1:1 table. The VALUE const and
-      // the CliCallTarget shape type gain a real cross-package consumer in the
-      // SAME phase — the @comis/skills comis-agent-cli.ts (Plan 04 Task 2) name-
-      // imports both — so those two are REMOVED from this baseline once that
-      // consumer lands. CliSubcommand (the table's `keyof typeof` key type,
-      // erased at runtime) stays tracked here beside GatedMethodName until a
-      // real cross-package type-importer lands.
-      "CLI_SUBCOMMAND_MAP",
-      "CliCallTarget",
+      // CliSubcommand (Phase 219, CLI-01): the comis-agent subcommand→{tool|method}
+      // table's `keyof typeof` key type, erased at runtime and never named
+      // cross-package yet — tracked here beside GatedMethodName until a real
+      // cross-package type-importer lands. The VALUE const CLI_SUBCOMMAND_MAP and
+      // the CliCallTarget shape type are NOT tracked here: the @comis/skills
+      // comis-agent-cli.ts name-imports both from @comis/core (real consumers).
       "CliSubcommand",
       // ── Durability-resume engine (Phase 216, interface-first Wave 1) ──
       // The DurableRunPort (run checkpoint store) + OutwardSendLedgerPort
