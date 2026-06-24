@@ -1049,6 +1049,341 @@ describe("createRpcDispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PHASE 217-05 (the keystone): the dispatch chokepoint's deny-catch wiring.
+//   - UNATT-01/03: an unattended would-ask deny ESCALATES (content-free, NEVER
+//     awaited) AND re-throws (the run sees the deny, adapts, never hangs).
+//   - UNATT-02: the outward floor-block (orch:message quota → CapabilityDeniedError)
+//     escalates CENTRALLY (escalate-not-ask), no parallel send path.
+//   - BREAK-02: the breaker counts ONLY CapabilityDeniedError floor-blocks; on the
+//     Nth consecutive → execution:aborted{denial_breaker} + killByRootRun + escalate.
+//   - EVICT-01/03/02: evicted → mode "default" at the NEXT gate; fail-closed.
+//
+// These tests drive dispatch() DIRECTLY (the in-process leg the agent traverses)
+// with stub denialBreaker/evictRegistry/escalate/subAgentRunner on deps, and a
+// REAL requireCapability inside message.send so a missing cap throws a genuine
+// CapabilityDeniedError at the chokepoint.
+// ---------------------------------------------------------------------------
+describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + breaker (217-05)", () => {
+  const mockLogger = {
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Deps with the 217-05 autonomy control plane wired: a denialBreaker +
+   * evictRegistry (real stubs over a Map so consecutive counting + trip + reset
+   * are exercised end-to-end), an escalate spy (the content-free NotifyFn), a
+   * subAgentRunner.killByRootRun spy, the synthetic-root resolver (so rootRunId
+   * resolves), and an `agents` map for the jail-leg server-resolve.
+   */
+  function makeAutonomyDeps(opts: { denialBreakerN?: number; agents?: Record<string, unknown> } = {}) {
+    const emit = vi.fn();
+    const escalate = vi.fn();
+    const killByRootRun = vi.fn(() => ({ killed: 1 }));
+    // A REAL denial breaker (the Plan-02 service) so the trip / reset semantics are
+    // genuinely exercised (not a stub that always returns tripped:false).
+    const n = opts.denialBreakerN ?? 5;
+    const counts = new Map<string, number>();
+    const denialBreaker = {
+      recordDenial: vi.fn((rootRunId: string) => {
+        const next = (counts.get(rootRunId) ?? 0) + 1;
+        counts.set(rootRunId, next);
+        return { tripped: next === n };
+      }),
+      recordAllow: vi.fn((rootRunId: string) => {
+        counts.delete(rootRunId);
+      }),
+      evict: vi.fn((rootRunId: string) => {
+        counts.delete(rootRunId);
+      }),
+    };
+    const evictedSet = new Set<string>();
+    const evictRegistry = {
+      mark: vi.fn((rootRunId: string) => {
+        const newlyEvicted = !evictedSet.has(rootRunId);
+        evictedSet.add(rootRunId);
+        return { newlyEvicted };
+      }),
+      isEvicted: vi.fn((rootRunId: string) => evictedSet.has(rootRunId)),
+      clear: vi.fn((rootRunId: string) => {
+        evictedSet.delete(rootRunId);
+      }),
+    };
+    const deps = {
+      logger: mockLogger,
+      container: {
+        eventBus: { emit, on: vi.fn() },
+        config: { providers: { entries: {} }, tenantId: "tenant-a" },
+      },
+      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
+        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+      denialBreaker,
+      evictRegistry,
+      escalate,
+      subAgentRunner: { killByRootRun },
+      agents: opts.agents ?? {},
+    } as never;
+    const pull = (name: string) =>
+      emit.mock.calls.filter((c) => c[0] === name).map((c) => c[1] as Record<string, unknown>);
+    return {
+      deps,
+      escalate,
+      killByRootRun,
+      denialBreaker,
+      evictRegistry,
+      abortEvents: () => pull("execution:aborted"),
+    };
+  }
+
+  /** Wire the REAL requireCapability into message.send so a missing cap throws a
+   *  genuine CapabilityDeniedError at the handler (the chokepoint's deny-catch). */
+  async function wireDenyingMessageSend() {
+    const { requireCapability } = await import("@comis/core");
+    const { createMessageHandlers } = await import("./message-handlers.js");
+    (createMessageHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "message.send": vi.fn(async (p: Record<string, unknown>) => {
+        requireCapability(p._capabilities as string[] | undefined, "orch:message");
+        return { sent: true };
+      }),
+    });
+  }
+
+  it("UNATT-01/03: an unattended would-ask deny ESCALATES once (content-free) AND re-throws (the run continues, never hangs)", async () => {
+    await wireDenyingMessageSend();
+    const { deps, escalate } = makeAutonomyDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    // Unattended mode (the trusted in-process-injected signal) + a missing cap →
+    // the handler throws CapabilityDeniedError → the chokepoint escalates + re-throws.
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+
+    // Escalated exactly once, content-free (ids/enums/hint only, NO body).
+    expect(escalate).toHaveBeenCalledTimes(1);
+    const arg = escalate.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.kind).toBe("would_ask_denied");
+    expect(arg.rootRunId).toBe("root-session-tenant-a:user-7:chan-9");
+    expect(typeof arg.reason).toBe("string");
+    expect(typeof arg.hint).toBe("string");
+    // No body/message/content/args/params leaked into the escalation.
+    const json = JSON.stringify(arg);
+    expect(json).not.toContain("orch:read");
+    for (const k of ["body", "message", "content", "args", "params", "text"]) {
+      expect(k in arg).toBe(false);
+    }
+  });
+
+  it("UNATT-01/03: escalate is NOT awaited — the re-throw propagates synchronously (a Promise escalate cannot stall the deny)", async () => {
+    await wireDenyingMessageSend();
+    // An escalate that returns a never-resolving Promise: if the chokepoint awaited
+    // it, the dispatch would hang. It must NOT — the deny must re-throw regardless.
+    const { deps } = makeAutonomyDeps();
+    (deps as unknown as { escalate: unknown }).escalate = () => new Promise<void>(() => {});
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    // If the escalation were awaited, this would never reject (it would hang). The
+    // 2s test default would time out. The throw arriving proves no blocking await.
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+  });
+
+  it("UNATT-02: the outward quota floor-block (CapabilityDeniedError orch:message) escalates centrally + re-throws — no parallel send path", async () => {
+    // enforceOutwardQuota throws CapabilityDeniedError("orch:message"); simulate it
+    // directly at the handler (the SAME error class the chokepoint catches). The
+    // chokepoint must escalate centrally — NOT trigger any auto-send.
+    const { CapabilityDeniedError } = await import("@comis/core");
+    const sendSpy = vi.fn();
+    const { createMessageHandlers } = await import("./message-handlers.js");
+    (createMessageHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "message.send": vi.fn(async () => {
+        sendSpy(); // would be the outward send; the quota throws BEFORE it in prod
+        throw new CapabilityDeniedError("orch:message");
+      }),
+    });
+    const { deps, escalate } = makeAutonomyDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:message"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+
+    // Escalated centrally on the outward floor-block.
+    expect(escalate).toHaveBeenCalledTimes(1);
+    expect((escalate.mock.calls[0]![0] as Record<string, unknown>).kind).toBe("would_ask_denied");
+    // No SECOND (parallel) auto-send was attempted by the chokepoint — the only
+    // send is the one the handler itself ran (which the quota throws past in prod).
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("standard mode (accept-reversible) does NOT escalate a deny — only the existing audit + re-throw (escalation is unattended-specific)", async () => {
+    await wireDenyingMessageSend();
+    const { deps, escalate } = makeAutonomyDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    await expect(
+      dispatch("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "accept-reversible", // standard, NOT unattended
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+
+    // No escalation under standard mode (the deny is the agent's own problem to adapt).
+    expect(escalate).not.toHaveBeenCalled();
+  });
+
+  it("BREAK-02: with denialBreakerN=3, three consecutive CapabilityDeniedError on one rootRunId → recordDenial 3x, trip on the 3rd → execution:aborted{denial_breaker} + killByRootRun + escalate", async () => {
+    const { deps, escalate, killByRootRun, denialBreaker, abortEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    const callDeny = async () => {
+      await wireDenyingMessageSend();
+      // Re-create the dispatch each call so the once-mock is fresh; SAME deps (so
+      // the breaker counter persists across the three denies on the same rootRunId).
+      const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+      return d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      });
+    };
+
+    await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1
+    await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 2
+    // Before the trip: no abort, no kill.
+    expect(abortEvents()).toHaveLength(0);
+    expect(killByRootRun).not.toHaveBeenCalled();
+
+    await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 3 → trip
+
+    expect(denialBreaker.recordDenial).toHaveBeenCalledTimes(3);
+    // On the trip: execution:aborted{denial_breaker} + killByRootRun(rootRunId) + escalate.
+    const aborts = abortEvents();
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0]!.reason).toBe("denial_breaker");
+    expect(aborts[0]!.agentId).toBe("agentA");
+    expect(killByRootRun).toHaveBeenCalledTimes(1);
+    expect(killByRootRun).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
+    // The trip escalates with a trip-specific kind.
+    const tripEscalate = escalate.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((a) => a.kind === "denial_breaker_tripped");
+    expect(tripEscalate).toBeDefined();
+  });
+
+  it("BREAK count-only-floor-blocks: a deny-by-origin admin attempt (plain Error) does NOT call recordDenial", async () => {
+    const { deps, denialBreaker } = makeAutonomyDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    // secrets.set is deny-by-origin → assertNotAgentOrigin throws a PLAIN Error
+    // (NOT a CapabilityDeniedError), so the breaker's instanceof guard excludes it.
+    await expect(
+      dispatch("secrets.set", {
+        _agentId: "agentA",
+        _trustLevel: "admin",
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+        name: "X",
+        value: "Y",
+      }),
+    ).rejects.toThrow(/not reachable from an agent origin/i);
+
+    expect(denialBreaker.recordDenial).not.toHaveBeenCalled();
+  });
+
+  it("BREAK count-only-floor-blocks: a generic (non-capability) handler Error does NOT call recordDenial", async () => {
+    const { createCronHandlers } = await import("./cron-handlers.js");
+    (createCronHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "cron.add": vi.fn(async () => {
+        throw new Error("Scheduler not available");
+      }),
+    });
+    const { deps, denialBreaker } = makeAutonomyDeps();
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(deps);
+
+    await expect(
+      dispatch("cron.add", {
+        _agentId: "agentA",
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      }),
+    ).rejects.toThrow("Scheduler not available");
+
+    expect(denialBreaker.recordDenial).not.toHaveBeenCalled();
+  });
+
+  it("BREAK reset: a successful gated call (allow branch) calls recordAllow; 2 denies → 1 allow → 1 deny does NOT trip", async () => {
+    const { deps, killByRootRun, denialBreaker, abortEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    const denyOnce = async () => {
+      await wireDenyingMessageSend();
+      const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+      return d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      });
+    };
+    const allowOnce = async () => {
+      // Default message.send mock resolves { sent: true } → the allow branch.
+      const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+      return d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:message"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "unattended",
+      });
+    };
+
+    await expect(denyOnce()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1
+    await expect(denyOnce()).rejects.toBeInstanceOf(CapabilityDeniedError); // 2
+    await expect(allowOnce()).resolves.toBeDefined(); // RESET
+    expect(denialBreaker.recordAllow).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
+    await expect(denyOnce()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1 again (post-reset)
+
+    // The single post-reset deny must NOT have tripped (the allow cleared the counter).
+    expect(abortEvents()).toHaveLength(0);
+    expect(killByRootRun).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TELEM-01 WIRING (the 172-WR-02 lesson, T-173-13): the createGraphHandlers
 // deps MUST actually carry a constructed `resolveCapabilityClass` — without it
 // every pipeline:authored emit fail-defaults to "unknown" and the small-model
