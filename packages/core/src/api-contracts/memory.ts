@@ -26,13 +26,12 @@
  *                                     intended trust model.
  *   - `memory.get_file`     (rpc) — agent-level file read via safePath.
  *                                     Registered via agent tool dispatch.
- *   - `memory.store`        (admin) — setup-gateway-api.ts line 235.
- *                                      Handler ADDITIONALLY supports a
- *                                      non-admin agent path (defaults to
- *                                      `learned` trust level + agent
- *                                      attribution); the contract scope
- *                                      documents the registered gateway
- *                                      route.
+ *   - `memory.store`        (rpc) — AGENT-REACHABLE (MD-02): the agent
+ *                                      `memory_store` tool is the primary caller.
+ *                                      The handler routes on `_trustLevel` — admin
+ *                                      (operator) vs the agent path (defaults to
+ *                                      `learned` trust + agent attribution).
+ *                                      (Was `admin`, which deny-by-origin blocked.)
  *   - `memory.stats`        (admin) — setup-gateway-api.ts line 234.
  *   - `memory.browse`       (admin) — setup-gateway-api.ts line 234.
  *   - `memory.delete`       (admin) — setup-gateway-api.ts line 234.
