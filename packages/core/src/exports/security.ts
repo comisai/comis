@@ -24,6 +24,11 @@ export type { HandlerCapabilityClassification, GatedMethodName } from "../securi
 // surfaced on the @comis/core barrel for the @comis/infra lease audience (Plan 02).
 export { SELF_SCOPED_AGENT_READS } from "../security/index.js";
 export type { SelfScopedAgentRead } from "../security/index.js";
+// CLI_SUBCOMMAND_MAP — the comis-agent subcommand→{tool|method} 1:1 table
+// (CLI-01, v8 §7), surfaced on the @comis/core barrel for the @comis/skills
+// comis-agent-cli dispatch (Plan 04) and the Plan 05 same-gate arch-test.
+export { CLI_SUBCOMMAND_MAP } from "../security/index.js";
+export type { CliCallTarget, CliSubcommand } from "../security/index.js";
 // TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP + ResultRef — the Phase 212 tool.invoke
 // surface single-source + the minimal result-handle, surfaced on the @comis/core
 // barrel for the daemon gate (Plan 02), the lease audience (Plan 02) and the

@@ -52,6 +52,13 @@ export type { HandlerCapabilityClassification, GatedMethodName } from "./handler
 export { SELF_SCOPED_AGENT_READS } from "./handler-capability-map.js";
 export type { SelfScopedAgentRead } from "./handler-capability-map.js";
 
+// CLI_SUBCOMMAND_MAP — the `comis-agent` subcommand→{tool|method} 1:1 table
+// (CLI-01, v8 §7). The @comis/skills comis-agent-cli dispatches over it; the
+// cap is DERIVED from the cap-maps (never restated). `skill` + admin verbs are
+// excluded by design (denylisted orch:skill / CLI-03).
+export { CLI_SUBCOMMAND_MAP } from "./cli-subcommand-map.js";
+export type { CliCallTarget, CliSubcommand } from "./cli-subcommand-map.js";
+
 // TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP — the single source for the tool.invoke
 // surface (gate + lease audience + SDK codegen) (Phase 212, DISPATCH/READ)
 export { TOOL_CAPABILITY_MAP, TOOL_ROUTE_MAP } from "./tool-capability-map.js";
