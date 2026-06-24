@@ -13,8 +13,9 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability } from "@comis/core";
-import { tryGetContext, safePath, systemNowMs } from "@comis/core";
+import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability, AgentConfig } from "@comis/core";
+import { tryGetContext, safePath, systemNowMs, resolveWorkspaceDir } from "@comis/core";
+import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
@@ -26,6 +27,28 @@ import { randomUUID } from "node:crypto";
 import { computeRetryBackoff } from "../../graph/graph-node-lifecycle.js";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
+
+// ---------------------------------------------------------------------------
+// No-op logger fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * A silent {@link ComisLogger} used only when the optional `deps.logger` is
+ * absent (test wiring). `createResultRefStore` requires a full ComisLogger; the
+ * production composition root always supplies one, so this never logs in
+ * production — it exists so the materialize feature is wired regardless.
+ */
+const NOOP_LOGGER: ComisLogger = {
+  level: "silent",
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  fatal: () => {},
+  audit: () => {},
+  child: () => NOOP_LOGGER,
+};
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -381,6 +404,38 @@ export function setupCrossSession(deps: {
     tagPrefix: subagentCtxConfigForCondenser?.resultTagPrefix ?? "Subagent Result",
   });
 
+  // Phase 218 (SUMREF-02): the full-output ResultRef store. The runner stays
+  // @comis/skills-free (DI) — the daemon owns the store + the child-workspace
+  // target selection. The callback resolves the CHILD's OWN jailed workspace
+  // from ctx.agentId (mirroring setup-cross-session-graph.ts:358-361), NEVER the
+  // lead's (T-218-08); createResultRefStore is additionally safePath-confined to
+  // that root, so a traversal returns a MaterializeError the runner degrades on.
+  // The store's 3-way union (ResultRef | MaterializeError | undefined) is returned
+  // UNCHANGED — the runner's dep contract IS that union, so no mapping is forced.
+  const resultRefStore = createResultRefStore({
+    logger: deps.logger
+      ? deps.logger.child({ submodule: "sub-agent-result-ref" })
+      : NOOP_LOGGER,
+  });
+  const materializeFullOutput = (
+    content: string,
+    ctx: { runId: string; nowMs: number; agentId: string },
+  ) => {
+    const childAgentConfig = container.config.agents[ctx.agentId]
+      ?? container.config.agents["default"]
+      ?? ({} as AgentConfig);
+    const childWorkspaceDir = resolveWorkspaceDir(
+      childAgentConfig,
+      ctx.agentId,
+      container.config.dataDir || undefined,
+    );
+    return resultRefStore.materialize(content, "sessions_spawn", {
+      workspacePath: childWorkspaceDir,
+      runId: ctx.runId,
+      nowMs: ctx.nowMs,
+    });
+  };
+
   // Create lifecycle hooks for spawn preparation and completion
   const lifecycleHooks = createLifecycleHooks({
     logger: deps.logger
@@ -427,6 +482,10 @@ export function setupCrossSession(deps: {
     condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
     condenserApiKey: condenserApiKey || undefined,
     narrativeCaster,
+    // SUMREF-02: the full-output ResultRef materialize, targeting the CHILD's
+    // own jailed workspace (resolved from ctx.agentId), returning the store's
+    // 3-way union unchanged. Absent of a wired store IS the no-op (no BC shim).
+    materializeFullOutput,
     lifecycleHooks,
     deadLetterQueue,
     deliveryDedup,

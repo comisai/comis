@@ -49,6 +49,27 @@ const mockStepCounterInstance = vi.hoisted(() => ({
 }));
 const mockCreateStepCounter = vi.hoisted(() => vi.fn(() => ({ ...mockStepCounterInstance })));
 
+// Phase 218 (SUMREF-02): the ResultRef store (from @comis/skills/tools). The
+// wiring constructs it and injects a materializeFullOutput callback into the
+// runner; the spy lets the test invoke that callback and assert it targets the
+// CHILD's resolved jailed workspace (T-218-08) and returns the union unchanged.
+const mockResultRefMaterialize = vi.hoisted(() =>
+  vi.fn(async () => ({
+    ref: "results/child.json",
+    kind: "json" as const,
+    bytes: 1024,
+    preview: "{...}",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  })),
+);
+const mockCreateResultRefStore = vi.hoisted(() =>
+  vi.fn(() => ({
+    materialize: mockResultRefMaterialize,
+    gcRun: vi.fn(async () => {}),
+    cleanupRun: vi.fn(async () => {}),
+  })),
+);
+
 // cross-session-sender, announcement-batcher, and announcement-dead-letter
 // live in packages/orchestrator/src/cross-session/. setup-cross-session.ts
 // imports all three from "@comis/orchestrator". The test mocks
@@ -195,6 +216,17 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     resolveWorkspaceDir: mockResolveWorkspaceDir,
+  };
+});
+
+// createResultRefStore lives in @comis/skills/tools (SUMREF-02). Spread the real
+// module so any other re-exports keep working; override only the store factory so
+// the wiring's injected materializeFullOutput routes to the spy.
+vi.mock("@comis/skills/tools", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/skills/tools")>();
+  return {
+    ...actual,
+    createResultRefStore: mockCreateResultRefStore,
   };
 });
 
@@ -3075,6 +3107,79 @@ describe("setupCrossSession", () => {
       // what it will actually run under (setup-cross-session-graph effectiveAgentId).
       expect(resolvePosture("child-no-config", "loose-agent")).toEqual({ exec: "never" });
       expect(resolvePosture("child-no-config", "confined-agent")).toEqual({ exec: "always" });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // SUMREF-02: the materializeFullOutput callback is injected and targets the
+  // CHILD's OWN jailed workspace (T-218-08), returning the store's 3-way union
+  // unchanged. These fail on the pre-patch wiring (no dep injected) — RED proof.
+  // -------------------------------------------------------------------------
+
+  describe("full-output ResultRef materialize wiring (SUMREF-02)", () => {
+    it("injects a defined materializeFullOutput callback into createSubAgentRunner", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      expect(runnerArgs.materializeFullOutput).toBeDefined();
+      expect(typeof runnerArgs.materializeFullOutput).toBe("function");
+    });
+
+    it("materializes to the CHILD's resolved jailed workspace (never the lead's)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      await materializeFullOutput("the child's megabyte output", {
+        runId: "run-xyz",
+        nowMs: 1234,
+        agentId: "agent-1",
+      });
+
+      // The target workspace is resolved from the CHILD's agent id — agent-1's
+      // own jailed workspace, NOT the lead/default's (T-218-08).
+      expect(mockResolveWorkspaceDir).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Agent 1" }),
+        "agent-1",
+        undefined,
+      );
+      expect(mockResultRefMaterialize).toHaveBeenCalledTimes(1);
+      const [content, toolName, ctx] = mockResultRefMaterialize.mock.calls[0]!;
+      expect(content).toBe("the child's megabyte output");
+      expect(toolName).toBe("sessions_spawn");
+      expect(ctx.workspacePath).toBe("/mock/workspace/agent-1");
+      expect(ctx.workspacePath).not.toBe("/mock/workspace/default");
+      expect(ctx.runId).toBe("run-xyz");
+      expect(ctx.nowMs).toBe(1234);
+    });
+
+    it("returns the store's 3-way union unchanged (a ResultRef passes through)", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      const out = await materializeFullOutput("x", { runId: "r", nowMs: 1, agentId: "agent-2" });
+      // No mapping/wrapping — the runner's contract IS the store's union.
+      expect(out).toEqual({
+        ref: "results/child.json",
+        kind: "json",
+        bytes: 1024,
+        preview: "{...}",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("passes a MaterializeError refusal through unchanged (no synthesized wrapper)", async () => {
+      mockResultRefMaterialize.mockResolvedValueOnce(
+        { error: "result_ref_too_large: 9000000 > 8388608" } as never,
+      );
+      const setupCrossSession = await getSetupCrossSession();
+      setupCrossSession(createMinimalDeps());
+
+      const materializeFullOutput = mockCreateSubAgentRunner.mock.calls[0][0].materializeFullOutput;
+      const out = await materializeFullOutput("x", { runId: "r", nowMs: 1, agentId: "agent-1" });
+      expect(out).toEqual({ error: "result_ref_too_large: 9000000 > 8388608" });
     });
   });
 });
