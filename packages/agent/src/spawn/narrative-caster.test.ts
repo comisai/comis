@@ -167,4 +167,44 @@ describe("NarrativeCaster", () => {
     expect(output).toContain("Original: 10000 tokens");
     expect(output).toContain("Ratio: 0.15");
   });
+
+  // -------------------------------------------------------------------------
+  // SUMREF-02: when a materialized ResultRef handle is supplied, the tagged
+  // AND untagged formats embed the structured handle (ref + bytes + kind) as
+  // the drill-in target instead of the bare condenser diskPath, so the lead's
+  // window grows by a summary + a handle (the longevity invariant).
+  // -------------------------------------------------------------------------
+
+  const fakeResultRef = {
+    ref: "results/child-7af3.json",
+    kind: "json" as const,
+    bytes: 1_048_576,
+    preview: "{...}",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  };
+
+  it("embeds the ResultRef handle (ref + bytes + kind) in the tagged format when supplied", () => {
+    const caster = createNarrativeCaster({ enabled: true, tagPrefix: "Subagent Result" });
+    const output = caster.cast(makeCastParams({ resultRef: fakeResultRef }));
+    expect(output).toContain("results/child-7af3.json");
+    expect(output).toContain("1048576");
+    expect(output).toContain("json");
+    // The bare condenser diskPath is NOT used when a handle is present.
+    expect(output).not.toContain("Full result: /home/user/.comis/subagent-results/session/run123.json");
+  });
+
+  it("embeds the ResultRef handle in the untagged (disabled) format when supplied", () => {
+    const caster = createNarrativeCaster({ enabled: false, tagPrefix: "Subagent Result" });
+    const output = caster.cast(makeCastParams({ resultRef: fakeResultRef }));
+    expect(output).toContain("[System Message]");
+    expect(output).toContain("results/child-7af3.json");
+    expect(output).toContain("1048576");
+    expect(output).not.toContain("Full result: /home/user/.comis/subagent-results/session/run123.json");
+  });
+
+  it("falls back to the condenser diskPath when no ResultRef handle is supplied", () => {
+    const caster = createNarrativeCaster({ enabled: true, tagPrefix: "Subagent Result" });
+    const output = caster.cast(makeCastParams());
+    expect(output).toContain("Full result: /home/user/.comis/subagent-results/session/run123.json");
+  });
 });
