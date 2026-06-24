@@ -39,9 +39,15 @@ import {
   generateStrongToken,
   HANDLER_CAPABILITY_MAP,
   TOOL_CAPABILITY_MAP,
+  SELF_SCOPED_AGENT_READS,
   type ClockPort,
   type AgentCapability,
 } from "@comis/core";
+
+// O(1) membership for the self-scoped-read audience exception (CLI-01/02). The
+// const is the single auditable source in @comis/core; building the Set once at
+// module load keeps the per-validate check small.
+const SELF_SCOPED_AGENT_READ_SET = new Set<string>(SELF_SCOPED_AGENT_READS);
 
 /** Internal lease entry — not exported. */
 interface LeaseEntry {
@@ -242,6 +248,34 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         if (!tokenEquals(candidateBuf, entry.tokenBuf)) {
           continue;
         }
+        // The validated lease projection (no secret material) — handed out by
+        // BOTH the self-scoped-read exception below and the cap-audience success
+        // branch, so the two return the SAME shape.
+        const leaseInfo: LeaseInfo = {
+          leaseId: entry.leaseId,
+          agentId: entry.agentId,
+          caps: entry.caps,
+          budgetRef: entry.budgetRef,
+          sessionKey: entry.sessionKey,
+          rootRunId: entry.rootRunId,
+          ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),
+        };
+        // Self-scoped-read audience exception (CLI-01/02; v8 §15 whoami/status).
+        // The three ungated, scopes:["rpc"], self-_agentId-scoped reads in
+        // SELF_SCOPED_AGENT_READS (capabilities.introspect / session.status /
+        // session.list) are in-audience for ANY valid lease — the cap-socket
+        // whoami/status path. This short-circuits ONLY the orch:* cap-audience
+        // deny below, and ONLY here AFTER the bearer/expiry/revoke/tokenEquals
+        // authenticity gates (an expired/revoked/forged lease never reaches it).
+        // It grants reach to NOTHING else: every gated / deny-by-origin method
+        // still flows through the unchanged cap-audience computation. The
+        // handlers self-scope to the injected _agentId, so the read reports only
+        // the caller's OWN caps/status. The const is sourced beside
+        // HANDLER_CAPABILITY_MAP in @comis/core (one auditable table; drift-test
+        // pinned), so the exception cannot drift from the classification.
+        if (SELF_SCOPED_AGENT_READ_SET.has(requestedMethod)) {
+          return leaseInfo;
+        }
         // Audience binding (RFC 8707): the requested method's required cap must
         // be one the lease holds. A non-cap method ("deny-by-origin"/"ungated")
         // or an unknown method has no orch:* cap → out of audience → deny.
@@ -265,15 +299,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         ) {
           return null;
         }
-        return {
-          leaseId: entry.leaseId,
-          agentId: entry.agentId,
-          caps: entry.caps,
-          budgetRef: entry.budgetRef,
-          sessionKey: entry.sessionKey,
-          rootRunId: entry.rootRunId,
-          ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),
-        };
+        return leaseInfo;
       }
 
       return null;
