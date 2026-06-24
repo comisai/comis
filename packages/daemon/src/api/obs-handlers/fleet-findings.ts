@@ -21,9 +21,12 @@
 import type { DiagnosticRow } from "@comis/memory";
 import type { PipelineAuthoringAggregate } from "@comis/observability";
 import {
+  autonomyKilledFromRow,
+  autonomyRevokedFromRow,
   chimericModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
   deliveryDeadletteredFromRow,
+  durableOrphanedFromRow,
   flaggedPostureKeys,
   healthSignalLabel,
   multilingualFromRow,
@@ -298,6 +301,76 @@ export function buildFindings(
           : `${budgetCount} node(s) exceeded their token budget`,
       count: budgetCount,
       hint: "graph nodes are being cut off by their token budget; raise the binding knob — the node's own `tokenBudget`, the operator default `security.agentToAgent.tokenBudget`, or the graph `budget.maxTokens` (inherit-share). run `comis explain` for the per-node numbers",
+    });
+  }
+
+  // FLEET-01 (Phase 220-03): dedicated durable_orphaned finding — the count of
+  // cron-fired/in-flight runs that did NOT resume after a restart + the DOMINANT
+  // closed orphan reason (which un-resumable class). Counts + the closed reason
+  // enum + a STATIC hint naming `comis explain <rootRunId>` + the heartbeat knob
+  // ONLY — NEVER the engine's free-text orphan reason (mapped to a closed enum at
+  // the source, Plan 01 T-220-01). Zero-traffic guard (the node_budget_exceeded mold).
+  let orphanedCount = 0;
+  const byReason = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = durableOrphanedFromRow(row);
+    if (parsed === null) continue;
+    orphanedCount += 1;
+    byReason.set(parsed.reason, (byReason.get(parsed.reason) ?? 0) + 1);
+  }
+  if (orphanedCount > 0) {
+    const topReason = [...byReason.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0]?.[0];
+    findings.push({
+      code: "durable_orphaned",
+      detail:
+        topReason !== undefined
+          ? `${orphanedCount} run(s) orphaned on restart (top reason: ${topReason})`
+          : `${orphanedCount} run(s) orphaned on restart`,
+      count: orphanedCount,
+      hint: "a cron-fired/in-flight run did not resume after a restart; run `comis explain <rootRunId>` on the worst run and check the durable checkpoint + lease heartbeat (autonomy.durability.heartbeatStaleMs)",
+    });
+  }
+
+  // FLEET-01 (Phase 220-03): dedicated autonomy_revoked finding — the SUM of the
+  // per-row revoked counts (a cooperative lease/tree revoke an admin must see in
+  // the roll-up). SEPARATE from autonomy_killed below — Plan 01 emits DISTINCT
+  // events because a kill and a revoke both flip the durable status to 'revoked'
+  // in the table, so the EVENT is the only count separator (the kill≠revoke
+  // separation). Counts + a STATIC hint ONLY — never a lease bearer/selector
+  // (T-220-02). Zero-traffic guard.
+  let revokedSum = 0;
+  for (const row of healthSignals) {
+    const parsed = autonomyRevokedFromRow(row);
+    if (parsed === null) continue;
+    revokedSum += parsed.revoked;
+  }
+  if (revokedSum > 0) {
+    findings.push({
+      code: "autonomy_revoked",
+      detail: `${revokedSum} lease(s)/run(s) revoked (cooperative authority revoke)`,
+      count: revokedSum,
+      hint: "an operator revoked a lease/run tree's authority; run `comis explain <rootRunId>` on the affected run, and confirm the revoke was intended (otherwise check the cap/lease config that triggered it)",
+    });
+  }
+
+  // FLEET-01 (Phase 220-03): dedicated autonomy_killed finding — the SUM of the
+  // per-row killed counts (a hard run.kill that tore down a spawn tree). SEPARATE
+  // from autonomy_revoked above (the kill≠revoke separation Plan 01 enables — same
+  // terminal table status, distinct event). Counts + a STATIC hint ONLY. Zero-traffic guard.
+  let killedSum = 0;
+  for (const row of healthSignals) {
+    const parsed = autonomyKilledFromRow(row);
+    if (parsed === null) continue;
+    killedSum += parsed.killed;
+  }
+  if (killedSum > 0) {
+    findings.push({
+      code: "autonomy_killed",
+      detail: `${killedSum} spawn tree(s)/run(s) hard-killed (run.kill)`,
+      count: killedSum,
+      hint: "a run tree was hard-killed (run.kill) — a forced teardown, not a cooperative revoke; run `comis explain <rootRunId>` on the killed run to see why it was terminated",
     });
   }
 
