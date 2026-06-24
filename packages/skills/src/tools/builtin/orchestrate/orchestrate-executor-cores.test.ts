@@ -459,6 +459,35 @@ describe("sql core — CR-01 local-file exfil confinement", () => {
     }
   });
 
+  it("IN-04: scrubs absolute host paths out of a duckdb non-zero-exit error before it crosses the jail boundary", async () => {
+    const ws = makeWorkspace();
+    try {
+      mkdirSync(join(ws, "results"), { recursive: true });
+      writeFileSync(join(ws, "results", "r.jsonl"), '{"id":1}\n', "utf8");
+      // Simulate duckdb present but exiting non-zero with a diagnostic that echoes
+      // an absolute host path (DuckDB does this on a failed read). The error
+      // returned to the jailed client MUST NOT contain the host path.
+      execFileSpy.mockImplementationOnce((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (e: unknown, o: string, s: string) => void;
+        const err = Object.assign(new Error("Command failed"), { code: 1 });
+        cb(err, "", "IO Error: No files found that match '/home/secret-user/.comis/config.yaml'");
+        return undefined as never;
+      });
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      const result = (await cores.fileExecutors.sql(
+        { path: "results/r.jsonl", query: "SELECT id FROM read_json_auto('results/r.jsonl')" },
+        { workspaceDir: ws },
+      )) as { error: string };
+      expect(result.error).toMatch(/duckdb error/i);
+      // The absolute host path is scrubbed; the daemon's filesystem layout never
+      // leaks into the jailed client's error.
+      expect(result.error).not.toContain("/home/secret-user/.comis/config.yaml");
+      expect(result.error).toContain("<path>");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
   it("a secret host file OUTSIDE the workspace is not exfiltrated (refused/confined; secret absent from result)", async () => {
     const ws = makeWorkspace();
     // A secret file in a sibling temp dir OUTSIDE the workspace allow-root.

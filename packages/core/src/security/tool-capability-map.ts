@@ -71,9 +71,13 @@ export const TOOL_CAPABILITY_MAP = {
   // orch:read — the full ResultRef query engine (QRY-01/02): DuckDB-SQL over
   // CSV/JSONL + JSONPath over JSON, run DAEMON-side (like jq) over the
   // run-scoped results/ file; only the slice re-enters context. Read-only —
-  // the daemon-side DuckDB is hardened (--readonly :memory:, no autoload, and
-  // INSTALL/LOAD/ATTACH/COPY/EXPORT/url-readers rejected) so this cap can never
-  // become an SSRF/exfil egress (T-221-QRY-01..05).
+  // the daemon-side DuckDB is CONFINED to the run's workspace
+  // (allowed_directories=[<ws>] + enable_external_access=false +
+  // lock_configuration, set before the model query) and hardened
+  // (--readonly :memory:, no autoload, INSTALL/LOAD/ATTACH/COPY/EXPORT, the
+  // pure-exfil readers read_text/read_blob/glob/getenv, and url-readers
+  // rejected before spawn) so this cap can never read a host file outside the
+  // workspace or become an SSRF/exfil egress (T-221-QRY-01..06 / CR-01).
   sql: "orch:read",
   jsonpath: "orch:read",
   // orch:web — daemon-side, DNS-pinned (the jail stays --unshare-net)
