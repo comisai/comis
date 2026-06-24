@@ -183,8 +183,9 @@ describe("ORIGIN-02 — setup-gateway-api strips internal fields at the external
     expect(code).toMatch(
       /stripInternalFields\(params \?\? \{\}\),\s*_trustLevel:\s*["']admin["']/,
     );
-    // The rpc branch wraps the bare pass-through.
-    expect(code).toMatch(/rpcCall\(\s*c\.method,\s*stripInternalFields\(params \?\? \{\}\)\s*\)/);
+    // The rpc branch strips external params first, then spreads the server-side
+    // orch-cap injection (#240) — `rpcCall(c.method, { ...stripInternalFields(params ?? {}), ...capInject })`.
+    expect(code).toMatch(/rpcCall\(\s*c\.method,\s*\{\s*\.\.\.stripInternalFields\(params \?\? \{\}\)/);
     // The pre-patch unstripped admin spread must NOT survive anywhere.
     expect(code).not.toMatch(/\{\s*\.\.\.\(params \?\? \{\}\),\s*_trustLevel/);
   });
