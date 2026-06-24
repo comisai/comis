@@ -933,6 +933,37 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "autonomy.evict": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rootRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootRunId"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "evicted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "evicted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "browser.act": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
