@@ -162,6 +162,19 @@ export function createMemoryPortabilityHandlers(
       let importCount = 0;
       let blockedCount = 0;
       let downgradedCount = 0;
+      let dedupedCount = 0;
+
+      // MEM-IMPORT-DUP (30uc-20260624 UC-22): build the set of content already present in the
+      // TARGET scope so the import is idempotent — re-importing an export (or an overlapping set)
+      // skips entries that already exist instead of inserting fresh-id duplicates (live: a 34-entry
+      // re-import doubled a 33-row store to 67). A DELETED memory is still restored (its content is
+      // absent here, so it imports). Bounded read (100K) — a larger store degrades to "may re-add"
+      // past the bound, never to a crash.
+      const existingContent = new Set<string>(
+        deps.memoryApi
+          .inspect({ tenantId: importTenantId, agentId: importAgentId, limit: 100_000, offset: 0 })
+          .map((e) => e.content),
+      );
 
       for (const rawEntry of importParams.entries) {
         const entryContent = typeof rawEntry["content"] === "string" ? rawEntry["content"] : "";
@@ -226,6 +239,15 @@ export function createMemoryPortabilityHandlers(
           const envelopeTrust = String(rawEntry["trust_level"] ?? "learned");
           entryTrustLevel = envelopeTrust === "external" ? "external" : "learned";
         }
+
+        // MEM-IMPORT-DUP: idempotent skip — content already present in the target scope (or earlier
+        // in THIS batch). Counted separately from blocked (security) and downgraded. Security wins:
+        // a CRITICAL entry was already blocked above before reaching here.
+        if (existingContent.has(entryContent)) {
+          dedupedCount++;
+          continue;
+        }
+        existingContent.add(entryContent);
 
         if (!importDryRun) {
           const importEntryId = randomUUID();
@@ -317,6 +339,7 @@ export function createMemoryPortabilityHandlers(
         imported: importCount,
         blocked: blockedCount,
         downgraded: downgradedCount,
+        deduped: dedupedCount,
         total: importParams.entries.length,
         dryRun: importDryRun,
       };
@@ -332,6 +355,7 @@ export function createMemoryPortabilityHandlers(
           imported: importCount,
           blocked: blockedCount,
           downgraded: downgradedCount,
+          deduped: dedupedCount,
           total: importResult.total,
           dryRun: importDryRun,
           durationMs: systemNowMs() - importStart,

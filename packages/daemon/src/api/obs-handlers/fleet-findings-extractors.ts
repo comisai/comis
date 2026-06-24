@@ -94,12 +94,18 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
       tlsOff?: unknown;
       canaryFallbackActive?: unknown;
       strandedFindings?: unknown;
+      sandboxNoDowngradeDisabled?: unknown;
     };
     const keys: string[] = [];
     if (d.tlsOff === true) keys.push("gateway.tls (off)");
     if (d.canaryFallbackActive === true) keys.push("CANARY_SECRET (unset)");
     if (Array.isArray(d.strandedFindings) && d.strandedFindings.length > 0) {
       keys.push(`stranded secrets (${d.strandedFindings.length})`);
+    }
+    // RELAX-SURFACE: the no-downgrade sandbox invariant is relaxed (a child may run
+    // a weaker posture than its parent) — NAME the exact knob, not "a flagged key".
+    if (d.sandboxNoDowngradeDisabled === true) {
+      keys.push("security.agentToAgent.sandboxNoDowngrade (off)");
     }
     return keys;
   } catch {

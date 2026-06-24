@@ -87,12 +87,14 @@ function summaryDetails(
   });
 }
 
-/** A session_started JSONL object (mirror fleet-session-index.test.ts). */
-function startedRow(o: { agentId: string; channelType: string; channelId: string; sessionId?: string }): string {
+/** A session_started JSONL object (mirror fleet-session-index.test.ts). `ts`
+ *  (epoch ms) overrides the row timestamp so a fixture row sits inside the
+ *  windowed [sinceMs..nowMs] range the A3 reader now enforces (F-OBS-1b). */
+function startedRow(o: { agentId: string; channelType: string; channelId: string; sessionId?: string; ts?: number }): string {
   return JSON.stringify({
     traceSchema: "comis-session-index",
     schemaVersion: 1,
-    ts: new Date(systemNowMs()).toISOString(),
+    ts: new Date(o.ts ?? systemNowMs()).toISOString(),
     event: "session_started",
     sessionId: o.sessionId ?? `sess-${o.agentId}`,
     sessionKey: o.sessionId ?? `sess-${o.agentId}`,
@@ -104,11 +106,11 @@ function startedRow(o: { agentId: string; channelType: string; channelId: string
 }
 
 /** A session_ended JSONL object (mirror fleet-session-index.test.ts). */
-function endedRow(o: { exitReason: string; turnCount: number; totalTokens: number; sessionId?: string }): string {
+function endedRow(o: { exitReason: string; turnCount: number; totalTokens: number; sessionId?: string; ts?: number }): string {
   return JSON.stringify({
     traceSchema: "comis-session-index",
     schemaVersion: 1,
-    ts: new Date(systemNowMs()).toISOString(),
+    ts: new Date(o.ts ?? systemNowMs()).toISOString(),
     event: "session_ended",
     sessionId: o.sessionId ?? "sess-x",
     exitReason: o.exitReason,
@@ -127,19 +129,23 @@ function makeDataDirWithActivity(): string {
   fs.mkdirSync(logsDir, { recursive: true });
   const today = dayKeyForMs(systemNowMs());
   const yesterday = dayKeyForMs(systemNowMs() - DAY_MS);
+  // Stamp rows a minute before now so they sit safely inside the [now-24h, now]
+  // window the A3 reader windows by (F-OBS-1b) — the captured fake-clock nowMs is
+  // ~now, and a 60s buffer absorbs the ms gap between capture and this write.
+  const rowTs = systemNowMs() - 60_000;
   fs.writeFileSync(
     path.join(logsDir, `session-index.${yesterday}.jsonl`),
     [
-      startedRow({ agentId: "agent-a", channelType: "telegram", channelId: "111", sessionId: "s1" }),
-      endedRow({ exitReason: "success", turnCount: 3, totalTokens: 100, sessionId: "s1" }),
+      startedRow({ agentId: "agent-a", channelType: "telegram", channelId: "111", sessionId: "s1", ts: rowTs }),
+      endedRow({ exitReason: "success", turnCount: 3, totalTokens: 100, sessionId: "s1", ts: rowTs }),
     ].join("\n") + "\n",
     "utf-8",
   );
   fs.writeFileSync(
     path.join(logsDir, `session-index.${today}.jsonl`),
     [
-      startedRow({ agentId: "agent-b", channelType: "discord", channelId: "222", sessionId: "s2" }),
-      endedRow({ exitReason: "error", turnCount: 2, totalTokens: 50, sessionId: "s2" }),
+      startedRow({ agentId: "agent-b", channelType: "discord", channelId: "222", sessionId: "s2", ts: rowTs }),
+      endedRow({ exitReason: "error", turnCount: 2, totalTokens: 50, sessionId: "s2", ts: rowTs }),
     ].join("\n") + "\n",
     "utf-8",
   );
@@ -350,11 +356,14 @@ describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
     const fixedDayKey = dayKeyForMs(fixedNow); // "2021-06-15"
+    // Stamp the rows at the FIXED instant (F-OBS-1b windows by row-ts) so they
+    // sit inside the [fixedNow-24h, fixedNow] window, not at real-now (excluded).
+    const fixedRowTs = fixedNow - 1000;
     fs.writeFileSync(
       path.join(logsDir, `session-index.${fixedDayKey}.jsonl`),
       [
-        startedRow({ agentId: "agent-h", channelType: "telegram", channelId: "777", sessionId: "h1" }),
-        endedRow({ exitReason: "success", turnCount: 4, totalTokens: 321, sessionId: "h1" }),
+        startedRow({ agentId: "agent-h", channelType: "telegram", channelId: "777", sessionId: "h1", ts: fixedRowTs }),
+        endedRow({ exitReason: "success", turnCount: 4, totalTokens: 321, sessionId: "h1", ts: fixedRowTs }),
       ].join("\n") + "\n",
       "utf-8",
     );

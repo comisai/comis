@@ -15,11 +15,53 @@ import { z } from "zod";
 // Request validation (Zod schemas)
 // ---------------------------------------------------------------------------
 
-/** Schema for a single message in the chat completions request. */
+/**
+ * A single block in the OpenAI multimodal `content` array. Standard OpenAI
+ * shape: a `text` block or an `image_url` block. V1-NO-VISION (30uc-20260624):
+ * accepting the array form lets a standard multimodal request PARSE (instead of
+ * the confusing "expected string, received array" schema 400); the handler
+ * flattens text blocks and returns a NAMED unsupported-vision error for
+ * image_url blocks (vision input is not yet wired through /v1).
+ */
+export const ContentBlockSchema = z.union([
+  z.strictObject({ type: z.literal("text"), text: z.string() }),
+  z.strictObject({
+    type: z.literal("image_url"),
+    image_url: z.object({ url: z.string(), detail: z.string().optional() }),
+  }),
+]);
+
+/** Schema for a single message in the chat completions request. `content` is a
+ *  plain string OR the OpenAI multimodal content-block array (V1-NO-VISION). */
 export const ChatMessageSchema = z.strictObject({
   role: z.enum(["system", "user", "assistant"]),
-  content: z.string(),
+  content: z.union([z.string(), z.array(ContentBlockSchema)]),
 });
+
+/** Human-named error for vision input via /v1 (V1-NO-VISION) — replaces the
+ *  opaque "messages.0.content: expected string, received array" schema 400. */
+export const VISION_UNSUPPORTED_MESSAGE =
+  "Vision input (image_url) is not yet supported via the /v1 chat completions endpoint. " +
+  "Send images through a chat channel (Telegram, Discord, etc.) instead.";
+
+/**
+ * Flatten an OpenAI message `content` (string OR content-block array) into the
+ * plain text the agent executor consumes, and report whether it carried an
+ * `image_url` block (vision input — not yet wired through /v1). A string content
+ * is returned verbatim with `hasImage:false`.
+ */
+export function flattenMessageContent(
+  content: z.infer<typeof ChatMessageSchema>["content"],
+): { text: string; hasImage: boolean } {
+  if (typeof content === "string") return { text: content, hasImage: false };
+  let hasImage = false;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === "text") parts.push(block.text);
+    else if (block.type === "image_url") hasImage = true;
+  }
+  return { text: parts.join("\n"), hasImage };
+}
 
 /** Schema for stream_options in the chat completions request. */
 export const StreamOptionsSchema = z.strictObject({

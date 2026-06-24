@@ -92,6 +92,9 @@ export function createTelegramPlugin(deps: TelegramAdapterDeps): TelegramPluginH
         ssrfFetcher,
         maxBytes,
         logger,
+        // Honor the Bot API root override for file downloads too (else getFile uses the override but
+        // the byte download 404s against real Telegram — breaks local Bot API servers + the emulator).
+        apiRoot: deps.apiRoot,
       });
     },
   };

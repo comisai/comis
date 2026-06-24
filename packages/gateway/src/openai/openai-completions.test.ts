@@ -132,6 +132,70 @@ describe("createOpenaiCompletionsRoute", () => {
     });
   });
 
+  describe("multimodal content (V1-NO-VISION)", () => {
+    it("accepts a text-block content array and flattens it to plain text", async () => {
+      const executeAgent = vi.fn().mockResolvedValue({
+        response: "ok",
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        finishReason: "stop",
+      });
+      const deps = createMockDeps({ executeAgent });
+      const app = createOpenaiCompletionsRoute(deps);
+
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          validBody({
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "Hello" },
+                  { type: "text", text: "world" },
+                ],
+              },
+            ],
+          }),
+        ),
+      });
+
+      // The OpenAI multimodal array form must PARSE (no generic schema 400) and the
+      // text blocks flatten to the agent's plain-text input.
+      expect(res.status).toBe(200);
+      expect(executeAgent.mock.calls[0][0].message).toBe("Hello\nworld");
+    });
+
+    it("returns a NAMED unsupported-vision error (not a generic schema 400) for image_url content", async () => {
+      const deps = createMockDeps();
+      const app = createOpenaiCompletionsRoute(deps);
+
+      const res = await app.request("/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          validBody({
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "what is in this image?" },
+                  { type: "image_url", image_url: { url: "https://example.com/cat.png" } },
+                ],
+              },
+            ],
+          }),
+        ),
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      // A clear, named vision-unsupported error — NOT "expected string, received array".
+      expect(json.error.message).toMatch(/vision|image_url/i);
+      expect(json.error.message).not.toMatch(/expected string/i);
+    });
+  });
+
   describe("streaming", () => {
     it("does NOT stream thinking/reasoning deltas into delta.content (reasoning-leak; streamed must == final, live 2026-06-20)", async () => {
       // qwen3.6 + other reasoning models emit thinking deltas (kind:"thinking"). The

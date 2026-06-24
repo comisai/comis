@@ -162,6 +162,14 @@ export const TRAJECTORY_EVENT_TYPES = [
   // records honestly omit leaseId/parentLeaseId/tool (no lease, G1).
   "capability.audited",
 
+  // TREE-01 (finding D, 30uc-20260624): a graph DAG node spawn — the per-graph-node
+  // spawn-tree producer. A graph node spawns in-process (gatedSpawn) and never crosses
+  // the socket chokepoint that emits capability.audited, so without this the spawn-tree
+  // omitted the graph children. DAEMON-emitted (graph-node-lifecycle.ts); the
+  // signals fold keys it by graphId:nodeId. Content-free: graph/node ids + child
+  // agentId + rootRunId + the per-node token cap ONLY — NEVER the node task or output.
+  "graph.node_spawned",
+
   // Background task lifecycle (T2.2 / F9): promote/complete/fail of a long-running tool
   // detached past the execute() boundary (content-free — ids + durationMs only).
   "background_task.promoted",

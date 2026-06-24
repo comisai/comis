@@ -50,9 +50,16 @@ describe("observability-domain contracts", () => {
     expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
   });
 
-  it("all 29 contracts are admin-scoped", () => {
+  it("all contracts are admin-scoped EXCEPT the agent self-observability pair (OBS-SELF-DEAD)", () => {
+    // obs.explain + obs.diagnostics are scopes:["rpc"] — the obs_query agent tool's
+    // self-diagnose path ("why did my session degrade?") needs them agent-reachable
+    // (30uc-20260624 UC-14; CLAUDE.md "Glass Box as an agent capability"). Read-only +
+    // scrubbed (zero secret residency), single-tenant. The daemon-wide/sensitive obs
+    // contracts (fleet/audit/billing/channels/delivery) stay admin.
+    const SELF_OBS = new Set(["obs.explain", "obs.diagnostics"]);
     for (const c of OBSERVABILITY_CONTRACTS) {
-      expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
+      const expected = SELF_OBS.has(c.method) ? ["rpc"] : ["admin"];
+      expect(c.scopes, `${c.method} scopes`).toEqual(expected);
     }
   });
 
@@ -876,8 +883,11 @@ describe("ObsTrace contracts", () => {
     expect(ObsExplainContract.method).toBe("obs.explain");
   });
 
-  it("obs.explain: requires the admin scope", () => {
-    expect(ObsExplainContract.scopes).toEqual(["admin"]);
+  it("obs.explain: is agent-reachable (rpc) for self-observability — OBS-SELF-DEAD", () => {
+    // Re-scoped admin→rpc (30uc-20260624 UC-14): the obs_query tool's explain/session_report
+    // action needs obs.explain agent-reachable; read-only + scrubbed digest, single-tenant.
+    // As ["admin"] it was in the deny-by-origin set and killed the agent's self-diagnose.
+    expect(ObsExplainContract.scopes).toEqual(["rpc"]);
   });
 
   it("obs.explain: request accepts sessionKey alone", () => {

@@ -76,11 +76,18 @@ Each message in the `messages` array follows `ChatMessageSchema`:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `role` | `"system"` \| `"user"` \| `"assistant"` | Yes | Message role |
-| `content` | `string` | Yes | Message text content |
+| `content` | `string` \| `ContentBlock[]` | Yes | Message text content. Accepts a plain string OR the OpenAI multimodal content-block array (`[{ "type": "text", "text": "..." }, ...]`) |
 
 System messages are concatenated (joined with newline) and passed as the system
 prompt. The last `user` message becomes the agent input. If no user message is
 found, the request returns `400`.
+
+When `content` is a content-block array, the `text` blocks are flattened (joined
+with newline) into the message text. **Vision input is not yet supported via this
+endpoint**: a request whose `content` carries an `image_url` block returns a
+named `400` ("Vision input (image_url) is not yet supported via the /v1 chat
+completions endpoint…") rather than silently dropping the image. Send images
+through a chat channel (Telegram, Discord, etc.) instead.
 
 #### Stream Options
 

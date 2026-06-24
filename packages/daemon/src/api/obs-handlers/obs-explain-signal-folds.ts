@@ -356,6 +356,48 @@ export function accumulateCapabilityAuditedRecord(
   spawnNodesByLease.set(leaseId, node);
 }
 
+/**
+ * Fold one `graph.node_spawned` trajectory record (finding D, TREE-01) into the
+ * spawn-tree working map. A graph DAG node spawns in-process (gatedSpawn →
+ * subAgentRunner.spawn), so it never crosses the socket chokepoint that emits
+ * `capability.audited` — and every node shares the graph's `rootRunId`, so the
+ * capability fold's `leaseId ?? rootRunId` key would collapse them all into ONE
+ * node. So graph nodes get their OWN key: the stable `graphId:nodeId` identity
+ * (NOT a fabricated socket lease — G1 forbids that; this is a graph-node id that
+ * just happens to live in the `leaseId` field, the same way the in-process leg's
+ * synthetic rootRunId does). The node nests under the graph root via
+ * `parentLeaseId = rootRunId`. One leaf per node (spawn fires once; the
+ * `has` guard makes a duplicate record idempotent). The record is content-free
+ * (the translator forwards ids + the child agentId only — no task/output).
+ */
+export function accumulateGraphNodeSpawnedRecord(
+  spawnNodesByLease: Map<string, SpawnNodeFold>,
+  data: Record<string, unknown>,
+): void {
+  const graphId = asString(data.graphId);
+  const nodeId = asString(data.nodeId);
+  // A record missing its node identity is not a reconstructable leaf — drop it
+  // (the capability-fold's neither-leaseId-nor-rootRunId precedent).
+  if (graphId === undefined || nodeId === undefined) return;
+  const leaseId = `${graphId}:${nodeId}`;
+  if (spawnNodesByLease.has(leaseId)) return; // one leaf per node (idempotent re-emit)
+  const rootRunId = asString(data.rootRunId) ?? "";
+  spawnNodesByLease.set(leaseId, {
+    leaseId,
+    // Nest under the graph's tree root so the node renders as the root's child,
+    // not a detached top-level leaf. Omit when the root is unknown.
+    ...(rootRunId !== "" ? { parentLeaseId: rootRunId } : {}),
+    rootRunId,
+    // The node's CHILD agent rides `data.nodeAgentId` (the translator's non-
+    // correlation field) — the envelope agentId is the emitting coordinator, not
+    // the child, so we must read the child identity from data.
+    agentId: asString(data.nodeAgentId) ?? "",
+    caps: ["orch:graph"],
+    toolsInvoked: [],
+    denials: [],
+  } satisfies SpawnNodeFold);
+}
+
 // ---------------------------------------------------------------------------
 // Schema-validated LAST-wins folds (W3 context.budget / LAT-04 prompt_timeout).
 // ---------------------------------------------------------------------------

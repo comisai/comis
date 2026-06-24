@@ -77,6 +77,46 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   // -------------------------------------------------------------------------
+  // ORIGIN-01 trust-tier (30uc-20260624): the in-process leg re-injects the run's
+  // REAL per-message trust from the framework ALS as a forgery-proof _trustLevel —
+  // the deny-by-origin chokepoint reads it to let an ADMIN-trust agent reach admin
+  // methods (and deny a guest/user one). Injected AFTER `...params` so a tool- or
+  // agent-supplied value cannot override the authentic trust.
+  // -------------------------------------------------------------------------
+
+  it("injects the framework ctx.trustLevel as a forgery-proof _trustLevel, OVERRIDING a params-supplied value", async () => {
+    currentCtx = { trustLevel: "admin" };
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    });
+
+    // A forged/tool-supplied `_trustLevel:"user"` in params MUST lose to the real
+    // ctx trust (post-spread injection) — this is the chokepoint's trusted signal.
+    await create("agent-1")("secrets.set", { name: "X", _trustLevel: "user" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._trustLevel).toBe("admin");
+  });
+
+  it("omits _trustLevel when the context has no resolved trust (absent ⇒ non-admin ⇒ denied at the chokepoint, never a silent admin)", async () => {
+    currentCtx = {}; // a context with no trustLevel (runWithContext stores raw — no schema default)
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("session.spawn", { task: "x" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect("_trustLevel" in forwarded).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
   // Phase 217 (UNATT-01 / EVICT-02): the in-process leg injects the trusted
   // _autonomyMode from the SAME resolveAutonomy call that yields _capabilities.
   // This is the forgery-proof channel the Wave-2 chokepoint reads to learn the

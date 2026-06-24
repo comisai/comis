@@ -297,8 +297,10 @@ describe("setupMedia", () => {
       skillsLogger: createMockLogger() as any,
     });
 
+    // objectContaining tolerates the additional trustedFetchOrigins config (MEDIA-INPUT-SSRF,
+    // d3ef5be3) — this test pins only that maxBytes is threaded from the infra config.
     expect(mockCreateSsrfGuardedFetcher).toHaveBeenCalledWith(
-      { maxBytes: 25_000_000 },
+      expect.objectContaining({ maxBytes: 25_000_000 }),
       expect.anything(),
     );
   });

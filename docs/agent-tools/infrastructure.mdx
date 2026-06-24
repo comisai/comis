@@ -166,10 +166,10 @@ Tools discovered from MCP servers are subject to the same [tool policy](/skills/
 
 ## Supervisor Tools
 
-Supervisor tools are admin-level capabilities for managing the entire Comis installation. They require the `supervisor` tool policy profile or an explicit `allow` list in your agent's configuration.
+Supervisor tools are admin-level capabilities for managing the entire Comis installation. They require the `supervisor` tool policy profile or an explicit `allow` list in your agent's configuration, **and** the turn must carry **admin trust** — they are admin-scoped (deny-by-origin), so an agent serving a non-admin user is rejected at the dispatch chokepoint. Grant admin trust to a specific operator via [`elevatedReply.senderTrustMap`](/reference/config-yaml) (`"<senderId>": admin`); a turn for that user inherits admin and the agent can run these tools on their behalf.
 
 <Warning>
-Supervisor tools can make significant changes to your system. They are intended for administration agents with elevated privileges, not regular conversation agents.
+Supervisor tools can make significant changes to your system. They are intended for administration agents and admin-trust operators, not regular conversation agents — a non-admin turn can never reach them.
 </Warning>
 
 | Tool | Actions | What It Manages |
@@ -219,7 +219,10 @@ Supervisor tools can make significant changes to your system. They are intended 
     - **delete** -- Permanently remove a session and its history
     - **reset** -- Clear a session's conversation history while keeping the session active
     - **export** -- Export a session's conversation data
-    - **compact** -- Compress a session's history to reduce storage
+    - **compact** -- Compress a session's history to reduce storage. The
+      `session_key` is **optional** for this action: omit it (or pass `"self"`)
+      to compact your own current session — you do not need to construct or guess
+      your session key (`delete`/`reset`/`export` still require an explicit key).
   </Accordion>
 
   <Accordion title="memory_manage -- Memory lifecycle" icon="brain">

@@ -34,6 +34,27 @@ export interface OrchestrationEvents {
     timestamp: number;
   };
 
+  /**
+   * Finding D (30uc-20260624, TREE-01): a graph DAG node was spawned. Bridged to
+   * the trajectory (`graph.node_spawned`) so `comis explain`'s spawn-tree
+   * reconstructs each node as a leaf — a graph node spawns in-process and never
+   * crosses the socket chokepoint that emits `capability:audited`, so without this
+   * the spawn-tree showed only the root. Content-free: graph/node ids + the child
+   * agentId + the tree-stable rootRunId + the per-node token cap ONLY (counts/ids,
+   * §2.7) — NEVER the node task or output.
+   */
+  "graph:node_spawned": {
+    graphId: string;
+    nodeId: string;
+    /** The tree-stable graph root (Phase 213 CR-01) every node shares. */
+    rootRunId: string;
+    /** The node's CHILD agent (node.agentId ?? defaultAgentId). */
+    agentId: string;
+    /** The resolved per-node token cap (BUDGET-03), or null when unbounded. */
+    tokenBudget: number | null;
+    timestamp: number;
+  };
+
   /** Graph node transitioned to a new status (running, completed, failed, skipped) */
   "graph:node_updated": {
     graphId: string;

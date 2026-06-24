@@ -32,7 +32,7 @@ import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
   accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
   accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
-  accumulateSpendExceeded, accumulateCapabilityAuditedRecord,
+  accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord,
 } from "./obs-explain-signal-folds.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
@@ -229,6 +229,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // per-node source. Delegated to a fold helper (the accumulateSpendExceeded
     // mold) for the obs-handlers/* subdir cap — see its docstring for the full
     // group-by-leaseId / content-free contract.
+    case "graph.node_spawned":
+      // Finding D (TREE-01): a graph DAG node is a spawn-tree leaf too (it never
+      // crosses the socket chokepoint that emits capability.audited).
+      accumulateGraphNodeSpawnedRecord(acc.spawnNodesByLease, data);
+      return;
     case "capability.audited":
       accumulateCapabilityAuditedRecord(acc.spawnNodesByLease, data, rec.agentId, acc.agentId);
       return;

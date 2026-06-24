@@ -69,6 +69,7 @@ describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
   it("response accepts the resolved caps + remaining budget/quota shape", () => {
     const ok = CapabilitiesIntrospectContract.response.parse({
       agentId: "agent-1",
+      enabled: true,
       caps: ["orch:spawn", "orch:message"],
       budget: {
         tokensRemaining: 900,
@@ -78,6 +79,7 @@ describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
       outwardQuota: { perHourRemaining: 4 },
     });
     expect(ok.agentId).toBe("agent-1");
+    expect(ok.enabled).toBe(true);
     expect(ok.caps).toEqual(["orch:spawn", "orch:message"]);
     expect(ok.budget?.usdRemaining).toBe(6);
     expect(ok.outwardQuota?.perHourRemaining).toBe(4);
@@ -86,17 +88,32 @@ describe("CapabilitiesIntrospectContract (INTRO-01/INTRO-02)", () => {
   it("response budget/outwardQuota are OPTIONAL (absent when no rootRunId is live, pre-spawn)", () => {
     const minimal = CapabilitiesIntrospectContract.response.parse({
       agentId: "agent-2",
+      enabled: false,
       caps: [],
     });
     expect(minimal.agentId).toBe("agent-2");
+    expect(minimal.enabled).toBe(false);
     expect(minimal.caps).toEqual([]);
     expect(minimal.budget).toBeUndefined();
     expect(minimal.outwardQuota).toBeUndefined();
   });
 
+  it("response REQUIRES the enabled flag (finding E: a disabled/assistant agent gets {enabled:false}, not Unknown-method)", () => {
+    // The handler is now registered UNCONDITIONALLY (not gated on bounded-autonomy),
+    // so the response always carries the caller's resolved autonomy.enabled — an
+    // absent enabled is a contract violation, never a silent default.
+    expect(
+      CapabilitiesIntrospectContract.response.safeParse({
+        agentId: "agent-x",
+        caps: [],
+      }).success,
+    ).toBe(false);
+  });
+
   it("response accepts a NULL usdRemaining (the honest-degrade unpriceable case, BUDGET-02)", () => {
     const degraded = CapabilitiesIntrospectContract.response.parse({
       agentId: "agent-3",
+      enabled: true,
       caps: [],
       budget: {
         tokensRemaining: 1000,

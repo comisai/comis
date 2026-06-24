@@ -756,5 +756,13 @@ export const ObsExplainContract = defineContract({
       message: "sessionKey, traceId, or rootRunId required",
     }),
   response: IncidentReportSchema,
-  scopes: ["admin"] as const,
+  // OBS-SELF-DEAD (30uc-20260624 UC-14): rpc, NOT admin. The obs_query agent tool's
+  // explain/session_report action calls obs.explain for SELF-observability ("why did my
+  // session degrade?") — a documented agent capability (CLAUDE.md). As scopes:["admin"] it
+  // was in ADMIN_METHODS → assertNotAgentOrigin denied the agent-origin call before the
+  // handler ran ("Control-plane method obs.explain is not reachable from an agent origin").
+  // The report is READ-ONLY + scrubbed/digest-only (no secrets — 30uc UC-27 residency sweep
+  // confirmed zero secret residency in the trajectory it reads), and the daemon is
+  // single-tenant (reads its own data dir). Same MD-02 re-scope class as memory.store.
+  scopes: ["rpc"] as const,
 });

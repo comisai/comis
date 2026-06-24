@@ -17,6 +17,7 @@ import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
 import { sanitizeLogString, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { fileTypeFromBuffer } from "file-type";
 import type { Bot } from "grammy";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,14 @@ export interface TelegramResolverDeps {
   maxBytes: number;
   ssrfFetcher: SsrfFetcher;
   logger: ResolverLogger;
+  /**
+   * Bot API root override (production: undefined → real Telegram). When set (a self-hosted local
+   * Bot API server, or the test emulator), the file-DOWNLOAD URL must use this base too — `getFile`
+   * already honors it via the grammy client, but the byte download is a manual fetch. Without this
+   * the download hardcoded `https://api.telegram.org/file/…` and 404'd against real Telegram while
+   * getFile pointed at the override (30uc-20260624 UC-05).
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,8 +100,12 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
           return err(new Error("Telegram getFile returned no file_path"));
         }
 
-        // Construct download URL
-        const downloadUrl = `https://api.telegram.org/file/bot${deps.botToken}/${file.file_path}`;
+        // Construct download URL. The file-server base mirrors the Bot API root: real Telegram uses
+        // `https://api.telegram.org/file/bot…`; a local Bot API server / the emulator uses the same
+        // host as `apiRoot`. getFile (above) already honors apiRoot via the grammy client, so the
+        // download MUST too — else getFile resolves on the override but the bytes 404 on real Telegram.
+        const apiBase = deps.apiRoot ?? "https://api.telegram.org";
+        const downloadUrl = `${apiBase}/file/bot${deps.botToken}/${file.file_path}`;
 
         // Download via SSRF-guarded fetcher
         const startMs = systemNowMs();
@@ -115,7 +128,23 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
           return err(new Error(sanitizeError(msg)));
         }
 
-        const { buffer, mimeType, sizeBytes } = fetchResult.value;
+        const { buffer, mimeType: fetchedMime, sizeBytes } = fetchResult.value;
+
+        // MEDIA-TYPE (30uc-20260624 UC-05): the MediaResolverPort contract specifies a VERIFIED
+        // (sniffed, not declared) MIME type. Telegram's getFile `file_path` / the file-server
+        // content-type can mislabel the bytes (e.g. a `.jpg` path / `image/jpeg` header for PNG
+        // bytes), and the model vision API rejects a declared type that mismatches the actual bytes
+        // (Anthropic 400: "specified image/jpeg, but the image appears to be image/png"). Sniff the
+        // downloaded bytes; the sniffed type is authoritative when recognized, else fall back to the
+        // fetched header type.
+        const sniffed = await fileTypeFromBuffer(buffer);
+        const mimeType = sniffed?.mime ?? fetchedMime;
+        if (sniffed && sniffed.mime !== fetchedMime) {
+          deps.logger.debug(
+            { fileId, declaredMime: fetchedMime, sniffedMime: sniffed.mime },
+            "Telegram media MIME corrected from sniffed bytes (declared type mismatched)",
+          );
+        }
 
         // Debug log for media pipeline visibility
         deps.logger.debug(

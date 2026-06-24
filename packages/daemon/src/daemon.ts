@@ -2830,7 +2830,10 @@ async function bootShutdown(
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
   const servedBelowConfiguredCount = [...(boot.servedWindowComparisons?.values() ?? [])].filter((c) => c.belowConfigured).length;
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents) }, boot.clock);
+  // RELAX-SURFACE (Track-M): surface the relaxed no-downgrade sandbox default at boot.
+  // The typed field defaults to true (schema-security.ts); === false is the relaxation.
+  const sandboxNoDowngradeDisabled = container.config.security.agentToAgent.sandboxNoDowngrade === false;
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

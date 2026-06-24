@@ -33,7 +33,10 @@ export type OrchestrationBridgedEventName =
   // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-cap authorization decision
   // — the spawn-tree's per-node producer. Content-free: caps/tool-NAME/decision/
   // lease-root ids ONLY, NEVER args/body/secret.
-  | "capability:audited";
+  | "capability:audited"
+  // TREE-01 (finding D, 30uc-20260624): the per-graph-node spawn-tree producer.
+  // Content-free: graph/node ids + child agentId + rootRunId + token cap ONLY.
+  | "graph:node_spawned";
 
 /**
  * Translate a v2.27 authoring / orchestration EventBus payload into the
@@ -95,6 +98,22 @@ export function translateOrchestrationPayload(
         leaseId: payload.leaseId,
         parentLeaseId: payload.parentLeaseId,
         rootRunId: payload.rootRunId,
+      };
+
+    case "graph:node_spawned":
+      // TREE-01 (finding D): the per-graph-node spawn-tree leaf — graph/node ids +
+      // the node's CHILD agentId + the tree-stable rootRunId + the per-node token cap
+      // ONLY. NEVER the node task or output. The child agentId rides `data` as
+      // `nodeAgentId` (NOT the correlation key `agentId`, which would be stripped to
+      // the envelope): the daemon coordinator emits this in the PARENT context, so
+      // the envelope agentId is the caller, not the child — the leaf's identity is
+      // DATA about the node, not the emitter's correlation id. timestamp is envelope-only.
+      return {
+        graphId: payload.graphId,
+        nodeId: payload.nodeId,
+        nodeAgentId: payload.agentId,
+        rootRunId: payload.rootRunId,
+        tokenBudget: payload.tokenBudget,
       };
 
     default: {

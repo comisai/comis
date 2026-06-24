@@ -184,6 +184,54 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
   );
 }
 
+/**
+ * F-OBS-2 (30uc-20260624): a CONTENT-FREE grounding summary of a web_search /
+ * web_fetch result for the trajectory `tool.result` — result count + source
+ * HOSTS only. NEVER titles, snippets, full URLs (path/query), or bodies. Lets a
+ * "grounded in fetched results" predicate be verified from `comis explain` /
+ * trajectory without a DEBUG daemon-log grep (the load-bearing-evidence-was-
+ * DEBUG-only obs-loop trigger). Returns `undefined` for any other tool or an
+ * unparseable result, so the `tool:executed` emit is unchanged for everything else.
+ *
+ * The tool return is an `AgentToolResult`; the structured payload rides `.details`
+ * (the same field the success classifier reads at the call site), with a direct-
+ * shape fallback. Only `host` is taken from each URL (`new URL(...).host`), never
+ * the path or query — so no fetched-content identifiers leak onto the trajectory.
+ */
+export function extractWebResultMetadata(
+  toolName: string,
+  result: unknown,
+): { resultCount?: number; domains?: string[] } | undefined {
+  if (toolName !== "web_search" && toolName !== "web_fetch") return undefined;
+  if (typeof result !== "object" || result === null) return undefined;
+  const top = result as Record<string, unknown>;
+  const payload = (top.details && typeof top.details === "object" ? top.details : top) as Record<string, unknown>;
+
+  const hostOf = (u: unknown): string | undefined => {
+    if (typeof u !== "string" || u.length === 0) return undefined;
+    try {
+      return new URL(u).host;
+    } catch {
+      return undefined;
+    }
+  };
+
+  if (toolName === "web_search") {
+    const results = Array.isArray(payload.results) ? payload.results : undefined;
+    if (results === undefined) return undefined;
+    const domains = new Set<string>();
+    for (const item of results) {
+      const h = hostOf((item as Record<string, unknown> | null)?.url);
+      if (h !== undefined) domains.add(h);
+    }
+    return { resultCount: results.length, domains: [...domains].sort() };
+  }
+  // web_fetch: a single page → resultCount 1 + the fetched host (final wins).
+  const host = hostOf(payload.finalUrl) ?? hostOf(payload.url);
+  if (host === undefined) return undefined;
+  return { resultCount: 1, domains: [host] };
+}
+
 /** Per-call TTL split estimate, populated by requestBodyInjector's onPayload.
  *  Shared mutable object — written by the stream wrapper, read by the bridge. */
 export interface TtlSplitEstimate {
@@ -1126,6 +1174,13 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             | Record<string, unknown>
             | undefined;
 
+          // F-OBS-2: content-free web_search/web_fetch grounding summary (count +
+          // source hosts only) — computed on the SUCCESS path so the trajectory
+          // tool.result reconstructs grounding without a DEBUG daemon-log grep.
+          const webResultMeta = toolSuccess
+            ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
+            : undefined;
+
           deps.eventBus.emit("tool:executed", {
             toolName: endEvent.toolName,
             toolCallId: endEvent.toolCallId,
@@ -1154,6 +1209,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),
             ...(resultBytes !== undefined && { resultBytes }),
             ...(resultDigest !== undefined && { resultDigest }),
+            ...(webResultMeta?.resultCount !== undefined && { resultCount: webResultMeta.resultCount }),
+            ...(webResultMeta?.domains !== undefined && { domains: webResultMeta.domains }),
           });
 
           // ATTR-01: skill-use attribution. A `read` whose path equals a frozen

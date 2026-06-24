@@ -224,6 +224,16 @@ export function readSessionIndexWindow(
       }
       linesRead += 1;
 
+      // F-OBS-1b (30uc-20260624): window by the ROW ts, not just the day-key.
+      // The day-keyed files are whole-DAY; a `--since 1h` window opens today's
+      // file and (pre-fix) counted EVERY session_started channel/agent in it
+      // regardless of ts — so a 1-session window reported 39 channels + a
+      // prior-run agent. Skip any row whose parseable ts falls outside
+      // [sinceMs..nowMs]. Fail-OPEN on an unparseable/absent ts (never silently
+      // drop a real row we cannot place) — every real row carries an ISO ts.
+      const rowTsMs = typeof rec.ts === "string" ? Date.parse(rec.ts) : Number.NaN;
+      if (Number.isFinite(rowTsMs) && (rowTsMs < sinceMs || rowTsMs > nowMs)) continue;
+
       // D9 default-exclude — a REAL filter (strict === true; a string "true"
       // must NOT truthy-coerce into a spurious exclusion of a real session).
       if (rec.synthetic === true && !includeSynthetic) continue;

@@ -168,6 +168,16 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // args, a message body, or a secret name (§2.7 / H1 / T-215-01).
   "capability:audited": "capability.audited",
 
+  // TREE-01 (finding D, 30uc-20260624): a graph DAG node spawn — the spawn-tree's
+  // per-graph-node producer. A graph node spawns in-process (gatedSpawn) and never
+  // crosses the socket chokepoint that emits capability:audited, so without this the
+  // `comis explain` spawn-tree showed only the root. DAEMON-emitted (graph-node-
+  // lifecycle.ts), so the agent/orchestrator emit-scanner arch gate does not require
+  // it (the subagent:budget_exceeded / capability:audited daemon-emitted precedent).
+  // Content-free (translate-orchestration-payload.ts): graph/node ids + child agentId
+  // + rootRunId + the per-node token cap ONLY — NEVER a node task or output.
+  "graph:node_spawned": "graph.node_spawned",
+
   // OUTCOME-08 (v2.26 Verified Learning WS1): a finished trajectory's resolved net
   // task-outcome, emitted DAEMON-SIDE after OutcomeSignalPort.resolve (learningOutcome.
   // enabled-gated, default OFF). DAEMON emit (NOT agent/orchestrator) so the arch

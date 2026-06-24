@@ -416,15 +416,17 @@ describe("autonomy handlers — deny-by-origin on the dispatch path (REVOKE-01, 
     return createRpcDispatch(mockDeps);
   }
 
-  it("denies an _agentId-bearing lease.revoke / run.kill / autonomy.evict on the in-process dispatch path (admin-derived, no manual check)", async () => {
-    // T-217-12: autonomy.evict joins the deny set — an agent cannot self-un-evict
-    // (or evict a sibling). The deny fires at the chokepoint BEFORE the handler.
+  it("denies a NON-admin _agentId-bearing lease.revoke / run.kill / autonomy.evict on the in-process dispatch path (admin-derived, no manual check)", async () => {
+    // T-217-12: autonomy.evict joins the deny set — a NON-admin agent cannot
+    // self-un-evict (or evict a sibling). The deny fires at the chokepoint BEFORE
+    // the handler. (An admin-trust agent inherits admin — that trust-tier path is
+    // covered by the rpc-dispatch + assert-not-agent-origin suites.)
     for (const method of ["lease.revoke", "run.kill", "autonomy.evict"]) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
       await expect(
-        dispatch(method, { _agentId: "forged", _trustLevel: "admin", rootRunId: "R1" }),
-      ).rejects.toThrow(/not reachable from an agent origin/i);
+        dispatch(method, { _agentId: "forged", _trustLevel: "user", rootRunId: "R1" }),
+      ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
 
       const audits = capturedAudits();
       expect(audits, `audit for ${method}`).toHaveLength(1);

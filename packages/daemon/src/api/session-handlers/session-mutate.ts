@@ -23,7 +23,7 @@ import {
   parseFormattedSessionKey,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
+import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
 
 /**
  * Bind the session mutation handlers. Object-spread compatible with
@@ -227,16 +227,31 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionCompactContract.method]: async (rawParams) => {
-      // Bespoke pre-Zod: missing-key + not-found guards FIRST.
-      const sessionKey = rawParams.session_key as string;
-      if (!sessionKey) throw new Error("Missing required parameter: session_key");
+      // COMPACT-KEY (30uc-20260624): self-resolve the CALLER's own session. An
+      // agent should NOT have to construct/guess its own formatted key (it guessed
+      // ":telegram:" where the real key uses ":peer:"). Read the dispatcher-injected
+      // `_callerSessionKey` BEFORE the strip (the same internal field session.send
+      // reads); when `session_key` is omitted or the "self"/"current" sentinel, use
+      // it. An explicit key still targets that session.
+      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
+      const requestedKey = rawParams.session_key as string | undefined;
+      const wantsSelf = !requestedKey || requestedKey === "self" || requestedKey === "current";
+      const sessionKey = wantsSelf ? callerSessionKey : requestedKey;
+      if (!sessionKey) {
+        throw new Error(
+          "Missing required parameter: session_key (omit it to compact your own session — only available from an in-process session call)",
+        );
+      }
 
       const userParams = stripInternalFields(rawParams);
       const params = SessionCompactContract.request.parse(userParams);
 
       const instructions = params.instructions;
 
-      const data = deps.sessionStore.loadByFormattedKey(sessionKey);
+      // COMPACT-STORE-MISS (30uc-20260624): read from EITHER store — a live channel
+      // chat is file-JSONL-only (the SQLite sessions table is empty for it), so a
+      // SQLite-only read threw "Session not found" for the active session.
+      const data = loadSessionAnyStore(deps, sessionKey);
       if (!data) throw new Error(`Session not found: ${sessionKey}`);
 
       const messageCount = data.messages.length;

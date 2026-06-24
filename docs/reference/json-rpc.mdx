@@ -4010,7 +4010,7 @@ Read-only and **not capability-gated** (an agent reading its OWN posture needs n
 
 <Accordion title="autonomy / live control (3 methods)">
 
-Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop, hard-stop, or demote a runaway or misbehaving spawn tree. All three methods are **admin-scoped and deny-by-origin** — they reject any agent-origin call, so a jailed agent can never revoke, un-kill, or un-evict itself (the bound is external to and non-bypassable by the agent). The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these methods are the manual override.
+Operator-facing live control of the [bounded-autonomy](/agents/autonomy) control plane: stop, hard-stop, or demote a runaway or misbehaving spawn tree. All three methods are **admin-scoped and deny-by-origin** — they reject a **non-admin** agent-origin call, so a jailed/runaway (non-admin) agent can never invoke them (the bound is external to and non-bypassable by such an agent; there is no "un-revoke"/"un-kill"/"un-evict" method, and a revoked lease's `validate`/`renew` are denied regardless). An admin-trust agent (an explicit operator grant) may invoke them as the admin operating the control plane. The bound mechanisms (spawn ceiling, rate limit, outward quota, per-root budget) are otherwise automatic from the resolved autonomy profile; these methods are the manual override.
 
 | Method | Scope | Description |
 |--------|-------|-------------|

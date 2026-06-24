@@ -291,6 +291,27 @@ describe("sessions_manage tool", () => {
         _trustLevel: "admin",
       });
     });
+
+    it("omits session_key when not provided so the daemon self-resolves the caller's session (COMPACT-KEY)", async () => {
+      mockRpcCall.mockResolvedValue({
+        sessionKey: "caller-session",
+        compactionTriggered: true,
+        instructions: null,
+      });
+
+      const tool = createSessionsManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-cp3", { action: "compact" } as never),
+      );
+
+      // No session_key in the RPC payload → the handler falls back to the
+      // dispatcher-injected _callerSessionKey (the agent never constructs a key).
+      expect(mockRpcCall).toHaveBeenCalledWith("session.compact", {
+        instructions: undefined,
+        _trustLevel: "admin",
+      });
+    });
   });
 
   // -----------------------------------------------------------------------

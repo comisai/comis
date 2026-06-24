@@ -24,6 +24,16 @@ import type { FailureResult } from "./graph-state-machine.js";
 import type { GraphRunState } from "./graph-coordinator-state.js";
 
 /**
+ * P0-A-OBS: the agent-layer `finishReason` values that mean a run aborted on its
+ * TOKEN budget via a BudgetGuard PRE-CHECK — the next LLM call was rejected before
+ * the overage, so the recorded spend is <= the per-node cap. These drive a per-node
+ * budget breach even when `spend <= nodeBudget` (the post-hoc `spend > cap` gate
+ * would otherwise miss them). Dollar-budget aborts (`spend_exceeded`) are a per-root
+ * signal owned by `handleBudgetExceeded`, NOT a per-node token breach — excluded here.
+ */
+const NODE_BUDGET_ABORT_REASONS: ReadonlySet<string> = new Set(["budget_exceeded", "budget_exhausted"]);
+
+/**
  * Resolve the effective per-node token budget for a node.
  * Precedence (D3):
  *  1. `node.tokenBudget` (the graph author's explicit per-node cap) wins.
@@ -105,23 +115,38 @@ export function applyNodeBudgetBreach(
   nodeId: string,
   spend: number,
   priorSessionKey?: string,
+  finishReason?: string,
 ): NodeBudgetBreachResult {
   // BUDGET-03: always record per-node spend (present even when no budget resolves).
   gs.nodeTokenSpend.set(nodeId, spend);
 
   // IN-02: resolve the cap AND the knob that produced it so the breach names it.
   const { budget: nodeBudget, source: capSource } = resolveNodeBudgetWithSource(gs, nodeId, config.subAgentTokenBudget);
-  if (nodeBudget === undefined || capSource === undefined || spend <= nodeBudget || gs.stateMachine.isTerminal()) {
+  // P0-A-OBS (orchestration-excellence): a per-node-budget-bounded node aborts on
+  // its budget TWO ways — (1) POST-HOC, the graph sees spend > nodeBudget; (2)
+  // PRE-CHECK, the agent's BudgetGuard rejected the NEXT LLM call BEFORE the
+  // overage (so spend <= nodeBudget) and the run ended with a budget finishReason.
+  // BOTH are per-node breaches and must terminal-fail the node + emit
+  // subagent:budget_exceeded — pre-fix the pre-check path was invisible (no event,
+  // empty node error, tokensUsed 0). A budget finishReason with NO per-node cap is
+  // a per-ROOT abort owned by handleBudgetExceeded, NOT a per-node breach.
+  const postHocOverage = nodeBudget !== undefined && spend > nodeBudget;
+  const preCheckAbort = NODE_BUDGET_ABORT_REASONS.has(finishReason ?? "");
+  if (nodeBudget === undefined || capSource === undefined || (!postHocOverage && !preCheckAbort) || gs.stateMachine.isTerminal()) {
     return { breached: false };
   }
 
   // Terminal-fail the node (D2): a retry would only re-burn the budget. ORCH-OBS:
   // name the cap SOURCE in the error too — the node error is the only surface
   // graph.status + the IncidentReport failure list see (the WARN/event ride other
-  // paths), so an operator drilling a failed node learns WHICH knob bound it.
+  // paths), so an operator drilling a failed node learns WHICH knob bound it. The
+  // pre-check path names the finishReason so the abort cause is unambiguous.
+  const breachDetail = postHocOverage
+    ? `${spend} > ${nodeBudget}`
+    : `pre-check aborted at ${spend}/${nodeBudget}; finishReason: ${finishReason}`;
   const failRes = gs.stateMachine.markNodeFailed(
     nodeId,
-    `Node token budget exceeded (${spend} > ${nodeBudget}; cap source: ${capSource})`,
+    `Node token budget exceeded (${breachDetail}; cap source: ${capSource})`,
     priorSessionKey,
     { terminal: true },
   );

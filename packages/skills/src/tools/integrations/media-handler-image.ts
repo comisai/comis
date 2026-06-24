@@ -12,8 +12,23 @@
 import type { Attachment, ImageAnalysisPort } from "@comis/core";
 import { wrapExternalContent, type WrapExternalContentOptions } from "@comis/core";
 import type { Result } from "@comis/shared";
+import { fileTypeFromBuffer } from "file-type";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
+
+/**
+ * MEDIA-TYPE (30uc-20260624 UC-05): determine the VERIFIED image MIME from the actual bytes.
+ * Telegram's `.jpg` file_path mislabels PNG bytes as image/jpeg, and the model vision API rejects
+ * a declared type that mismatches the bytes (Anthropic 400 "specified image/jpeg, but the image
+ * appears to be image/png"). The buffer-only resolve seam (`resolveMediaAttachment`) discards the
+ * resolver's sniffed type, so we sniff here — the consumer that pairs the buffer with the media_type
+ * for the request. Sniffed image type wins; fall back to the declared type (then image/jpeg).
+ */
+async function verifiedImageMime(buffer: Buffer, declared: string | undefined): Promise<string> {
+  const sniffed = await fileTypeFromBuffer(buffer);
+  if (sniffed?.mime.startsWith("image/")) return sniffed.mime;
+  return declared ?? "image/jpeg";
+}
 
 /** Deps subset needed by the image handler. */
 export interface ImageHandlerDeps {
@@ -62,7 +77,7 @@ export async function processImageAttachment(
     const buffer = await resolveMediaAttachment(att, deps.resolveAttachment, deps.logger, "Image");
     if (!buffer) return {};
 
-    const sanitizeResult = await deps.sanitizeImage(buffer, att.mimeType ?? "image/jpeg");
+    const sanitizeResult = await deps.sanitizeImage(buffer, await verifiedImageMime(buffer, att.mimeType));
     if (sanitizeResult.ok) {
       deps.logger.debug?.({
         url: att.url,
@@ -96,7 +111,7 @@ export async function processImageAttachment(
 
   try {
     const result = await deps.imageAnalyzer.analyze(buffer, "Describe this image in detail", {
-      mimeType: att.mimeType ?? "image/jpeg",
+      mimeType: await verifiedImageMime(buffer, att.mimeType),
     });
 
     if (result.ok) {

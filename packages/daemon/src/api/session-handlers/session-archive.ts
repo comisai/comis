@@ -27,7 +27,7 @@ import {
 } from "@comis/core";
 import type { ContextStoreScope } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
+import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
 
 /**
  * Bind the session archive/lifecycle handlers. Object-spread compatible with
@@ -47,7 +47,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       const userParams = stripInternalFields(rawParams);
       SessionDeleteContract.request.parse(userParams);
 
-      const data = deps.sessionStore.loadByFormattedKey(sessionKey);
+      const data = loadSessionAnyStore(deps, sessionKey);
       if (!data) throw new Error(`Session not found: ${sessionKey}`);
 
       // Archive transcript before deletion
@@ -129,7 +129,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       const userParams = stripInternalFields(rawParams);
       SessionResetContract.request.parse(userParams);
 
-      const data = deps.sessionStore.loadByFormattedKey(sessionKey);
+      const data = loadSessionAnyStore(deps, sessionKey);
       if (!data) throw new Error(`Session not found: ${sessionKey}`);
 
       const previousMessageCount = data.messages.length;
@@ -137,8 +137,25 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // Clear messages but preserve metadata (identity)
       deps.sessionStore.saveByFormattedKey(sessionKey, [], data.metadata);
 
+      // COMPACT-STORE-MISS (30uc-20260624): a live chat is file-JSONL-only, so the
+      // SQLite saveByFormattedKey([]) above is a NO-OP for it — the runtime destroy
+      // is what actually clears the working transcript (mirrors session.delete +
+      // reset_conversation). Without it, reset reported success while the JSONL
+      // survived and the conversation resurrected on the next turn (a false success).
+      // Identity (ROLE/IDENTITY/SOUL workspace files) is unaffected — only the
+      // conversation transcript is cleared, matching reset's "keep identity" contract.
+      let runtimeSessionDestroyed = false;
+      if (deps.destroyRuntimeSession) {
+        runtimeSessionDestroyed = await deps.destroyRuntimeSession(sessionKey);
+      }
+
       // Clear approval cache entries for the reset session.
       deps.approvalGate?.clearApprovalCache(sessionKey);
+
+      deps.logger.info(
+        { method: SessionResetContract.method, sessionKey, previousMessageCount, runtimeSessionDestroyed },
+        "Session reset (messages cleared, identity preserved)",
+      );
 
       const result = { sessionKey, reset: true as const, previousMessageCount };
       if (IS_DEV) SessionResetContract.response.parse(result);
@@ -155,7 +172,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       const userParams = stripInternalFields(rawParams);
       SessionExportContract.request.parse(userParams);
 
-      const data = deps.sessionStore.loadByFormattedKey(sessionKey);
+      const data = loadSessionAnyStore(deps, sessionKey);
       if (!data) throw new Error(`Session not found: ${sessionKey}`);
 
       return {
@@ -221,7 +238,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // but no live session, or pipeline session whose JSONL was already deleted),
       // skip the save and report 0.
       let sessionMessagesCleared = 0;
-      const sessionData = deps.sessionStore.loadByFormattedKey(sessionKey);
+      const sessionData = loadSessionAnyStore(deps, sessionKey);
       if (sessionData) {
         sessionMessagesCleared = sessionData.messages.length;
         deps.sessionStore.saveByFormattedKey(sessionKey, [], sessionData.metadata);

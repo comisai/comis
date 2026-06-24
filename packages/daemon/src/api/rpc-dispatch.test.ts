@@ -642,14 +642,14 @@ describe("createRpcDispatch", () => {
       .map((c: unknown[]) => c[1] as Record<string, unknown>);
   }
 
-  it("ORIGIN-01: an _agentId-carrying admin call on the IN-PROCESS dispatch path is denied + audited (the bypass the agent actually traverses)", async () => {
+  it("ORIGIN-01: a NON-admin _agentId-carrying admin call on the IN-PROCESS dispatch path is denied + audited (the confused-deputy floor)", async () => {
     const dispatch = await getDispatch();
-    // secrets.get is admin-scoped. _trustLevel:"admin" is the agent's ALS
-    // trust — deny-by-origin must fire on the ORIGIN regardless. We dispatch()
-    // directly: this is the in-process leg, not the gateway.
+    // secrets.set is admin-scoped. _trustLevel:"user" is a NON-admin agent turn —
+    // deny-by-origin must fire (a guest/user/prompt-injected turn can never reach
+    // an admin method). We dispatch() directly: the in-process leg, not the gateway.
     await expect(
-      dispatch("secrets.set", { _agentId: "forged", _trustLevel: "admin", name: "X", value: "Y" }),
-    ).rejects.toThrow(/not reachable from an agent origin/i);
+      dispatch("secrets.set", { _agentId: "forged", _trustLevel: "user", name: "X", value: "Y" }),
+    ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
 
     const audits = capturedAudits();
     expect(audits).toHaveLength(1);
@@ -658,16 +658,29 @@ describe("createRpcDispatch", () => {
     expect(audits[0]!.actionType).toBe("secrets.set");
   });
 
-  it("ORIGIN-01: the chokepoint denies across ≥3 DIFFERENT admin scope families (whole admin set, not a subset)", async () => {
+  it("ORIGIN-01 (trust-tier, 30uc-20260624): an ADMIN-trust agent reaches an admin method (inherits the admin user's privileges, no deny audit)", async () => {
+    const dispatch = await getDispatch();
+    // The agent acts for an admin-trust user (operator's senderTrustMap grant) →
+    // it INHERITS admin and the deny-by-origin chokepoint passes it through to the
+    // handler. secrets.set's mock handler resolves; NO capability_denied audit fires.
+    await expect(
+      dispatch("secrets.set", { _agentId: "agent-a", _trustLevel: "admin", name: "X", value: "Y" }),
+    ).resolves.toBeDefined();
+    const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
+    expect(denials).toHaveLength(0);
+  });
+
+  it("ORIGIN-01: the chokepoint denies a NON-admin agent across ≥3 DIFFERENT admin scope families (whole admin set, not a subset)", async () => {
     // Three admin methods from distinct domains: secrets.*, auth.*, mcp.* —
-    // all contract-declared `scopes:["admin"]` and present in the mock maps.
+    // all contract-declared `scopes:["admin"]` and present in the mock maps. A
+    // NON-admin agent origin (user trust) is denied on all of them.
     const adminMethods = ["secrets.delete", "auth.logout", "mcp.oauth_login"];
     for (const method of adminMethods) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
       await expect(
-        dispatch(method, { _agentId: "forged", _trustLevel: "admin" }),
-      ).rejects.toThrow(/not reachable from an agent origin/i);
+        dispatch(method, { _agentId: "forged", _trustLevel: "user" }),
+      ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
       const audits = capturedAudits();
       expect(audits, `audit for ${method}`).toHaveLength(1);
       expect(audits[0]!.actionType, `actionType for ${method}`).toBe(method);
@@ -820,10 +833,13 @@ describe("createRpcDispatch", () => {
     for (const method of STILL_DENIED) {
       vi.clearAllMocks();
       const dispatch = await getDispatch();
+      // A NON-admin agent turn (user trust) is the confused-deputy case these
+      // control-plane methods must keep denying (admin-trust now inherits — tested
+      // separately; the floor for guest/user/injected turns is what matters here).
       await expect(
-        dispatch(method, { _agentId: "agentA", _trustLevel: "admin" }),
-        `${method} must stay denied from an agent origin`,
-      ).rejects.toThrow(/not reachable from an agent origin/i);
+        dispatch(method, { _agentId: "agentA", _trustLevel: "user" }),
+        `${method} must stay denied from a non-admin agent origin`,
+      ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
       const denials = capturedAudits().filter((a) => a.kind === "capability_denied");
       expect(denials, `${method} must audit the deny-by-origin denial`).toHaveLength(1);
     }
@@ -1037,14 +1053,15 @@ describe("createRpcDispatch", () => {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
 
-    // secrets.set is deny-by-origin (ADMIN_METHODS) — assertNotAgentOrigin audits
-    // it once; the per-cap emitter (AgentCapability-only) must NOT add a second.
+    // secrets.set is deny-by-origin (ADMIN_METHODS) — a NON-admin agent (user trust)
+    // is denied once by assertNotAgentOrigin; the per-cap emitter (AgentCapability-
+    // only) must NOT add a second deny audit.
     await expect(
-      dispatch("secrets.set", { _agentId: "agentA", _trustLevel: "admin", name: "X", value: "Y" }),
-    ).rejects.toThrow(/not reachable from an agent origin/i);
+      dispatch("secrets.set", { _agentId: "agentA", _trustLevel: "user", name: "X", value: "Y" }),
+    ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
     const denials = auditEvents().filter((a) => a.kind === "capability_denied");
     expect(denials).toHaveLength(1);
-    expect((denials[0]!.metadata as Record<string, unknown>).reason).toBe("agent_origin_admin");
+    expect((denials[0]!.metadata as Record<string, unknown>).reason).toBe("non_admin_agent_origin");
   });
 });
 
@@ -1322,18 +1339,19 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
 
-    // secrets.set is deny-by-origin → assertNotAgentOrigin throws a PLAIN Error
-    // (NOT a CapabilityDeniedError), so the breaker's instanceof guard excludes it.
+    // secrets.set is deny-by-origin → for a NON-admin agent (user trust)
+    // assertNotAgentOrigin throws a PLAIN Error (NOT a CapabilityDeniedError), so
+    // the breaker's instanceof guard excludes it.
     await expect(
       dispatch("secrets.set", {
         _agentId: "agentA",
-        _trustLevel: "admin",
+        _trustLevel: "user",
         _callerSessionKey: "tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
         name: "X",
         value: "Y",
       }),
-    ).rejects.toThrow(/not reachable from an agent origin/i);
+    ).rejects.toThrow(/not reachable from a non-admin agent origin/i);
 
     expect(denialBreaker.recordDenial).not.toHaveBeenCalled();
   });
@@ -1701,9 +1719,10 @@ describe("createRpcDispatch — pipeline:authored tier resolver wiring (TELEM-01
 // ---------------------------------------------------------------------------
 // INTRO-01/02 (Phase 215-04): capabilities.introspect dispatch wiring. The
 // capabilities-handlers module is NOT mocked, so the REAL createCapabilitiesHandlers
-// runs — this asserts the dispatch-level contract: gated on boundedAutonomy,
-// agent-reachable (NOT denied by origin — it is scopes:["rpc"]/"ungated", not in
-// ADMIN_METHODS), and self-scoped to the caller's _agentId.
+// runs — this asserts the dispatch-level contract: registered UNCONDITIONALLY
+// (finding E, 30uc-20260624 — no longer gated on boundedAutonomy), agent-reachable
+// (NOT denied by origin — it is scopes:["rpc"]/"ungated", not in ADMIN_METHODS),
+// and self-scoped to the caller's _agentId.
 // ---------------------------------------------------------------------------
 
 describe("createRpcDispatch — capabilities.introspect wiring (INTRO-01/02)", () => {
@@ -1757,16 +1776,31 @@ describe("createRpcDispatch — capabilities.introspect wiring (INTRO-01/02)", (
     expect(result.caps).not.toEqual([]);
   });
 
-  it("capabilities.introspect is NOT registered when boundedAutonomy is absent (gated spread)", async () => {
+  it("capabilities.introspect IS registered (disabled-state) when boundedAutonomy is absent (finding E)", async () => {
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
-    // Minimal deps WITHOUT boundedAutonomy — the spread is {} → unknown method.
+    // The no-autonomy wiring: agents + defaultAgentId come from config and are
+    // present, but NO agent resolves to an autonomy-bearing profile, so
+    // boundedAutonomy was never constructed. Pre-finding-E this gated the spread
+    // to {} and `comis whoami` died with "Unknown RPC method". It must now resolve
+    // to a clean disabled-state — registered unconditionally, budget omitted.
     const dispatch = createRpcDispatch({
       logger: mockLogger,
       container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
+      defaultAgentId: "default",
+      agents: { default: { autonomy: { profile: "assistant", capabilities: [] } } },
+      // boundedAutonomy + resolveRootRunId deliberately ABSENT.
     } as never);
 
-    await expect(dispatch("capabilities.introspect", {})).rejects.toThrow(
-      "Unknown RPC method: capabilities.introspect",
-    );
+    const result = (await dispatch("capabilities.introspect", { _agentId: "default" })) as {
+      agentId: string;
+      enabled: boolean;
+      caps: string[];
+      budget?: unknown;
+    };
+
+    expect(result.agentId).toBe("default");
+    expect(typeof result.enabled).toBe("boolean"); // honest disabled/enabled flag, no crash
+    expect(result.caps).toEqual([]); // assistant profile → no orch caps
+    expect(result.budget).toBeUndefined(); // no boundedAutonomy → no snapshot, omitted (honest)
   });
 });

@@ -120,6 +120,14 @@ export interface ConfigPostureInputs {
    * agents at boot. Optional (defaults to 0 in the record).
    */
   pricingGapCount?: number;
+  /**
+   * RELAX-SURFACE (30uc-20260624, Track-M): `true` when the operator set
+   * `security.agentToAgent.sandboxNoDowngrade: false` — a RELAXED security default
+   * (a spawned child may run with a weaker sandbox posture than its parent). The
+   * Track-M relaxation-surfacing rule wants a relaxed default surfaced at boot, not
+   * silent. A boolean, never config bodies. Optional (defaults to `false`).
+   */
+  sandboxNoDowngradeDisabled?: boolean;
 }
 
 /**
@@ -139,13 +147,15 @@ export function buildConfigPostureRecord(
 ): void {
   const chimericModelCount = inputs.chimericModelCount ?? 0;
   const pricingGapCount = inputs.pricingGapCount ?? 0;
+  const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
     inputs.canaryFallbackActive ||
     inputs.servedBelowConfiguredCount > 0 ||
     chimericModelCount > 0 ||
-    pricingGapCount > 0;
+    pricingGapCount > 0 ||
+    sandboxNoDowngradeDisabled;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -164,6 +174,9 @@ export function buildConfigPostureRecord(
       // SPEND-05: agents burning tokens on remote-unknown-priced models
       // (resolvePricingState == "unknown"). A COUNT, never agent ids/model names.
       pricingGapCount,
+      // RELAX-SURFACE: the no-downgrade sandbox invariant is DISABLED (relaxed
+      // default surfaced at boot, not silent). A boolean, never config bodies.
+      sandboxNoDowngradeDisabled,
     }),
   });
 }

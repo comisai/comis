@@ -3377,13 +3377,12 @@
           "type": "string"
         },
         "session_key": {
-          "description": "The formatted session key (e.g., tenant:user:channel)",
+          "description": "The formatted session key (e.g., tenant:user:channel). For the COMPACT action you may OMIT this (or pass \"self\") to compact YOUR OWN current session — you do not need to construct or guess your session key. delete/reset/export still require an explicit key.",
           "type": "string"
         }
       },
       "required": [
-        "action",
-        "session_key"
+        "action"
       ],
       "type": "object"
     },

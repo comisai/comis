@@ -293,13 +293,16 @@ export function spawnNode(
 
   // Regular node spawn wrapped in gatedSpawn for global concurrency
   gatedSpawn(state, deps, config, gs, nodeId, () => {
+    // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution
+    // cap. Resolved ONCE here so the spawn arg + the graph:node_spawned obs event agree.
+    const nodeTokenBudget = resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget);
     const runId = deps.subAgentRunner.spawn({
       task: envelopedTask,
       agentId: node.agentId ?? deps.defaultAgentId,
       model: node.model,
       max_steps: node.maxSteps,
       // BUDGET-01/02 (D3): per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
-      tokenBudget: resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget),
+      tokenBudget: nodeTokenBudget,
       callerSessionKey: gs.callerSessionKey,
       callerAgentId: gs.callerAgentId,
       callerType: "graph",
@@ -332,6 +335,18 @@ export function spawnNode(
         graphId: gs.graphId,
         nodeId,
         status: "running" as const,
+        timestamp: systemNowMs(),
+      });
+      // Finding D (TREE-01): emit the spawn-tree leaf producer for this graph node.
+      // A graph node spawns in-process and never crosses the socket chokepoint that
+      // emits capability:audited, so without this `comis explain` shows only the
+      // root. Content-free: ids + child agentId + rootRunId + the per-node cap.
+      deps.eventBus.emit("graph:node_spawned", {
+        graphId: gs.graphId,
+        nodeId,
+        rootRunId: gs.rootRunId ?? gs.graphId, // tree-stable root; fall back to graphId
+        agentId: node.agentId ?? deps.defaultAgentId,
+        tokenBudget: nodeTokenBudget ?? null,
         timestamp: systemNowMs(),
       });
     }
@@ -615,7 +630,11 @@ export function handleSubAgentCompleted(
   // 5d. Per-node spend + node-first breach (BUDGET-02/03; D5 — BEFORE the step-6
   // state transition so a breaching SUCCESSFUL run ends `failed` not `completed`,
   // and BEFORE the cumulative 6.6 check). Records nodeTokenSpend always (IN-01).
-  const budgetBreach = applyNodeBudgetBreach(deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey);
+  // P0-A-OBS: pass the agent-layer finishReason so a per-node budget PRE-CHECK
+  // abort (BudgetGuard rejected the next call before the overage → spend <= cap,
+  // finishReason "budget_exceeded") still terminal-fails the node + emits
+  // subagent:budget_exceeded — not just the post-hoc spend > cap overage.
+  const budgetBreach = applyNodeBudgetBreach(deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey, run?.result?.finishReason);
 
   // 6. Synchronous state machine update
   if (budgetBreach.breached) {
@@ -724,7 +743,10 @@ export function handleSubAgentCompleted(
       nodeId,
       status: nodeCompleted ? "completed" as const : "failed" as const,
       durationMs: finalNodeState?.startedAt ? systemNowMs() - finalNodeState.startedAt : undefined,
-      error: nodeCompleted ? undefined : (run?.error ?? "Unknown error"),
+      // P0-A-OBS: prefer the node STATE error (markNodeFailed's authoritative
+      // reason — e.g. the budget-breach attribution) over the raw run.error, which
+      // is empty for an agent-layer budget pre-check abort.
+      error: nodeCompleted ? undefined : (finalNodeState?.error || run?.error || "Unknown error"),
       // BUDGET-03: per-node spend on the transition event (additive; undefined when
       // the completion omits them — byte-identical shape otherwise).
       tokensUsed: event.tokensUsed,

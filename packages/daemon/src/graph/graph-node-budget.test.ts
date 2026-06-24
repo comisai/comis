@@ -121,6 +121,44 @@ describe("applyNodeBudgetBreach", () => {
     expect(breach![1]).toMatchObject({ agentId: "default-agent" });
   });
 
+  it("P0-A-OBS: breaches on the agent-layer budget pre-check (finishReason 'budget_exceeded') even when spend <= budget", () => {
+    // The agent's BudgetGuard pre-check rejects the NEXT LLM call BEFORE the
+    // overage, so spend stays within the per-node cap — but the node DID abort on
+    // its budget (finishReason 'budget_exceeded'). Pre-fix this skipped the
+    // spend>budget gate → NO subagent:budget_exceeded event, node error empty,
+    // tokensUsed 0. The agent-layer finishReason must drive the breach + the event.
+    const markNodeFailed = vi.fn(() => ({ ok: true, value: { skipped: [], newlyReady: [], retrying: [] } }));
+    const gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 1_000, agentId: "child-x" }], markNodeFailed });
+    const deps = makeDeps();
+    // spend 800 < budget 1000 — the pre-check fired before any overage.
+    const result = applyNodeBudgetBreach(deps, { subAgentTokenBudget: null }, gs, "n1", 800, "sk-1", "budget_exceeded");
+
+    expect(result.breached).toBe(true);
+    expect(markNodeFailed).toHaveBeenCalledWith("n1", expect.stringContaining("budget"), "sk-1", { terminal: true });
+    const emit = deps.eventBus.emit as unknown as ReturnType<typeof vi.fn>;
+    const breach = emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded");
+    expect(breach, "subagent:budget_exceeded must fire on the pre-check abort path").toBeDefined();
+    expect(breach![1]).toMatchObject({ graphId: "g1", nodeId: "n1", agentId: "child-x", tokenBudget: 1_000, tokensUsed: 800 });
+  });
+
+  it("does NOT breach on a normal finishReason when spend is within budget (no false budget breach)", () => {
+    const markNodeFailed = vi.fn();
+    const gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 1_000 }], markNodeFailed });
+    const result = applyNodeBudgetBreach(makeDeps(), { subAgentTokenBudget: null }, gs, "n1", 800, "sk-1", "stop");
+    expect(result.breached).toBe(false);
+    expect(markNodeFailed).not.toHaveBeenCalled();
+  });
+
+  it("does NOT breach on a budget finishReason when NO per-node budget resolves (per-root abort is a separate signal)", () => {
+    // A budget finishReason with no per-node cap is a per-ROOT abort, not a per-node
+    // breach — applyNodeBudgetBreach must stay silent (handleBudgetExceeded owns that).
+    const markNodeFailed = vi.fn();
+    const gs = makeGs({ nodes: [{ nodeId: "n1" }], markNodeFailed });
+    const result = applyNodeBudgetBreach(makeDeps(), { subAgentTokenBudget: null }, gs, "n1", 800, "sk-1", "budget_exceeded");
+    expect(result.breached).toBe(false);
+    expect(markNodeFailed).not.toHaveBeenCalled();
+  });
+
   it("does NOT breach when the graph is already terminal (guards a late completion)", () => {
     const markNodeFailed = vi.fn();
     const gs = makeGs({ nodes: [{ nodeId: "n1", tokenBudget: 1_000 }], isTerminal: true, markNodeFailed });

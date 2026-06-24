@@ -282,15 +282,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // the agent reaches it; the spread closes the contract↔handler parity gate
     // via [CapabilitiesIntrospectContract.method] in the SAME wave the handler +
     // codegen land (the 188 BLOCKER-1 same-wave rule).
-    ...(deps.boundedAutonomy
-      ? createCapabilitiesHandlers({
-          boundedAutonomy: deps.boundedAutonomy,
-          resolveRootRunId: deps.resolveRootRunId,
-          agents: deps.agents,
-          defaultAgentId: deps.defaultAgentId,
-          logger: deps.logger,
-        })
-      : {}),
+    // Finding E (30uc-20260624): register UNCONDITIONALLY (no longer gated on deps.boundedAutonomy).
+    // When no autonomy agent is wired, the handler returns a clean disabled-state ({enabled:false,
+    // caps:[]}) — `comis whoami` / capabilities.introspect must never be "Unknown RPC method".
+    // The budget snapshot is omitted when boundedAutonomy is absent (handler guards it).
+    ...createCapabilitiesHandlers({
+      boundedAutonomy: deps.boundedAutonomy,
+      resolveRootRunId: deps.resolveRootRunId,
+      agents: deps.agents,
+      defaultAgentId: deps.defaultAgentId,
+      logger: deps.logger,
+    }),
     ...((deps.graphCoordinator || deps.namedGraphStore) ? createGraphHandlers({
       // Handler factory consumes OrchestratorApiDeps (narrowed to require
       // graphCoordinator). Spread `...deps` so broader slice fields

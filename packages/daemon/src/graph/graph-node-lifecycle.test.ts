@@ -691,6 +691,43 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded")).toBeUndefined();
   });
 
+  it("P0-A-OBS: a budget PRE-CHECK abort (finishReason 'budget_exceeded', spend <= cap) fails the node + emits the breach", () => {
+    const callOrder: string[] = [];
+    const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({
+      nodes: [{ nodeId: "n1", tokenBudget: 1_000, agentId: "child-a" }],
+      onFailure: "continue",
+      runNodeId: "n1",
+      callOrder,
+    });
+    // The agent self-aborted on its per-node budget BEFORE any overage: the run
+    // ended with finishReason "budget_exceeded" and spend (800) <= cap (1000).
+    // Pre-fix the graph saw spend <= cap → applyNodeBudgetBreach skipped the gate
+    // → NO subagent:budget_exceeded event, node not budget-failed (the obs gap).
+    const deps = makeCompletionDeps();
+    (deps.subAgentRunner.getRunStatus as ReturnType<typeof vi.fn>).mockReturnValue({
+      status: "failed",
+      result: { response: "", finishReason: "budget_exceeded" },
+      error: "",
+      sessionKey: "sk-1",
+    });
+    const handleBudgetExceeded = vi.fn();
+
+    handleSubAgentCompleted(
+      makeState(), deps, makeCompletionConfig(), gs,
+      { runId: "run-1", success: false, tokensUsed: 800, cost: 0.01 },
+      noopCallbacks(handleBudgetExceeded),
+    );
+
+    expect(markNodeFailed).toHaveBeenCalledTimes(1);
+    expect(String(markNodeFailed.mock.calls[0][1])).toContain("budget");
+    expect(markNodeFailed.mock.calls[0][3]).toEqual({ terminal: true });
+    expect(markNodeCompleted).not.toHaveBeenCalled();
+    const emit = (deps.eventBus.emit as ReturnType<typeof vi.fn>);
+    const breach = emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded");
+    expect(breach, "subagent:budget_exceeded must fire on the pre-check abort path").toBeDefined();
+    expect(breach![1]).toMatchObject({ graphId: gs.graphId, nodeId: "n1", agentId: "child-a", tokenBudget: 1_000, tokensUsed: 800 });
+  });
+
   it("D5 node-first precedence: markNodeFailed runs BEFORE handleBudgetExceeded", () => {
     const callOrder: string[] = [];
     const { gs } = makeBudgetGs({

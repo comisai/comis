@@ -23,7 +23,7 @@
  * @module
  */
 
-import { validateUrl } from "@comis/core";
+import { validateUrl, validateLocalServerUrl } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise, suppressError } from "@comis/shared";
@@ -58,6 +58,16 @@ export interface SsrfGuardedFetcher {
 export interface SsrfFetcherConfig {
   /** Maximum response body size (from MediaInfraConfigSchema.maxRemoteFetchBytes). */
   readonly maxBytes: number;
+  /**
+   * MEDIA-INPUT-SSRF (30uc-20260624 UC-05): operator-configured trusted fetch ORIGINS
+   * (`scheme://host:port`, e.g. a self-hosted local Bot API server / the test emulator at
+   * `http://127.0.0.1:38411`), normalized from the channel `apiRoot` config. A media URL whose
+   * origin EXACTLY matches one of these is validated leniently (loopback/private-IP permitted)
+   * so the file-byte download from a custom apiRoot works; EVERY other URL — including an
+   * arbitrary loopback like `127.0.0.1:4766` — still goes through the strict `validateUrl`
+   * SSRF firewall. Host:port-scoped, so the SSRF block (UC-10) is preserved. Default: none.
+   */
+  readonly trustedFetchOrigins?: ReadonlyArray<string>;
 }
 
 /**
@@ -152,8 +162,22 @@ export function createSsrfGuardedFetcher(
     async fetch(url: string): Promise<Result<FetchedMedia, Error>> {
       return fromPromise(
         (async (): Promise<FetchedMedia> => {
-          // 1. Validate URL via SSRF guard (DNS resolution + IP range check + DNS pinning)
-          const validated = await validateUrl(url);
+          // 1. Validate URL via SSRF guard (DNS resolution + IP range check + DNS pinning).
+          //    MEDIA-INPUT-SSRF: a URL whose ORIGIN exactly matches a configured trusted apiRoot
+          //    (a self-hosted local Bot API server / the emulator) is validated leniently
+          //    (loopback/private permitted via validateLocalServerUrl); everything else — incl. any
+          //    other loopback URL — goes through strict validateUrl (the SSRF firewall, UC-10).
+          let urlOrigin: string | undefined;
+          try {
+            urlOrigin = new URL(url).origin;
+          } catch {
+            /* malformed URL → urlOrigin stays undefined → strict validateUrl rejects it below */
+          }
+          const isTrustedOrigin =
+            urlOrigin !== undefined && (config.trustedFetchOrigins ?? []).includes(urlOrigin);
+          const validated = isTrustedOrigin
+            ? await validateLocalServerUrl(url, [new URL(url).hostname])
+            : await validateUrl(url);
           if (!validated.ok) {
             logger.error(
               {

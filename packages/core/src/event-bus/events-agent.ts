@@ -128,6 +128,14 @@ export interface AgentEvents {
     resultBytes?: number;
     /** 12-hex digest of the full result payload (D4) — never the body. */
     resultDigest?: string;
+    /** F-OBS-2 (30uc-20260624): CONTENT-FREE grounding summary for web_search /
+     *  web_fetch — the number of results returned (1 for a single fetch). Lets a
+     *  "grounded in fetched results" predicate be verified from the trajectory
+     *  without a DEBUG daemon-log grep. Never titles/snippets/bodies. */
+    resultCount?: number;
+    /** F-OBS-2: the source HOSTS the web result came from (e.g. ["example.com"]) —
+     *  hosts ONLY, never full URLs with paths/queries, never bodies. */
+    domains?: string[];
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */

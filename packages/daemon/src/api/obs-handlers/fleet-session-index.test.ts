@@ -43,7 +43,8 @@ function dayKeyForMs(ms: number): string {
   return systemDateFrom(ms).toISOString().slice(0, 10);
 }
 
-/** Build a session_started JSONL object. */
+/** Build a session_started JSONL object. `ts` (epoch ms) overrides the row
+ *  timestamp — used to place a row inside/outside an hours-window (F-OBS-1b). */
 function startedRow(
   overrides: {
     agentId: string;
@@ -51,12 +52,13 @@ function startedRow(
     channelId: string;
     sessionId?: string;
     synthetic?: boolean;
+    ts?: number;
   },
 ): Record<string, unknown> {
   return {
     traceSchema: "comis-session-index",
     schemaVersion: 1,
-    ts: new Date(systemNowMs()).toISOString(),
+    ts: new Date(overrides.ts ?? systemNowMs()).toISOString(),
     event: "session_started",
     sessionId: overrides.sessionId ?? `sess-${overrides.agentId}`,
     sessionKey: overrides.sessionId ?? `sess-${overrides.agentId}`,
@@ -76,12 +78,13 @@ function endedRow(
     totalTokens: number;
     sessionId?: string;
     synthetic?: boolean;
+    ts?: number;
   },
 ): Record<string, unknown> {
   return {
     traceSchema: "comis-session-index",
     schemaVersion: 1,
-    ts: new Date(systemNowMs()).toISOString(),
+    ts: new Date(overrides.ts ?? systemNowMs()).toISOString(),
     event: "session_ended",
     sessionId: overrides.sessionId ?? "sess-x",
     exitReason: overrides.exitReason,
@@ -181,7 +184,7 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
 
     expect(result.exitReasons).toEqual({ success: 2, error: 1 });
   });
@@ -230,7 +233,7 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
 
     expect(result.turnTotal).toBe(2);
     expect(result.tokenTotal).toBe(29953 + 22 + 1659 + 8);
@@ -253,7 +256,7 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
 
     // Authoritative ended totals (2 / 330), NOT 4 / 660 (live + ended).
     expect(result.turnTotal).toBe(2);
@@ -286,7 +289,7 @@ describe("readSessionIndexWindow", () => {
     ]);
 
     // Default: synthetic excluded — only the real agent/channel, no harness totals.
-    const excluded = readSessionIndexWindow(dataDir, systemNowMs());
+    const excluded = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
     expect(excluded.activeAgents).toEqual(["agent-real"]);
     expect(excluded.activeChannels).toEqual(["telegram:111"]);
     expect(excluded.exitReasons).toEqual({});
@@ -295,7 +298,7 @@ describe("readSessionIndexWindow", () => {
 
     // Opt-in: synthetic included — proves the filter is not a no-op. nowMs is
     // the explicit window upper bound (the 3rd positional arg post-WR-01).
-    const included = readSessionIndexWindow(dataDir, systemNowMs(), systemNowMs(), { includeSynthetic: true });
+    const included = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS, systemNowMs(), { includeSynthetic: true });
     expect(included.activeAgents).toEqual(["agent-real", "agent-synthetic"]);
     expect(included.activeChannels).toEqual(["discord:999", "telegram:111"]);
     expect(included.exitReasons).toEqual({ harness: 1 });
@@ -315,7 +318,7 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
     expect(result.activeAgents).toEqual(["agent-real"]);
   });
 
@@ -356,7 +359,7 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
 
     expect(result.activeAgents).toEqual(["agent-a"]);
     expect(result.exitReasons).toEqual({ success: 1 });
@@ -370,7 +373,7 @@ describe("readSessionIndexWindow", () => {
     const twoDaysAgo = dayKeyForMs(systemNowMs() - 2 * DAY_MS);
     const dataDir = makeDataDirWithDayFiles([
       {
-        // OLDER than the window (sinceMs is today) — must NOT be opened.
+        // OLDER than the window's earliest day-key (yesterday) — must NOT be opened.
         dayKey: twoDaysAgo,
         lines: [
           JSON.stringify(
@@ -388,13 +391,44 @@ describe("readSessionIndexWindow", () => {
       },
     ]);
 
-    // Window starts today → only today's day-key is iterated.
-    const result = readSessionIndexWindow(dataDir, systemNowMs());
+    // Window is [yesterday .. today] → twoDaysAgo's day-key is never iterated.
+    const result = readSessionIndexWindow(dataDir, systemNowMs() - DAY_MS);
 
     expect(result.activeAgents).toEqual(["agent-today"]);
     expect(result.activeAgents).not.toContain("agent-old");
+    expect(result.daysRead).toBe(1); // today's file
+    expect(result.daysMissing).toBe(1); // yesterday is in-window but absent
+  });
+
+  it("windows activeChannels/activeAgents to [sinceMs..nowMs] WITHIN a day-file, not whole-day (F-OBS-1b)", () => {
+    // The bug (30uc-20260624): a `--since 1h` window opens today's WHOLE-day
+    // session-index file and counted EVERY session_started channel/agent in it,
+    // regardless of row ts — so a 1-session window reported 39 channels + a
+    // prior-run agent. Row-ts must be windowed, not just the day-key.
+    const now = systemNowMs();
+    const within = now - 30 * 60 * 1000; // 30 min ago — inside a 1h window
+    const stale = now - 5 * 60 * 60 * 1000; // 5h ago — same day-file, OUTSIDE a 1h window
+    const today = dayKeyForMs(now);
+    const dataDir = makeDataDirWithDayFiles([
+      {
+        dayKey: today,
+        lines: [
+          JSON.stringify(startedRow({ agentId: "agent-fresh", channelType: "telegram", channelId: "111", ts: within })),
+          JSON.stringify(startedRow({ agentId: "agent-stale", channelType: "discord", channelId: "999", ts: stale })),
+        ],
+      },
+    ]);
+
+    // 1-hour window: sinceMs = now - 1h, nowMs = now.
+    const result = readSessionIndexWindow(dataDir, now - 60 * 60 * 1000, now);
+
+    // Only the in-window row's agent/channel — the stale same-day row is excluded.
+    expect(result.activeAgents).toEqual(["agent-fresh"]);
+    expect(result.activeChannels).toEqual(["telegram:111"]);
+    expect(result.activeAgents).not.toContain("agent-stale");
+    expect(result.activeChannels).not.toContain("discord:999");
+    // The day-file WAS opened/read (the windowing is per-row, not per-file here).
     expect(result.daysRead).toBe(1);
-    expect(result.daysMissing).toBe(0);
   });
 
   it("uses the INJECTED nowMs as the window upper bound, not real Date.now() (WR-01 determinism seam)", () => {
@@ -407,12 +441,15 @@ describe("readSessionIndexWindow", () => {
     // (daysRead 0). This FAILS on the pre-patch signature/code.
     const fixedNow = Date.UTC(2020, 0, 2, 9, 0, 0); // 2020-01-02T09:00:00Z
     const fixedDayKey = dayKeyForMs(fixedNow); // "2020-01-02"
+    // Stamp the ROW ts to the fixed instant too (F-OBS-1b windows by row-ts, not
+    // just day-key) — an hour before nowMs so both rows sit inside the window.
+    const rowTs = fixedNow - 60 * 60 * 1000;
     const dataDir = makeDataDirWithDayFiles([
       {
         dayKey: fixedDayKey,
         lines: [
-          JSON.stringify(startedRow({ agentId: "agent-fixed", channelType: "telegram", channelId: "111" })),
-          JSON.stringify(endedRow({ exitReason: "success", turnCount: 2, totalTokens: 42, sessionId: "f1" })),
+          JSON.stringify(startedRow({ agentId: "agent-fixed", channelType: "telegram", channelId: "111", ts: rowTs })),
+          JSON.stringify(endedRow({ exitReason: "success", turnCount: 2, totalTokens: 42, sessionId: "f1", ts: rowTs })),
         ],
       },
     ]);

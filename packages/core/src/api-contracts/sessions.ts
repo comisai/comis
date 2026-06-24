@@ -579,10 +579,14 @@ export const SessionExportContract = defineContract({
  * Handler path: session-handlers.ts:941-965.
  *
  * Bespoke pre-Zod:
- *   - Missing `session_key` → `"Missing required parameter: session_key"`.
+ *   - Missing `session_key` AND no caller session → `"Missing required parameter:
+ *     session_key"`.
  *   - Unknown session → `"Session not found: <key>"`.
  *
- * Request: `{ session_key, instructions? }`.
+ * Request: `{ session_key?, instructions? }`. COMPACT-KEY (30uc-20260624):
+ * `session_key` is OPTIONAL — omit it (or pass `"self"`/`"current"`) to compact
+ * the CALLER's OWN session, resolved from the dispatcher-injected
+ * `_callerSessionKey`, so an agent never constructs/guesses its own key.
  *
  * Response: `{ sessionKey, messageCount, estimatedTokens, compactionTriggered,
  * instructions: string | null }`. `compactionTriggered` is always `true`
@@ -592,7 +596,9 @@ export const SessionExportContract = defineContract({
 export const SessionCompactContract = defineContract({
   method: "session.compact",
   request: z.object({
-    session_key: z.string(),
+    // OPTIONAL (COMPACT-KEY): omit or pass "self"/"current" to compact the
+    // caller's own session via the injected _callerSessionKey.
+    session_key: z.string().optional(),
     instructions: z.string().optional(),
   }),
   response: z.object({

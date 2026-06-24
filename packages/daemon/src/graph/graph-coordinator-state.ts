@@ -172,7 +172,7 @@ export interface GraphCoordinatorDeps {
       isLeafNode?: boolean;
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
-    getRunStatus(runId: string): { status: string; result?: { response: string }; error?: string; sessionKey?: string } | undefined;
+    getRunStatus(runId: string): { status: string; result?: { response: string; finishReason?: string }; error?: string; sessionKey?: string } | undefined;
     /** Phase 213 CR-01: resolve a driving sub-agent's run by its session key so a
      *  graph submitted BY a sub-agent inherits that run's tree root. Optional
      *  (older narrowed wiring); absent ⇒ the resolver/mint fallback applies. */

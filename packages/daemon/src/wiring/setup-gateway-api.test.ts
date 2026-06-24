@@ -70,8 +70,11 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
 
     const calls = registerMethod.mock.calls;
+    // NOTE: obs.diagnostics + obs.explain are now scopes:["rpc"] (OBS-SELF-DEAD,
+    // 30uc-20260624 UC-14) — agent self-observability — so they register agent-reachable,
+    // NOT admin. The DAEMON-WIDE/sensitive obs methods below stay admin.
     const obsMethods = [
-      "obs.diagnostics", "obs.billing.byProvider", "obs.billing.byAgent",
+      "obs.billing.byProvider", "obs.billing.byAgent",
       "obs.billing.bySession", "obs.billing.total", "obs.billing.usage24h",
       "obs.channels.all", "obs.channels.stale", "obs.channels.get",
       "obs.delivery.recent", "obs.delivery.stats",
@@ -88,15 +91,15 @@ describe("registerRpcMethods", () => {
   it("admin passthrough methods inject _trustLevel", async () => {
     registerRpcMethods(deps);
 
-    // Find the obs.diagnostics handler (admin passthrough)
+    // Use obs.billing.total (a DAEMON-WIDE admin passthrough). NB: obs.diagnostics is no
+    // longer admin (OBS-SELF-DEAD re-scope to rpc), so it's no longer an admin passthrough.
     const calls = registerMethod.mock.calls;
-    const call = calls.find(([m]: [string]) => m === "obs.diagnostics");
+    const call = calls.find(([m]: [string]) => m === "obs.billing.total");
     const handler = call![2];
 
-    await handler({ category: "usage" });
+    await handler({});
 
-    expect(deps.rpcCall).toHaveBeenCalledWith("obs.diagnostics", {
-      category: "usage",
+    expect(deps.rpcCall).toHaveBeenCalledWith("obs.billing.total", {
       _trustLevel: "admin",
     });
   });
@@ -375,9 +378,10 @@ describe("registerRpcMethods", () => {
   }
 
   it("admin branch strips a forged _agentId but re-injects _trustLevel and keeps user fields", async () => {
-    const handler = handlerFor("obs.diagnostics");
+    // obs.billing.total is a DAEMON-WIDE admin method (obs.diagnostics is now rpc — OBS-SELF-DEAD).
+    const handler = handlerFor("obs.billing.total");
 
-    await handler({ _agentId: "forged", category: "usage" });
+    await handler({ _agentId: "forged", marker: "keep" });
 
     const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
       .calls[0]![1] as Record<string, unknown>;
@@ -386,7 +390,7 @@ describe("registerRpcMethods", () => {
     // Trusted control field is re-injected (strip-then-inject ordering).
     expect(forwarded._trustLevel).toBe("admin");
     // Legitimate user field survives the strip.
-    expect(forwarded.category).toBe("usage");
+    expect(forwarded.marker).toBe("keep");
   });
 
   it("rpc branch strips forged internal fields but keeps user fields", async () => {
@@ -409,9 +413,9 @@ describe("registerRpcMethods", () => {
   });
 
   it("strips every INTERNAL_FIELD_NAMES entry forged by an external admin caller", async () => {
-    const handler = handlerFor("obs.diagnostics");
+    const handler = handlerFor("obs.billing.total"); // admin (obs.diagnostics is now rpc — OBS-SELF-DEAD)
 
-    const forged: Record<string, unknown> = { category: "usage" };
+    const forged: Record<string, unknown> = { marker: "keep" };
     for (const name of INTERNAL_FIELD_NAMES) {
       forged[name] = "forged";
     }
@@ -424,7 +428,7 @@ describe("registerRpcMethods", () => {
       expect(forwarded, `expected ${name} to be stripped`).not.toHaveProperty(name);
     }
     expect(forwarded._trustLevel).toBe("admin");
-    expect(forwarded.category).toBe("usage");
+    expect(forwarded.marker).toBe("keep");
   });
 
   it("does not drop legitimate-only params (strip removes nothing it should not)", async () => {

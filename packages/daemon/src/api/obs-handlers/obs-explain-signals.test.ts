@@ -519,6 +519,48 @@ describe("toIncidentSignals — capability.audited fold (TREE)", () => {
   });
 });
 
+// TREE-01 (finding D, 30uc-20260624): graph DAG nodes are spawn-tree leaves too.
+// A graph node spawn (in-process via gatedSpawn → subAgentRunner.spawn) emits NO
+// capability.audited (it never crosses the socket chokepoint), and all nodes share
+// the graph's rootRunId — so pre-fix `comis explain` spawnTree showed the root but
+// OMITTED the graph children. The graph.node_spawned record reconstructs each node
+// as its own leaf keyed by graphId:nodeId, nested under the root via parentLeaseId.
+function graphNodeSpawned(seq: number, data: Record<string, unknown>): Record<string, unknown> {
+  return { traceSchema: "comis-trajectory", schemaVersion: 1, type: "graph.node_spawned", seq, data };
+}
+
+describe("toIncidentSignals — graph.node_spawned fold (TREE, finding D)", () => {
+  it("reconstructs each graph node as a distinct spawn-tree leaf (keyed by graphId:nodeId, nested under the root)", () => {
+    const s = toIncidentSignals([
+      graphNodeSpawned(1, { graphId: "G1", nodeId: "analyst-0", rootRunId: "R", nodeAgentId: "analyst", tokenBudget: 5000 }),
+      graphNodeSpawned(2, { graphId: "G1", nodeId: "analyst-1", rootRunId: "R", nodeAgentId: "analyst", tokenBudget: 5000 }),
+    ]);
+    // Both children appear — NOT collapsed into one node despite the shared rootRunId.
+    expect(s.spawnTree).toHaveLength(2);
+    const byLease = new Map(s.spawnTree!.map((n) => [n.leaseId, n]));
+    const n0 = byLease.get("G1:analyst-0")!;
+    expect(n0, "graph node analyst-0 must appear as a spawn-tree leaf").toBeDefined();
+    expect(n0.rootRunId).toBe("R");
+    expect(n0.agentId).toBe("analyst");
+    expect(n0.caps).toContain("orch:graph");
+    expect(n0.parentLeaseId).toBe("R"); // nested under the graph root
+    expect(byLease.has("G1:analyst-1")).toBe(true);
+  });
+
+  it("is idempotent — a duplicate spawn record for the same node does not create a second leaf", () => {
+    const s = toIncidentSignals([
+      graphNodeSpawned(1, { graphId: "G1", nodeId: "n0", rootRunId: "R", nodeAgentId: "a" }),
+      graphNodeSpawned(2, { graphId: "G1", nodeId: "n0", rootRunId: "R", nodeAgentId: "a" }),
+    ]);
+    expect(s.spawnTree).toHaveLength(1);
+  });
+
+  it("drops a record missing graphId/nodeId (a partial/corrupted row), no junk node", () => {
+    const s = toIncidentSignals([graphNodeSpawned(1, { rootRunId: "R", agentId: "a" })]);
+    expect(s.spawnTree ?? []).toHaveLength(0);
+  });
+});
+
 describe("toIncidentSignals — spend.exceeded fold (WEBUI-04, 179-04)", () => {
   it("folds a spend.exceeded record into spend {scope, totalUsd, capUsd} (totalUsd <- spentUsd)", () => {
     const s = toIncidentSignals([

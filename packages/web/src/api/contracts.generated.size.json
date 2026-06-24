@@ -1,6 +1,6 @@
 {
-  "totalMinified": 131431,
-  "totalGzipped": 13186,
+  "totalMinified": 131471,
+  "totalGzipped": 13203,
   "budget": {
     "minified": 132000,
     "gzipped": 38912
@@ -38,7 +38,7 @@
     "browser.status": 448,
     "browser.stop": 302,
     "browser.tabs": 500,
-    "capabilities.introspect": 769,
+    "capabilities.introspect": 808,
     "channels.capabilities": 456,
     "channels.disable": 448,
     "channels.enable": 448,
@@ -121,7 +121,7 @@
     "memory.observations": 761,
     "memory.pin": 476,
     "memory.portability.export": 874,
-    "memory.portability.import": 708,
+    "memory.portability.import": 746,
     "memory.recall_stats": 937,
     "memory.recall_trace": 616,
     "memory.search_files": 641,
@@ -179,7 +179,7 @@
     "secrets.get": 403,
     "secrets.list": 577,
     "secrets.set": 561,
-    "session.compact": 639,
+    "session.compact": 612,
     "session.delete": 778,
     "session.export": 709,
     "session.history": 1449,

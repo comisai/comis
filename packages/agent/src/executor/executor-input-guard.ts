@@ -24,6 +24,19 @@ import {
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 
+/**
+ * GIANT-INPUT-WEDGE guard (30uc-20260624 UC-09): the default maximum inbound user-message
+ * size, in characters, processed by a single turn. A message larger than this is rejected
+ * honestly BEFORE the jailbreak scan + the downstream tokenize / LCD-ingest / embed path —
+ * a multi-MB message otherwise drives O(words) synchronous work (the scan's typoglycemia
+ * split+loop) plus multi-MB tokenization/ingest that BLOCKS the Node event loop for minutes,
+ * freezing the entire daemon (gateway unresponsive, all sessions hung; live: a 4.5MB message
+ * wedged the daemon 8.5+ min). 1,000,000 chars (~250K tokens) is the largest input empirically
+ * confirmed to process WITHOUT wedging; the context engine still handles large-but-within-cap
+ * inputs (and the multi-turn `context_exhausted` path is unaffected — this is a per-message cap).
+ */
+export const DEFAULT_MAX_INPUT_CHARS = 1_000_000;
+
 /** Result of input validation: either validation passed (ok) or rejected with a response. */
 export interface InputGuardResult {
   /** Whether validation passed and execution should continue. */
@@ -54,9 +67,36 @@ export function validateInput(params: {
   logger: ComisLogger;
   /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
+  /** Inbound message-size cap in chars (GIANT-INPUT-WEDGE). Defaults to {@link DEFAULT_MAX_INPUT_CHARS}. */
+  maxInputChars?: number;
 }): InputGuardResult {
   const { msg, sessionKey, agentId, inputValidator, inputGuard, rateLimiter, eventBus, logger, clock } = params;
+  const maxInputChars = params.maxInputChars ?? DEFAULT_MAX_INPUT_CHARS;
   let safetyReinforcement: string | undefined;
+
+  // GIANT-INPUT-WEDGE (30uc UC-09): reject an over-cap message BEFORE the jailbreak scan AND the
+  // downstream tokenize/LCD-ingest/embed. A multi-MB message drives O(words) sync work that blocks
+  // the Node event loop for minutes (the whole daemon freezes). This early-return keeps the gateway
+  // responsive and the failure HONEST + reason-coded; the context engine handles within-cap inputs.
+  // `msg.text` is optional (a media-only message / some internal paths carry no text) — guard the
+  // length read so the size cap never NPEs a text-less message (the `?? 0` short-circuits to a no-op).
+  const inputChars = msg.text?.length ?? 0;
+  if (inputChars > maxInputChars) {
+    logger.warn(
+      {
+        chars: inputChars,
+        limit: maxInputChars,
+        hint: `Inbound message exceeds the ${maxInputChars}-char cap; rejected before processing to keep the daemon responsive (GIANT-INPUT-WEDGE)`,
+        errorKind: "validation" as ErrorKind,
+      },
+      "Inbound message exceeds size cap — rejected before processing",
+    );
+    return {
+      passed: false,
+      earlyResponse: `Your message is too large (${inputChars.toLocaleString()} characters; the limit is ${maxInputChars.toLocaleString()}). Please send a shorter message or split it into parts.`,
+      earlyFinishReason: "input_too_large",
+    };
+  }
 
   // Structural validation
   if (inputValidator) {

@@ -115,6 +115,29 @@ describe("attachTrajectoryToEventBus -- tool events", () => {
     expect(data.errorKind).toBe("internal");
   });
 
+  it("F-OBS-2: forwards the content-free web_search grounding summary (resultCount + domains) onto tool.result", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("tool:executed", {
+      toolName: "web_search",
+      toolCallId: "tc-ws",
+      durationMs: 800,
+      success: true,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      resultCount: 5,
+      domains: ["example.com", "news.example.org"],
+    });
+
+    expect(recorder.calls[0].type).toBe("tool.result");
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.resultCount).toBe(5);
+    expect(data.domains).toEqual(["example.com", "news.example.org"]);
+  });
+
   // B1 (D3): the two breaker transitions must land in the trajectory as
   // tool.breaker_opened / tool.breaker_reset with ids/counts/typed-reason only
   // (no raw error body, §2.7). Phase 153's obs.explain reads these.
@@ -1647,6 +1670,17 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       leaseId: "lease-abc",
       parentLeaseId: "lease-root",
       agentId: "agent-1",
+      timestamp: 0,
+    },
+    // TREE-01 (finding D): the per-graph-node spawn-tree leaf. The child agentId
+    // rides `nodeAgentId` (data), NOT the correlation key `agentId` (envelope-only) —
+    // the strip invariant still holds (data.agentId never set by the translator).
+    "graph:node_spawned": {
+      graphId: "g1",
+      nodeId: "analyst-0",
+      rootRunId: "run-1",
+      agentId: "analyst",
+      tokenBudget: 5000,
       timestamp: 0,
     },
     // WR-4 (177-obs-loop): spend kill-switch — content-free (scope enum + $ numbers
@@ -3647,7 +3681,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
     //   needed; the mapping is for operator trajectory visibility + arch closure.
     //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(109);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(110); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624)
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

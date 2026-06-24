@@ -125,7 +125,29 @@ describe("createCapabilitiesHandlers — capabilities.introspect (INTRO-01/02)",
     expect(result.budget).toBeUndefined();
     expect(result.outwardQuota).toBeUndefined();
     // Never fabricated: the snapshot accessor is not even consulted with no root.
-    expect(deps.boundedAutonomy.snapshot).not.toHaveBeenCalled();
+    expect(deps.boundedAutonomy!.snapshot).not.toHaveBeenCalled();
+  });
+
+  // Finding E (30uc-20260624): introspect must be registered + WORK even when bounded-autonomy is
+  // NOT wired (no agent resolves to an autonomy profile) — a clean disabled-state, never the
+  // "Unknown RPC method" the conditional registration produced under autonomy.profile:assistant.
+  it("returns a disabled-state ({enabled, caps}) with NO budget when bounded-autonomy is unwired", async () => {
+    const depsNoAutonomy = { ...createMockDeps(), boundedAutonomy: undefined } as unknown as CapabilitiesHandlerDeps;
+    const noAutonomyHandlers = createCapabilitiesHandlers(depsNoAutonomy) as Record<
+      string,
+      (params: Record<string, unknown>) => Promise<unknown>
+    >;
+
+    const result = (await noAutonomyHandlers["capabilities.introspect"]!({
+      _agentId: "default", // the assistant-profile agent
+      _callerSessionKey: "default:user:peer123",
+    })) as { agentId: string; enabled: boolean; caps: string[]; budget?: unknown };
+
+    expect(result.agentId).toBe("default");
+    expect(result).toHaveProperty("enabled"); // explicit enabled flag (finding E)
+    expect(typeof result.enabled).toBe("boolean");
+    expect(result.caps).toEqual([]); // assistant profile → no orch caps
+    expect(result.budget).toBeUndefined(); // no bounded-autonomy → no snapshot, honest (no crash)
   });
 
   // -------------------------------------------------------------------------

@@ -4,9 +4,10 @@ import { ok, err } from "@comis/shared";
 import { createSsrfGuardedFetcher } from "./ssrf-fetcher.js";
 import type { ValidatedUrl } from "@comis/core";
 
-// Mock @comis/core's validateUrl
+// Mock @comis/core's validateUrl + validateLocalServerUrl (MEDIA-INPUT-SSRF trusted-origin path)
 vi.mock("@comis/core", () => ({
   validateUrl: vi.fn(),
+  validateLocalServerUrl: vi.fn(),
 }));
 
 // Mock undici Agent — must be a real class so `new Agent()` works.
@@ -30,9 +31,10 @@ vi.mock("undici", () => {
 });
 
 // Import the mocked version so we can control its return values
-import { validateUrl } from "@comis/core";
+import { validateUrl, validateLocalServerUrl } from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 const mockValidateUrl = vi.mocked(validateUrl);
+const mockValidateLocalServerUrl = vi.mocked(validateLocalServerUrl);
 
 function createMockResponse(options: {
   ok?: boolean;
@@ -80,6 +82,8 @@ describe("createSsrfGuardedFetcher", () => {
     originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn();
     mockAgentClose.mockClear();
+    mockValidateUrl.mockClear();
+    mockValidateLocalServerUrl.mockClear();
   });
 
   afterEach(() => {
@@ -111,6 +115,47 @@ describe("createSsrfGuardedFetcher", () => {
       }),
       expect.stringContaining("URL validation rejected"),
     );
+  });
+
+  // MEDIA-INPUT-SSRF (30uc-20260624 UC-05): a URL whose ORIGIN matches a configured trusted apiRoot
+  // (a self-hosted local Bot API server / the emulator on loopback) is validated leniently
+  // (validateLocalServerUrl — loopback permitted) so the file-byte download works; an arbitrary
+  // loopback URL (a different port) still goes through strict validateUrl (the SSRF firewall, UC-10).
+  it("MEDIA-INPUT-SSRF: a TRUSTED-origin URL is validated via validateLocalServerUrl (loopback allowed)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher(
+      { maxBytes: 1024 * 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
+      logger,
+    );
+    mockValidateLocalServerUrl.mockResolvedValue(
+      ok(makeValidatedUrl({ hostname: "127.0.0.1", ip: "127.0.0.1", url: new URL("http://127.0.0.1:38411/file/x.jpg") })),
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      createMockResponse({ headers: { "content-type": "image/jpeg" }, body: new Uint8Array([1, 2, 3]) }),
+    );
+
+    const result = await fetcher.fetch("http://127.0.0.1:38411/file/x.jpg");
+
+    expect(result.ok).toBe(true);
+    expect(mockValidateLocalServerUrl).toHaveBeenCalledWith("http://127.0.0.1:38411/file/x.jpg", ["127.0.0.1"]);
+    expect(mockValidateUrl).not.toHaveBeenCalled();
+  });
+
+  it("MEDIA-INPUT-SSRF: an UNtrusted loopback URL (different port) still uses strict validateUrl (UC-10 preserved)", async () => {
+    const logger = createMockLogger();
+    const fetcher = createSsrfGuardedFetcher(
+      { maxBytes: 1024, trustedFetchOrigins: ["http://127.0.0.1:38411"] },
+      logger,
+    );
+    // The gateway port (UC-10) is NOT the trusted apiRoot origin → strict validateUrl rejects it.
+    mockValidateUrl.mockResolvedValue(err(new Error("127.0.0.1 is in blocked range (loopback)")));
+
+    const result = await fetcher.fetch("http://127.0.0.1:4766/health");
+
+    expect(result.ok).toBe(false);
+    expect(mockValidateUrl).toHaveBeenCalledWith("http://127.0.0.1:4766/health");
+    expect(mockValidateLocalServerUrl).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("fetches with original URL and undici dispatcher (Agent-based DNS pinning)", async () => {

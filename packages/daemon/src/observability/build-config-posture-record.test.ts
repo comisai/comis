@@ -64,6 +64,7 @@ describe("buildConfigPostureRecord", () => {
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0, // RESOLVE-01: always present (0 default), count-only
       pricingGapCount: 0, // SPEND-05: always present (0 default), count-only
+      sandboxNoDowngradeDisabled: false, // RELAX-SURFACE: always present (false default)
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -97,6 +98,7 @@ describe("buildConfigPostureRecord", () => {
       servedBelowConfiguredCount: 0,
       chimericModelCount: 0,
       pricingGapCount: 0,
+      sandboxNoDowngradeDisabled: false,
     });
   });
 
@@ -119,6 +121,30 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("warning");
     const details = JSON.parse(row.details ?? "{}") as { chimericModelCount?: number };
     expect(details.chimericModelCount).toBe(2);
+  });
+
+  it("RELAX-SURFACE: flips severity to warning and surfaces the flag when sandboxNoDowngrade is disabled", () => {
+    // security.agentToAgent.sandboxNoDowngrade:false is a RELAXED security default
+    // (a child may run with a weaker sandbox posture than its parent). Track-M wants
+    // a relaxed default SURFACED at boot, not silent. Pre-fix there was no signal.
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(7);
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        sandboxNoDowngradeDisabled: true,
+      },
+      clock,
+    );
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    const details = JSON.parse(row.details ?? "{}") as { sandboxNoDowngradeDisabled?: boolean };
+    expect(details.sandboxNoDowngradeDisabled).toBe(true);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

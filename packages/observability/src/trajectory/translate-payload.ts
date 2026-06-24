@@ -70,6 +70,10 @@ export function translatePayload(
         ...(payload.matchedToken !== undefined ? { matchedToken: payload.matchedToken } : {}),
         ...(payload.resultBytes !== undefined ? { resultBytes: payload.resultBytes } : {}),
         ...(payload.resultDigest !== undefined ? { resultDigest: payload.resultDigest } : {}),
+        // F-OBS-2: content-free web_search/web_fetch grounding summary (count +
+        // source hosts only) so grounding is verifiable from the trajectory.
+        ...(payload.resultCount !== undefined ? { resultCount: payload.resultCount } : {}),
+        ...(payload.domains !== undefined ? { domains: payload.domains } : {}),
       };
 
     case "tool:timeout":
@@ -275,6 +279,7 @@ export function translatePayload(
     // refusal / dead-lettered delivery / per-node budget breach) to the SAME content-free,
     // orchestration-translator-delegated group.
     // AUDIT-01 / TREE (215): capability:audited joins the orchestration-translator group (content-free: caps/tool-NAME/decision/lease-root ids ONLY, never args/body/secret).
+    // TREE-01 (finding D): graph:node_spawned joins it too (content-free: graph/node ids + child agentId + rootRunId + token cap).
     case "pipeline:authored":
     case "graph:repaired":
     case "graph:synthesized_from_intent":
@@ -283,6 +288,7 @@ export function translatePayload(
     case "subagent:delivery_deadlettered":
     case "subagent:budget_exceeded":
     case "capability:audited":
+    case "graph:node_spawned":
       return translateOrchestrationPayload(eventName, payload);
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).

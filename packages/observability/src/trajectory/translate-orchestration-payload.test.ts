@@ -115,3 +115,36 @@ describe("translateOrchestrationPayload — capability:audited (AUDIT-01/TREE, c
     expect("body" in data).toBe(false);
   });
 });
+
+describe("translateOrchestrationPayload — graph:node_spawned (TREE-01 finding D, content-free)", () => {
+  it("forwards ONLY {graphId, nodeId, nodeAgentId, rootRunId, tokenBudget} — child agent rides nodeAgentId, not the correlation key agentId", () => {
+    const data = translateOrchestrationPayload(
+      "graph:node_spawned" as OrchestrationBridgedEventName,
+      {
+        graphId: "g1",
+        nodeId: "analyst-0",
+        agentId: "analyst", // the node's CHILD agent → mapped to nodeAgentId
+        rootRunId: "run-1",
+        tokenBudget: 5000,
+        timestamp: 1_717_171_719, // envelope-only — stripped
+        // hostile extras that MUST NOT cross into the trajectory:
+        task: "Research NVDA Q3 earnings and the analyst sentiment",
+        output: "the node's full LLM output",
+      } as Record<string, unknown>,
+    );
+    expect(data).toEqual({
+      graphId: "g1",
+      nodeId: "analyst-0",
+      nodeAgentId: "analyst",
+      rootRunId: "run-1",
+      tokenBudget: 5000,
+    });
+    // The correlation key `agentId` is NOT forwarded (it would be stripped to the
+    // envelope); the child identity rides `nodeAgentId` instead.
+    expect("agentId" in data).toBe(false);
+    expect("timestamp" in data).toBe(false);
+    const json = JSON.stringify(data);
+    expect(json).not.toContain("Research NVDA"); // never the node task
+    expect(json).not.toContain("full LLM output"); // never the node output
+  });
+});

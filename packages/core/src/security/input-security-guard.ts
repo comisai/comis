@@ -67,6 +67,17 @@ export interface InputSecurityGuard {
   scan(text: string): InputSecurityGuardResult;
 }
 
+/**
+ * Defense-in-depth bound on the scan input (GIANT-INPUT-WEDGE, 30uc-20260624). The scan is a
+ * heuristic over `text` — `stripCodeBlocks` (regex over the whole string) + per-pattern regex
+ * tests + a `split(/\s+/)` typoglycemia loop (O(words)). On a multi-MB message that is millions
+ * of synchronous string ops that block the Node event loop. A jailbreak directive is realistically
+ * at the START of a message; scanning only the first 64 KB catches real injections while keeping
+ * the scan O(1) in input size. (The inbound message-size cap in executor-input-guard rejects the
+ * multi-MB message entirely before this runs; this bound keeps `scan()` itself safe for any caller.)
+ */
+const MAX_SCAN_CHARS = 65_536;
+
 // ---------------------------------------------------------------------------
 // Weighted pattern categories
 // ---------------------------------------------------------------------------
@@ -174,7 +185,10 @@ export function createInputSecurityGuard(config?: Partial<InputSecurityGuardConf
 
   return {
     scan(text: string): InputSecurityGuardResult {
-      const stripped = stripCodeBlocks(text);
+      // GIANT-INPUT-WEDGE: bound the scanned text so the O(words) typoglycemia loop + the regex
+      // passes can never block the event loop on a multi-MB input (a jailbreak is at the start).
+      const bounded = text.length > MAX_SCAN_CHARS ? text.slice(0, MAX_SCAN_CHARS) : text;
+      const stripped = stripCodeBlocks(bounded);
       const matched: string[] = [];
       let score = 0;
 

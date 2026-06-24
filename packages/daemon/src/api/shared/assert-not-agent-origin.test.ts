@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ORIGIN-01 deny-by-origin helper unit tests (RED-first).
+ * ORIGIN-01 deny-by-origin helper unit tests.
  *
- * Proves the shared guard rejects any `_agentId`-carrying call independent
- * of the ALS `_trustLevel` (admin trust does NOT exempt an agent origin),
- * and that the rejection emits exactly one content-free audited denial.
+ * Trust-tiered (30uc-20260624 decision): an ADMIN-trust agent origin is ALLOWED
+ * through (it inherits the admin user's control-plane privileges — the operator's
+ * explicit senderTrustMap grant); a NON-admin agent origin (guest/user/unset) is
+ * DENIED (the confused-deputy floor) with exactly one content-free audited denial.
+ * An operator origin (no `_agentId`) always passes.
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
@@ -37,20 +39,35 @@ function makeDeps(): {
 }
 
 describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
-  it("ORIGIN-01-S1: throws on an _agentId-carrying call even when _trustLevel is admin (independence from ALS trust)", () => {
-    const { deps } = makeDeps();
-    // _trustLevel:"admin" is the ALS-derived operator trust the in-process
-    // agent loop carries; deny-by-origin must fire regardless — the agent
-    // ORIGIN is what disqualifies the call, not its trust level.
+  it("ORIGIN-01-S1: ALLOWS an _agentId-carrying call when _trustLevel is admin (the admin user's agent inherits admin)", () => {
+    const { deps, capturedAuditEvents } = makeDeps();
+    // The agent acts for an admin-trust user (the operator's senderTrustMap grant)
+    // → it inherits admin control-plane access. The admin handler re-checks the
+    // trust (defense-in-depth). No deny, no audited denial.
     expect(() =>
-      assertNotAgentOrigin({ _agentId: "forged-agent", _trustLevel: "admin" }, deps, "secrets.get"),
-    ).toThrow();
+      assertNotAgentOrigin({ _agentId: "agent-a", _trustLevel: "admin" }, deps, "agents.create"),
+    ).not.toThrow();
+    expect(capturedAuditEvents).toHaveLength(0);
   });
 
-  it("ORIGIN-01-S2: emits exactly one content-free audit:event (kind capability_denied, outcome denied, actionType=method)", () => {
+  it("ORIGIN-01-S1b: THROWS on an _agentId-carrying call when _trustLevel is NON-admin (user/guest/unset — the confused-deputy floor)", () => {
+    for (const trust of ["user", "guest", undefined] as const) {
+      const { deps } = makeDeps();
+      expect(() =>
+        assertNotAgentOrigin(
+          { _agentId: "agent-a", ...(trust !== undefined ? { _trustLevel: trust } : {}) },
+          deps,
+          "secrets.get",
+        ),
+        `trust=${String(trust)} must be denied`,
+      ).toThrow();
+    }
+  });
+
+  it("ORIGIN-01-S2: a NON-admin agent denial emits exactly one content-free audit:event (capability_denied/denied/actionType=method)", () => {
     const { deps, capturedAuditEvents } = makeDeps();
     try {
-      assertNotAgentOrigin({ _agentId: "forged-agent", _trustLevel: "admin" }, deps, "secrets.get");
+      assertNotAgentOrigin({ _agentId: "forged-agent", _trustLevel: "user" }, deps, "secrets.get");
     } catch {
       /* expected throw — the audit emit precedes it */
     }
@@ -63,7 +80,7 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     // reason string — never any param value (no _agentId VALUE, no secret).
     const metadata = evt.metadata as Record<string, unknown>;
     expect(metadata.method).toBe("secrets.get");
-    expect(metadata.reason).toBe("agent_origin_admin");
+    expect(metadata.reason).toBe("non_admin_agent_origin");
     const metaJson = JSON.stringify(metadata);
     // The forged _agentId value itself must NOT leak into metadata.
     expect(metaJson).not.toContain("forged-agent");
@@ -77,12 +94,12 @@ describe("assertNotAgentOrigin (ORIGIN-01 deny-by-origin)", () => {
     expect(capturedAuditEvents).toHaveLength(0);
   });
 
-  it("ORIGIN-01-S4: the thrown error names the method but does NOT leak param values", () => {
+  it("ORIGIN-01-S4: the thrown error (non-admin agent) names the method but does NOT leak param values", () => {
     const { deps } = makeDeps();
     let caught: unknown;
     try {
       assertNotAgentOrigin(
-        { _agentId: "agent-7", _trustLevel: "admin", apiKey: "sk-PLANTED-SECRET" },
+        { _agentId: "agent-7", _trustLevel: "user", apiKey: "sk-PLANTED-SECRET" },
         deps,
         "secrets.get",
       );

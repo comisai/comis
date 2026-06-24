@@ -242,12 +242,31 @@ export async function setupMedia(deps: {
     skillsLogger.debug("Audio converter initialized");
   }
 
-  // 6.6.8.pre4.5. SSRF-guarded fetcher — safe remote media downloads
+  // 6.6.8.pre4.5. SSRF-guarded fetcher — safe remote media downloads.
+  // MEDIA-INPUT-SSRF (30uc-20260624 UC-05): trust the operator-configured channel apiRoot ORIGINS
+  // (a self-hosted local Bot API server / the test emulator on loopback) so media file-byte
+  // downloads from a custom apiRoot are permitted past the loopback block — host:port-scoped, so
+  // the strict SSRF firewall still gates every OTHER URL (UC-10's 127.0.0.1:4766 stays blocked).
+  const channelsCfg = (container.config.channels ?? {}) as Record<string, { apiRoot?: string } | undefined>;
+  const trustedFetchOrigins = Object.values(channelsCfg)
+    .map((c) => c?.apiRoot)
+    .filter((r): r is string => typeof r === "string" && r.length > 0)
+    .map((r) => {
+      try {
+        return new URL(r).origin;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((o): o is string => o !== undefined);
   const ssrfFetcher = createSsrfGuardedFetcher(
-    { maxBytes: infraConfig.maxRemoteFetchBytes },
+    { maxBytes: infraConfig.maxRemoteFetchBytes, trustedFetchOrigins },
     skillsLogger,
   );
-  skillsLogger.debug({ maxBytes: infraConfig.maxRemoteFetchBytes }, "SSRF-guarded fetcher initialized");
+  skillsLogger.debug(
+    { maxBytes: infraConfig.maxRemoteFetchBytes, trustedFetchOrigins },
+    "SSRF-guarded fetcher initialized",
+  );
 
   // 6.6.8.pre5. STT provider — keyless-first resolution THEN factory construction.
   //

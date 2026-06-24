@@ -387,9 +387,10 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     });
 
     // The exact params the endpoint injects (the _agentId is the agent-origin
-    // signal assertNotAgentOrigin reads). The sink must deny-by-origin.
+    // signal assertNotAgentOrigin reads). The lease path carries NO admin trust
+    // (no _trustLevel), so the sink must deny-by-origin (the non-admin floor).
     await expect(sink(adminMethod, { _agentId: "agent-x", _capabilities: [] })).rejects.toThrow(
-      /not reachable from an agent origin/,
+      /not reachable from a non-admin agent origin/,
     );
 
     // And the SAME admin method with NO _agentId (operator origin) passes the

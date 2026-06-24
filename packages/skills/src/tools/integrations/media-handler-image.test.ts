@@ -77,6 +77,31 @@ describe("processImageAttachment", () => {
       expect(result.analysis).toBeUndefined();
     });
 
+    it("MEDIA-TYPE: sniffs the bytes — passes the VERIFIED image/png to sanitize for PNG bytes declared image/jpeg (30uc UC-05)", async () => {
+      // Telegram's `.jpg` file_path mislabels PNG bytes as image/jpeg; the model vision API 400s on a
+      // declared type that mismatches the bytes. The handler must sniff the buffer and use image/png.
+      const pngBytes = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      // sanitize mock echoes its INPUT mimeType so we can assert which type the handler passed.
+      const sanitizeImage = vi.fn(async (_buf: Buffer, mimeType: string) =>
+        ok({ buffer: Buffer.from("ok"), mimeType, width: 1, height: 1, originalBytes: pngBytes.length, sanitizedBytes: 2 }),
+      );
+      const deps: ImageHandlerDeps = {
+        visionAvailable: true,
+        sanitizeImage: sanitizeImage as never,
+        resolveAttachment: vi.fn().mockResolvedValue(pngBytes),
+        logger: makeLogger(),
+      };
+      const att: Attachment = { type: "image", url: "tg-file://png-as-jpg", mimeType: "image/jpeg", sizeBytes: pngBytes.length };
+
+      const result = await processImageAttachment(att, deps, 0, buildHint);
+
+      expect(sanitizeImage).toHaveBeenCalledWith(pngBytes, "image/png"); // sniffed wins over declared image/jpeg
+      expect(result.imageContent!.mimeType).toBe("image/png");
+    });
+
     it("skips with debug log when sanitizeImage is missing", async () => {
       const logger = makeLogger();
       const deps: ImageHandlerDeps = {

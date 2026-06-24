@@ -389,13 +389,41 @@ describe("createSessionHandlers - session management", () => {
       ).rejects.toThrow("Session not found: non-existent");
     });
 
-    it("throws when session_key is missing", async () => {
+    it("throws when session_key is missing AND there is no caller session", async () => {
       const deps = makeDeps();
       const handlers = createSessionHandlers(deps);
 
       await expect(
         handlers["session.compact"]!({}),
       ).rejects.toThrow("Missing required parameter: session_key");
+    });
+
+    it("self-resolves the CALLER's own session via _callerSessionKey when session_key is omitted (COMPACT-KEY)", async () => {
+      // The agent should NOT have to construct/guess its own formatted key (it
+      // guessed ":telegram:" where the real key uses ":peer:"). Omitting session_key
+      // must compact the caller's OWN session from the injected _callerSessionKey.
+      const deps = makeDeps();
+      const handlers = createSessionHandlers(deps);
+
+      const result = (await handlers["session.compact"]!({
+        _callerSessionKey: "valid-session",
+      })) as { sessionKey: string; compactionTriggered: boolean };
+
+      expect(result.sessionKey).toBe("valid-session");
+      expect(result.compactionTriggered).toBe(true);
+    });
+
+    it("treats session_key:'self' as the caller's own session (COMPACT-KEY sentinel)", async () => {
+      const deps = makeDeps();
+      const handlers = createSessionHandlers(deps);
+
+      const result = (await handlers["session.compact"]!({
+        session_key: "self",
+        _callerSessionKey: "valid-session",
+      })) as { sessionKey: string; compactionTriggered: boolean };
+
+      expect(result.sessionKey).toBe("valid-session");
+      expect(result.compactionTriggered).toBe(true);
     });
   });
 

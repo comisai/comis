@@ -1457,6 +1457,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "agentId": {
           "type": "string"
         },
+        "enabled": {
+          "type": "boolean"
+        },
         "caps": {
           "type": "array",
           "items": {
@@ -1505,6 +1508,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       },
       "required": [
         "agentId",
+        "enabled",
         "caps"
       ],
       "additionalProperties": false
@@ -6185,6 +6189,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "downgraded": {
           "type": "number"
         },
+        "deduped": {
+          "type": "number"
+        },
         "total": {
           "type": "number"
         },
@@ -6196,6 +6203,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "imported",
         "blocked",
         "downgraded",
+        "deduped",
         "total",
         "dryRun"
       ],
@@ -7737,7 +7745,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "obs.explain": {
@@ -8664,7 +8672,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "obs.fleet.health": {
@@ -10049,9 +10057,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         }
       },
-      "required": [
-        "session_key"
-      ],
       "additionalProperties": false
     },
     "response": {

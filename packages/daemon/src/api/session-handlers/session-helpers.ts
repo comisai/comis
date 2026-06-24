@@ -250,6 +250,32 @@ export function loadJsonlSession(
 }
 
 /**
+ * COMPACT-STORE-MISS (30uc-20260624): load a session's transcript from EITHER
+ * store, keyed by the canonical formatted key. Live channel conversations are
+ * persisted ONLY as file JSONL by the pi session manager
+ * (`workspace/sessions/<tenant>/<channel>/<userId>~peer~<peerId>.jsonl`), never
+ * into the SQLite `sessions` table — so the lifecycle handlers (compact / delete
+ * / reset / export / reset_conversation) that read ONLY
+ * `sessionStore.loadByFormattedKey` threw "Session not found" for the ACTIVE
+ * session even with the correct key (the SQLite table is empty for live chat).
+ * This mirrors the proven `session.history` / `search` / `list` fallback: try
+ * SQLite first, then the workspace JSONL matched on the canonical formatted key.
+ */
+export function loadSessionAnyStore(
+  deps: SessionHandlerDeps,
+  sessionKey: string,
+): { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined {
+  const fromStore = deps.sessionStore.loadByFormattedKey(sessionKey);
+  if (fromStore) return fromStore;
+  if (deps.defaultWorkspaceDir) {
+    const match = scanWorkspaceSessions(deps.defaultWorkspaceDir).find((ws) => ws.sessionKey === sessionKey);
+    const jsonlPath = match?.metadata._workspaceJsonlPath;
+    if (typeof jsonlPath === "string") return loadJsonlSession(jsonlPath);
+  }
+  return undefined;
+}
+
+/**
  * Collect available session keys from all sources (SQLite, JSONL, workspace)
  * for inclusion in "session not found" error messages.
  */

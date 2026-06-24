@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { validateInput } from "./executor-input-guard.js";
+import { validateInput, DEFAULT_MAX_INPUT_CHARS } from "./executor-input-guard.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { TypedEventBus } from "@comis/core";
@@ -110,6 +110,61 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     expect(result.safetyReinforcement).toBeUndefined();
     expect(result.earlyResponse).toBeUndefined();
     expect(events.length).toBe(0);
+  });
+
+  // GIANT-INPUT-WEDGE (30uc-20260624 UC-09): a multi-MB message must be rejected BEFORE the
+  // jailbreak scan + the downstream tokenize/LCD-ingest path (which otherwise block the event
+  // loop for minutes — the whole daemon freezes). The reject is honest + reason-coded, and the
+  // scan never runs on the giant input.
+  it("GIANT-INPUT-WEDGE: rejects an over-cap message (input_too_large) BEFORE the scan runs", () => {
+    const { bus } = makeCaptureBus();
+    const guard = makeGuard({}); // would pass; assert it is NEVER called on the giant input
+    const huge = "x".repeat(DEFAULT_MAX_INPUT_CHARS + 1);
+    const result = validateInput({
+      msg: makeMessage({ text: huge }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+    expect(result.passed).toBe(false);
+    expect(result.earlyFinishReason).toBe("input_too_large");
+    expect(result.earlyResponse).toMatch(/too large/i);
+    expect(guard.scan).not.toHaveBeenCalled();
+  });
+
+  it("GIANT-INPUT-WEDGE: a message AT the cap still proceeds to the scan", () => {
+    const { bus } = makeCaptureBus();
+    const guard = makeGuard({});
+    const result = validateInput({
+      msg: makeMessage({ text: "x".repeat(DEFAULT_MAX_INPUT_CHARS) }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+    expect(result.passed).toBe(true);
+    expect(guard.scan).toHaveBeenCalledOnce();
+  });
+
+  it("GIANT-INPUT-WEDGE: an UNDEFINED-text message (media-only / internal path) does NOT NPE the size cap", () => {
+    // The size guard reads msg.text.length; msg.text is optional, so a text-less
+    // message must short-circuit to a no-op (chars 0), not throw a TypeError.
+    const { bus } = makeCaptureBus();
+    const result = validateInput({
+      msg: makeMessage({ text: undefined as unknown as string }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+    expect(result.passed).toBe(true);
+    expect(result.earlyFinishReason).toBeUndefined();
   });
 
   it("emits security:injection_detected with riskLevel=medium when inputValidator reports invalid structure", () => {

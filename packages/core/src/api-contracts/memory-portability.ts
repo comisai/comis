@@ -79,6 +79,10 @@ export const MemoryPortabilityImportContract = defineContract({
     imported: z.number(),
     blocked: z.number(),
     downgraded: z.number(),
+    /** MEM-IMPORT-DUP (30uc-20260624 UC-22): entries skipped because their content already
+     *  exists in the target scope (idempotent re-import — re-importing an export does not
+     *  duplicate; a deleted memory is still restored since its content is absent). */
+    deduped: z.number(),
     total: z.number(),
     dryRun: z.boolean(),
   }),

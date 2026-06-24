@@ -118,10 +118,12 @@ denial is recorded as a content-free security signal in the audit trail.
 ## Deny-by-Origin on the Control Plane
 
 Capabilities govern what an agent **may** do. A second, stricter rule governs
-what an agent may **never** do regardless of capabilities: **reach the control
-plane.** Administrative handlers (the ones that manage secrets, tokens, config,
-channels, and the other privileged-surface methods) reject any call that carries
-an agent-origin marker outright -- before any capability is even consulted.
+the control plane: a **non-admin** agent turn may **never** reach it, regardless
+of capabilities. Administrative handlers (the ones that manage secrets, tokens,
+config, channels, and the other privileged-surface methods) reject a non-admin
+agent-origin call outright -- before any capability is even consulted. An
+admin-trust agent turn (an explicit operator grant) is the exception: it inherits
+the admin user's control-plane access (detailed in the trust-tier note below).
 
 The deny-by-origin set is exactly the **true control plane** -- the
 `admin`-scoped methods. The orchestration surface an agent legitimately reaches
@@ -154,10 +156,20 @@ This is sound because of how agent origin is established:
 </Steps>
 
 <Warning>
-**Deny-by-origin is independent of trust level.** An admin handler rejects an
-agent-origin call even if the call also presents an admin trust level -- the two
-checks are separate, and origin wins. This closes the gap where an agent might
-otherwise reach a control-plane method through the in-process dispatcher.
+**Deny-by-origin is trust-tiered.** A control-plane method rejects an agent-origin
+call from a **non-admin** turn (guest/user trust, or a turn with no resolved
+trust) -- the confused-deputy floor: a low-trust or prompt-injected agent can
+never reach the control plane through the in-process dispatcher. An **admin-trust**
+agent turn -- one acting for a user the operator explicitly granted admin via
+`elevatedReply.senderTrustMap` (resolved per-message, default `user`) -- INHERITS
+that user's control-plane privileges and is allowed through to the admin handler
+(which re-checks admin trust, defense-in-depth).
+
+The trust signal is sound: `_trustLevel` is in the internal-field registry
+(stripped from external callers, like `_agentId`) and is re-injected in-process
+from the framework request context **after** the call's own params, so neither a
+tool nor the agent can forge it; an absent trust resolves to non-admin (denied).
+Admin is reached only via an explicit operator grant, never a default.
 </Warning>
 
 ## How Capabilities Get Granted

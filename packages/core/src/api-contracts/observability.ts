@@ -149,7 +149,11 @@ export const ObsDiagnosticsContract = defineContract({
     events: ObsRecordArray,
     counts: ObsRecord,
   }),
-  scopes: ["admin"] as const,
+  // OBS-SELF-DEAD (30uc-20260624 UC-14): rpc, NOT admin — same as obs.explain. obs_query's
+  // self-observability path reads diagnostics for the agent's own sessions; read-only +
+  // scrubbed digests, single-tenant daemon. ["admin"] put it in the deny-by-origin set and
+  // killed the agent's self-diagnose. MD-02 re-scope class.
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------

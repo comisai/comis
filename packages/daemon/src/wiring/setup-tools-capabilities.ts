@@ -130,6 +130,16 @@ export function makeCreateAgentRpcCall(
         // true mode through this forgery-proof channel. `_autonomyMode` is in
         // INTERNAL_FIELD_NAMES, so a forged inbound value was stripped before here.
         _autonomyMode: resolved.mode,
+        // ORIGIN-01 trust-tier (30uc-20260624): re-inject the run's REAL per-message
+        // trust from the framework ALS (set by execution-pipeline from
+        // elevatedReply.senderTrustMap, default "user"). Placed AFTER `...params` so a
+        // tool- or agent-supplied `_trustLevel` cannot override the authentic value —
+        // this is the forgery-proof signal the deny-by-origin chokepoint reads to let
+        // an ADMIN-trust agent reach admin methods (and deny a guest/user one). Injected
+        // only when a trust is resolved; an unset trust stays absent ⇒ NON-admin ⇒ denied
+        // (runWithContext stores the raw context, so the schema's "admin" default never
+        // applies here — absence is honest, not a silent elevation).
+        ...(ctx?.trustLevel !== undefined && { _trustLevel: ctx.trustLevel }),
         ...(ctx?.sessionKey && { _callerSessionKey: ctx.sessionKey }),
         ...(deliveryTarget && { _deliveryTarget: deliveryTarget }),
         ...(origin && { _callerChannelType: origin.channelType }),

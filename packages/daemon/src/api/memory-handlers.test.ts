@@ -2067,6 +2067,54 @@ describe("memory.portability.import — CRITICAL firewall RED→GREEN", () => {
   });
 });
 
+describe("memory.portability.import — MEM-IMPORT-DUP idempotency (30uc UC-22)", () => {
+  const cleanValidator = vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] }));
+  function importEntry(content: string, id: string) {
+    return {
+      id, content, trust_level: "learned", memory_type: "semantic", tags: [], source_who: "user",
+      source_channel: null, source_session_key: null, created_at: 1748000000000, occurred_at: null,
+      proof_count: null, source_ids: null, confidence: null, observation_kind: null, pattern_type: null,
+    };
+  }
+
+  it("DEDUPS an entry whose content already exists in the target scope — store NOT called (RED: re-import doubled)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      // target already has "already here" → a re-import of it must be skipped, not duplicated.
+      memoryApi: { inspect: vi.fn(() => [{ id: "x", content: "already here", trustLevel: "learned", tags: [], agentId: "agent1", userId: "u", source: {}, createdAt: 1 }]) } as never,
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: cleanValidator,
+    });
+    const handlers = createMemoryPortabilityHandlers(deps);
+    const result = await (handlers["memory.portability.import"] as Function)({
+      entries: [importEntry("already here", "e1")],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(result.deduped).toBe(1);
+    expect(result.imported).toBe(0);
+    expect(storeMock).not.toHaveBeenCalled();
+  });
+
+  it("imports NEW content + dedups a within-batch duplicate (restores absent, never doubles)", async () => {
+    const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
+    const deps = makeDeps({
+      memoryApi: { inspect: vi.fn(() => []) } as never, // empty target — like importing to a fresh store
+      memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
+      memoryWriteValidator: cleanValidator,
+    });
+    const handlers = createMemoryPortabilityHandlers(deps);
+    const result = await (handlers["memory.portability.import"] as Function)({
+      entries: [importEntry("fact A", "a"), importEntry("fact A", "a2"), importEntry("fact B", "b")],
+      agent_id: "agent1",
+      _trustLevel: "admin",
+    });
+    expect(result.imported).toBe(2); // A + B (the 2nd "fact A" deduped within the batch)
+    expect(result.deduped).toBe(1);
+    expect(storeMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("memory.portability.import — WARN downgrade RED→GREEN", () => {
   it("downgrades jailbreak entry to external trust with security-tainted tag (RED: handler absent)", async () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));

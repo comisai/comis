@@ -7,24 +7,37 @@
  * ORIGIN-01 deny-by-origin guard (v8 §3.1 / §22.3 floor item 1).
  *
  * The confused-deputy mitigation for the control plane: the in-process agent
- * loop carries `_trustLevel:"admin"` in its AsyncLocalStorage context and
- * dispatches straight through `createRpcDispatch` (bypassing `method-router`'s
- * `checkScope`). Without a positive boundary, an agent could reach
- * `secrets.*`/`tokens.*`/`config.*`/`agents.*`/`mcp.*` simply because the ALS
- * trust is `admin`. This guard rejects ANY `_agentId`-carrying call to an
- * admin-scoped method INDEPENDENT of that trust level — the agent ORIGIN is
- * the disqualifier, not the trust.
+ * loop dispatches straight through `createRpcDispatch` (bypassing
+ * `method-router`'s `checkScope`). This guard governs whether an agent-origin
+ * call may reach an admin-scoped method (`secrets.*`/`tokens.*`/`config.*`/
+ * `agents.*`/`mcp.*`/…).
  *
- * Soundness: Plan 03 strips inbound `INTERNAL_FIELD_NAMES` (incl. `_agentId`)
- * from external WS/REST callers before dispatch, so the *presence* of
- * `_agentId` at this seam is an unforgeable agent-origin signal. The sole
- * legitimate injector is `createAgentRpcCall` (ORIGIN-03).
+ * **Trust-tiered (30uc-20260624 decision):** an agent turn operating on behalf
+ * of an **admin-trust** user INHERITS that user's control-plane privileges — so
+ * an admin-trust agent origin is ALLOWED through to the admin handler (which
+ * re-checks `_trustLevel === "admin"`, defense-in-depth). A **non-admin** agent
+ * turn (guest/user trust, or one with no resolved trust) is the confused-deputy
+ * case — a prompt-injected guest/user turn must never reach an admin method —
+ * and is DENIED. The split is on the per-message trust, NOT a blanket origin ban:
+ * the operator grants admin trust explicitly via `elevatedReply.senderTrustMap`
+ * (resolved per-message in `execution-pipeline`, default `"user"`).
  *
- * Fail-safe over-denial: the guard fires whenever `_agentId !== undefined`,
- * regardless of its value — it never tries to decide "which" agent is allowed.
- * The admin/non-admin split is enforced by the single chokepoint in
- * `rpc-dispatch.ts` (it calls this guard only for `ADMIN_METHODS`); a
- * non-admin handler's `_agentId` never reaches here and keeps self-scoping.
+ * Soundness of the two signals:
+ *   - `_agentId` — Plan 03 strips inbound `INTERNAL_FIELD_NAMES` (incl. `_agentId`)
+ *     from external WS/REST callers before dispatch, so its *presence* here is an
+ *     unforgeable agent-origin signal; the sole legitimate injector is
+ *     `createAgentRpcCall` (ORIGIN-03).
+ *   - `_trustLevel` — ALSO in `INTERNAL_FIELD_NAMES` (external-stripped) AND
+ *     re-injected by `createAgentRpcCall` from the framework ALS trust
+ *     (post-spread, so a tool- or agent-supplied value cannot override the
+ *     real per-message trust). `runWithContext` stores the raw context (no schema
+ *     `default("admin")` applied), so an absent trust is `undefined` → NON-admin →
+ *     denied (fail-safe). Admin is reached ONLY via an explicit operator grant.
+ *
+ * Fail-safe: anything other than a literal `_trustLevel === "admin"` on an
+ * `_agentId`-bearing call is denied. The chokepoint in `rpc-dispatch.ts` calls
+ * this guard only for `ADMIN_METHODS`; a non-admin handler's `_agentId` never
+ * reaches here and keeps self-scoping.
  *
  * The denial is audited content-free: the `audit:event` `metadata` carries the
  * method name + a fixed reason string ONLY — never a param value/body/secret
@@ -57,8 +70,9 @@ export interface AssertNotAgentOriginDeps {
  * @param deps - structural deps carrying `container.eventBus` + tenant config.
  * @param method - the RPC method name (used in the audit + the thrown message;
  *   it is a method identifier, never a param value, so it is content-free).
- * @throws Error when `rawParams._agentId !== undefined` (after emitting one
- *   content-free audited denial). No-op (and no audit) otherwise.
+ * @throws Error when `rawParams._agentId !== undefined` AND `_trustLevel` is not
+ *   `"admin"` (after emitting one content-free audited denial). No-op (and no
+ *   audit) for an operator origin or an admin-trust agent origin.
  */
 export function assertNotAgentOrigin(
   rawParams: Record<string, unknown>,
@@ -70,6 +84,16 @@ export function assertNotAgentOrigin(
     return;
   }
 
+  // Admin-trust agent origin: the turn acts for an admin user (the operator's
+  // explicit senderTrustMap grant) → it INHERITS admin control-plane access. The
+  // admin handler re-enforces `_trustLevel === "admin"` (defense-in-depth). The
+  // `_trustLevel` signal is forgery-proof (external-stripped + createAgentRpcCall
+  // re-injects the real ALS trust post-spread).
+  if (rawParams._trustLevel === "admin") {
+    return;
+  }
+
+  // Non-admin agent origin (guest/user/unset trust) — the confused-deputy floor.
   // Content-free audited denial: ids/method/decision only, never values.
   deps.container.eventBus.emit("audit:event", {
     timestamp: systemNowMs(),
@@ -79,8 +103,8 @@ export function assertNotAgentOrigin(
     kind: "capability_denied",
     outcome: "denied",
     classification: "destructive",
-    metadata: { method, reason: "agent_origin_admin" },
+    metadata: { method, reason: "non_admin_agent_origin" },
   });
 
-  throw new Error(`Control-plane method ${method} is not reachable from an agent origin`);
+  throw new Error(`Control-plane method ${method} is not reachable from a non-admin agent origin`);
 }

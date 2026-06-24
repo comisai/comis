@@ -209,6 +209,17 @@ describe("buildFindings — T1.3 config_posture names the flagged keys (F6)", ()
     expect(cp!.hint).not.toBe("review the gateway TLS / token posture and the flagged config keys");
   });
 
+  it("RELAX-SURFACE: names security.agentToAgent.sandboxNoDowngrade when the no-downgrade invariant is disabled", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { sandboxNoDowngradeDisabled: true })],
+    );
+    const cp = findings.find((f) => f.code === "config_posture");
+    expect(cp).toBeDefined();
+    expect(cp!.detail).toMatch(/sandboxNoDowngrade/);
+  });
+
   it("names keys from the LATEST posture row only (standing state — a healthy newer boot supersedes)", () => {
     const findings = buildFindings(
       [],

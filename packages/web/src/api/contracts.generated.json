@@ -1335,6 +1335,9 @@
         "agentId": {
           "type": "string"
         },
+        "enabled": {
+          "type": "boolean"
+        },
         "caps": {
           "type": "array",
           "items": {
@@ -1383,6 +1386,7 @@
       },
       "required": [
         "agentId",
+        "enabled",
         "caps"
       ],
       "additionalProperties": false
@@ -6063,6 +6067,9 @@
         "downgraded": {
           "type": "number"
         },
+        "deduped": {
+          "type": "number"
+        },
         "total": {
           "type": "number"
         },
@@ -6074,6 +6081,7 @@
         "imported",
         "blocked",
         "downgraded",
+        "deduped",
         "total",
         "dryRun"
       ],
@@ -7615,7 +7623,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "obs.explain": {
@@ -8542,7 +8550,7 @@
       "additionalProperties": false
     },
     "scopes": [
-      "admin"
+      "rpc"
     ]
   },
   "obs.fleet.health": {
@@ -9927,9 +9935,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "session_key"
-      ],
       "additionalProperties": false
     },
     "response": {

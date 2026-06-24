@@ -74,8 +74,14 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
  * `logger` is required on every slice.
  */
 export interface CapabilitiesHandlerDeps {
-  /** The bounded-autonomy composite — `snapshot` is the pure remaining-budget read (Plan 02). */
-  boundedAutonomy: BoundedAutonomy;
+  /**
+   * The bounded-autonomy composite — `snapshot` is the pure remaining-budget read (Plan 02).
+   * OPTIONAL (finding E, 30uc-20260624): when NO agent resolves to an autonomy-bearing profile
+   * (e.g. all `autonomy.profile: assistant`), bounded-autonomy is not wired — but the handler is
+   * STILL registered (no more "Unknown RPC method") and returns the disabled-state ({enabled:false,
+   * caps:[]}); the budget snapshot is simply omitted (no live root to report).
+   */
+  boundedAutonomy?: BoundedAutonomy;
   /** The per-agent config map — the caller's `autonomy` (an `AutonomyConfig`) is the caps source. */
   agents: Record<string, PerAgentConfig>;
   /** The default agent the self-scope falls back to (operator/CLI origin, or an unknown agent). */
@@ -129,17 +135,20 @@ export function createCapabilitiesHandlers(
       // (an unknown `_agentId` no longer borrows the default agent's caps — the
       // chimeric-posture class). `agentId` already resolves to `defaultAgentId`
       // for a no-`_agentId` operator origin (line above), so that path is intact.
-      const caps =
-        injectedCaps ?? [...resolveAutonomy(deps.agents[agentId]?.autonomy).capabilities];
+      const resolvedAutonomy = resolveAutonomy(deps.agents[agentId]?.autonomy);
+      const caps = injectedCaps ?? [...resolvedAutonomy.capabilities];
+      // Finding E: report the caller's resolved autonomy.enabled so a disabled/assistant-profile
+      // agent gets a clean {enabled:false, caps:[]} instead of an "Unknown RPC method" error.
+      const enabled = resolvedAutonomy.enabled;
 
-      // Budget/outwardQuota ONLY when a live rootRunId resolves (in-flight run).
-      // In-process pre-spawn (no caller key, or the resolver mints nothing) ⇒
-      // both ABSENT — honest, never a fabricated zero snapshot (a false posture).
+      // Budget/outwardQuota ONLY when a live rootRunId resolves (in-flight run) AND bounded-autonomy
+      // is wired (finding E: it may be absent when no autonomy agent exists). In-process pre-spawn
+      // (no caller key) or no-autonomy ⇒ both ABSENT — honest, never a fabricated zero snapshot.
       let budget: ReturnType<BoundedAutonomy["snapshot"]>["budget"] | undefined;
       let outwardQuota: ReturnType<BoundedAutonomy["snapshot"]>["outwardQuota"] | undefined;
       const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
       const rootRunId = parsedKey ? deps.resolveRootRunId?.(parsedKey) : undefined;
-      if (rootRunId) {
+      if (rootRunId && deps.boundedAutonomy) {
         const snap = deps.boundedAutonomy.snapshot(rootRunId, agentId, "");
         budget = snap.budget;
         outwardQuota = snap.outwardQuota;
@@ -151,6 +160,7 @@ export function createCapabilitiesHandlers(
         {
           method: CapabilitiesIntrospectContract.method,
           agentId,
+          enabled,
           capCount: caps.length,
           budgetLive: budget !== undefined,
         },
@@ -159,6 +169,7 @@ export function createCapabilitiesHandlers(
 
       const result = {
         agentId,
+        enabled,
         caps,
         ...(budget ? { budget } : {}),
         ...(outwardQuota ? { outwardQuota } : {}),

@@ -61,6 +61,11 @@ export const CapabilitiesIntrospectContract = defineContract({
   request: z.object({}),
   response: z.object({
     agentId: z.string(),
+    /** Finding E (30uc-20260624): the caller's resolved `autonomy.enabled`. FALSE for a
+     *  disabled/assistant-profile agent — introspect then returns a clean disabled-state
+     *  ({enabled:false, caps:[]}) instead of "Unknown RPC method" (the method is now registered
+     *  unconditionally, not gated on bounded-autonomy being wired). */
+    enabled: z.boolean(),
     caps: z.array(z.string()),
     budget: z
       .object({

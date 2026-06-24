@@ -17,7 +17,9 @@ import { systemNowMs, type TypedEventBus } from "@comis/core";
 import {
   ChatCompletionRequestSchema,
   createOpenAIError,
+  flattenMessageContent,
   mapFinishReason,
+  VISION_UNSUPPORTED_MESSAGE,
   type ChatCompletion,
   type ChatCompletionChunk,
 } from "./openai-types.js";
@@ -325,20 +327,29 @@ export function createOpenaiCompletionsRoute(
       // Turn-lifecycle clock for the diagnostic:message_processed emit (resolve + obs).
       const receivedAt = systemNowMs();
 
-      // Extract system messages (concatenate all system role messages in order)
+      // V1-NO-VISION: the multimodal array form now PARSES (no opaque schema 400),
+      // but vision input is not yet wired through /v1 → if ANY message carries an
+      // image_url block, fail FAST with a NAMED error rather than silently dropping
+      // the image and answering as if it were text-only.
+      if (body.messages.some((m) => flattenMessageContent(m.content).hasImage)) {
+        return c.json(createOpenAIError(400, VISION_UNSUPPORTED_MESSAGE, "messages"), 400);
+      }
+
+      // Extract system messages (concatenate all system role messages in order).
+      // Content-block arrays are flattened to their text (image blocks rejected above).
       const systemParts: string[] = [];
       for (const m of body.messages) {
         if (m.role === "system") {
-          systemParts.push(m.content);
+          systemParts.push(flattenMessageContent(m.content).text);
         }
       }
       const systemPrompt = systemParts.length > 0 ? systemParts.join("\n") : undefined;
 
-      // Extract the last user message as agent input
+      // Extract the last user message as agent input (flattened to text).
       let userMessage = "";
       for (let i = body.messages.length - 1; i >= 0; i--) {
         if (body.messages[i].role === "user") {
-          userMessage = body.messages[i].content;
+          userMessage = flattenMessageContent(body.messages[i].content).text;
           break;
         }
       }
