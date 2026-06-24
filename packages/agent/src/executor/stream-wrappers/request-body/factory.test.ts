@@ -4496,7 +4496,7 @@ describe("selective tool-type clearing in microcompact", () => {
     expect(toolMsgs[0].content[0].text).toBe("A".repeat(1500));
   });
 
-  it("clears exec result", async () => {
+  it("clears exec tool_result (compactable emitted name)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
