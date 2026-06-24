@@ -150,6 +150,105 @@ describe("FleetHealthReportSchema (R1 — bounded/deterministic fleet wire shape
     expect(parsed.schemaVersion).toBe(1);
   });
 
+  // -------------------------------------------------------------------------
+  // FLEET-01/02/04 (Phase 220-03) — the additive-optional `autonomy` block: the
+  // cross-run AUTONOMY-health slice (run counts + degradedRate +
+  // orphaned/resumed/revoked/killed + breakerTrips + budgetBreaches + costUsd +
+  // the worst rootRunId to drill into via `comis explain`). Counts + an id ONLY.
+  // RED on pre-patch code: there is no `autonomy` field, so the non-strict
+  // z.object STRIPS the block on .parse() and it never reaches the operator —
+  // every assertion below fails until the schema field lands (the
+  // pipelineAuthoringGate BLOCKER-1 proof, one signal class over).
+  // -------------------------------------------------------------------------
+  it("FLEET-01/02/04: the populated `autonomy` block SURVIVES .parse() (additive block round-trip)", () => {
+    // Without the schema field, the non-strict z.object STRIPS this key on parse
+    // → the autonomy slice never reaches the wire. Declaring it in
+    // FleetHealthReportSchema is what makes .parse() PRESERVE it (T-220-10).
+    const withAutonomy = {
+      ...validReport(),
+      autonomy: {
+        runs: { total: 20, degraded: 3, degradedRate: 0.15 },
+        orphaned: 2,
+        resumed: 4,
+        revoked: 1,
+        killed: 1,
+        breakerTrips: 2,
+        budgetBreaches: 1,
+        costUsd: 0.42,
+        worstRootRunId: "root-run-abc123",
+      },
+    };
+    const parsed = FleetHealthReportSchema.parse(withAutonomy);
+    expect(parsed.autonomy).toBeDefined();
+    expect(parsed.autonomy?.runs).toEqual({ total: 20, degraded: 3, degradedRate: 0.15 });
+    expect(parsed.autonomy?.orphaned).toBe(2);
+    expect(parsed.autonomy?.resumed).toBe(4);
+    expect(parsed.autonomy?.revoked).toBe(1);
+    expect(parsed.autonomy?.killed).toBe(1);
+    expect(parsed.autonomy?.breakerTrips).toBe(2);
+    expect(parsed.autonomy?.budgetBreaches).toBe(1);
+    expect(parsed.autonomy?.costUsd).toBeCloseTo(0.42);
+    expect(parsed.autonomy?.worstRootRunId).toBe("root-run-abc123");
+    // schemaVersion stays the literal 1 (additive, not a version bump).
+    expect(parsed.schemaVersion).toBe(1);
+  });
+
+  it("treats `autonomy` as optional (additive — a report WITHOUT it still parses, schemaVersion stays 1)", () => {
+    const without = validReport() as Partial<FleetHealthReport>;
+    expect(without).not.toHaveProperty("autonomy"); // validReport() omits it.
+    const parsed = FleetHealthReportSchema.parse(without);
+    expect(parsed.autonomy).toBeUndefined();
+    expect(parsed.schemaVersion).toBe(1);
+
+    // worstRootRunId is itself optional inside the block (a clean window has no
+    // worst run) — a block without it still parses.
+    const noWorstId = {
+      ...validReport(),
+      autonomy: {
+        runs: { total: 5, degraded: 0, degradedRate: 0 },
+        orphaned: 0,
+        resumed: 0,
+        revoked: 0,
+        killed: 0,
+        breakerTrips: 0,
+        budgetBreaches: 0,
+        costUsd: 0,
+      },
+    };
+    const parsedNoWorst = FleetHealthReportSchema.parse(noWorstId);
+    expect(parsedNoWorst.autonomy?.worstRootRunId).toBeUndefined();
+  });
+
+  it("CONTENT-FREE: a smuggled free-text `reason` key inside the autonomy block is STRIPPED on parse (T-220-10)", () => {
+    // The block carries counts + an id ONLY. A caller who smuggles a body field
+    // (a free-text reason / a lease bearer) must have it stripped by the
+    // non-strict z.object — it can never reach the operator-facing report.
+    const smuggled = {
+      ...validReport(),
+      autonomy: {
+        runs: { total: 3, degraded: 1, degradedRate: 1 / 3 },
+        orphaned: 1,
+        resumed: 0,
+        revoked: 0,
+        killed: 0,
+        breakerTrips: 0,
+        budgetBreaches: 0,
+        costUsd: 0,
+        worstRootRunId: "root-run-xyz",
+        reason: "the lease holder dropped its heartbeat at /home/op/run", // smuggled body
+        bearer: "secret-lease-token", // smuggled secret
+      },
+    } as Record<string, unknown>;
+    const parsed = FleetHealthReportSchema.parse(smuggled) as {
+      autonomy?: Record<string, unknown>;
+    };
+    expect(parsed.autonomy).toBeDefined();
+    expect(parsed.autonomy).not.toHaveProperty("reason");
+    expect(parsed.autonomy).not.toHaveProperty("bearer");
+    // The declared keys survive; only the smuggled ones are dropped.
+    expect(parsed.autonomy?.worstRootRunId).toBe("root-run-xyz");
+  });
+
   it("QT2/QT3: carries degradedByCause — a required bounded Record<cause, count> of named causes", () => {
     // The fleet-level degradation detector. Required (the assembler always emits
     // it, possibly {}). Each value is a count (bounded, no raw bodies).
