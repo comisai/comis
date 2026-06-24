@@ -1,0 +1,155 @@
+---
+title: "comis-agent CLI"
+description: "The in-jail, capability-scoped CLI an agent drives over the lease capability socket -- same gate as the typed tools, no admin reach"
+icon: "robot"
+---
+
+**What this is for:** `comis-agent` is the shell-fluent CLI an agent runs **from inside its own sandbox** to orchestrate, schedule, send, search, fetch, and read -- the same actions it can take through the typed orchestration tools or the `orchestrate(script)` surface, expressed as a command line. **Who it's for:** agent authors and operators reasoning about what an autonomous agent can do, and confirming it cannot reach more than the typed tools already allow.
+
+<Warning>
+`comis-agent` is **not** the operator [`comis` CLI](/reference/cli). It is a **separate binary** that exists **only inside an agent's jail**, authenticates with a **capability lease** (not an operator gateway token), reaches **no admin verbs**, and rides a **different transport** (the loopback capability Unix socket, not the gateway WebSocket). It is **not on the host PATH** -- you cannot run it from your shell. Everything it can do, the typed orchestration tools can already do; it adds shell fluency, not authority.
+</Warning>
+
+## Overview
+
+Comis exposes orchestration to an agent through three sibling surfaces that all converge on the **same** RPC handlers and the **same** `requireCapability` gate:
+
+1. **The typed orchestration tools** -- `session.spawn`, `graph.execute`, `cron.add`, `message.send`, the web/read tools (the tool-call surface).
+2. **The `orchestrate(script)` surface** -- a sandboxed script that calls those same methods over the capability socket (see [Orchestrate](/agent-tools/orchestrate)).
+3. **`comis-agent`** -- this CLI: the same calls, expressed as subcommands.
+
+`comis-agent` adds **no new capability, no new RPC handler, no new gate, and no new transport**. Each subcommand routes through the existing capability socket to the existing handler, which enforces the existing `requireCapability` check. The CLI does **no** client-side authorization of its own -- it sends the call and lets the endpoint decide. That single-gate design is enforced by architecture tests (`comis-agent-same-gate.test.ts` / `comis-agent-no-admin.test.ts`): a future subcommand that reached a weaker, admin, or denied path would fail `pnpm test:architecture`.
+
+The CLI is **opt-in and off by default** -- it is only available inside a jail where the daemon has bound the (sha256-pinned, read-only) binary and minted a capability lease.
+
+## Subcommands and capabilities
+
+`comis-agent` exposes exactly **13** subcommands. Each maps **1:1** to a capability that the typed tools already reach -- the capability is **derived from** the existing capability maps (`TOOL_CAPABILITY_MAP` / `HANDLER_CAPABILITY_MAP`), never restated by the CLI:
+
+| Subcommand | Routes to | Capability |
+|------------|-----------|------------|
+| `spawn` | `session.spawn` | `orch:spawn` |
+| `run` | `graph.execute` | `orch:graph` |
+| `schedule` | `cron.add` | `orch:cron` |
+| `send` | `message.send` | `orch:message` |
+| `search` | web search tool | `orch:web` |
+| `fetch` | web fetch tool | `orch:web` |
+| `read` | read tool | `orch:read` |
+| `grep` | grep tool | `orch:read` |
+| `find` | find tool | `orch:read` |
+| `ls` | ls tool | `orch:read` |
+| `whoami` | `capabilities.introspect` | self-scoped read (no capability) |
+| `status` | `session.status` | self-scoped read (no capability) |
+| `list` | `session.list` | self-scoped read (no capability) |
+
+The first ten subcommands dispatch to a capability-mapped tool or method and are gated by `requireCapability`; a lease that does not hold the mapped capability is denied at the endpoint (the same denial the typed tool would receive). The last three -- `whoami`, `status`, `list` -- are **self-scoped reads**: any valid lease reaches the agent's **own** introspection and session reads (the request carries no `agentId`; the daemon resolves the caller's own scope, so an agent can never read another agent's sessions). `status list` is accepted as a two-token alias for `list`.
+
+<Note>
+The 1:1-to-capability table is the **same gate** the typed tools reach. `comis-agent spawn` and the `session.spawn` tool both arrive at the `session.spawn` handler behind `requireCapability("orch:spawn")` -- there is no separate, weaker CLI path. This is proved by `comis-agent-same-gate.test.ts`, which enumerates every `CLI_SUBCOMMAND_MAP` target and asserts it resolves to the same capability-map gate.
+</Note>
+
+## The wire: the lease capability socket
+
+`comis-agent` connects to the **loopback capability endpoint over a Unix socket** ([`COMIS_ORCH_SOCKET`](/reference/environment-variables#comis_orch_socket)), presenting its **capability lease** ([`COMIS_CAP_LEASE`](/reference/environment-variables#comis_cap_lease)) as the bearer. It sends one newline-delimited JSON line per call -- a capability-mapped tool rides `tool.invoke`, a direct method (`session.spawn`, `cron.add`, ...) is sent as that method -- and the endpoint resolves the lease's capabilities and dispatches through the same handler gates as every other origin.
+
+This Unix socket is the **only** egress from the jail. `comis-agent` does **not** use the gateway -- it never opens an operator-token WebSocket and never reaches the gateway port. The lease is **audience-bound**: a lease captured from one jail cannot be replayed against a foreign method, and the endpoint strips any caller-supplied internal `_`-prefixed field before injecting the lease identity, so the CLI cannot forge an `agentId` even if one appears in its arguments.
+
+```bash
+# Inside the jail: spawn a child agent (gated by orch:spawn on the lease)
+comis-agent spawn --prompt "summarize today's open issues"
+
+# Schedule a recurring job (gated by orch:cron)
+comis-agent schedule --cron "0 9 * * *" --prompt "post the daily standup"
+
+# Read-only file inspection inside the workspace (gated by orch:read)
+comis-agent grep "TODO" src/
+
+# Self-scoped introspection -- what can I do, and how much budget is left
+comis-agent whoami
+```
+
+If the CLI is invoked outside a jail (no `COMIS_ORCH_SOCKET` / `COMIS_CAP_LEASE`), it **fails loudly** with a non-zero exit and an error naming both environment variables and "jail" -- it never silently runs against the host and never hangs.
+
+## No admin reach: the closed doors
+
+`comis-agent` has **no** admin subcommands. There is no `secrets`, `config`, `tokens`, `gateway`, `agents`, `providers`, `models`, `channels`, or `env` verb -- they **do not exist** in the CLI. Even if an agent tried to reach admin another way, three independent barriers stop it:
+
+- The operator `comis` binary is **not on the jail PATH** -- it cannot be invoked from inside the sandbox.
+- The capability **lease holds no admin capability** -- admin actions are not in the `orch:*` capability set a lease can carry.
+- Admin handlers **deny by origin** -- a call arriving over the capability socket is rejected at the admin handlers regardless of what it claims.
+
+An admin attempt is therefore **denied identically to the `orchestrate(script)` path** -- the same closed door, the same denial. This is proved by `comis-agent-no-admin.test.ts`, which asserts the CLI table's intersection with both the derived admin-method set and the denylisted-method set is empty.
+
+### `skill` is excluded by design
+
+There is **no `skill` subcommand**, and this is **intentional, not a gap**. Every skill-mutation method (`skills.create`, `skills.update`, `skills.delete`, `skills.import`, `skills.upload`, and `skills.list`) is on the capability socket's denylist -- the `skills_manage` mitigation (the same control that gates the SIGUSR2 skill-reload path). The endpoint's denylist pre-check rejects those methods **before** capability resolution, for **every** origin. So the `orchestrate(script)` surface hits exactly the same closed door.
+
+Offering a `skill` subcommand would advertise a path that is **always denied**, so it is omitted. The substrate denylist is **not** relaxed for the CLI -- a skill attempt through `comis-agent` is **denied identically to the script path**. A future attempt to re-add a `skill`-like entry aborts the module at load (the `CLI_SUBCOMMAND_MAP` soundness assertion) rather than shipping a false affordance.
+
+## Pinned and honest: the bound binary
+
+The `comis-agent` binary is a **defense surface**, so it is locked down:
+
+- **sha256-pinned.** A committed build manifest (`comis-agent-manifest.json`) pins the sha256 of the Comis-built binary. At jail construction the daemon **re-hashes the bound bytes** and refuses to bind a binary whose hash does not match the pin -- a swapped or tampered binary is never made available.
+- **Read-only bound.** The binary is bind-mounted **read-only** (`--ro-bind`) into the jail. A writable interpreter or binary inside a sandbox is a host-RCE vector; the read-only bind (plus the [§4.7 writable-path audit](/reference/sandbox#exec-sandbox-os-level)) ensures a write to it from inside the jail fails.
+- **In-jail path via [`COMIS_AGENT_BIN`](/reference/environment-variables#comis_agent_bin).** When the binary is bound, the daemon sets `COMIS_AGENT_BIN` to its in-jail path so the CLI resolves. Operators never set this -- it is daemon-managed.
+
+**Honest-degrade (never silent).** If the binary is **missing**, its **hash does not match** the pin, or **Node-in-jail is unavailable**, the daemon emits a **loud WARN**, leaves `COMIS_AGENT_BIN` unset, and the **`comis-agent` CLI surface is unavailable**. Critically, this degrade is **scoped**: the `orchestrate(script)` surface still runs (a script needs Node; it does not need the CLI binary). There is never a silent bind of an unverified binary and never a silent disappearance of the CLI -- the WARN announces it.
+
+<Note>
+The CLI surface and the script surface are **independent**. A tampered/missing `comis-agent` binary disables only the CLI; it does not refuse the whole jail. (Contrast: an unavailable in-jail Node refuses the jail entirely -- a script cannot run without it.)
+</Note>
+
+## Worktrees and one-shot spawns
+
+`spawn` composes with isolated git worktrees and the broader autonomy patterns:
+
+### `spawn --worktree`
+
+`comis-agent spawn --worktree` runs the child agent in an **isolated git worktree** -- a separate working tree on its own branch, so concurrent agents do not collide on one checkout. Lifecycle:
+
+- **Auto-clean only if unchanged.** When the child finishes, its worktree is removed **only if it is provably pristine** -- the predicate is an **empty `git status --porcelain`** (no modified, staged, **or untracked** files) **and** `HEAD` equal to the base ref (**no commits ahead**). Anything else means there is work to keep.
+- **Dirty or ahead worktrees are preserved.** A worktree with uncommitted changes, untracked files, or commits ahead of base is **never** deleted. The cleanup can only ever remove a tree that has nothing in it -- it can never discard an agent's work.
+- **Orphan-sweep.** Worktrees whose directory is gone are pruned; completed-and-clean ones are removed; dirty/ahead/in-progress ones are skipped. A removal failure logs a WARN and **preserves** the entry rather than dropping it silently or aborting the whole sweep.
+
+<Warning>
+The clean-if-unchanged predicate is deliberately strict: a single untracked file or one commit ahead of base marks the worktree **dirty**, and a dirty worktree is preserved. The sweep is conservative by design -- it would rather leave an orphan for an operator to reclaim than risk deleting uncommitted work.
+</Warning>
+
+### `spawn --async`, tmux, and resume
+
+- **`spawn --async`** is the one-shot, fire-and-forget spawn -- it rides the already-async-only `session.spawn`; the caller does not block on the child.
+- **tmux multi-agent** runs through the jailed [terminal driver](/agent-tools/terminal-driver) -- the same sandboxed CLI-driving surface, so a driven multi-agent tmux session is bound by the same jail.
+- **Resume** composes with [durable runs](/agents/resilience) -- a spawned run that supports resume is resumable through the durability layer; the CLI adds no separate resume mechanism.
+
+## Exit behavior
+
+| Condition | Behavior |
+|-----------|----------|
+| Subcommand succeeded | Exit `0`; the endpoint's result is printed to stdout |
+| Capability denied at the endpoint | Non-zero exit; the endpoint's **content-free** denial message (no lease, bearer, or argument echoed) |
+| Unknown / admin / `skill` verb | Non-zero exit **without** any socket call (the verb does not exist) |
+| Invoked outside a jail (no lease/socket) | Non-zero exit; loud error naming `COMIS_ORCH_SOCKET` / `COMIS_CAP_LEASE` and "jail" |
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Operator CLI" icon="terminal" href="/reference/cli">
+    The host `comis` CLI -- operator token, gateway transport, admin commands
+  </Card>
+  <Card title="Orchestrate" icon="diagram-project" href="/agent-tools/orchestrate">
+    The script surface: the same capability socket, same gate
+  </Card>
+  <Card title="Capability Model" icon="shield" href="/security/capability-model">
+    The orch:* capabilities, leases, and deny-by-origin
+  </Card>
+  <Card title="Sandbox" icon="box" href="/reference/sandbox">
+    The read-only sha256-pinned bound binary as a defense layer
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/reference/environment-variables#comis_agent_bin">
+    COMIS_AGENT_BIN, COMIS_CAP_LEASE, COMIS_ORCH_SOCKET
+  </Card>
+  <Card title="Autonomy" icon="robot" href="/agents/autonomy">
+    Autonomy profiles, budgets, and outward quotas
+  </Card>
+</CardGroup>
