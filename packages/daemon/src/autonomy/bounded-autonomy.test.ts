@@ -288,6 +288,47 @@ describe("createBoundedAutonomy — the single composite chokepoint (213-06)", (
   });
 
   // -------------------------------------------------------------------------
+  // Test 3e (KEYING-01): the per-turn re-anchor for an interactive SESSION root.
+  // A `root-session-*` root acquires NO spawn slot, so releaseSpawn → evictRoot
+  // NEVER fires for it; its wall-clock + token anchors accumulate across the
+  // WHOLE conversation, and a session alive > wallClockMs falsely aborts every
+  // subsequent turn (live finding 2026-06-24: elapsedMs 2052386 > capMs 1800000).
+  // `evictRootIfIdle` re-anchors an IDLE root at the turn boundary (next turn
+  // measures from its own start) but is a NO-OP on a root with a LIVE spawn — so
+  // the genuine runaway-TREE backstop is preserved. The $ aggregate is untouched
+  // either way (evictRoot does not prune the $ accumulator → session spend cap).
+  // -------------------------------------------------------------------------
+  it("evictRootIfIdle re-anchors an IDLE session root per turn (KEYING-01) but preserves a LIVE spawn's wall-clock backstop", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+      budget: { aggregateUsd: 100, tokens: 1_000_000, wallClockMs: 1_800_000 }, // 30-min default
+    };
+    const { service, clock } = makeService({ config });
+
+    // ── IDLE root (an interactive session root: NO spawn slot acquired). ──
+    service.registerRoot("root-session-IDLE", "lease-1");
+    expect(service.reserveBudget("root-session-IDLE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+    clock.advance(1_800_001); // the conversation ages past the 30-min wall-clock cap.
+    // The bug: the next turn trips the wall-clock limb (elapsed > capMs) despite no runaway.
+    expect(service.reserveBudget("root-session-IDLE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
+    // The fix: at the turn boundary, evictRootIfIdle drops the stale anchor (idle →
+    // activeCount 0) so the NEXT turn re-anchors fresh and does NOT falsely abort.
+    service.evictRootIfIdle("root-session-IDLE");
+    expect(service.reserveBudget("root-session-IDLE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+
+    // ── ACTIVE root (a LIVE spawn tree): evictRootIfIdle must be a NO-OP. ──
+    service.tryAcquireSpawn("root-spawn-LIVE", 1, 0);
+    service.registerRoot("root-spawn-LIVE", "lease-2");
+    expect(service.reserveBudget("root-spawn-LIVE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
+    clock.advance(1_800_001); // a spawn tree genuinely running > the cap — a real runaway.
+    service.evictRootIfIdle("root-spawn-LIVE"); // activeCount > 0 → must NOT reset.
+    expect(service.reserveBudget("root-spawn-LIVE", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).toBe("exceeded");
+
+    service.destroy();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 4: idempotent construction + destroy() tears down the rate timers
   // -------------------------------------------------------------------------
   it("constructs sub-modules once and destroy() cancels the rate limiter's scheduled timers", () => {

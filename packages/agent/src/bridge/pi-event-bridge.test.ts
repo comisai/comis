@@ -6391,6 +6391,34 @@ describe("createPiEventBridge — per-root budget sibling (BUDGET-01/02)", () =>
     expect(deps.onAbort).toHaveBeenCalled();
   });
 
+  it("KEYING-01: re-anchors the session root ONCE per turn (evictRootIfIdle called once with the resolved root) so an interactive session does not accumulate its wall-clock", () => {
+    const clock = createFakeClock(1_000_000);
+    const evictRootIfIdle = vi.fn();
+    deps = createMockDeps({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      getCurrentModel: () => "claude-sonnet-4-5-20250929",
+      boundedAutonomyBudget: {
+        current: {
+          reserveBudget: vi.fn().mockReturnValue({ kind: "ok" as const, reservation: { scopeKey: "_root root-session-conv", tenantKey: "_root", reservedUsd: 0, warn: false }, warn: null }),
+          registerRoot: vi.fn(),
+          evictRootIfIdle,
+        },
+      },
+      resolveRootRunId: () => "root-session-conv",
+    } as Partial<PiEventBridgeDeps>);
+    const { listener } = createPiEventBridge(deps);
+
+    // Two LLM completions within ONE turn (one executeAgent): the re-anchor fires
+    // EXACTLY once (the per-turn metrics flag), with the resolved session root — so
+    // each turn measures its wall-clock from its own start, not the conversation's age.
+    listener(makeTurnEndEvent({ totalTokens: 10 }) as any);
+    listener(makeTurnEndEvent({ totalTokens: 10 }) as any);
+
+    expect(evictRootIfIdle).toHaveBeenCalledTimes(1);
+    expect(evictRootIfIdle).toHaveBeenCalledWith("root-session-conv");
+  });
+
   it("calls the per-root reserve with the REAL per-call provider/model/tokens (the same locals checkSpendCeiling consumes)", () => {
     const clock = createFakeClock(1_000_000);
     const spy = vi.fn().mockReturnValue({ kind: "ok" as const, reservation: { scopeKey: "_root root-args", tenantKey: "_root", reservedUsd: 0, warn: false }, warn: null });
