@@ -888,6 +888,8 @@ function buildRpcDispatchDeps(deps: {
     ...(c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager ? { leaseManager: c.capEndpointHandle?.leaseManager ?? c.sharedLeaseManager } : {}),
     ...(c.durableRunStore ? { durableRuns: c.durableRunStore } : {}),
     ...(c.outwardLedger ? { outwardLedger: c.outwardLedger } : {}),
+    // Phase 217-05 (UNATT/BREAK/EVICT): the never-hang control plane the dispatch chokepoint reads — the denial breaker (recordDenial/recordAllow → trip→abort), the evicted-rootRunId set (isEvicted → demote mid-run), and the content-free escalate. Constructed at the cap layer; absent when no autonomy agent ⇒ pre-217 deny-without-escalate (byte-identical). Threading evictRegistry here ALSO flows it into createAutonomyHandlers via the `...deps` spread, activating the autonomy.evict handler (Plan 04 cross-wave point).
+    ...(c.capEndpointHandle ? { denialBreaker: c.capEndpointHandle.denialBreaker, evictRegistry: c.capEndpointHandle.evictRegistry, escalate: c.capEndpointHandle.escalate } : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
