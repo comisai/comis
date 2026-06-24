@@ -89,9 +89,12 @@ describe("stripInternalFields()", () => {
     expect(result._autonomyMode).toBeUndefined();
   });
 
-  it("sorts `_autonomyMode` first (it precedes `_agentId` alphabetically)", () => {
-    // The array is maintained in alphabetical order; `_autonomyMode` is the new
-    // first element (before `_agentId`). Catches an accidental mis-insertion.
-    expect(INTERNAL_FIELD_NAMES[0]).toBe("_autonomyMode");
+  it("places `_autonomyMode` immediately after `_agentId` (the canonical sort order)", () => {
+    // The array is maintained in JS `.sort()`/localeCompare alphabetical order
+    // (asserted by the sorted-order test above). "_agentId" < "_autonomyMode"
+    // (2nd char 'g' < 'u'), so `_autonomyMode` is index 1, right after `_agentId`.
+    // Catches an accidental mis-insertion of the new entry.
+    expect(INTERNAL_FIELD_NAMES[0]).toBe("_agentId");
+    expect(INTERNAL_FIELD_NAMES[1]).toBe("_autonomyMode");
   });
 });
