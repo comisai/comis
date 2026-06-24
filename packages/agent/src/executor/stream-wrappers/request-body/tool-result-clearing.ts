@@ -23,12 +23,23 @@ export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
  * Read-only tool names whose results are safely clearable during microcompact.
  * Edit/write tool results are preserved because they carry the LLM's understanding
  * of what was changed -- clearing them loses context.
+ *
+ * EFF-02: these are Comis's ACTUAL emitted builtin tool names (the `block.name` on the
+ * `tool_use` blocks in the message stream), verified at the builtin registrations:
+ * `read` (read-tool), `grep` (grep-tool), `find` (find-tool), `ls` (ls-tool),
+ * `exec` (exec-tool), `web_fetch` (web-fetch-tool), `web_search` (web-search-tool).
+ * The earlier set listed provider/SDK names (file_read/glob/exec_tool/list_dir/
+ * search_files) that matched NONE of the builtins -- so the heaviest results
+ * (read/find/ls/exec) were never compacted (the latent bug).
  */
 export const COMPACTABLE_TOOL_NAMES = new Set<string>([
-  "grep", "glob", "file_read", "web_search", "web_fetch",
-  "exec_tool",    // Shell equivalent -- output is ephemeral
-  "list_dir",     // Directory listing -- ephemeral
-  "search_files", // File search -- ephemeral
+  "read",        // File read -- output is ephemeral
+  "grep",        // Content search -- ephemeral
+  "find",        // File search -- ephemeral
+  "ls",          // Directory listing -- ephemeral
+  "exec",        // Shell exec -- output is ephemeral
+  "web_fetch",   // Fetched page content -- ephemeral
+  "web_search",  // Search results -- ephemeral
 ]);
 
 /**

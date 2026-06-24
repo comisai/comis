@@ -4496,7 +4496,7 @@ describe("selective tool-type clearing in microcompact", () => {
     expect(toolMsgs[0].content[0].text).toBe("A".repeat(1500));
   });
 
-  it("clears exec_tool result", async () => {
+  it("clears exec result", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -4514,12 +4514,13 @@ describe("selective tool-type clearing in microcompact", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      makePayloadWithNamedToolResult("exec_tool", "tu_exec", "A".repeat(1500)),
+      // EFF-02: "exec" is Comis's emitted shell tool name (was "exec_tool", a dead alias).
+      makePayloadWithNamedToolResult("exec", "tu_exec", "A".repeat(1500)),
       model,
     );
 
     const toolMsgs = (result.messages as any[]).filter((m: any) => m.role === "tool");
-    // exec_tool is a compactable tool -- result should be cleared
+    // exec is a compactable tool -- result should be cleared
     expect(toolMsgs[0].content[0].text).toContain("[Stale tool result cleared");
   });
 });
@@ -4572,7 +4573,7 @@ describe("dual-category tool clearing", () => {
     };
   }
 
-  it("clears file_read tool_result (existing compactable behavior)", async () => {
+  it("clears read tool_result (existing compactable behavior)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -4590,12 +4591,13 @@ describe("dual-category tool clearing", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (payload: any, model: any) => Promise<any>;
     const result = await onPayload(
-      makePayloadWithToolUseAndResult("file_read", "tu_read", { path: "/foo" }, "A".repeat(1500)),
+      // EFF-02: "read" is Comis's emitted file-read tool name (was "file_read", a dead alias).
+      makePayloadWithToolUseAndResult("read", "tu_read", { path: "/foo" }, "A".repeat(1500)),
       model,
     );
 
     const toolMsgs = (result.messages as any[]).filter((m: any) => m.role === "tool");
-    // file_read is a compactable tool -- result should be cleared
+    // read is a compactable tool -- result should be cleared
     expect(toolMsgs[0].content[0].text).toContain("[Stale tool result cleared");
   });
 
@@ -6338,19 +6340,19 @@ describe("fence-aware microcompaction", () => {
     const opts = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = opts.onPayload as (p: any, m: any) => Promise<any>;
 
-    // Use "file_read" (in COMPACTABLE_TOOL_NAMES) and role: "tool" (Anthropic API format)
+    // Use "read" (in COMPACTABLE_TOOL_NAMES — EFF-02 emitted name) and role: "tool" (Anthropic API format)
     const result = await onPayload({
       system: [{ type: "text", text: "System" }],
       tools: [],
       messages: [
         { role: "user", content: [{ type: "text", text: "user 1" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t1", content: [{ type: "text", text: longText }] }, // idx 2 — protected by fence
         { role: "user", content: [{ type: "text", text: "user 2" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t2", content: [{ type: "text", text: longText }] }, // idx 5 — beyond fence
         { role: "user", content: [{ type: "text", text: "user 3" }] },
-        { role: "assistant", content: [{ type: "tool_use", id: "t3", name: "file_read", input: {} }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t3", name: "read", input: {} }] },
         { role: "tool", tool_use_id: "t3", content: [{ type: "text", text: longText }] }, // idx 8 — within keepWindow
       ],
     }, model);
