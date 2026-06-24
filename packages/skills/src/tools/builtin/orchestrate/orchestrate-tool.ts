@@ -43,7 +43,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
@@ -351,12 +351,20 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //    .linux.test) — re-listing them here would route the curated
         //    allow-list through the JAIL-03 discovery screen (a false-positive on
         //    /etc/* paths that resolve into a blocked dir on some hosts).
+        // The jail `--bind`s `<workspace>/.tmp` as its writable temp; bwrap requires
+        // the bind SOURCE to exist, so create it BEFORE building the args. A missing
+        // `.tmp` makes bwrap fail at construction with "Can't find source path
+        // …/.tmp" → exit 1 on EVERY real jailed run (live VPS finding 2026-06-23;
+        // invisible to the macOS unit suite, which injects a fake spawn). Guarded by
+        // orchestrate-tool.test.ts.
+        const tempDir = safePath(workspacePath, ".tmp");
+        mkdirSync(tempDir, { recursive: true });
         const args = deps.sandbox.buildArgs({
           workspacePath,
           sharedPaths: [],
           readOnlyPaths: [],
           cwd: workspacePath,
-          tempDir: safePath(workspacePath, ".tmp"),
+          tempDir,
           network: { mode: "cap-socket", capSocketPath: deps.capSocketPath },
           seccompFd,
           jailNode,

@@ -30,6 +30,11 @@ vi.mock("@comis/core", () => ({
     profile: "standard",
     capabilities: ["orch:spawn", "orch:graph", "orch:cron"],
   })),
+  // PROFILE-05/JAIL-03: buildAutonomyToolWiring (loaded via the setup-tools chain)
+  // degrades the resolved posture via degradeAutonomy before gating orchestrate.
+  // This seam never passes namespacePreflightOk (→ defaults true → no-op), so a
+  // pass-through is faithful; the real fn is unit-tested in schema-agent-autonomy.test.ts.
+  degradeAutonomy: vi.fn((resolved: unknown) => ({ resolved })),
 }));
 
 const { makeCreateAgentRpcCall } = await import("./setup-tools-capabilities.js");

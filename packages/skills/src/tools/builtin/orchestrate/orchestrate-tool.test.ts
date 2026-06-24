@@ -215,6 +215,27 @@ describe("orchestrate-tool", () => {
     expect(bindIdx).toBeGreaterThanOrEqual(0);
   });
 
+  // Live VPS finding (2026-06-23): the runner passes `tempDir: <workspace>/.tmp`
+  // to BwrapProvider.buildArgs, which `--bind`s it into the jail — and bwrap
+  // requires the bind SOURCE to exist. The runner never created `.tmp`, so EVERY
+  // real jailed run died at construction with `bwrap: Can't find source path
+  // .../.tmp: No such file or directory` → exit 1, breaking the orchestrate
+  // happy-path. (Passed every macOS unit test because they inject a fake spawn
+  // that never runs bwrap.) The runner must create `.tmp` before spawning.
+  it("creates the .tmp tempDir before spawning so bwrap can --bind it", async () => {
+    let tmpExistsAtSpawn: boolean | undefined;
+    const spawnFn: OrchestrateSpawnFn = () => {
+      tmpExistsAtSpawn = existsSync(join(workspacePath, ".tmp"));
+      return makeFakeChild("ok\n");
+    };
+    const { deps } = makeDeps({ spawnFn });
+    const tool = createOrchestrateTool(deps);
+
+    await tool.execute("c", { script: "1", language: "ts" });
+
+    expect(tmpExistsAtSpawn).toBe(true);
+  });
+
   describe("scrubSecretEnv (ORCH-02 pure helper)", () => {
     it("drops every *KEY*/*TOKEN*/*SECRET* key (case-insensitive)", () => {
       const scrubbed = scrubSecretEnv({
