@@ -49,6 +49,14 @@ import {
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
 import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
+// Phase 217-05 (UNATT/BREAK/EVICT): the never-hang control plane the dispatch
+// chokepoint reads — the per-rootRunId denial breaker (BREAK-01/02), the evicted-
+// rootRunId set (EVICT-01/03), and the content-free escalate NotifyFn (UNATT-03).
+// All three are constructed here (alongside BoundedAutonomy) and held on the cap
+// handle so daemon.ts threads them onto the dispatch deps.
+import { createDenialBreaker, type DenialBreaker } from "../autonomy/denial-breaker.js";
+import { createEvictRegistry, type EvictRegistry } from "../autonomy/evict-registry.js";
+import type { NotifyFn } from "../autonomy/durable-resume-engine.js";
 import { namespacePreflight, type NamespacePreflightResult } from "@comis/skills";
 import {
   createOrchestrateExecutorCores,
@@ -205,6 +213,29 @@ export interface CapabilityLayerHandle {
    * `CapabilityMintDeps`, so the bearer is added to the redaction set at mint.
    */
   outputGuard: OutputGuardPort;
+  /**
+   * Phase 217-05 (BREAK-01/02): the daemon-wide per-rootRunId consecutive denial
+   * breaker. The dispatch chokepoint calls `recordDenial` ONLY on a
+   * CapabilityDeniedError floor-block and `recordAllow` on the allow branch; on
+   * the Nth consecutive floor-block it trips → execution:aborted + killByRootRun.
+   * `denialBreakerN` is sourced from the resolved autonomy-bearing config (LOW-1).
+   */
+  denialBreaker: DenialBreaker;
+  /**
+   * Phase 217-05 (EVICT-01/03): the daemon-wide evicted-rootRunId set. The
+   * `autonomy.evict` admin handler WRITES it (`mark`); the chokepoint READS it
+   * (`isEvicted`) at the NEXT gate decision to demote the run's mode to `default`
+   * mid-run. The SAME instance is threaded into createAutonomyHandlers via the
+   * `...deps` spread, activating the evict handler (Plan 04's cross-wave point).
+   */
+  evictRegistry: EvictRegistry;
+  /**
+   * Phase 217-05 (UNATT-03): the content-free escalate NotifyFn. The chokepoint
+   * fires it (NEVER awaited) on an unattended would-ask deny and on a breaker
+   * trip — out-of-band + auditable (a WARN with ids/enums/hint, never a body).
+   * Synchronous (void) so the deny re-throw is not blocked (the never-hang bar).
+   */
+  escalate: NotifyFn;
 }
 
 /** Result of {@link constructCapabilityLayer}: the cap handle + the boot preflight boolean. */
@@ -375,6 +406,31 @@ export async function constructCapabilityLayer(
     ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
     logger: daemonLogger,
   });
+  // Phase 217-05 (BREAK-01/02): the daemon-wide denial breaker, keyed per
+  // rootRunId. denialBreakerN is sourced from the resolved autonomy-bearing config
+  // (LOW-1 — NOT a non-existent `agents[defaultAgentId]` lookup; this file has no
+  // defaultAgentId local). A single daemon-wide breaker is acceptable: it keys
+  // per-rootRunId, mirroring the single daemon-wide LeaseManager + BoundedAutonomy.
+  const denialBreaker = createDenialBreaker({
+    denialBreakerN: autonomyBearingConfig.denialBreakerN,
+    logger: daemonLogger,
+  });
+  // Phase 217-05 (EVICT-01/03): the daemon-wide evicted-rootRunId set. The SAME
+  // instance is read by the chokepoint (isEvicted → demote to "default") and
+  // written by the autonomy.evict admin handler (mark) — wired via the dispatch
+  // deps spread (activating Plan 04's conditionally-registered handler).
+  const evictRegistry = createEvictRegistry({ logger: daemonLogger });
+  // Phase 217-05 (UNATT-03): the content-free escalate NotifyFn. A synchronous
+  // WARN (ids/enums/hint only, NEVER a message body) — mirrors the durable-resume
+  // notify (setup-durable-resume.ts). The chokepoint fires it fire-and-forget (the
+  // deny still re-throws immediately so the run never hangs). No ApprovalGate is in
+  // scope at this boot seam, so the WARN + the deny's existing audit emit together
+  // meet UNATT-03's out-of-band + auditable bar.
+  const escalate: NotifyFn = (opts) =>
+    daemonLogger.warn(
+      { kind: opts.kind, rootRunId: opts.rootRunId, hint: opts.hint, errorKind: "internal" as const },
+      `Autonomy escalation: ${opts.reason}`,
+    );
   // Phase 213-08 (BUDGET-01/02): POPULATE the late-bound budget holder with the
   // narrow budget port now that the service exists — the seam the bridge reads
   // (the bridge + schedulers were built BEFORE this layer; they hold the holder
@@ -436,7 +492,18 @@ export async function constructCapabilityLayer(
       "Capability lease layer ACTIVE (0600 socket listening; executor wired; lease minted per spawn)",
     );
     return {
-      capEndpointHandle: { leaseManager, endpoint, boundedAutonomy, capSocketPath, outputGuard },
+      // Phase 217-05: the never-hang control plane (denialBreaker/evictRegistry/
+      // escalate) rides the handle so daemon.ts threads it onto the dispatch deps.
+      capEndpointHandle: {
+        leaseManager,
+        endpoint,
+        boundedAutonomy,
+        capSocketPath,
+        outputGuard,
+        denialBreaker,
+        evictRegistry,
+        escalate,
+      },
       // The cap-socket teardown ALSO tears down the bounded-autonomy rate-limiter
       // timers (clean shutdown — RATE-01's TTL-evict timers).
       capEndpointStop: async () => {

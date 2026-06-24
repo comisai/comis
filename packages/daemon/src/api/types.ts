@@ -324,14 +324,14 @@ export interface AgentsApiDeps {
 /**
  * Dependencies for cron-handlers + graph-handlers + heartbeat-handlers + subagent-handlers
  * (cron.list/run, graph.list/run, heartbeat.list/run, subagent.list).
+ * @optional-field-count: 14 — daemon-internal orchestration-plane slice; every optional gates on a daemon-global resource (graph coordinator, heartbeat runner, leaseManager/durableRuns, the Phase-217 autonomy plane denialBreaker/evictRegistry/escalate). daemon.ts supplies each from the cap-endpoint handle or config; a non-autonomy boot leaves them absent (byte-identical pre-217). Keep until a structural slice split.
  */
 export interface OrchestratorApiDeps {
   getAgentCronScheduler: (agentId: string) => CronScheduler;
   cronSchedulers: Map<string, CronScheduler>;
   executionTrackers: Map<string, ExecutionTracker>;
   wakeCoalescer: WakeCoalescer;
-  // Graph coordinator deps
-  graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator;
+  graphCoordinator?: import("../graph/graph-coordinator.js").GraphCoordinator; // Graph coordinator deps
   // Named graph persistence deps
   namedGraphStore?: import("@comis/memory").NamedGraphStore;
   /** Node type registry for driver config validation (structurally compatible with the graph-local / @comis/scheduler NodeTypeRegistry). */
@@ -357,8 +357,10 @@ export interface OrchestratorApiDeps {
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   /** autonomy-handlers (213-06 REVOKE-01/03) revoke fan-outs. Optional: Plan 07 wires it; absent ⇒ handlers not registered. */ leaseManager?: import("@comis/infra").LeaseManager;
   /** Phase 216 DUR-03: the durable-run store — autonomy-handlers ALSO calls invalidateForRevoke(rootRunId) on lease.revoke/run.kill so a restart cannot resume pre-revoke caps. Optional; absent ⇒ the persisted record is not poisoned (only matters when durability is enabled, which is when Plan 07 wires it). */ durableRuns?: import("@comis/core").DurableRunPort;
-  // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
-  eventBus?: AppContainer["eventBus"];
+  denialBreaker?: import("../autonomy/denial-breaker.js").DenialBreaker; // 217-05 BREAK-02 (see the @optional-field-count JSDoc above). OPTIONAL ⇒ pre-217 byte-identical.
+  evictRegistry?: import("../autonomy/evict-registry.js").EvictRegistry; // 217-05 EVICT-01/03: isEvicted→demote; flows into createAutonomyHandlers via `...deps` (activates autonomy.evict).
+  escalate?: import("../autonomy/durable-resume-engine.js").NotifyFn; // 217-05 UNATT-03: content-free NotifyFn, fired NEVER-awaited.
+  eventBus?: AppContainer["eventBus"]; // TELEM-01 (Plan 173-02): graph-mutate.ts emits `pipeline:authored` via eventBus, tier from getProviderCapabilityClass+deps.agents at rpc-dispatch.ts (when-absent: AUDIT-orchestrator.md). Both optional; eventBus shape matches sibling slices (ApiDispatchDeps parity).
   getProviderCapabilityClass?: (provider: string | undefined) => import("@comis/agent").CapabilityClass | undefined;
 }
 
