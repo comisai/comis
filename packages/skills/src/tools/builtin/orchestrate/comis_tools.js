@@ -32,6 +32,11 @@ const DESCRIPTORS = [
     "summary": "Run a jq expression over JSON (a value or a ResultRef)."
   },
   {
+    "name": "jsonpath",
+    "capability": "orch:read",
+    "summary": "Extract a precise value from a JSON ResultRef via JSONPath (no eval)."
+  },
+  {
     "name": "ls",
     "capability": "orch:read",
     "summary": "List a directory in the jailed workspace."
@@ -72,6 +77,11 @@ const DESCRIPTORS = [
     "summary": "List the agent's own sessions."
   },
   {
+    "name": "sql",
+    "capability": "orch:read",
+    "summary": "Run DuckDB SQL over a CSV/JSONL/JSON ResultRef (daemon-side, read-only)."
+  },
+  {
     "name": "web_fetch",
     "capability": "orch:web",
     "summary": "Fetch a URL's readable content (daemon-side, DNS-pinned)."
@@ -99,6 +109,9 @@ export const comis_tools = {
   async jq(args) {
     return invoke("jq", args);
   },
+  async jsonpath(args) {
+    return invoke("jsonpath", args);
+  },
   async ls(args) {
     return invoke("ls", args);
   },
@@ -122,6 +135,9 @@ export const comis_tools = {
   },
   async sessions_list(args) {
     return invoke("sessions_list", args);
+  },
+  async sql(args) {
+    return invoke("sql", args);
   },
   async web_fetch(args) {
     return wrapResultRef(await invoke("web_fetch", args));
