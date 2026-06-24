@@ -333,6 +333,69 @@ describe("TOOL_PROFILES", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// COORD-01 (Phase 218): the `coordinator` TOOL_PROFILE — the lean-coordinator
+// orchestration surface. A long-running lead with `autonomy.role: coordinator`
+// resolves `coordinatorToolGroups: ["coordinator"]` (schema-agent-autonomy.ts),
+// which setup-tools applies as the effective tool-group allowlist. The surface
+// is: the orchestration tools (sessions_spawn/pipeline/cron/message + the rest
+// of group:sessions) + the orch:read drill-in tools (read/grep/find/ls — so the
+// lead can read a child ResultRef, SUMREF-03) + obs_query (the obs surface as a
+// TOOL NAME, NOT a new capability — AGENT_CAPABILITIES is unchanged). It
+// EXCLUDES the heavy-work tools (no exec/edit/write/browser inline — COORD-02:
+// heavy work has nowhere to run except a fresh-window child).
+//
+// These cases are RED until the `coordinator` entry exists in TOOL_PROFILES.
+// ---------------------------------------------------------------------------
+describe("TOOL_PROFILES.coordinator (COORD-01 — the lean-coordinator orchestration surface)", () => {
+  it("COORD-01-T1: the coordinator profile exists and includes the orchestration tools sessions_spawn/pipeline/cron/message", () => {
+    const coordinator = TOOL_PROFILES["coordinator"];
+    expect(coordinator, "TOOL_PROFILES.coordinator must exist").toBeDefined();
+    expect(coordinator).toContain("sessions_spawn");
+    expect(coordinator).toContain("pipeline");
+    expect(coordinator).toContain("cron");
+    expect(coordinator).toContain("message");
+  });
+
+  it("COORD-01-T2: includes the orch:read drill-in tools (read/grep/find/ls) so the lead can read a child ResultRef (SUMREF-03)", () => {
+    const coordinator = TOOL_PROFILES["coordinator"]!;
+    expect(coordinator).toContain("read");
+    expect(coordinator).toContain("grep");
+    expect(coordinator).toContain("find");
+    expect(coordinator).toContain("ls");
+  });
+
+  it("COORD-01-T3: includes obs_query (the obs surface as a tool NAME, not a new capability)", () => {
+    expect(TOOL_PROFILES["coordinator"]).toContain("obs_query");
+  });
+
+  it("COORD-01-T4: EXCLUDES the heavy-work tools — no exec/edit/write/browser inline (COORD-02)", () => {
+    const coordinator = TOOL_PROFILES["coordinator"]!;
+    expect(coordinator).not.toContain("exec");
+    expect(coordinator).not.toContain("edit");
+    expect(coordinator).not.toContain("write");
+    expect(coordinator).not.toContain("browser");
+  });
+
+  it("COORD-01-T5: applyToolPolicy with the coordinator profile keeps the orchestration tools and filters the heavy-work tools", () => {
+    const tools = [
+      ...createMockTools(),
+      mockTool("obs_query"),
+    ];
+    const result = applyToolPolicy(tools, { profile: "coordinator", allow: [], deny: [] });
+    const names = result.tools.map((t) => t.name);
+    // Orchestration + drill-in survive.
+    expect(names).toContain("sessions_spawn");
+    expect(names).toContain("message");
+    expect(names).toContain("read");
+    expect(names).toContain("obs_query");
+    // Heavy-work tools are filtered out (not in the coordinator profile).
+    expect(names).not.toContain("exec");
+    expect(names).not.toContain("edit");
+    expect(names).not.toContain("browser");
+  });
+});
+
 describe("TOOL_GROUPS", () => {
   it("has all expected groups", () => {
     expect(TOOL_GROUPS).toHaveProperty("group:coding");
