@@ -552,6 +552,17 @@ export interface SpawnParams {
    *  Leaf nodes use "short" (5m) cache retention instead of the 1h default
    *  because their cache prefix has no downstream consumers. */
   isLeafNode?: boolean;
+  /**
+   * WT-01: run this child in an ISOLATED git worktree (its own working tree on a
+   * fresh branch rooted under the child's jailed workspace) so parallel children
+   * never clobber each other's files. The runner is @comis/skills-free, so it does
+   * NOT create the worktree itself — it persists this flag onto the child session
+   * metadata (`worktree`), and the daemon's executeSubAgent (which holds the
+   * GitExec seam + the workspace resolver) reads the metadata, creates the
+   * worktree, runs the child in it, and auto-cleans-if-unchanged on completion.
+   * Absent/false ⇒ the child runs in its normal jailed workspace (today's path).
+   */
+  worktree?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1624,6 +1635,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         graphToolNames: params.graphToolNames ?? [],
         graphNodeDepth: params.graphNodeDepth,
         isLeafNode: params.isLeafNode ?? false,
+        // WT-01: carry the worktree request onto the child session metadata so
+        // executeSubAgent (the only place that holds the GitExec seam + the
+        // workspace resolver) can run the child in an isolated git worktree.
+        // Defaults to false so the no-worktree path stays byte-identical.
+        worktree: params.worktree ?? false,
       });
     }
 

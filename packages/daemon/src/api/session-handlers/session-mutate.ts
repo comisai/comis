@@ -197,6 +197,11 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         // GEN-03: ride the parent's resolved reply language into child session
         // metadata (same channel as objective/toolGroups); read off the live ALS.
         resolvedLanguage: tryGetContext()?.resolvedLanguage,
+        // WT-01: thread the `worktree?` request from the RPC param so the runner
+        // persists it onto the child session metadata; executeSubAgent then runs
+        // the child in an isolated git worktree (auto-clean-if-unchanged). Omit
+        // when absent so the no-worktree spawn stays byte-identical.
+        ...(params.worktree !== undefined ? { worktree: params.worktree } : {}),
       });
       // Capture dedup signal from this spawn so the response carries
       // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner
