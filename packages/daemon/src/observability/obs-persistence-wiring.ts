@@ -727,11 +727,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(autonomyKilledEventToRow(payload));
   });
   // FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip → a content-free
-  // health_signal row (same diagnosticBuffer, NO migration). The fleet lens (below)
-  // counts it as the SEPARABLE `denialBreakerTrips` — the tool-failure breaker
-  // (breakerTripTotal) and the capability-denial breaker are distinct mechanisms,
-  // so they must not be conflated. The row carries the closed label + count + id
-  // only — the deny reason stays on the escalate at the source (rpc-dispatch.ts).
+  // health_signal row (the SEPARABLE denialBreakerTrips count; see the mapper docstring).
   eventBus.on("autonomy:denial_breaker_tripped", (payload) => {
     diagnosticBuffer.push(autonomyDenialBreakerEventToRow(payload));
   });

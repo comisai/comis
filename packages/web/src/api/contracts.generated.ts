@@ -9013,6 +9013,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "breakerTrips": {
               "type": "number"
             },
+            "denialBreakerTrips": {
+              "type": "number"
+            },
             "budgetBreaches": {
               "type": "number"
             },
@@ -9030,6 +9033,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "revoked",
             "killed",
             "breakerTrips",
+            "denialBreakerTrips",
             "budgetBreaches",
             "costUsd"
           ],
