@@ -625,6 +625,42 @@ describe("jsonpath core (QRY-02): DuckDB json_extract, NO eval lib (T-221-QRY-03
       rmSync(ws, { recursive: true, force: true });
     }
   });
+
+  it("WR-01: escapes a single quote in the workspace path so it cannot break out of the SQL literal", async () => {
+    // The workspace dir is <dataDir>/workspace-<agentId>; agentId is only
+    // z.string().min(1) (no charset limit), so a data-dir / agent-id containing a
+    // single quote is reachable. safePath confines the LOCATION but does not
+    // escape SQL metacharacters — the jsonpath core interpolates absPath into a
+    // single-quoted read_json_auto('...') literal, so an unescaped quote would
+    // break out into injectable SQL. Use a workspace dir whose name carries a
+    // quote and assert the generated SQL DOUBLES it (SQL string-literal escaping),
+    // never leaving a lone quote that closes the literal early.
+    const wsParent = mkdtempSync(join(tmpdir(), "orch-wr01-"));
+    const ws = join(wsParent, "workspace-x'or'1");
+    mkdirSync(join(ws, "results"), { recursive: true });
+    writeFileSync(join(ws, "results", "doc.json"), JSON.stringify({ a: 1 }), "utf8");
+    try {
+      const cores = createOrchestrateExecutorCores({ logger: makeLogger() });
+      await cores.fileExecutors.jsonpath(
+        { path: "results/doc.json", expr: "$.a" },
+        { workspaceDir: ws },
+      );
+      expect(execFileSpy).toHaveBeenCalledTimes(1);
+      const [, argv] = execFileSpy.mock.calls[0] as [string, string[]];
+      const sqlText = argv[argv.indexOf("-c") + 1] as string;
+      // Isolate the read_json_auto('...') literal and assert the path inside it
+      // has every single quote doubled (no lone quote that would close it early).
+      const m = sqlText.match(/read_json_auto\('((?:[^']|'')*)'\)/);
+      expect(m, "expected a well-formed read_json_auto('...') literal").not.toBeNull();
+      const inside = m![1]!;
+      // The raw path's single quotes must appear DOUBLED in the literal body.
+      expect(inside).toContain("workspace-x''or''1");
+      // And the body must contain no UN-doubled quote (every ' is part of a '').
+      expect(inside.replace(/''/g, "")).not.toContain("'");
+    } finally {
+      rmSync(wsParent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("isSafeJsonPath (pure guard)", () => {
