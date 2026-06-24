@@ -50,8 +50,10 @@ const REL = "packages/daemon/src/wiring/setup-gateway-api.ts";
 const DESIGN_REF = "v8 ORIGIN-02 / section 3.1";
 const SUGGESTED_FIX =
   "Wrap external caller params in stripInternalFields() at BOTH registerMethod " +
-  "branches: admin → `{ ...stripInternalFields(params ?? {}), _trustLevel: \"admin\" }` " +
-  "(strip-THEN-inject), rpc → `stripInternalFields(params ?? {})`.";
+  "branches, with any server-trusted field (_trustLevel, the CAP-03 _capabilities " +
+  "injection `...capInject`) spread AFTER the strip: admin → " +
+  "`{ ...stripInternalFields(params ?? {}), _trustLevel: \"admin\", ...capInject }`, " +
+  "rpc → `{ ...stripInternalFields(params ?? {}), ...capInject }` (strip-THEN-inject).";
 
 /**
  * Strip line + block comments so a token inside a comment cannot satisfy an
@@ -183,8 +185,12 @@ describe("ORIGIN-02 — setup-gateway-api strips internal fields at the external
     expect(code).toMatch(
       /stripInternalFields\(params \?\? \{\}\),\s*_trustLevel:\s*["']admin["']/,
     );
-    // The rpc branch wraps the bare pass-through.
-    expect(code).toMatch(/rpcCall\(\s*c\.method,\s*stripInternalFields\(params \?\? \{\}\)\s*\)/);
+    // The rpc branch strips FIRST, then spreads the CAP-03 server-side cap
+    // injection (...capInject) AFTER — so a forged client `_capabilities` is
+    // stripped before the trusted one is added (strip-THEN-inject).
+    expect(code).toMatch(
+      /rpcCall\(\s*c\.method,\s*\{\s*\.\.\.stripInternalFields\(params \?\? \{\}\),\s*\.\.\.capInject\s*\}\s*\)/,
+    );
     // The pre-patch unstripped admin spread must NOT survive anywhere.
     expect(code).not.toMatch(/\{\s*\.\.\.\(params \?\? \{\}\),\s*_trustLevel/);
   });
