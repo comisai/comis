@@ -1384,6 +1384,208 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
 });
 
 // ---------------------------------------------------------------------------
+// PHASE 217-05 Task 3 (EVICT): the chokepoint effectiveMode read.
+//   - EVICT-03: an evicted rootRunId resolves to "default" at the NEXT gate
+//     decision (mid-run), overriding any injected/resolved mode — tested across
+//     two sequential calls (the operator's autonomy.evict between them).
+//   - EVICT-01: eviction DEMOTES (mode→default), it does NOT kill/abort.
+//   - EVICT-02: an absent/unparseable/unresolvable mode fail-closes to "default".
+//   - jail-leg server-resolve: no injected mode → deps.agents[agentOrigin] mode.
+//
+// effectiveMode is internal; it is OBSERVED behaviorally via escalate — an
+// unattended would-ask deny escalates, a default-mode deny does NOT (escalation
+// is unattended-specific, proven in Task 2).
+// ---------------------------------------------------------------------------
+describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote + fail-closed (217-05)", () => {
+  const mockLogger = {
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeEvictDeps(opts: { agents?: Record<string, unknown> } = {}) {
+    const emit = vi.fn();
+    const escalate = vi.fn();
+    const killByRootRun = vi.fn(() => ({ killed: 1 }));
+    const evictedSet = new Set<string>();
+    const evictRegistry = {
+      mark: vi.fn((rootRunId: string) => {
+        const newlyEvicted = !evictedSet.has(rootRunId);
+        evictedSet.add(rootRunId);
+        return { newlyEvicted };
+      }),
+      isEvicted: vi.fn((rootRunId: string) => evictedSet.has(rootRunId)),
+      clear: vi.fn((rootRunId: string) => {
+        evictedSet.delete(rootRunId);
+      }),
+    };
+    // A simple breaker stub that NEVER trips (so any kill in these tests can ONLY
+    // come from the breaker trip path — proving eviction itself does not kill).
+    const denialBreaker = {
+      recordDenial: vi.fn(() => ({ tripped: false })),
+      recordAllow: vi.fn(),
+      evict: vi.fn(),
+    };
+    const deps = {
+      logger: mockLogger,
+      container: {
+        eventBus: { emit, on: vi.fn() },
+        config: { providers: { entries: {} }, tenantId: "tenant-a" },
+      },
+      resolveRootRunId: (key: { tenantId: string; userId: string; channelId: string }) =>
+        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+      denialBreaker,
+      evictRegistry,
+      escalate,
+      subAgentRunner: { killByRootRun },
+      agents: opts.agents ?? {},
+    } as never;
+    const pull = (name: string) =>
+      emit.mock.calls.filter((c) => c[0] === name).map((c) => c[1] as Record<string, unknown>);
+    return { deps, escalate, killByRootRun, evictRegistry, abortEvents: () => pull("execution:aborted") };
+  }
+
+  async function denyingSend() {
+    const { requireCapability } = await import("@comis/core");
+    const { createMessageHandlers } = await import("./message-handlers.js");
+    (createMessageHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "message.send": vi.fn(async (p: Record<string, unknown>) => {
+        requireCapability(p._capabilities as string[] | undefined, "orch:message");
+        return { sent: true };
+      }),
+    });
+  }
+
+  const SEND_DENIED = {
+    _agentId: "agentA",
+    _capabilities: ["orch:read"], // missing orch:message → deny
+    _callerSessionKey: "tenant-a:user-7:chan-9",
+    _autonomyMode: "unattended",
+  } as const;
+
+  it("EVICT-03 (mid-run, NEXT gate decision): call 1 escalates as unattended; after evictRegistry.mark, call 2 resolves 'default' (no unattended escalate)", async () => {
+    const { deps, escalate, evictRegistry } = makeEvictDeps();
+    const { CapabilityDeniedError } = await import("@comis/core");
+
+    // Call 1: not yet evicted → unattended → escalates.
+    await denyingSend();
+    const d1 = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(d1("message.send", { ...SEND_DENIED })).rejects.toBeInstanceOf(CapabilityDeniedError);
+    const unattendedEscalations1 = escalate.mock.calls.filter(
+      (c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied",
+    );
+    expect(unattendedEscalations1).toHaveLength(1);
+
+    // The operator evicts the run mid-flight (autonomy.evict → mark).
+    evictRegistry.mark("root-session-tenant-a:user-7:chan-9");
+
+    // Call 2: now evicted → "default" → does NOT escalate as a would-ask (the
+    // demotion took effect at THIS gate decision, mid-run — not next spawn).
+    await denyingSend();
+    const d2 = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(d2("message.send", { ...SEND_DENIED })).rejects.toBeInstanceOf(CapabilityDeniedError);
+    const unattendedEscalations2 = escalate.mock.calls.filter(
+      (c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied",
+    );
+    // Still 1 (no NEW would_ask escalation on the evicted call).
+    expect(unattendedEscalations2).toHaveLength(1);
+  });
+
+  it("EVICT-01 (demote not abort): an evicted run's deny is NOT escalated-as-unattended AND the eviction itself does NOT kill the run", async () => {
+    const { deps, escalate, killByRootRun } = makeEvictDeps();
+    const { CapabilityDeniedError } = await import("@comis/core");
+    // Pre-evict the run.
+    deps.evictRegistry.mark("root-session-tenant-a:user-7:chan-9");
+
+    await denyingSend();
+    const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(d("message.send", { ...SEND_DENIED })).rejects.toBeInstanceOf(CapabilityDeniedError);
+
+    // Demoted to default → no unattended would-ask escalation.
+    expect(
+      escalate.mock.calls.filter((c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied"),
+    ).toHaveLength(0);
+    // Eviction DEMOTES — it does not kill. The breaker stub never trips, so the
+    // only kill source is the trip path; killByRootRun must be untouched.
+    expect(killByRootRun).not.toHaveBeenCalled();
+  });
+
+  it("EVICT-02 (fail-closed, absent mode): NO _autonomyMode + an absent deps.agents entry → 'default' (no unattended escalate)", async () => {
+    const { deps, escalate } = makeEvictDeps({ agents: {} }); // agentA NOT present
+    const { CapabilityDeniedError } = await import("@comis/core");
+    await denyingSend();
+    const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    // No _autonomyMode at all (the jail leg injects none) → server-resolve from an
+    // EMPTY agents map → unresolvable → "default" (fail-closed, never broader).
+    await expect(
+      d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(
+      escalate.mock.calls.filter((c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied"),
+    ).toHaveLength(0);
+  });
+
+  it("EVICT-02 (fail-closed, forged/unparseable mode): _autonomyMode:'bogus' → 'default' (no unattended escalate)", async () => {
+    const { deps, escalate } = makeEvictDeps();
+    const { CapabilityDeniedError } = await import("@comis/core");
+    await denyingSend();
+    const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(
+      d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        _autonomyMode: "bogus", // unparseable → resolveEffectiveMode → "default"
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(
+      escalate.mock.calls.filter((c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied"),
+    ).toHaveLength(0);
+  });
+
+  it("EVICT-02 (valid passthrough): a valid injected _autonomyMode:'unattended' → 'unattended' (escalates)", async () => {
+    const { deps, escalate } = makeEvictDeps();
+    const { CapabilityDeniedError } = await import("@comis/core");
+    await denyingSend();
+    const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(d("message.send", { ...SEND_DENIED })).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(
+      escalate.mock.calls.filter((c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied"),
+    ).toHaveLength(1);
+  });
+
+  it("jail-leg server-resolve: NO _autonomyMode but deps.agents[agentOrigin] resolves mode 'unattended' → 'unattended' (escalates)", async () => {
+    // The jail leg injects no _autonomyMode; the chokepoint server-resolves it from
+    // deps.agents[agentOrigin].autonomy (Plan 03 Task 3). An unattended-profile agent
+    // resolves mode:"unattended".
+    const { deps, escalate } = makeEvictDeps({
+      agents: { agentA: { autonomy: { profile: "unattended" } } },
+    });
+    const { CapabilityDeniedError } = await import("@comis/core");
+    await denyingSend();
+    const d = (await import("./rpc-dispatch.js")).createRpcDispatch(deps);
+    await expect(
+      d("message.send", {
+        _agentId: "agentA",
+        _capabilities: ["orch:read"],
+        _callerSessionKey: "tenant-a:user-7:chan-9",
+        // NO _autonomyMode — the server-resolve from deps.agents is the source.
+      }),
+    ).rejects.toBeInstanceOf(CapabilityDeniedError);
+    expect(
+      escalate.mock.calls.filter((c) => (c[0] as Record<string, unknown>).kind === "would_ask_denied"),
+    ).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TELEM-01 WIRING (the 172-WR-02 lesson, T-173-13): the createGraphHandlers
 // deps MUST actually carry a constructed `resolveCapabilityClass` — without it
 // every pipeline:authored emit fail-defaults to "unknown" and the small-model
