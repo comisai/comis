@@ -48,19 +48,74 @@ Set `autonomy.profile` to pick a posture. There are four:
 |---------|---------------|-------------|-------------|
 | `assistant` | **Off** -- zero orchestration surfaces, the agent only replies | n/a | A pure conversational agent; or the safe floor Comis downshifts to when the jail cannot be built |
 | `standard` _(default)_ | The nine floor capabilities (read, web, write, analyze, spawn, graph, cron, skill, message) | Budget ceiling, spawn-rate limit, concurrency cap, message quota -- all on | The default for almost everyone |
-| `unattended` | Same as `standard` in this release | Same | Reserved for long-running, no-human-present operation (the extra surfaces ship later) |
+| `unattended` | Same nine floor capabilities as `standard` (the cap set is clamped -- no over-grant) | Standard guard rails **plus** the never-hang mode behaviors (below) | Long-running, no-human-present operation: the run never stalls on a human and never retry-loops the budget away |
 | `max` | Same as `standard` in this release | Same | Reserved for the fullest coordinator posture (ships later) |
 
 <Info>
-**`unattended` and `max` resolve to `standard`-equivalent today.** Their extra
-surfaces -- a coordinator role and sandbox auto-allow -- are not in this release.
-Selecting either resolves to `standard`'s capability set and attaches an
-"available in a later milestone" notice (logged at boot). Comis **never silently
-grants** a capability whose enforcement floor is not yet built, so you are told
-rather than over-granted. (**Durable runs** are no longer one of the deferred
-surfaces -- they ship as an opt-in knob orthogonal to the profile; see
-[Durability & Resume](#durability-resume) below.)
+**`unattended` is active; `max` ships later.** `unattended`'s capability **set**
+stays `standard`-equivalent (the structural floor still bounds every cap -- no
+over-grant), but its **mode behaviors are on in this release**: a run that would
+ask a human resolves to **deny + escalate** (never a blocking prompt), a
+**denial breaker** aborts a run that keeps hitting a floor block, and an operator
+can **evict** an in-flight run back to `default` -- see
+[The `unattended` profile](#the-unattended-profile) below. `max`'s extra surface
+(sandbox auto-allow) is **not** in this release: selecting it resolves to
+`standard`'s capability set and attaches an "available in a later milestone"
+notice (logged at boot). Comis **never silently grants** a capability whose
+enforcement floor is not yet built, so you are told rather than over-granted.
+(**Durable runs** are not one of the deferred surfaces -- they ship as an opt-in
+knob orthogonal to the profile; see [Durability & Resume](#durability-resume)
+below.)
 </Info>
+
+### The `unattended` profile
+
+`unattended` is for a run with **no human present** -- a long-lived cron pipeline,
+an overnight batch, a background coordinator. Its capability **set** is exactly
+`standard`'s (the structural floor bounds every cap; there is no over-grant), but
+its **mode** changes how the run behaves when it reaches a decision a human would
+normally make. The whole point is that such a run **never stalls waiting on a
+person** and **never burns its budget retry-looping** a thing it is not allowed to
+do.
+
+- **Never-hang: a would-ask becomes deny + escalate.** Under `standard`, an action
+  that needs approval pauses for a human. Under `unattended` there is no human to
+  pause for, so that same action **does not block** -- it resolves to a denial and
+  the platform **escalates it to your operator** out-of-band. The run keeps going
+  on what it *is* allowed to do; it does not sit on a prompt forever.
+- **Outward actions still escalate, never auto-send.** `unattended` does **not**
+  loosen the outward floor. A send to a new channel, a browser action, any
+  hard-to-reverse outward step is still **proposed** for approval, never
+  auto-decided -- exactly as under `standard`. Never-hang changes *waiting* into
+  *escalation*; it does not change *propose* into *send*.
+- **The denial breaker stops a retry-loop.** A run that keeps trying a blocked
+  capability would otherwise spin -- each attempt denied, the budget draining for
+  nothing. After [`denialBreakerN`](/reference/config-yaml#autonomy-agents-autonomy)
+  consecutive floor blocks (default **5**) on one run, the **denial breaker** trips:
+  the run is aborted (an `execution:aborted` with reason `denial_breaker`) and the
+  operator is told, rather than letting it retry-loop the budget away. An actual
+  allowed step in between resets the counter, so a single stray denial inside
+  productive work never accumulates to a trip.
+- **An operator can evict an in-flight run to `default`.** If an `unattended` run
+  misbehaves, an admin can call
+  [`autonomy.evict`](/reference/json-rpc#autonomy-evict) with its `rootRunId`. This
+  is **demote-but-continue**: the run is **not** killed -- it keeps running, but
+  **under `default`** from its next gated decision onward (so it reverts to the
+  conservative posture mid-flight, no waiting for a restart or the next spawn).
+  This is distinct from `lease.revoke` (cooperative stop) and `run.kill` (hard
+  stop).
+- **Fail-closed: an unresolvable mode is treated as `default`.** Mode resolution is
+  fail-closed. If the run's autonomy mode cannot be determined for any reason, it
+  is treated as `default` (the safe profile) -- **never** something broader. This
+  posture is controlled by
+  [`evictOnPolicyUnreachable`](/reference/config-yaml#autonomy-agents-autonomy)
+  (default **true**), and it is the same safe target the `autonomy.evict` demotion
+  lands on.
+
+The two `unattended` knobs are `denialBreakerN` (default `5`) and
+`evictOnPolicyUnreachable` (default `true`); both live in the
+[`autonomy.*` config table](/reference/config-yaml#autonomy-agents-autonomy) and
+apply to every profile, but they are the dials that matter most for a no-human run.
 
 ### What `standard` turns on
 
@@ -237,8 +292,11 @@ boot logs alone, without turning on debug logging:
 ```
 
 The `changeField` names the one config field that changes all of the above:
-`autonomy.profile`. For an `unattended` or `max` agent, the line also carries an
-`m1Notice` saying the extra surfaces arrive in a later milestone.
+`autonomy.profile`. The line also carries an `m1Notice` whose text is
+profile-specific: for an `unattended` agent it states that the never-hang mode
+behaviors are **active** (deny + escalate, the denial breaker, operator evict) and
+that the capability set stays `standard`-equivalent; for a `max` agent it states
+that the extra surface (sandbox auto-allow) arrives in a later milestone.
 
 ## Honest, Legible Degrade
 
