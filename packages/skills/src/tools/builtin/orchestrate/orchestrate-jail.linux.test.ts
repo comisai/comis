@@ -18,6 +18,9 @@
  *   - READ-02 in-jail jq: a ResultRef materialized in `results/` is queryable via
  *     the cap socket's `jq` route; the slice returns, the full payload never
  *     enters stdout unless explicitly logged.
+ *   - QRY-01 in-jail sql: a tabular ResultRef in `results/` is queried via the
+ *     cap socket's `sql` route (the same daemon-side DuckDB round-trip); only the
+ *     queried row slice returns, the big payload never leaks.
  *
  * It MUST compile cleanly on macOS (`tsc --noEmit` passes) but the whole describe
  * block SKIPS on non-Linux / when bwrap is unavailable (mirrors
@@ -320,6 +323,66 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       const text = result.content.map((b) => b.text ?? "").join("");
 
       expect(text).toContain("IDS=[1,2,3]");
+      expect(text).not.toContain("BIG-PAYLOAD-MUST-NOT-LEAK");
+    },
+  );
+
+  it(
+    "QRY-01 in-jail sql: a tabular ResultRef in results/ is queried via the cap socket; only the row slice returns",
+    { timeout: 20_000 },
+    async () => {
+      // The cap server answers the `sql` route by returning ONLY the queried row
+      // slice (here: the high-priced rows). This proves the same daemon-side
+      // execFile("duckdb", …) round-trip the `jq` proof exercises — over the cap
+      // socket from the --unshare-net jail, slice-only, big payload never leaks.
+      server = await startCapServer((tool, args) => {
+        if (tool === "sql") {
+          expect(typeof args.path).toBe("string");
+          expect(typeof args.query).toBe("string");
+          expect(String(args.query)).toContain("read_json_auto");
+          return [{ id: 2, price: 150 }];
+        }
+        return null;
+      });
+      // Materialize a (large) tabular ResultRef payload in results/ — it must NOT
+      // enter stdout; only the queried row slice does.
+      const ref: ResultRef = {
+        ref: "results/rows.jsonl",
+        kind: "jsonl",
+        bytes: 1_000_000,
+        rows: 40_000,
+        preview: "",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      };
+      writeFileSync(
+        join(workspacePath, "results", "rows.jsonl"),
+        '{"id":1,"price":50,"_note":"BIG-PAYLOAD-MUST-NOT-LEAK"}\n'.repeat(40_000),
+      );
+      // Copy the REAL compiled runtime so the in-jail `import` resolves the genuine
+      // wrapResultRef (the sql round-trips over the cap socket). validate:full
+      // builds dist/ first, so the compiled module is present.
+      const distRuntime = new URL(
+        "../../../../dist/tools/builtin/orchestrate/orchestrate-sdk-runtime.js",
+        import.meta.url,
+      ).pathname;
+      expect(existsSync(distRuntime), "dist runtime must exist (run pnpm build)").toBe(true);
+      copyFileSync(distRuntime, join(sdkAssetsDir, "orchestrate-sdk-runtime.js"));
+
+      const refLiteral = JSON.stringify(ref);
+      const script = [
+        'import { wrapResultRef } from "./orchestrate-sdk-runtime.js";',
+        `const ref = ${refLiteral};`,
+        "const wrapped = wrapResultRef(ref);",
+        // A read-only SELECT over the materialized file — the slice (not the payload) returns.
+        'const rows = await wrapped.sql("SELECT id, price FROM read_json_auto(\'" + ref.ref + "\') WHERE price > 100");',
+        'console.log("ROWS=" + JSON.stringify(rows));',
+      ].join("\n");
+      const tool = makeTool();
+
+      const result = await tool.execute("c", { script, language: "js" });
+      const text = result.content.map((b) => b.text ?? "").join("");
+
+      expect(text).toContain('ROWS=[{"id":2,"price":150}]');
       expect(text).not.toContain("BIG-PAYLOAD-MUST-NOT-LEAK");
     },
   );

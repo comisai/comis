@@ -155,6 +155,27 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ${COMIS_DOCKER_APT_PACKAGES} \
     && rm -rf /var/cache/apt/archives/*.deb
 
+# Install the DuckDB CLI for the orchestrate `sql`/`jsonpath` ResultRef query
+# engine (QRY-01/02). DuckDB is a single static binary — NOT in the Debian apt
+# repos (`apt-get install duckdb` would FAIL) and NOT an npm package, so we fetch
+# the pinned release-page static binary (verified against the duckdb releases
+# page: v1.5.4 is the latest stable 1.x). `dpkg --print-architecture` yields
+# `amd64`/`arm64`, which match DuckDB's `duckdb_cli-linux-<arch>.zip` asset names
+# (the image builds for both via buildx). Non-fatal: if the GitHub release CDN is
+# unreachable at build time the image still works — the daemon-side `sql` core
+# honest-degrades with errorKind:"precondition" ("duckdb is not installed") when
+# the binary is absent, exactly like the `jq` core's ENOENT path.
+ARG COMIS_DUCKDB_VERSION="1.5.4"
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    url="https://github.com/duckdb/duckdb/releases/download/v${COMIS_DUCKDB_VERSION}/duckdb_cli-linux-${arch}.zip"; \
+    ( curl -LsSf "$url" -o /tmp/duckdb_cli.zip \
+        && unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin duckdb \
+        && chmod 755 /usr/local/bin/duckdb \
+        && rm -f /tmp/duckdb_cli.zip \
+        && /usr/local/bin/duckdb --version ) \
+    || echo "duckdb install failed — the orchestrate sql/jsonpath query engine will honest-degrade (precondition)"
+
 # Install uv/uvx for Python-based MCP servers (e.g. nanobanana). Mirrors
 # install_uv() in install.sh. UV_UNMANAGED_INSTALL=/usr/local/bin puts the
 # binaries on PATH system-wide and disables the self-updater (image is
