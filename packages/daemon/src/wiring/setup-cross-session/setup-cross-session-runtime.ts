@@ -126,6 +126,16 @@ export function setupCrossSession(deps: {
   /** Timer scheduling. */
   timers: TimerPort;
   /**
+   * WT-01: the lifecycle GitExec the composition root binds (the real
+   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }` via
+   * `toLifecycleGitExec`). Threaded into executeSubAgent so a `worktree:true`
+   * child runs in an isolated git worktree. Paired with {@link worktreeRegistry}.
+   * Absent ⇒ the worktree request is honestly skipped (WARN, not silent no-op).
+   */
+  worktreeGitExec?: import("@comis/skills/tools").GitExec;
+  /** WT-02: the shared registry the boot/periodic orphan sweep reads (paired with {@link worktreeGitExec}). */
+  worktreeRegistry?: import("../setup-worktree-sweep.js").WorktreeRegistry;
+  /**
    * Phase 213 (CEIL-01): the tree-wide spawn ceiling consult, threaded into the
    * sub-agent runner's `checkSpawnCeiling` so every spawn (session.spawn AND
    * graph.* AND the in-process loop) is bounded at the convergence point. Bound
@@ -239,6 +249,11 @@ export function setupCrossSession(deps: {
     getExecutor,
     fileLock: deps.fileLock,
     logger: deps.logger,
+    // WT-01: thread the git-worktree seam + registry so a `worktree:true` child
+    // runs in an isolated worktree (auto-clean-if-unchanged). Both absent ⇒ the
+    // request is honestly skipped (no git seam) — byte-identical default.
+    ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
+    ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
   });
 
   // Cross-session sender — fire-and-forget, wait, or ping-pong messaging

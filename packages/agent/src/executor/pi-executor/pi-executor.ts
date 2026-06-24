@@ -549,6 +549,13 @@ async function runSessionLocked(
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
+  // WT-01: the per-run workspace jail. A `spawn --worktree` child runs in an
+  // isolated git worktree (executionOverrides.workspaceDir, confined under the
+  // agent's own jailed workspace, T-219-11), so the SDK session cwd + the
+  // resource-loader / context-engine / command-handler workspace root all use it
+  // — exec/read/write/edit resolve inside the worktree. Absent ⇒ deps.workspaceDir
+  // (the agent's shared workspace — byte-identical to today's path).
+  const effectiveWorkspaceDir = executionOverrides?.workspaceDir ?? deps.workspaceDir;
   // Reset closure for postExecution finally-block (writes back through the
   // factory's MutableRef-backed `let`s so the next execute() starts fresh).
   const executionCacheRetentionClear = () => { cacheRetentionRef.set(undefined); };
@@ -609,8 +616,9 @@ async function runSessionLocked(
     setDeliveredGuides(formattedKeyForGuides, deliveredGuides);
   }
 
-  // Detect onboarding state for post-execution completion check
-  const isOnboarding = await detectOnboardingState(deps.workspaceDir);
+  // Detect onboarding state for post-execution completion check (WT-01: the
+  // worktree is the child's actual working tree, so onboarding state reflects it).
+  const isOnboarding = await detectOnboardingState(effectiveWorkspaceDir);
 
   // Capture prompt skills XML once at execution start.
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
@@ -662,7 +670,7 @@ async function runSessionLocked(
   //      override the SDK built-ins via Map.set() in the registry
   //      build (`agent-session.js:1810-1813` in pi-coding-agent@0.68.0).
   const sessionOptions: CreateAgentSessionOptions = {
-    cwd: deps.workspaceDir,
+    cwd: effectiveWorkspaceDir,
     authStorage: deps.authStorage,
     modelRegistry: deps.modelRegistry,
     model: resolvedModel ?? undefined,
@@ -726,7 +734,9 @@ async function runSessionLocked(
       agentId: agentId ?? config.name,
       sessionId: formattedKey,
       sessionKey: formattedKey,
-      workspaceDir: deps.workspaceDir,
+      // WT-01: record the run's ACTUAL working tree (the worktree when present)
+      // so the trajectory reflects where exec/read/write ran, not the shared dir.
+      workspaceDir: effectiveWorkspaceDir,
       // Pointer-file sidecar. createTrajectoryRecorder
       // calls writeTrajectoryPointerFileBestEffort when sessionFile is
       // set, producing <sessionFile>.trajectory-path.json next to the
@@ -844,8 +854,8 @@ async function runSessionLocked(
         envelope: {
           sessionKey: formattedKey,
           ...(deps.tenantId !== undefined ? { tenantId: deps.tenantId } : {}),
-          ...(deps.workspaceDir !== undefined
-            ? { workspaceDir: deps.workspaceDir }
+          ...(effectiveWorkspaceDir !== undefined
+            ? { workspaceDir: effectiveWorkspaceDir }
             : {}),
         },
         ...(cacheTraceConfinedBase !== undefined
@@ -1481,7 +1491,7 @@ async function runSessionLocked(
         version: "unknown",
         os: process.platform,
         node: process.version,
-        ...(deps.workspaceDir !== undefined ? { workspaceDir: deps.workspaceDir } : {}),
+        ...(effectiveWorkspaceDir !== undefined ? { workspaceDir: effectiveWorkspaceDir } : {}),
       },
       model: {
         provider: resolvedModel?.provider ?? config.provider,
@@ -1775,7 +1785,9 @@ async function runSessionLocked(
         getSummarizerDeps: ceSetup?.getSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
-        workspaceDir: deps.workspaceDir,
+        // WT-01: the post-execution / context-engine workspace root is the run's
+        // actual working tree (the worktree when present).
+        workspaceDir: effectiveWorkspaceDir,
         clock: deps.clock,
       },
       sessionAdapter,

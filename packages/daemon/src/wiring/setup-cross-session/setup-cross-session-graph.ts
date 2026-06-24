@@ -27,6 +27,9 @@ import {
   resolveProviderFamily,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
+import type { GitExec } from "@comis/skills/tools";
+import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
+import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 
 // ---------------------------------------------------------------------------
 // Depth-aware graph cache retention
@@ -83,6 +86,17 @@ export interface ExecuteSubAgentDeps {
   getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
   fileLock: FileLockPort;
   logger?: ComisLogger;
+  /**
+   * WT-01: the lifecycle GitExec the composition root binds (the real
+   * execFile-backed `createExecGit` adapted to `{ stdout, exitCode }`). Present
+   * ⇒ a child whose session metadata carries `worktree:true` runs in an isolated
+   * git worktree. **Absent ⇒ the worktree request is honestly ignored** (no git
+   * seam to create one) — a content-free WARN surfaces the skip rather than a
+   * silent no-op. Paired with {@link worktreeRegistry}; the daemon wires BOTH.
+   */
+  worktreeGitExec?: GitExec;
+  /** WT-02: the shared registry the boot/periodic orphan sweep reads. Paired with {@link worktreeGitExec}. */
+  worktreeRegistry?: WorktreeRegistry;
 }
 
 /**
@@ -205,6 +219,31 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
         callerAgentId,
       }, "Sub-agent inheriting caller workspace (no dedicated config)");
     }
+
+    // The child's base jailed workspace (the agent's shared workspace dir).
+    const baseAgentConfig = container.config.agents[effectiveAgentId];
+    const baseWorkspaceDir = baseAgentConfig
+      ? resolveWorkspaceDir(baseAgentConfig, effectiveAgentId, container.config.dataDir || undefined)
+      : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId, container.config.dataDir || undefined);
+
+    // WT-01: when the child session metadata requests a worktree (persisted by the
+    // runner from session.spawn's request.worktree), run the child in an ISOLATED
+    // git worktree under its base workspace (off HEAD, auto-clean-if-unchanged). The
+    // decision + WARN-on-unwired-seam live in maybePrepareWorktreeForSpawn (size cap);
+    // createWorktree throws on git failure — the try/finally below fails the spawn LOUD.
+    const worktreeHandle = await maybePrepareWorktreeForSpawn({
+      wantsWorktree: meta.worktree === true,
+      runId: typeof meta.runId === "string" ? meta.runId : undefined,
+      baseWorkspaceDir,
+      agentId: effectiveAgentId,
+      seam: {
+        ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
+        ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
+        ...(deps.logger ? { logger: deps.logger } : {}),
+      },
+    });
+    // The run's effective working tree: the worktree when created, else the shared base.
+    const effectiveWorkspaceDir = worktreeHandle?.dir ?? baseWorkspaceDir;
 
     let tools = await assembleToolsForAgent(effectiveAgentId, {
       includePlatformTools: true,
@@ -355,10 +394,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     // Build SpawnPacket from session metadata if spawn fields are present
     let spawnPacket: SpawnPacket | undefined;
     if (meta.taskDescription && !isReuseSession) {
-      const spawnAgentConfig = container.config.agents[effectiveAgentId];
-      const workspaceDir = spawnAgentConfig
-        ? resolveWorkspaceDir(spawnAgentConfig, effectiveAgentId, container.config.dataDir || undefined)
-        : resolveWorkspaceDir(container.config.agents["default"] ?? {} as AgentConfig, effectiveAgentId, container.config.dataDir || undefined);
+      // WT-01: the spawn packet's workspace path is the run's actual working tree
+      // (the worktree when present), so the child's prompt names the right dir.
+      const workspaceDir = effectiveWorkspaceDir;
 
       const agentWorkspaces: Record<string, string> = {};
       for (const [id, agentCfg] of Object.entries(container.config.agents)) {
@@ -496,20 +534,48 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // cap (pi-executor feeds it to budgetGuard.resetExecution). Omitted when
       // absent so the no-budget path stays byte-identical to today.
       ...(tokenBudget !== undefined && { tokenBudget }),
+      // WT-01: when a worktree was created, the child's file-tool jail cwd IS the
+      // worktree (the SDK session cwd + resource-loader / context-engine root), so
+      // exec/read/write/edit resolve inside it. Omitted when no worktree ⇒ the
+      // executor uses its construction-bound deps.workspaceDir (byte-identical).
+      ...(worktreeHandle ? { workspaceDir: effectiveWorkspaceDir } : {}),
     };
-    const result = ctx
-      ? await runWithContext(ctx, () =>
-          getExecutor(effectiveAgentId).execute(
+    let result;
+    try {
+      result = ctx
+        ? await runWithContext(ctx, () =>
+            getExecutor(effectiveAgentId).execute(
+              msg, sessionKey, tools, undefined, agentId,
+              undefined, undefined,
+              executionOverrides,
+            ),
+          )
+        : await getExecutor(effectiveAgentId).execute(
             msg, sessionKey, tools, undefined, agentId,
             undefined, undefined,
             executionOverrides,
-          ),
-        )
-      : await getExecutor(effectiveAgentId).execute(
-          msg, sessionKey, tools, undefined, agentId,
-          undefined, undefined,
-          executionOverrides,
-        );
+          );
+    } finally {
+      // WT-01: on the child's terminal settle (success OR throw), auto-clean the
+      // worktree if-unchanged — a pristine worktree is removed, a dirty/ahead one
+      // is PRESERVED so the agent's work survives (the boot sweep retries it). A
+      // cleanup error must NOT mask the run's own outcome, so it is swallowed with
+      // a content-free WARN (the worktree is left for the sweep, never lost).
+      if (worktreeHandle) {
+        try {
+          await worktreeHandle.cleanup();
+        } catch (cleanupErr) {
+          deps.logger?.warn(
+            {
+              err: cleanupErr,
+              hint: "worktree clean-if-unchanged failed on terminal settle; the worktree is left for the boot orphan-sweep to reclaim",
+              errorKind: "internal" as const,
+            },
+            "Worktree cleanup failed; left for the orphan sweep",
+          );
+        }
+      }
+    }
     deps.logger?.debug({
       agentId,
       callerAgentId,

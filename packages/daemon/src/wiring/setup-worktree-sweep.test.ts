@@ -28,6 +28,7 @@ import {
   createWorktreeRegistry,
   toLifecycleGitExec,
   setupWorktreeSweep,
+  discoverWorktreeOrphans,
 } from "./setup-worktree-sweep.js";
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,65 @@ describe("setupWorktreeSweep", () => {
     // The dangerous op (worktree remove) was NEVER attempted on the dirty tree.
     expect(removeCalls).toHaveLength(0);
     handle.shutdown();
+  });
+
+  it("discovers prior-crash orphans from `git worktree list` and seeds the registry (boot recovery across a restart)", async () => {
+    const reg = createWorktreeRegistry();
+    // After a daemon restart the in-memory registry is empty, but the on-disk
+    // .git/worktrees admin state survives. `git worktree list --porcelain` lists
+    // both the main worktree (a NON-comis dir) and a leftover comis worktree under
+    // the agent workspace's .worktrees/ — only the latter is OUR orphan to seed.
+    const listOutput = [
+      "worktree /data/workspace-researcher",
+      "HEAD aaaa",
+      "branch refs/heads/main",
+      "",
+      "worktree /data/workspace-researcher/.worktrees/wt-old-run",
+      "HEAD bbbb",
+      "branch refs/heads/wt-old-run",
+      "",
+    ].join("\n");
+    const execGit: ExecGitFn = async (args) => {
+      if (args[0] === "worktree" && args[1] === "list") return ok(listOutput);
+      return ok("");
+    };
+    const count = await discoverWorktreeOrphans({
+      execGit,
+      registry: reg,
+      workspaceDirs: ["/data/workspace-researcher"],
+      logger: silentLogger,
+    });
+    expect(count).toBe(1);
+    const snap = reg.snapshot();
+    expect(snap).toHaveLength(1);
+    expect(snap[0]!.dir).toBe("/data/workspace-researcher/.worktrees/wt-old-run");
+    // Seeded as completed so the sweep MAY reclaim it once it proves pristine
+    // (never an in-progress entry the conservative sweep would always preserve).
+    expect(snap[0]!.completed).toBe(true);
+  });
+
+  it("does NOT seed the operator's own worktrees (only dirs under an agent workspace's .worktrees/)", async () => {
+    const reg = createWorktreeRegistry();
+    const listOutput = [
+      "worktree /home/user/some-project",
+      "HEAD aaaa",
+      "",
+      "worktree /home/user/some-project-feature",
+      "HEAD bbbb",
+      "",
+    ].join("\n");
+    const execGit: ExecGitFn = async (args) => {
+      if (args[0] === "worktree" && args[1] === "list") return ok(listOutput);
+      return ok("");
+    };
+    const count = await discoverWorktreeOrphans({
+      execGit,
+      registry: reg,
+      workspaceDirs: ["/data/workspace-researcher"],
+      logger: silentLogger,
+    });
+    expect(count).toBe(0);
+    expect(reg.snapshot()).toHaveLength(0);
   });
 
   it("registers exactly one periodic sweep interval and cancels it on shutdown (no leaked timer)", () => {

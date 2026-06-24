@@ -81,6 +81,10 @@ import {
   setupDeliveryMirror,
   buildDurableStores,
   buildDurableResume,
+  createWorktreeRegistry,
+  toLifecycleGitExec,
+  setupWorktreeSweep,
+  discoverWorktreeOrphans,
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
@@ -2341,12 +2345,23 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // the eventBus.on("system:shutdown", ...) subscriber inside
   // registerProxyTypingListeners that silently no-op'd in production.
   const gatewaySendRef: { ref?: (channelId: string, text: string) => boolean } = {};
+  // WT-01/WT-02: the git-worktree seam for `spawn --worktree`. ONE registry shared
+  // by executeSubAgent (which creates + auto-cleans worktrees in-line) and the boot
+  // orphan-sweep (which reclaims worktrees orphaned by a crashed run). The lifecycle
+  // GitExec is the SAME real execFile-backed `execGit` config-git uses, adapted to
+  // the lifecycle's `{ stdout, exitCode }` shape (toLifecycleGitExec). The boot
+  // sweep is started in wirePostChannelsLifecycle (after channels) + cancelled on
+  // shutdown — modeled on the durable-resume two-phase boot hook.
+  const worktreeRegistry = createWorktreeRegistry();
+  const worktreeGitExec = toLifecycleGitExec(handle.execGit);
   const { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
+    // WT-01/WT-02: thread the worktree seam + the shared registry.
+    worktreeGitExec, worktreeRegistry,
     ...(capEndpointHandle ? { checkSpawnCeiling: (rootRunId: string, depth: number, fanout: number) => capEndpointHandle.boundedAutonomy.tryAcquireSpawn(rootRunId, depth, fanout), releaseSpawnCeiling: (rootRunId: string) => capEndpointHandle.boundedAutonomy.releaseSpawn(rootRunId) } : {}), // Phase 213 CEIL-01/CR-02: tree-wide spawn ceiling + symmetric release (paired 1:1, no per-root leak)
     // Phase 216 DUR-01/HB-01: durable store + thresholds + facts → the runner writes a per-root checkpoint + heartbeat (off ⇒ inert).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
@@ -2356,6 +2371,49 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
   });
+
+  // WT-02: the worktree orphan-sweep. Boot recovery (discover prior-crash
+  // worktrees from `git worktree list` → seed the registry → one conservative
+  // sweep) THEN a periodic interval (.unref()'d, cancelled on shutdown). Modeled
+  // on the durable-resume two-phase boot hook. The sweep is git/fs-only (no
+  // channels), so it runs here once setupCrossSession has built the shared
+  // registry. `exists` is the real fs check (existsSync); the boot discovery is
+  // scoped to the agent workspace dirs so the operator's OWN worktrees are never
+  // touched. Best-effort at boot — a failure WARN-logs and the periodic pass retries.
+  const worktreeSweep = setupWorktreeSweep({
+    execGit: handle.execGit,
+    registry: worktreeRegistry,
+    exists: (dir: string) => existsSync(dir),
+    timers: handle.timers,
+    clock: handle.clock,
+    logger: daemonLogger,
+  });
+  void (async () => {
+    try {
+      await discoverWorktreeOrphans({
+        execGit: handle.execGit,
+        registry: worktreeRegistry,
+        workspaceDirs: [...workspaceDirs.values()],
+        logger: daemonLogger,
+      });
+      await worktreeSweep.sweepNow();
+    } catch (sweepErr) {
+      daemonLogger.warn(
+        {
+          err: sweepErr,
+          hint: "worktree boot sweep failed; the periodic sweep retries — no worktree was removed this pass",
+          errorKind: "internal" as const,
+        },
+        "Worktree boot sweep failed",
+      );
+    } finally {
+      worktreeSweep.startPeriodicSweep();
+    }
+  })();
+  // The sweep interval is .unref()'d so it never blocks event-loop exit at
+  // shutdown (mirrors the per-agent lock-cleanup timer in setup-agents-registry,
+  // which likewise relies on .unref() rather than a formal teardown handle).
+
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });
 

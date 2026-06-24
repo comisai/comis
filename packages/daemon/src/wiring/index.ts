@@ -54,6 +54,17 @@ export {
   type DurableStoresResult,
   type DurableResumeWiring,
 } from "./setup-durable-resume.js";
+export {
+  createWorktreeRegistry,
+  toLifecycleGitExec,
+  setupWorktreeSweep,
+  discoverWorktreeOrphans,
+  type WorktreeRegistry,
+  type RegisterWorktreeInput,
+  type SetupWorktreeSweepDeps,
+  type WorktreeSweepHandle,
+  type DiscoverWorktreeOrphansDeps,
+} from "./setup-worktree-sweep.js";
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";

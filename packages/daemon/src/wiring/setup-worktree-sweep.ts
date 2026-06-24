@@ -92,6 +92,79 @@ export function createWorktreeRegistry(): WorktreeRegistry {
 }
 
 // ---------------------------------------------------------------------------
+// discoverWorktreeOrphans — boot recovery across a restart
+// ---------------------------------------------------------------------------
+
+/** The path segment that marks a dir as a comis-managed per-run worktree. */
+const COMIS_WORKTREE_MARKER = `/.worktrees/wt-`;
+
+/** Deps for {@link discoverWorktreeOrphans}. */
+export interface DiscoverWorktreeOrphansDeps {
+  /** The daemon's real git executor. */
+  execGit: ExecGitFn;
+  /** The registry to seed with discovered orphans (as completed entries). */
+  registry: WorktreeRegistry;
+  /** The agent workspace dirs — only worktrees under `<dir>/.worktrees/wt-*` are OURS to seed. */
+  workspaceDirs: string[];
+  logger: ComisLogger;
+}
+
+/**
+ * Discover comis-managed worktrees left on disk by a CRASHED prior daemon process
+ * (the in-memory registry is empty after a restart, but `.git/worktrees/*` admin
+ * state survives) and seed them into the registry as COMPLETED entries so the boot
+ * sweep may reclaim the pristine ones. Authoritative source: `git worktree list
+ * --porcelain`. ONLY paths under an agent workspace's `.worktrees/wt-*` are seeded
+ * — the operator's OWN worktrees (and the main worktree) are NEVER touched. The
+ * base ref is unknown post-crash, so it is recorded as `HEAD` (the conservative
+ * predicate then compares the worktree HEAD to the workspace HEAD — a committed-
+ * ahead orphan is preserved, a pristine one is reclaimed). Returns the count seeded.
+ */
+export async function discoverWorktreeOrphans(
+  deps: DiscoverWorktreeOrphansDeps,
+): Promise<number> {
+  const { execGit, registry, workspaceDirs, logger } = deps;
+  if (workspaceDirs.length === 0) return 0;
+  const log = logger.child({ submodule: "worktree-sweep" });
+  // Run from the first workspace dir (any dir inside the repo enumerates the whole
+  // worktree set — `git worktree list` is repo-global, not cwd-scoped).
+  const res = await execGit(["worktree", "list", "--porcelain"], workspaceDirs[0]!);
+  if (!res.ok) {
+    log.debug(
+      {
+        err: res.error,
+        hint: "git worktree list failed at boot; orphan discovery skipped — the periodic sweep retries",
+        errorKind: "dependency" as const,
+      },
+      "Worktree orphan discovery: list failed",
+    );
+    return 0;
+  }
+  let seeded = 0;
+  for (const line of res.value.split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const dir = line.slice("worktree ".length).trim();
+    // Only OUR worktrees: a dir under some agent workspace's `.worktrees/wt-`.
+    const isComisWorktree = workspaceDirs.some((ws) =>
+      dir.startsWith(`${ws}${COMIS_WORKTREE_MARKER}`),
+    );
+    if (!isComisWorktree) continue;
+    // Already tracked (a live entry from this process) ⇒ skip (don't clobber).
+    if (registry.snapshot().some((e) => e.dir === dir)) continue;
+    const branch = dir.slice(dir.lastIndexOf("/") + 1);
+    registry.register({ dir, baseRef: "HEAD", branch });
+    // Seed as completed: the owning process is gone, so the sweep may reclaim it
+    // once it proves pristine (never an in-progress entry it must preserve).
+    registry.markCompleted(dir);
+    seeded += 1;
+  }
+  if (seeded > 0) {
+    log.info({ seededCount: seeded }, "Worktree orphan discovery: seeded prior-crash worktrees for sweep");
+  }
+  return seeded;
+}
+
+// ---------------------------------------------------------------------------
 // ExecGitFn → lifecycle GitExec adapter
 // ---------------------------------------------------------------------------
 

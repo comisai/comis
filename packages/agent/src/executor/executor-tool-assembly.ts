@@ -133,6 +133,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModel, modelCompat, modelProfile: modelProfileParam, windowProvenance, agentId, safetyReinforcement, _directives,
   } = params;
 
+  const effectiveWorkspaceDir = executionOverrides?.workspaceDir ?? deps.workspaceDir; // WT-01: worktree jail when present.
+
   // -------------------------------------------------------------------
   // 1. Merge per-request tools (AgentTool[]) with deps.customTools
   // -------------------------------------------------------------------
@@ -150,7 +152,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   let settingsManager: ReturnType<typeof SettingsManager.create>;
   let persistentSettings = true;
   try {
-    settingsManager = SettingsManager.create(deps.workspaceDir, deps.agentDir);
+    settingsManager = SettingsManager.create(effectiveWorkspaceDir, deps.agentDir);
   } catch (createError) {
     deps.logger.warn(
       {
@@ -281,7 +283,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const promptResult = await assembleExecutionPrompt({
     config,
     deps: {
-      workspaceDir: deps.workspaceDir,
+      workspaceDir: effectiveWorkspaceDir, // WT-01: AGENTS.md/BOOT.md from the run's working tree.
       // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
@@ -422,7 +424,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // 6. ResourceLoader options
   // -------------------------------------------------------------------
   const resourceLoaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
-    cwd: deps.workspaceDir,
+    cwd: effectiveWorkspaceDir,
     agentDir: deps.agentDir,
     settingsManager,
     noExtensions: true,
