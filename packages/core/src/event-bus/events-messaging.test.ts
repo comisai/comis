@@ -200,6 +200,10 @@ describe("MessagingEvents payload structure", () => {
     // on pre-patch: the union at events-messaging.ts lacks it, so the typed
     // payload below fails to COMPILE for that literal (per AGENTS §2.10 a
     // compile-RED is the failing state for a closed-type widen).
+    // BREAK-02 (Phase 217-02): "denial_breaker" is the SAME additive pattern —
+    // the denial-limit breaker abort (distinct from circuit_breaker, the
+    // tool-failure breaker). RED on pre-patch: the union lacks it, so the typed
+    // payload for that literal fails to COMPILE.
     const reasons = [
       "user_stop",
       "budget_exceeded",
@@ -209,6 +213,7 @@ describe("MessagingEvents payload structure", () => {
       "pipeline_timeout",
       "loop_detected",
       "spend_exceeded",
+      "denial_breaker",
     ] as const;
 
     for (const reason of reasons) {
@@ -223,7 +228,7 @@ describe("MessagingEvents payload structure", () => {
       bus.removeAllListeners("execution:aborted");
     }
 
-    expect(handler).toHaveBeenCalledTimes(8);
+    expect(handler).toHaveBeenCalledTimes(9);
     expect(handler.mock.calls[0]![0].reason).toBe("user_stop");
     expect(handler.mock.calls[4]![0].reason).toBe("context_exhausted");
     expect(handler.mock.calls[5]![0].reason).toBe("pipeline_timeout");
@@ -231,6 +236,9 @@ describe("MessagingEvents payload structure", () => {
     // SPEND-02: the new dollars-kill-switch abort reason (distinct from the
     // token-budget "budget_exceeded" so the dollars-vs-tokens cause stays clear).
     expect(handler.mock.calls[7]![0].reason).toBe("spend_exceeded");
+    // BREAK-02: the denial-limit breaker abort (N consecutive floor-blocks tripped
+    // the breaker; distinct from circuit_breaker, which is the tool-failure breaker).
+    expect(handler.mock.calls[8]![0].reason).toBe("denial_breaker");
   });
 
   it("execution:aborted reason stays a CLOSED union (rejects a non-member literal)", () => {
