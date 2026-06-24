@@ -84,7 +84,13 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
   const getNow = deps.nowMs ?? Date.now;
 
   const rateLimiter: RateLimiter = createRateLimiter({
-    maxPerHour: deps.defaultConfig.maxPerHour,
+    // Resolve the ceiling PER-AGENT from the agent's own notification config
+    // (schema-notification `maxPerHour`), falling back to the default. The
+    // limiter is keyed per-agent (tryAcquire(agentId)) but previously baked in
+    // ONLY defaultConfig.maxPerHour, so a configured per-agent ceiling was
+    // silently ignored (built-but-not-wired).
+    maxPerHour: (agentId) =>
+      (deps.notificationConfigs.get(agentId) ?? deps.defaultConfig).maxPerHour,
     nowMs: deps.nowMs,
   });
 

@@ -51,4 +51,20 @@ describe("createRateLimiter", () => {
     limiter.reset("agent-1");
     expect(limiter.tryAcquire("agent-1")).toBe(true);
   });
+
+  it("resolves maxPerHour PER-AGENT when given a function (per-agent config ceiling)", () => {
+    const limits: Record<string, number> = { vip: 3, basic: 1 };
+    const limiter = createRateLimiter({
+      maxPerHour: (agentId) => limits[agentId] ?? 1,
+      nowMs: () => 0,
+    });
+
+    // "vip" gets its own higher ceiling (3); "basic" gets 1 — independent counters.
+    expect(limiter.tryAcquire("vip")).toBe(true); // 1
+    expect(limiter.tryAcquire("vip")).toBe(true); // 2
+    expect(limiter.tryAcquire("vip")).toBe(true); // 3
+    expect(limiter.tryAcquire("vip")).toBe(false); // 4 = blocked at its own limit
+    expect(limiter.tryAcquire("basic")).toBe(true); // 1
+    expect(limiter.tryAcquire("basic")).toBe(false); // 2 = blocked at the lower limit
+  });
 });

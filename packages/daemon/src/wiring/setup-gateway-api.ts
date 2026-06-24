@@ -23,7 +23,12 @@
  * @module
  */
 
-import { API_CONTRACTS_ORDERED, stripInternalFields, type AppContainer } from "@comis/core";
+import {
+  API_CONTRACTS_ORDERED,
+  HANDLER_CAPABILITY_MAP,
+  stripInternalFields,
+  type AppContainer,
+} from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { DynamicMethodRouter } from "@comis/gateway";
 
@@ -86,6 +91,23 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // `_trustLevel` is never stripped. The in-process `createAgentRpcCall` path
   // (the legitimate `_agentId` injector) does NOT pass through here.
   for (const c of API_CONTRACTS_ORDERED) {
+    // CAP-03 (gateway leg): M1 (#236) capability-gated the orchestration RPCs
+    // (graph/skills/session.spawn/cron/message-mutate) on the injected
+    // `_capabilities`, but only the in-process agent leg (createAgentRpcCall) and
+    // the jailed-child lease inject it — this gateway leg never did, so every
+    // authenticated operator/dashboard call (and the integration suite) hit
+    // `Capability denied: orch:*`. `_capabilities` is a stripped internal field
+    // (a client cannot forge it — see the ORIGIN-02 strip below), so inject the
+    // method's REQUIRED orch cap server-side here, AFTER the strip. Grant exactly
+    // the one cap the method needs (least-privilege), mirroring the agent leg; the
+    // gateway boundary is already gated by the token scope, and the capability
+    // axis constrains the agent loop, not the trusted operator control plane.
+    // Ungated / deny-by-origin methods get nothing (deny-by-origin is enforced by
+    // _trustLevel + the rpc-dispatch chokepoint, not a cap).
+    const requiredCap = (HANDLER_CAPABILITY_MAP as Record<string, string>)[c.method];
+    const capInject: { _capabilities?: string[] } = requiredCap?.startsWith("orch:")
+      ? { _capabilities: [requiredCap] }
+      : {};
     for (const scope of c.scopes) {
       if (scope === "admin") {
         dynamicRouter.registerMethod(
@@ -95,6 +117,7 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
             rpcCall(c.method, {
               ...stripInternalFields(params ?? {}),
               _trustLevel: "admin",
+              ...capInject,
             }),
         );
       } else {
@@ -102,7 +125,7 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
           c.method,
           "rpc",
           async (params: Record<string, unknown> | undefined) =>
-            rpcCall(c.method, stripInternalFields(params ?? {})),
+            rpcCall(c.method, { ...stripInternalFields(params ?? {}), ...capInject }),
         );
       }
     }
