@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: createWorktree + the clean-if-unchanged probes throw
+// WorktreeGitError (carrying a closed-union `errorKind`) so a git failure / a
+// `git`-absent host fails LOUD — a worktree op MUST never silently become a
+// non-worktree spawn or silently treat a failed status-probe as "clean" (that
+// would risk deleting agent work, T-219-09). createWorktree's throw is caught at
+// the runner/spawn boundary; sweepOrphans CATCHES the predicate's throw and
+// PRESERVES the entry (never aborts the whole sweep) so the conservative-sweep
+// invariant holds.
 /**
  * `worktree-lifecycle` — the net-new git-worktree lifecycle for
  * `comis-agent spawn --worktree` (WT-01/WT-02).

@@ -10563,6 +10563,9 @@
         },
         "announce_channel_id": {
           "type": "string"
+        },
+        "worktree": {
+          "type": "boolean"
         }
       },
       "required": [

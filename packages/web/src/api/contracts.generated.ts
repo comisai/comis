@@ -10685,6 +10685,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "announce_channel_id": {
           "type": "string"
+        },
+        "worktree": {
+          "type": "boolean"
         }
       },
       "required": [
