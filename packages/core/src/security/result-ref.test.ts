@@ -206,7 +206,7 @@ describe("QRY-03: results/ GC / TTL / per-run-cap enforced (assert the shipped m
     expect(selectEvictions(entries, PER_RUN_AGGREGATE_CAP_BYTES)).toEqual([]);
   });
 
-  it("isExpired / computeExpiresAt drive the TTL eviction predicate around the boundary", () => {
+  it("evicts at the TTL boundary: isExpired / computeExpiresAt drive the predicate", () => {
     // Stamp an expiry one hour out, then probe just-before / at / just-after it:
     // exactly-at-expiry is NOT yet expired (the GC keeps it that tick).
     const nowMs = Date.parse("2026-06-24T00:00:00.000Z");
