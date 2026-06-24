@@ -225,12 +225,18 @@ export const MemoryGetFileContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `memory.store` — write a memory entry. Admin via gateway route
- * (setup-gateway-api.ts:235); ALSO usable from the agent in-process tool
- * path where the trust level defaults to `learned`. The handler routes
- * on the dispatcher-injected `_trustLevel`:
- *   - `_trustLevel === "admin"`: operator-attributed (channel: web-console).
- *   - Otherwise: agent-attributed (channel: agent-tool).
+ * `memory.store` — write a memory entry. `scopes:["rpc"]` — AGENT-REACHABLE:
+ * the agent `memory_store` tool is the primary caller, where the trust level
+ * defaults to `learned`. (Was `scopes:["admin"]`, the MD-02 deny-by-origin
+ * regression: `["admin"]` put it in `ADMIN_METHODS` so the `assertNotAgentOrigin`
+ * chokepoint threw "Control-plane method memory.store is not reachable from an
+ * agent origin" for the agent's `_agentId`-bearing call — the `memory_store`
+ * tool could not store anything. Re-scoped admin→rpc 2026-06-24, matching the
+ * earlier `message.send`/`skills.*`/`session.list` fixes; guarded by
+ * `test/architecture/agent-memory-tools-deny-by-origin.test.ts`.) The handler
+ * still routes on the dispatcher-injected `_trustLevel`:
+ *   - `_trustLevel === "admin"` (operator path): operator-attributed (channel: web-console), may override trust to learned/external.
+ *   - Otherwise (agent path): agent-attributed (channel: agent-tool), trust defaults to `learned` (never `system`).
  *
  * Bespoke pre-Zod validation: `content` is required + non-empty (the
  * handler raises `"Missing required parameter: content"`), and the
@@ -252,7 +258,7 @@ export const MemoryStoreContract = defineContract({
     stored: z.literal(true),
     id: z.string(),
   }),
-  scopes: ["admin"] as const,
+  scopes: ["rpc"] as const,
 });
 
 // ---------------------------------------------------------------------------
