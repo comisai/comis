@@ -39,6 +39,7 @@ const mockCreateMcpLoginTool = vi.hoisted(() => vi.fn(() => ({ name: "mcp_login"
 const mockCreateExecTool = vi.hoisted(() => vi.fn(() => ({ name: "exec" })));
 const mockCreateProcessTool = vi.hoisted(() => vi.fn(() => ({ name: "process" })));
 const mockCreateApplyPatchTool = vi.hoisted(() => vi.fn(() => ({ name: "apply_patch" })));
+const mockCreateSleepTool = vi.hoisted(() => vi.fn(() => ({ name: "sleep", execute: vi.fn() })));
 const mockCreateHeartbeatManageTool = vi.hoisted(() => vi.fn(() => ({ name: "heartbeat_manage" })));
 const mockCreateProvidersManageTool = vi.hoisted(() => vi.fn(() => ({ name: "providers_manage" })));
 const mockCreateNotifyTool = vi.hoisted(() => vi.fn(() => ({ name: "notify_user" })));
@@ -117,6 +118,9 @@ vi.mock("@comis/skills/tools", () => ({
   createProcessTool: mockCreateProcessTool,
   createProcessRegistry: mockCreateProcessRegistry,
   createApplyPatchTool: mockCreateApplyPatchTool,
+  // STREAM-03: the sleep pacing primitive pushed into the toolset next to the
+  // other always-on builtins (createExecTool/createProcessTool/createApplyPatchTool).
+  createSleepTool: mockCreateSleepTool,
   createFileStateTracker: mockCreateFileStateTracker,
   sanitizeImageForApi: mockSanitizeImageForApi,
   createMediaPersistenceService: mockCreateMediaPersistenceService,
@@ -487,6 +491,9 @@ describe("setupTools", () => {
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
     expect(toolNames).toContain("providers_manage");
+    // STREAM-03: the sleep pacing primitive is an always-on builtin.
+    expect(toolNames).toContain("sleep");
+    expect(mockCreateSleepTool).toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------

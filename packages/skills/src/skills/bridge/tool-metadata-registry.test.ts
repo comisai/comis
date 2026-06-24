@@ -55,7 +55,31 @@ describe("tool-metadata-registry -- registry count", () => {
     // DAG read tools were deleted in Phase 126; these 3 are the governed TOOL
     // surface over the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(63);
+    expect(all.size).toBe(64);
+  });
+});
+
+// ===========================================================================
+// Sleep primitive (STREAM-03) — read-only + concurrency-safe + never-export
+// ===========================================================================
+
+describe("tool-metadata-registry -- sleep primitive (STREAM-03)", () => {
+  // The sleep builtin paces the model between turns; it mutates NO state, so it
+  // must register read-only + concurrency-safe (Plan 04's read-only detection +
+  // Plan 05's serializer rely on this to let it overlap concurrency-safe reads
+  // instead of serializing them behind it). The mcp-export-policy.test.ts AST
+  // gate additionally requires every registered name to carry an explicit policy;
+  // sleep is an internal loop-pacing primitive inside Comis's trust boundary, so
+  // it is never-export (like ctx_* / terminal_*).
+  it("registers sleep as isReadOnly + isConcurrencySafe (it mutates no state)", () => {
+    const meta = getToolMetadata("sleep");
+    expect(meta, "sleep must be registered").toBeDefined();
+    expect(meta!.isReadOnly).toBe(true);
+    expect(meta!.isConcurrencySafe).toBe(true);
+  });
+
+  it("registers sleep as mcpExportPolicy 'never-export' (internal pacing primitive)", () => {
+    expect(getToolMetadata("sleep")!.mcpExportPolicy).toBe("never-export");
   });
 });
 
