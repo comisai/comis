@@ -12,7 +12,7 @@
  *
  * @module
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   existsSync,
   mkdtempSync,
@@ -26,6 +26,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PER_FILE_CAP_BYTES } from "@comis/core";
 import { buildPreview, createResultRefStore, inferKind } from "./result-ref-store.js";
+
+// Spy on execFile so the slice-only guarantee test can drive the `sql` core's
+// daemon-side duckdb with a controlled tiny row-slice stdout — proving ONLY the
+// slice (not the materialized payload) crosses back. The default implementation
+// delegates to the real execFile (untouched for any other consumer in this file).
+const { execFileSpy } = vi.hoisted(() => ({ execFileSpy: vi.fn() }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  execFileSpy.mockImplementation((...args: unknown[]) =>
+    (actual.execFile as unknown as (...a: unknown[]) => unknown)(...args),
+  );
+  return { ...actual, execFile: execFileSpy };
+});
+
+import { createOrchestrateExecutorCores } from "./orchestrate-executor-cores.js";
 
 // A silent logger stub (the store instruments via deps.logger; we don't assert
 // on log output here — the gates do — so a no-op child-able logger suffices).
@@ -445,5 +460,110 @@ describe("result-ref-store pure helpers", () => {
       expect(preview.length).toBeLessThanOrEqual(2048);
       expect(preview.length).toBeGreaterThan(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QRY-03 / T-221-QRY-07: the slice-only guarantee.
+//
+// The store materializes a high-volume tabular result to results/<id>; the `sql`
+// core (daemon-side DuckDB, Plan 02) runs a SELECT over it and returns ONLY the
+// row slice. This test PINS that the payload NEVER re-enters context: it
+// materializes a multi-MB JSONL ResultRef, runs a `sql` query that selects 2
+// columns of 3 rows, and asserts the returned slice byte-length is « the
+// materialized payload byte-length. It FAILS if a regression ever makes the core
+// return the whole file instead of the query's slice (unbounded context re-entry
+// / cost — the information-disclosure threat the per-file/per-run caps + TTL also
+// bound). DuckDB is driven via the execFileSpy (a controlled small row-slice
+// stdout), so the test is deterministic + macOS-runnable; the real DuckDB
+// round-trip is the VPS orchestrate-jail.linux.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("QRY-03 slice-only: a large tabular ResultRef SQL'd returns ONLY the slice, never the payload", () => {
+  function makeCoresLogger(): import("@comis/core").ComisLogger {
+    const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    return { child: vi.fn(() => child), ...child } as unknown as import("@comis/core").ComisLogger;
+  }
+
+  beforeEach(() => {
+    // Reset only the call history; the rejection-screen tests elsewhere depend on
+    // the delegating implementation, but this file's slice test sets its own.
+    execFileSpy.mockReset();
+  });
+
+  it("returns the duckdb row slice whose byte-length is « the materialized multi-MB payload", async () => {
+    const store = createResultRefStore({ logger: makeLogger() });
+    const workspacePath = mkdtempSync(join(tmpdir(), "comis-slice-only-"));
+    try {
+      // 1. Build a multi-MB tabular JSONL payload (~3 MB, well above the 15 KB
+      //    handle threshold, well below the 8 MiB per-file cap) and materialize it.
+      const rowCount = 30_000;
+      const rows: string[] = [];
+      for (let i = 0; i < rowCount; i++) {
+        rows.push(JSON.stringify({ id: i, price: i * 3, label: `widget-${i}-xxxxxxxxxxxxxxxxxxxx` }));
+      }
+      const payload = rows.join("\n");
+      expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(2_000_000); // multi-MB
+
+      const ref = await store.materialize(payload, "web_fetch", {
+        workspacePath,
+        runId: "run-slice",
+        nowMs: 1_700_000_000_000,
+      });
+      if (ref === undefined || "error" in ref) {
+        throw new Error(`expected a ResultRef for the multi-MB payload, got ${JSON.stringify(ref)}`);
+      }
+      // The handle's preview is already tiny — the payload stays on disk.
+      expect(ref.preview.length).toBeLessThanOrEqual(2048);
+      expect(ref.bytes).toBe(Buffer.byteLength(payload, "utf8"));
+
+      // 2. Drive the daemon-side duckdb with a controlled SELECT result: the query
+      //    asked for 2 columns of 3 rows, so duckdb's -json stdout is exactly that
+      //    small row slice (NOT the whole file). This is what DuckDB does for a
+      //    `SELECT id, price ... LIMIT 3` — return only the projected/limited rows.
+      const sliceRows = [
+        { id: 0, price: 0 },
+        { id: 1, price: 3 },
+        { id: 2, price: 6 },
+      ];
+      const sliceStdout = JSON.stringify(sliceRows);
+      execFileSpy.mockImplementation(
+        (_bin: unknown, _argv: unknown, _opts: unknown, cb: (e: unknown, out: string, err: string) => void) => {
+          cb(null, sliceStdout, "");
+          return undefined;
+        },
+      );
+
+      const cores = createOrchestrateExecutorCores({ logger: makeCoresLogger() });
+      const result = await cores.fileExecutors.sql(
+        {
+          path: ref.ref,
+          query: `SELECT id, price FROM read_json_auto('${ref.ref}') LIMIT 3`,
+        },
+        { workspaceDir: workspacePath },
+      );
+
+      // 3. The core returns ONLY the slice (the duckdb stdout), never the payload.
+      expect(typeof result).toBe("string");
+      const slice = result as string;
+      expect(slice).toBe(sliceStdout);
+
+      // The load-bearing pin: the slice is ORDERS of magnitude smaller than the
+      // materialized payload. If a regression made the core read+return the whole
+      // results/ file, slice.length would be ~ref.bytes and this fails hard.
+      expect(slice.length).toBeLessThan(ref.bytes / 1000);
+      expect(slice.length).toBeLessThan(2048);
+
+      // duckdb was invoked exactly once over the confined results/ path — the file
+      // contents were never handed back through the core's return value.
+      expect(execFileSpy).toHaveBeenCalledTimes(1);
+      const [bin, argv] = execFileSpy.mock.calls[0] as [string, string[]];
+      expect(bin).toBe("duckdb");
+      // The query references read_json_auto over the run-scoped file, not a file read.
+      const cFlagIdx = argv.indexOf("-c");
+      expect(argv[cFlagIdx + 1]).toContain("read_json_auto");
+    } finally {
+      rmSync(workspacePath, { recursive: true, force: true });
+    }
   });
 });
