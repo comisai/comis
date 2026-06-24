@@ -47,7 +47,9 @@ export function buildAutonomyDoctrineSection(): string[] {
       "multi-step read/fetch/synthesize/fan-out chain is one `orchestrate(script)` turn. You are " +
       "confined to your workspace; you cannot read secrets, mint tokens, change config, or reach the " +
       "control plane — don't try. A `CapabilityDeniedError` — or any quota, budget, or rate-limit " +
-      "denial — means you lack that capability or hit a ceiling: do not retry or escalate, adapt or " +
-      "report.",
+      "denial — means you lack that capability or hit a ceiling: adapt or report — do not retry the " +
+      "same blocked call in a loop. (Under an unattended profile the platform escalates a blocked " +
+      "irreversible action to your operator for you; you still adapt and continue, you do not wait on " +
+      "it.)",
   ];
 }

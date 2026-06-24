@@ -55,9 +55,18 @@ describe("autonomy doctrine — always-on bootstrap section (SKILL-02)", () => {
     expect(prompt).not.toMatch(/You can act on your own within a bounded envelope/);
   });
 
-  it("the doctrine teaches that a denial is not a retry-escalate signal", () => {
+  it("the doctrine teaches that a denial is a do-not-retry-loop signal (mode-accurate, Phase 217)", () => {
+    // A denial must NOT trigger a retry-loop (the Phase-217 denial breaker aborts
+    // a run that keeps hitting a floor block — the prompt must steer away from it).
     const prompt = assembleRichSystemPrompt({ promptMode: "full" });
     expect(prompt).toMatch(/do not retry|don't retry/i);
+    // But it must NOT flatly forbid escalation: under the `unattended` profile the
+    // PLATFORM escalates a blocked irreversible action to the operator, so the old
+    // categorical "do not retry or escalate" misdescribed that path. Pin the
+    // mode-accurate phrasing and assert the old over-restrictive clause is gone.
+    expect(prompt).not.toMatch(/do not retry or escalate/i);
+    expect(prompt).toMatch(/unattended/i);
+    expect(prompt).toMatch(/the platform escalates/i);
   });
 
   it("the doctrine frames runs as revocable/clamped, NOT durable (M1 honesty)", () => {
