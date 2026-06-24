@@ -28,11 +28,19 @@
  *     AGENTS §2.2 — never `path.join` on a caller-influenced segment) and runs a
  *     daemon-side binary over it (`execFile`, no shell), returning only the
  *     requested slice. `jq` runs the system `jq`; `sql`/`jsonpath` run the system
- *     `duckdb` HARDENED (`--readonly :memory:`, autoload/autoinstall OFF, and the
- *     model query screened by `rejectDangerousSql` — INSTALL/LOAD/ATTACH/COPY/
- *     EXPORT/PRAGMA + http(s)/s3/gcs url-readers are refused BEFORE spawn) so the
- *     un-jailed daemon-side DuckDB can never become an SSRF/exfil/file-write
- *     egress (T-221-QRY-01..06). `jsonpath` does NOT add an eval-based JSONPath
+ *     `duckdb` CONFINED + HARDENED: the duckdb process is spawned with `cwd` =
+ *     the run's workspace and a prelude that sets `allowed_directories=['<ws>']`,
+ *     then `enable_external_access=false` + `lock_configuration=true` BEFORE the
+ *     (untrusted) model query — so the master external-access switch blocks every
+ *     local-file reader (read_text/read_blob/glob/read_*), ATTACH/COPY, and
+ *     remote readers WHOLESALE except reads under the workspace allow-root, and
+ *     the appended model query cannot widen them (CR-01). Layered on top:
+ *     `--readonly :memory:`, autoload/autoinstall OFF, and the model query
+ *     screened by `rejectDangerousSql` — INSTALL/LOAD/ATTACH/COPY/EXPORT/PRAGMA,
+ *     the pure-exfil readers (read_text/read_blob/glob/getenv/parquet_metadata),
+ *     and http(s)/s3/gcs url-readers are refused BEFORE spawn — so the un-jailed
+ *     daemon-side DuckDB can never read a host file outside the workspace or
+ *     become an SSRF/exfil/file-write egress (T-221-QRY-01..06). `jsonpath` does NOT add an eval-based JSONPath
  *     library (those are banned by AGENTS.md §2.2 and have live RCE CVEs); it
  *     compiles the `$`-dot/bracket path into a DuckDB `json_extract` query and
  *     runs it through the SAME hardened `duckdb` invocation as `sql`. A binary
@@ -118,6 +126,27 @@ function errorResult(error: string): { error: string } {
   return { error };
 }
 
+/** Bound a duckdb stderr diagnostic before it crosses the jail boundary (IN-04). */
+const DUCKDB_STDERR_MAX_CHARS = 500;
+
+/**
+ * Scrub a duckdb stderr diagnostic for the `{ error }` returned to the jailed
+ * client (IN-04). DuckDB error text can echo the offending SQL AND absolute host
+ * paths (e.g. a failed `read_json_auto('/abs/...')` names the path); the jailed
+ * client must never see daemon-side host paths. Replace any absolute path-like
+ * run (`/...`, `~/...`, `C:\...`) with `<path>` and bound the length. Pure.
+ *
+ * @param stderr - The raw duckdb stderr (may be empty).
+ * @returns A trimmed, length-bounded, path-scrubbed diagnostic.
+ */
+function scrubDuckDbStderr(stderr: string): string {
+  return stderr
+    .trim()
+    .slice(0, DUCKDB_STDERR_MAX_CHARS)
+    // Unix abs path (/...), home (~/...), and Windows drive path (C:\...).
+    .replace(/(?:[A-Za-z]:\\|~?\/)[^\s'"]+/g, "<path>");
+}
+
 const DEFAULT_JQ_TIMEOUT_MS = 10_000;
 /** Bound the captured jq stdout so a huge slice cannot blow the daemon's heap. */
 const JQ_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
@@ -127,13 +156,42 @@ const DEFAULT_SQL_TIMEOUT_MS = 10_000;
 const SQL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 /**
- * Disable DuckDB extension auto-install / auto-load on EVERY `-c` payload. The
- * extension auto-installer is the one path in `--readonly :memory:` that touches
- * the network (a remote extension fetch); turning both off closes it (A2 /
- * Q-QRY-1). Prepended before the model query in `runDuckDb`.
+ * Build the DuckDB hardening prelude prepended before the (untrusted) model
+ * query on EVERY `-c` payload. The ORDER is load-bearing — each statement runs
+ * left-to-right and the security knobs LOCK once restrictive, so they must be
+ * set BEFORE the model query (which is appended after this prelude) so the query
+ * cannot widen them from inside its own SQL (CR-01):
+ *
+ *   1. `allowed_directories=['<workspaceDir>']` — the run's workspace is the ONLY
+ *      directory DuckDB may read; these allow-roots are queryable IRRESPECTIVE of
+ *      the master switch below (DuckDB >= 1.2). Set FIRST, while config is still
+ *      mutable, so the carve-out registers before the switch flips.
+ *   2. `enable_external_access=false` — the master external-access kill. Blocks
+ *      ALL local-file table functions (read_text/read_blob/read_csv/
+ *      read_json_auto/glob/…), ATTACH/COPY, the extension auto-installer's remote
+ *      fetch, and url-readers WHOLESALE — except reads under the allow-root above.
+ *      This is the real confinement (a keyword denylist cannot enumerate DuckDB's
+ *      growing reader surface); it makes a `read_text('/etc/passwd')` refuse even
+ *      if the keyword screen ever misses a reader. Self-locks once false.
+ *   3. autoinstall/autoload off — defense in depth alongside (2); the extension
+ *      auto-installer is the one path that touches the network.
+ *   4. `lock_configuration=true` — freeze ALL config so the appended model query
+ *      cannot `SET allowed_directories=...` / `SET enable_external_access=true`.
+ *
+ * @param workspaceDir - The lease-resolved workspace abs path (the sole allow-root).
+ * @returns The prelude string, ending in `; ` so the model query appends cleanly.
  */
-const DUCKDB_HARDENING_PRELUDE =
-  "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; ";
+function buildDuckDbHardeningPrelude(workspaceDir: string): string {
+  // Single-quote-escape the workspace path for the SQL string-list literal
+  // (a data-dir / agent-id containing a quote must not break out — mirrors WR-01).
+  const escWs = workspaceDir.replace(/'/g, "''");
+  return (
+    `SET allowed_directories=['${escWs}']; ` +
+    "SET enable_external_access=false; " +
+    "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; " +
+    "SET lock_configuration=true; "
+  );
+}
 
 /**
  * Statement keywords that let DuckDB install an extension, load one, attach an
@@ -162,6 +220,30 @@ const DANGEROUS_SQL_KEYWORDS = [
 const DANGEROUS_URL_SCHEMES = ["http://", "https://", "s3://", "gcs://", "gs://", "azure://"] as const;
 
 /**
+ * DuckDB local-file / environment table functions that have NO legitimate use
+ * over a tabular `results/` ResultRef — they read raw file bytes, enumerate a
+ * directory, or read a daemon env var from an ARBITRARY absolute host path with
+ * none of the {@link DANGEROUS_SQL_KEYWORDS} and no url-scheme (CR-01). The real
+ * confinement is `enable_external_access=false` + `allowed_directories` in
+ * {@link buildDuckDbHardeningPrelude} (which blocks ALL readers off the allow-root,
+ * including future ones); this denylist is belt-and-suspenders for the pure-exfil
+ * readers so they are refused BEFORE `duckdb` is ever spawned.
+ *
+ * Deliberately NOT listed (the documented tabular-query contract uses them, so
+ * they are confined by `allowed_directories`, never keyword-blocked):
+ * `read_csv`/`read_csv_auto`/`read_json`/`read_json_auto`/`read_ndjson`/
+ * `read_parquet`/`parquet_scan`. Matched as whole words, case-insensitive.
+ */
+const DANGEROUS_SQL_READERS = [
+  "READ_TEXT",
+  "READ_BLOB",
+  "GLOB",
+  "GETENV",
+  "PARQUET_METADATA",
+  "PARQUET_SCHEMA",
+] as const;
+
+/**
  * Screen a model-supplied DuckDB query for the extension / file-write / network
  * verbs and url-readers a read-only slicer must never run (T-221-QRY-01). Pure —
  * returns a human reason on the FIRST hit, or `null` when the query is safe to
@@ -177,6 +259,12 @@ export function rejectDangerousSql(query: string): string | null {
     // \b handles the surrounding punctuation/space DuckDB statements use.
     if (new RegExp(`\\b${kw}\\b`).test(upper)) {
       return `sql rejected: the \`${kw}\` statement is not allowed on the read-only query surface`;
+    }
+  }
+  for (const reader of DANGEROUS_SQL_READERS) {
+    // Whole-word match so a column/table named e.g. `glob_count` does not trip.
+    if (new RegExp(`\\b${reader}\\b`).test(upper)) {
+      return `sql rejected: the \`${reader.toLowerCase()}\` reader is not allowed — the query may only read the run-scoped results/ file (use read_json_auto/read_csv/read_parquet)`;
     }
   }
   const lower = query.toLowerCase();
@@ -329,13 +417,24 @@ export function createOrchestrateExecutorCores(
    * exit (bad SQL / non-table input) → `errorKind:"validation"`. Never throws —
    * mirrors the jq ENOENT/non-zero branches.
    */
-  function runDuckDb(query: string, toolName: "sql" | "jsonpath", started: number): Promise<unknown> {
+  function runDuckDb(
+    query: string,
+    workspaceDir: string,
+    toolName: "sql" | "jsonpath",
+    started: number,
+  ): Promise<unknown> {
     log.debug({ step: "duckdb-spawn", toolName }, "orchestrate duckdb spawning");
+    // Confine the daemon-side duckdb to the run's workspace: the prelude sets
+    // allowed_directories=[<ws>] + enable_external_access=false + lock BEFORE the
+    // (untrusted) model query (CR-01), and the process cwd is the workspace so a
+    // workspace-relative `results/...` read resolves inside the allow-root rather
+    // than against the daemon's cwd.
+    const payload = buildDuckDbHardeningPrelude(workspaceDir) + query;
     return new Promise<unknown>((resolve) => {
       execFile(
         "duckdb",
-        ["--readonly", ":memory:", "-json", "-c", DUCKDB_HARDENING_PRELUDE + query],
-        { timeout: sqlTimeoutMs, maxBuffer: SQL_MAX_BUFFER_BYTES, encoding: "utf8" },
+        ["--readonly", ":memory:", "-json", "-c", payload],
+        { cwd: workspaceDir, timeout: sqlTimeoutMs, maxBuffer: SQL_MAX_BUFFER_BYTES, encoding: "utf8" },
         (err, stdout, stderr) => {
           if (err) {
             const code = (err as NodeJS.ErrnoException).code;
@@ -355,7 +454,11 @@ export function createOrchestrateExecutorCores(
               errorResult(
                 missing
                   ? "duckdb is not installed on the host"
-                  : `duckdb error: ${stderr.trim() || "non-zero exit"}`,
+                  : // Scrub absolute host paths + bound length before the error
+                    // crosses the jail boundary (IN-04): a duckdb diagnostic can
+                    // echo the offending SQL/path; the jailed client must not see
+                    // daemon-side host paths.
+                    `duckdb error: ${scrubDuckDbStderr(stderr) || "non-zero exit"}`,
               ),
             );
             return;
@@ -406,17 +509,19 @@ export function createOrchestrateExecutorCores(
       );
       return errorResult("sql path escapes the workspace");
     }
-    // Screen the model query for extension / file-write / network verbs + url
-    // readers BEFORE spawning duckdb (T-221-QRY-01) — refuse, never spawn, on a hit.
+    // Screen the model query for extension / file-write / network verbs, the
+    // pure-exfil local-file readers, + url readers BEFORE spawning duckdb
+    // (T-221-QRY-01 / CR-01) — refuse, never spawn, on a hit. The running duckdb
+    // is ALSO confined to the workspace via the hardening prelude (defense in depth).
     const rejection = rejectDangerousSql(query);
     if (rejection !== null) {
       log.warn(
-        { errorKind: "validation" as const, hint: "sql query contained a disallowed extension/file-write/network verb or url-reader — refusing before spawn", toolName: "sql" },
+        { errorKind: "validation" as const, hint: "sql query contained a disallowed extension/file-write/network verb, an exfil reader, or a url-reader — refusing before spawn", toolName: "sql" },
         "orchestrate sql dangerous query blocked",
       );
       return errorResult(rejection);
     }
-    return await runDuckDb(query, "sql", started);
+    return await runDuckDb(query, ctx.workspaceDir, "sql", started);
   };
 
   /**
@@ -470,8 +575,14 @@ export function createOrchestrateExecutorCores(
     // Compile the JSONPath into a DuckDB json_extract query over read_json_auto.
     // The path literal is the safePath-confined absolute path; the expr passed the
     // grammar gate above. read_json_auto yields one row of the doc as `j`.
-    const query = `SELECT json_extract(j, '${expr}') AS value FROM read_json_auto('${absPath}') t(j)`;
-    return await runDuckDb(query, "jsonpath", started);
+    // WR-01: single-quote-escape absPath before interpolating it into the SQL
+    // string literal. `safePath` confines the LOCATION (under the workspace) but
+    // does NOT escape SQL metacharacters; an operator data-dir / agent-id
+    // containing a `'` (agentId is only z.string().min(1)) would otherwise break
+    // out of the literal. Double the quote per SQL string-literal escaping.
+    const escPath = absPath.replace(/'/g, "''");
+    const query = `SELECT json_extract(j, '${expr}') AS value FROM read_json_auto('${escPath}') t(j)`;
+    return await runDuckDb(query, ctx.workspaceDir, "jsonpath", started);
   };
 
   const fileExecutors: OrchestrateFileCores = {

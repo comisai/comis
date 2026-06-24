@@ -93,8 +93,19 @@ export interface LaterQueueItem<T = unknown> {
 export interface LaterCompletion<T = unknown> {
   /** The completed item's id. */
   id: string;
-  /** The completed item's result (the `run()` return value). */
-  result: T;
+  /**
+   * The completed item's result (the `run()` return value). Present on success;
+   * `undefined` when the item threw (see {@link LaterCompletion.error}).
+   */
+  result?: T;
+  /**
+   * The error the item's `run()` threw, if any (WR-03). Present ONLY on a failed
+   * item — a successful completion carries `result` and no `error`. This is the
+   * error channel that lets a throwing item be ANNOUNCED (never swallowed, never
+   * escaping enqueue/the timer) so the parent can distinguish failure from
+   * "never ran".
+   */
+  error?: unknown;
 }
 
 /** Dependencies for {@link createLaterQueue}. Note what is ABSENT: there is no
@@ -150,8 +161,20 @@ export function createLaterQueue<T = unknown>(
   // Pending deferred timers, keyed by item id so cancel() can drop them all.
   const pending = new Map<string, TimerHandle>();
 
-  function announce(id: string, result: T): void {
-    onComplete({ id, result });
+  /**
+   * Run an item's `run()` and ANNOUNCE its outcome through `onComplete` (WR-03).
+   * A thrown error is caught and announced as `{ id, error }` — it NEVER escapes
+   * (so a 'now' throw cannot propagate out of enqueue into the executor loop, and
+   * a 'later' throw cannot become an unhandled timer exception). A success
+   * announces `{ id, result }`.
+   */
+  function safeRun(item: LaterQueueItem<T>): void {
+    try {
+      const result = item.run();
+      onComplete({ id: item.id, result });
+    } catch (error) {
+      onComplete({ id: item.id, error });
+    }
   }
 
   return {
@@ -159,16 +182,19 @@ export function createLaterQueue<T = unknown>(
       if (item.priority === "now") {
         // In-turn work: run inline, push-complete synchronously. This is why a
         // 'now' item enqueued AFTER a 'later' item still runs first — the
-        // 'later' item is only scheduled, never run inline.
-        announce(item.id, item.run());
+        // 'later' item is only scheduled, never run inline. A throw is isolated
+        // and announced as an error (WR-03) — it never escapes enqueue.
+        safeRun(item);
         return;
       }
 
       // 'later': defer past this turn on an unref'd, cancelable timer. When it
       // fires it runs the work and ANNOUNCES (push-completion) — no poll loop.
+      // A throw inside the deferred work is isolated + announced (WR-03), so the
+      // item never strands silently and never crashes the timer.
       const handle = timers.setTimeout(() => {
         pending.delete(item.id);
-        announce(item.id, item.run());
+        safeRun(item);
       }, laterDelayMs);
       // Never block event-loop exit (mirrors coordinator-progress-fork.ts:137).
       handle.unref();
