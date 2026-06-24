@@ -215,7 +215,28 @@ export class BwrapProvider implements SandboxProvider {
   }
 
   buildArgs(opts: SandboxOptions): string[] {
-    const args: string[] = [this.bwrapPath!];
+    // Self-prime the bwrap binary path (symmetry with getSystemPaths()'s lazy
+    // resolvedSysPaths). Callers that build args on a fresh provider without
+    // first calling available() — e.g. the orchestrate jail, which constructs a
+    // new BwrapProvider() per run (orchestrate-jail.linux.test.ts:156) — would
+    // otherwise get `[null, …]` and explode opaquely as `spawn(null)` →
+    // `TypeError: The "file" argument must be of type string. Received null`
+    // deep in node:child_process (the #236 orchestrate-jail.linux suite). In
+    // production the shared provider is already primed at boot (detect-provider),
+    // so this is a no-op there; available() caches bwrapPath.
+    if (this.bwrapPath === null) {
+      this.available();
+    }
+    if (this.bwrapPath === null) {
+      // Fail loud, naming the cause — never return a null bin that becomes an
+      // inscrutable child_process TypeError. The host genuinely cannot build a
+      // jail; callers must honest-degrade (orchestrate refuses) rather than spawn.
+      throw new Error(
+        "BwrapProvider.buildArgs: bwrap is not available on PATH (`which bwrap` failed). " +
+          "The host cannot build the jail — refuse the jailed run instead of spawning.",
+      );
+    }
+    const args: string[] = [this.bwrapPath];
     // WR-05: the credential-denylist base (`validateBindMount(hostPath, home)`)
     // must be an EXPLICIT trusted value, not a hidden ambient read inside this
     // pure arg generator. Prefer the caller-supplied `opts.home` (resolved once
