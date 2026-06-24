@@ -122,8 +122,12 @@ export function registerFleetCommand(program: Command): void {
         // automatically — this is the human-readable table render only.
         if (report.autonomy) {
           const a = report.autonomy;
+          // FLEET-02 (Phase 220-05): `denialBreaker` is the capability-DENIAL breaker
+          // trip count — SEPARATE from `breaker` (the tool-failure breaker). A
+          // denial-breaker-aborted run is invisible to every other count (it lands in
+          // durable status 'completed'), so this is its only fleet surface.
           info(
-            `Autonomy:   ${a.runs.total} run(s) (${a.runs.degraded} degraded, ${(a.runs.degradedRate * 100).toFixed(0)}%) · orphaned=${a.orphaned} resumed=${a.resumed} revoked=${a.revoked} killed=${a.killed} · breaker=${a.breakerTrips} budgetBreaches=${a.budgetBreaches}`,
+            `Autonomy:   ${a.runs.total} run(s) (${a.runs.degraded} degraded, ${(a.runs.degradedRate * 100).toFixed(0)}%) · orphaned=${a.orphaned} resumed=${a.resumed} revoked=${a.revoked} killed=${a.killed} · breaker=${a.breakerTrips} denialBreaker=${a.denialBreakerTrips} budgetBreaches=${a.budgetBreaches}`,
           );
           if (a.worstRootRunId) {
             info(`  → worst run: comis explain ${a.worstRootRunId}`);

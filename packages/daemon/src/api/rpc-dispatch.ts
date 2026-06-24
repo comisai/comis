@@ -689,6 +689,20 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
                   timestamp: systemNowMs(),
                 });
               }
+              // FLEET-02 (Phase 220-05): ALSO emit the dedicated content-free
+              // autonomy:denial_breaker_tripped event so `comis fleet` surfaces the
+              // trip as a separable `denialBreakerTrips` count. The execution:aborted
+              // emit above flips a UI phase only (no fleet-ingestion path) and its
+              // `denial_breaker` reason is never a session endReason/breakerTripCount,
+              // so the trip would otherwise be INVISIBLE to the fleet lens (the
+              // milestone-audit gap). rootRunId is in scope (the `!== undefined` guard
+              // above); systemNowMs is the globals-gate-safe wiring clock (no Date.now).
+              // Content-free: the rootRunId (an id) + timestamp ONLY — the deny reason
+              // rides the escalate() below, never the typed event.
+              deps.container.eventBus.emit("autonomy:denial_breaker_tripped", {
+                rootRunId,
+                timestamp: systemNowMs(),
+              });
               deps.subAgentRunner.killByRootRun(rootRunId);
               deps.escalate?.({
                 kind: "denial_breaker_tripped",

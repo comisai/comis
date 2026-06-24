@@ -314,4 +314,20 @@ export interface OrchestrationEvents {
    * separately (RESEARCH OQ1). Carries the killed COUNT + rootRunId + timestamp ONLY.
    */
   "autonomy:killed": { rootRunId: string; killed: number; timestamp: number };
+
+  /**
+   * FLEET-02 (Phase 220-05): a Phase-217 capability-DENIAL breaker tripped — N
+   * consecutive floor-blocks aborted + killed the run tree (rpc-dispatch.ts, beside
+   * the `execution:aborted{reason:"denial_breaker"}` emit). DISTINCT from both the
+   * TOOL-failure breaker (`execution:aborted{reason:"circuit_breaker"}` → the
+   * session-rollup `breakerTripCount` → `breakerTripTotal`) and from kill/revoke:
+   * the denial-breaker abort is NEVER a session endReason and NEVER a
+   * breakerTripCount, so this dedicated event is the ONLY fleet-ingestion path for
+   * it — without it the trip is invisible to `comis fleet` (the milestone-audit
+   * FLEET-02 gap; the aborted run lands in durable status 'completed', so it shows
+   * 0 in orphaned/revoked/killed/breakerTrips too). Carries the rootRunId (an id) +
+   * timestamp ONLY — NEVER the engine's free-text deny reason (which stays on the
+   * escalate/WARN at the source). Each trip is one event (the count is the row count).
+   */
+  "autonomy:denial_breaker_tripped": { rootRunId: string; timestamp: number };
 }

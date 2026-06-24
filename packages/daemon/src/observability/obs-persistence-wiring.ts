@@ -34,6 +34,7 @@ import {
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
   autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
 } from "./obs-autonomy-rows.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
 
@@ -495,6 +496,7 @@ export {
   durableResumedEventToRow,
   autonomyRevokedEventToRow,
   autonomyKilledEventToRow,
+  autonomyDenialBreakerEventToRow,
 };
 
 // ---------------------------------------------------------------------------
@@ -723,6 +725,15 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("autonomy:killed", (payload) => {
     diagnosticBuffer.push(autonomyKilledEventToRow(payload));
+  });
+  // FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip → a content-free
+  // health_signal row (same diagnosticBuffer, NO migration). The fleet lens (below)
+  // counts it as the SEPARABLE `denialBreakerTrips` — the tool-failure breaker
+  // (breakerTripTotal) and the capability-denial breaker are distinct mechanisms,
+  // so they must not be conflated. The row carries the closed label + count + id
+  // only — the deny reason stays on the escalate at the source (rpc-dispatch.ts).
+  eventBus.on("autonomy:denial_breaker_tripped", (payload) => {
+    diagnosticBuffer.push(autonomyDenialBreakerEventToRow(payload));
   });
 
   // PERSIST-01 (Phase 176 Plan 04): a detected prompt-cache break → an obs_diagnostics

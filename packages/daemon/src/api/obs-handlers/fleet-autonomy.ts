@@ -28,6 +28,7 @@
 
 import type { DiagnosticRow } from "@comis/memory";
 import {
+  autonomyDenialBreakerFromRow,
   autonomyKilledFromRow,
   autonomyRevokedFromRow,
   durableOrphanedFromRow,
@@ -52,6 +53,10 @@ export interface AutonomySlice {
   revoked: number;
   killed: number;
   breakerTrips: number;
+  /** FLEET-02 (Phase 220-05): the capability-DENIAL breaker trip count (event-sourced
+   *  from the `autonomy_denial_breaker` rows) — SEPARABLE from `breakerTrips` (the
+   *  tool-failure breaker read-back). The two are distinct mechanisms (Phase 217). */
+  denialBreakerTrips: number;
   budgetBreaches: number;
   costUsd: number;
   worstRootRunId?: string;
@@ -59,12 +64,15 @@ export interface AutonomySlice {
 
 /**
  * Severity rank for the worst-rootRunId pick (FLEET-04): an ORPHANED run (died on
- * restart, did not recover) outranks a KILLED run (forced teardown) outranks a
- * REVOKED run (cooperative authority revoke). Higher = worse. Deterministic, no
- * clock — the rank + a lexicographic tie-break fully order the candidates.
+ * restart, did not recover) outranks a DENIAL-BREAKER-aborted run (FLEET-02 — the
+ * run burned its denial budget and was force-aborted, a robustness fault) outranks
+ * a KILLED run (operator-intentional forced teardown) outranks a REVOKED run
+ * (cooperative authority revoke). Higher = worse. Deterministic, no clock — the
+ * rank + a lexicographic tie-break fully order the candidates.
  */
 const AUTONOMY_SIGNAL_SEVERITY: Readonly<Record<string, number>> = {
-  durable_orphaned: 3,
+  durable_orphaned: 4,
+  autonomy_denial_breaker: 3,
   autonomy_killed: 2,
   autonomy_revoked: 1,
 };
@@ -116,6 +124,7 @@ export function computeAutonomySlice(input: {
   // Event-sourced counts + the worst-run candidate scan (one pass over the rows).
   let resumed = 0;
   let killed = 0;
+  let denialBreakerTrips = 0;
   let budgetBreaches = 0;
   let worstRootRunId: string | undefined;
   let worstSeverity = 0;
@@ -152,6 +161,17 @@ export function computeAutonomySlice(input: {
       considerWorst("autonomy_killed", kill.rootRunId);
       continue;
     }
+    // FLEET-02 (Phase 220-05): the capability-denial breaker trip — SEPARABLE from
+    // both the tool-failure breaker (breakerTrips read-back) and kill/revoke. Each
+    // row is one trip (the count defaults to 1); the worst-run pick CAN promote it
+    // (rank 3, above killed) since a denial-breaker abort is a robustness fault.
+    const denial = autonomyDenialBreakerFromRow(row);
+    if (denial !== null) {
+      sawAutonomyRow = true;
+      denialBreakerTrips += denial.denialBreakerTrips;
+      considerWorst("autonomy_denial_breaker", denial.rootRunId);
+      continue;
+    }
     if (nodeBudgetExceededFromRow(row) !== null) {
       budgetBreaches += 1;
       continue;
@@ -182,6 +202,7 @@ export function computeAutonomySlice(input: {
     revoked,
     killed,
     breakerTrips,
+    denialBreakerTrips,
     budgetBreaches,
     costUsd,
     ...(worstRootRunId !== undefined ? { worstRootRunId } : {}),
@@ -262,6 +283,29 @@ export function buildAutonomyFindings(healthSignals: readonly DiagnosticRow[]): 
       detail: `${killedSum} spawn tree(s)/run(s) hard-killed (run.kill)`,
       count: killedSum,
       hint: "a run tree was hard-killed (run.kill) — a forced teardown, not a cooperative revoke; run `comis explain <rootRunId>` on the killed run to see why it was terminated",
+    });
+  }
+
+  // autonomy_denial_breaker (FLEET-02, Phase 220-05) — the SUM of the per-row
+  // denial-breaker trip counts (a Phase-217 capability-denial breaker aborted +
+  // killed a run tree after N consecutive floor-blocks). DISTINCT from the
+  // tool-failure breaker (breakerTripTotal) and from kill/revoke — this is the
+  // capability-denial breaker, the only fleet-visible signal that an unattended run
+  // burned its denial budget in a deny loop. Counts + a STATIC hint naming the knob
+  // (autonomy.denialBreakerN) + `comis explain <rootRunId>` ONLY — never the
+  // engine's free-text deny reason (the row never carried it). Zero-traffic guard.
+  let denialBreakerSum = 0;
+  for (const row of healthSignals) {
+    const parsed = autonomyDenialBreakerFromRow(row);
+    if (parsed === null) continue;
+    denialBreakerSum += parsed.denialBreakerTrips;
+  }
+  if (denialBreakerSum > 0) {
+    findings.push({
+      code: "autonomy_denial_breaker",
+      detail: `${denialBreakerSum} run(s) aborted by the capability-denial breaker (consecutive floor-blocks)`,
+      count: denialBreakerSum,
+      hint: "an unattended run hit N consecutive capability/quota denials and the denial breaker aborted the tree to avoid burning the budget on a deny loop; run `comis explain <rootRunId>` on the aborted run, then raise the run's autonomy ceiling or tune autonomy.denialBreakerN if the denials were expected",
     });
   }
 

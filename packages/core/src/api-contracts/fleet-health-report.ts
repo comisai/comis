@@ -164,8 +164,27 @@ export const FleetHealthReportSchema = z.object({
       resumed: z.number(),
       revoked: z.number(),
       killed: z.number(),
-      /** Autonomy-scoped subset of breakerTripTotal (FLEET-02 — the synthetic-excluded denial_breaker read-back). */
+      /** The TOOL-FAILURE breaker subset of breakerTripTotal (the synthetic-excluded
+       *  session-rollup `breakerTripCount` read-back). DISTINCT from `denialBreakerTrips`
+       *  below — the tool-failure breaker and the capability-denial breaker are
+       *  separate Phase-217 mechanisms and must not be conflated. */
       breakerTrips: z.number(),
+      /**
+       * FLEET-02 (Phase 220-05): the CAPABILITY-DENIAL breaker trip count — N
+       * consecutive floor-blocks aborted + killed an unattended run tree (Phase
+       * 217). EVENT-SOURCED from the content-free `autonomy_denial_breaker`
+       * health_signal rows, NOT the session-rollup `breakerTripCount`: a
+       * denial-breaker abort is NEVER a session endReason and NEVER a
+       * breakerTripCount, so `breakerTrips` (the tool-failure read-back) can never
+       * see it — and the aborted run lands in durable status 'completed', so it is
+       * 0 in orphaned/revoked/killed too. This separable count is the ONLY fleet
+       * surface for the denial breaker (the milestone-audit FLEET-02 gap). Counts
+       * only — never the engine's free-text deny reason. The assembler always
+       * emits it within the (optional) autonomy block; a `denial_breaker`-aborted
+       * run's id can also surface as `worstRootRunId` + an `autonomy_denial_breaker`
+       * finding code.
+       */
+      denialBreakerTrips: z.number(),
       budgetBreaches: z.number(),
       costUsd: z.number(),
       /** FLEET-04: the worst autonomy run to drill into via `comis explain`. */

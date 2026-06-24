@@ -431,6 +431,9 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
       revoked: 1,
       killed: 0,
       breakerTrips: 1,
+      // FLEET-02 (Phase 220-05): the capability-denial breaker trip count, separable
+      // from the tool-failure `breakerTrips` above.
+      denialBreakerTrips: 2,
       budgetBreaches: 0,
       costUsd: 0.42,
       worstRootRunId: "root-2f9c1a",
@@ -461,6 +464,9 @@ describe("comis fleet table view renders the autonomy block (FLEET-01/02/04) and
     expect(output).toContain("revoked=1");
     expect(output).toContain("killed=0");
     expect(output).toContain("breaker=1");
+    // FLEET-02 (Phase 220-05): the capability-denial breaker count renders SEPARATELY
+    // from the tool-failure breaker (so a denial-breaker-aborted run is fleet-visible).
+    expect(output).toContain("denialBreaker=2");
     expect(output).toContain("budgetBreaches=0");
     // FLEET-04: the worst-run drill-down line names `comis explain <rootRunId>`.
     expect(output).toContain("comis explain root-2f9c1a");

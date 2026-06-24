@@ -1132,12 +1132,24 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     // The worst-run pick CAN include the denial-breaker root (a degraded autonomy run).
     expect(report.autonomy?.worstRootRunId).toBe("root-deny-worst");
 
-    // CONTENT-FREE: no body/secret/path/free-text anywhere in the report JSON.
+    // CONTENT-FREE: no bearer/secret/path leaks anywhere in the report JSON. (The
+    // dedicated finding's detail/hint carry STATIC operator guidance — authored
+    // constants, not echoed runtime bodies — so they legitimately name the breaker
+    // mechanism; that is identical to every other finding's static hint and is NOT
+    // a body leak.) The content-free invariant is enforced at the ROW: the persisted
+    // `autonomy_denial_breaker` details carry ONLY the closed triple (signal /
+    // denialBreakerTrips / rootRunId) — the engine's runtime free-text deny reason
+    // is NEVER persisted, so it can never reach the report from the data side.
     const j = JSON.stringify(report);
     expect(j).not.toMatch(/Bearer|sk-|secret/i);
     expect(j).not.toMatch(/\/home\/|\/tmp\//);
-    // The closed signal label + the id are fine; a free-text deny reason is NOT present.
-    expect(j).not.toMatch(/consecutive floor-blocks|capability\/quota denied/i);
+    // The row's details JSON (the data-sourced surface) is the closed triple ONLY —
+    // no runtime body field smuggled through (this is what an untrusted row could leak).
+    const denialRow = store
+      .queryDiagnostics({ category: "health_signal" })
+      .find((r) => r.message === "autonomy:denial_breaker_tripped");
+    const details = JSON.parse(denialRow?.details ?? "{}") as Record<string, unknown>;
+    expect(Object.keys(details).sort()).toEqual(["denialBreakerTrips", "rootRunId", "signal"]);
   });
 
   it("FLEET-02: round-trips FleetHealthReportSchema.parse() with denialBreakerTrips (additive-optional, no drift)", async () => {

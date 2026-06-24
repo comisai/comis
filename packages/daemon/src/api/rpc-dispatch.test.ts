@@ -1136,6 +1136,11 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       denialBreaker,
       evictRegistry,
       abortEvents: () => pull("execution:aborted"),
+      // FLEET-02 (Phase 220-05): the dedicated content-free autonomy event the trip
+      // emits BESIDE execution:aborted so `comis fleet` surfaces the denial-breaker
+      // count (the abort reason is never a session endReason, so the fleet lens has
+      // no other ingestion path).
+      denialBreakerEvents: () => pull("autonomy:denial_breaker_tripped"),
     };
   }
 
@@ -1261,8 +1266,8 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(escalate).not.toHaveBeenCalled();
   });
 
-  it("BREAK-02: with denialBreakerN=3, three consecutive CapabilityDeniedError on one rootRunId → recordDenial 3x, trip on the 3rd → execution:aborted{denial_breaker} + killByRootRun + escalate", async () => {
-    const { deps, escalate, killByRootRun, denialBreaker, abortEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
+  it("BREAK-02: with denialBreakerN=3, three consecutive CapabilityDeniedError on one rootRunId → recordDenial 3x, trip on the 3rd → execution:aborted{denial_breaker} + autonomy:denial_breaker_tripped + killByRootRun + escalate", async () => {
+    const { deps, escalate, killByRootRun, denialBreaker, abortEvents, denialBreakerEvents } = makeAutonomyDeps({ denialBreakerN: 3 });
     const { createRpcDispatch } = await import("./rpc-dispatch.js");
     const dispatch = createRpcDispatch(deps);
     const { CapabilityDeniedError } = await import("@comis/core");
@@ -1282,9 +1287,10 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
 
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 2
-    // Before the trip: no abort, no kill.
+    // Before the trip: no abort, no kill, no fleet denial-breaker event.
     expect(abortEvents()).toHaveLength(0);
     expect(killByRootRun).not.toHaveBeenCalled();
+    expect(denialBreakerEvents()).toHaveLength(0);
 
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 3 → trip
 
@@ -1296,6 +1302,14 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(aborts[0]!.agentId).toBe("agentA");
     expect(killByRootRun).toHaveBeenCalledTimes(1);
     expect(killByRootRun).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
+    // FLEET-02: the trip ALSO emits the content-free autonomy:denial_breaker_tripped
+    // event (the fleet-ingestion path — execution:aborted has none). It carries the
+    // rootRunId (an id) + a timestamp ONLY — never the free-text deny reason.
+    const denialEvents = denialBreakerEvents();
+    expect(denialEvents).toHaveLength(1);
+    expect(denialEvents[0]!.rootRunId).toBe("root-session-tenant-a:user-7:chan-9");
+    expect(typeof denialEvents[0]!.timestamp).toBe("number");
+    expect(Object.keys(denialEvents[0]!).sort()).toEqual(["rootRunId", "timestamp"]);
     // The trip escalates with a trip-specific kind.
     const tripEscalate = escalate.mock.calls
       .map((c) => c[0] as Record<string, unknown>)
