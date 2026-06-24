@@ -118,6 +118,14 @@ describe("createSleepTool — STREAM-03 sleep primitive", () => {
     await p;
   });
 
+  it("uses the real systemSetTimeout defaultTimer when no timer is injected (ms:0 resolves promptly)", async () => {
+    // No timer override → the production defaultTimer (sanctioned systemSetTimeout + .unref()).
+    // ms:0 schedules a real next-tick timer, exercising the default wiring end-to-end.
+    const tool = createSleepTool();
+    const result = await tool.execute("call-real-timer", { ms: 0 });
+    expect(result.content.length).toBeGreaterThan(0);
+  });
+
   it("calls .unref() on the scheduled handle (a pending sleep never blocks shutdown)", async () => {
     const fake = createFakeTimer();
     const tool = createSleepTool({ timer: fake.timer });

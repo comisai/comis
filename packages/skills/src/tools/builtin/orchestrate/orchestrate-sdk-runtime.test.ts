@@ -336,6 +336,46 @@ describe("orchestrate-sdk-runtime", () => {
       });
     });
 
+    it(".sql(query) runs the DuckDB SQL query over the ref file and returns only the slice", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: [{ id: 1 }] }), captured);
+      const wrapped = wrapResultRef({
+        ref: "results/data.jsonl",
+        kind: "jsonl",
+        bytes: 9,
+        preview: "",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+
+      const out = await wrapped.sql("SELECT id FROM data WHERE id = 1");
+
+      expect(out).toEqual([{ id: 1 }]);
+      expect(captured[0].params).toEqual({
+        tool: "sql",
+        args: { path: "results/data.jsonl", query: "SELECT id FROM data WHERE id = 1" },
+      });
+    });
+
+    it(".jsonpath(expr) extracts the JSONPath slice over the ref file in-jail", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: ["a", "b"] }), captured);
+      const wrapped = wrapResultRef({
+        ref: "results/data.json",
+        kind: "json",
+        bytes: 9,
+        preview: "",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      });
+
+      const out = await wrapped.jsonpath("$.items[*].name");
+
+      expect(out).toEqual(["a", "b"]);
+      expect(captured[0].params).toEqual({
+        tool: "jsonpath",
+        args: { path: "results/data.json", expr: "$.items[*].name" },
+      });
+    });
+
     it(".read(offset, limit) reads a bounded slice of the ref file in-jail", async () => {
       const captured: CapturedRequest[] = [];
       server = await startFakeCapServer(socketPath, () => ({ result: "line5\nline6" }), captured);
