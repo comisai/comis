@@ -13,12 +13,20 @@ export interface RateLimiter {
 }
 
 export function createRateLimiter(opts: {
-  maxPerHour: number;
+  /**
+   * The hourly ceiling. A function resolves it PER-AGENT (called on each
+   * tryAcquire) so an agent's own `notification.maxPerHour` config takes effect
+   * rather than a single global default — previously the limiter baked in one
+   * number and silently ignored the schema-supported per-agent ceiling.
+   */
+  maxPerHour: number | ((agentId: string) => number);
   nowMs?: () => number;
 }): RateLimiter {
   const getNow = opts.nowMs ?? Date.now;
   const HOUR_MS = 3_600_000;
   const counters = new Map<string, { count: number; windowStartMs: number }>();
+  const limitFor = (agentId: string): number =>
+    typeof opts.maxPerHour === "function" ? opts.maxPerHour(agentId) : opts.maxPerHour;
 
   return {
     tryAcquire(agentId: string): boolean {
@@ -28,7 +36,7 @@ export function createRateLimiter(opts: {
         counters.set(agentId, { count: 1, windowStartMs: now });
         return true;
       }
-      if (entry.count >= opts.maxPerHour) return false;
+      if (entry.count >= limitFor(agentId)) return false;
       entry.count++;
       return true;
     },

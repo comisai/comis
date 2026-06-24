@@ -164,7 +164,12 @@ describe("registerRpcMethods", () => {
     };
     await handler(webShape);
 
-    expect(deps.rpcCall).toHaveBeenCalledWith("cron.add", webShape);
+    // cron.add is gated (orch:cron), so the gateway leg now injects the required
+    // cap server-side (CAP-03); the user-shape params are otherwise unchanged.
+    expect(deps.rpcCall).toHaveBeenCalledWith("cron.add", {
+      ...webShape,
+      _capabilities: ["orch:cron"],
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -420,5 +425,39 @@ describe("registerRpcMethods", () => {
     const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
       .calls[0]![1] as Record<string, unknown>;
     expect(forwarded).toEqual({ text: "hello", foo: 1 });
+  });
+
+  // -----------------------------------------------------------------------
+  // CAP-03 (gateway leg): M1 (#236) capability-gated the orchestration RPCs on
+  // the injected `_capabilities`, but only the in-process agent leg injected it
+  // — the gateway leg did not, so every authenticated operator/dashboard call
+  // (and the integration suite) hit `Capability denied: orch:*`. The gateway
+  // must inject the method's REQUIRED orch cap server-side, after the strip
+  // (a client cannot forge `_capabilities` — it is a stripped internal field).
+  // -----------------------------------------------------------------------
+
+  it("injects the required orch cap for gated orchestration methods (least-privilege)", async () => {
+    for (const [method, cap] of [
+      ["graph.save", "orch:graph"],
+      ["graph.execute", "orch:graph"],
+      ["session.spawn", "orch:spawn"],
+      ["skills.upload", "orch:skill"],
+      ["cron.add", "orch:cron"],
+    ] as const) {
+      (deps.rpcCall as ReturnType<typeof vi.fn>).mockClear();
+      const handler = handlerFor(method);
+      await handler({ any: "param" });
+      const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+        .calls[0]![1] as Record<string, unknown>;
+      expect(forwarded._capabilities, `${method} → ${cap}`).toEqual([cap]);
+    }
+  });
+
+  it("does NOT inject _capabilities for an ungated rpc method (session.send)", async () => {
+    const handler = handlerFor("session.send");
+    await handler({ text: "hi" });
+    const forwarded = (deps.rpcCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![1] as Record<string, unknown>;
+    expect(forwarded).not.toHaveProperty("_capabilities");
   });
 });

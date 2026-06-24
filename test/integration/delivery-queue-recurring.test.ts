@@ -229,13 +229,13 @@ describe("continuous delivery-queue drainer (integration)", () => {
       // default EventTarget MaxListeners cap (10) trips a warning AND can
       // drop responses past the 10th listener, causing JSON-RPC timeouts.
       //
-      // Pass a unique `_agentId` per call to bypass the per-agent rate
-      // limiter (defaults: 30/hour). The notification handler reads
-      // params._agentId directly (notification-handlers.ts:34); unknown
-      // agentIds fall through to defaultConfig (notification-service.ts:103),
-      // and each unique agentId gets its own fresh counter
-      // (rate-limiter.ts:24-33). Channel resolution uses explicit
-      // channel_type + channel_id, which is independent of agentId.
+      // Rate limit: the gateway STRIPS a client-supplied `_agentId`
+      // (ORIGIN-02 anti-forgery — it is an internal field), so all 100 sends
+      // resolve to the DEFAULT agent's per-agent notification limiter rather
+      // than 100 distinct fresh counters. The test config raises that agent's
+      // `notification.maxPerHour` to 100000 (config.test-delivery-recurring.yaml)
+      // so the burst is not throttled. Channel resolution uses the explicit
+      // channel_type + channel_id, independent of agentId.
       const CONCURRENCY = 8; // < EventTarget.MaxListeners (10) per socket
       const BATCH_COUNT = Math.ceil(N / CONCURRENCY);
       const sockets = await Promise.all(
