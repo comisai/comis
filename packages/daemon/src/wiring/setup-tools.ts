@@ -16,6 +16,7 @@ import {
   safePath,
   formatSessionKey,
   systemNowMs,
+  resolveAutonomy,
 } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import type { SessionTrackerRegistry, CapabilityClass } from "@comis/agent";
@@ -632,14 +633,36 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       return tools;
     };
 
+    // COORD-01 (218-01): resolve the agent's autonomy posture and select the
+    // effective tool-group allowlist. A `role: coordinator` lead with NO explicit
+    // `tool_groups` is narrowed to the coordinator orchestration surface
+    // (resolveAutonomy().coordinatorToolGroups) — heavy/long work has nowhere to
+    // run inline (COORD-02). An explicit `tool_groups` (or "full") still wins
+    // (operator intent — progressive disclosure, T-218-04); role:worker (the
+    // default) leaves the surface untouched (byte-identical to today). This
+    // narrows the TOOL SURFACE only — the resolved capability set is unchanged
+    // (the §22.3 floor + requireCapability gate are not in this path).
+    const resolvedAutonomy = resolveAutonomy(agentConfig?.autonomy);
+    const hasExplicitToolGroups = toolGroups !== undefined && toolGroups.length > 0;
+    const effectiveGroups =
+      resolvedAutonomy.role === "coordinator" && !hasExplicitToolGroups
+        ? resolvedAutonomy.coordinatorToolGroups
+        : toolGroups;
+    if (resolvedAutonomy.role === "coordinator" && !hasExplicitToolGroups) {
+      skillsLogger.debug(
+        { agentId, role: resolvedAutonomy.role, toolGroups: effectiveGroups, step: "tool-assembly" },
+        "coordinator role narrowed the tool surface to the orchestration set",
+      );
+    }
+
     // Determine platform tool provider based on options
     let platformToolProvider: PlatformToolProvider | undefined;
     if (!includePlatform) {
       platformToolProvider = undefined;
-    } else if (toolGroups && toolGroups.length > 0 && !toolGroups.includes("full")) {
+    } else if (effectiveGroups && effectiveGroups.length > 0 && !effectiveGroups.includes("full")) {
       // Build allowed tool name set from all requested profiles AND groups
       const allowedNames = new Set<string>();
-      for (const group of toolGroups) {
+      for (const group of effectiveGroups) {
         const profileTools = TOOL_PROFILES[group];
         if (profileTools) {
           for (const t of profileTools) allowedNames.add(t);
@@ -653,7 +676,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       }
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {
-      // No toolGroups or "full" in toolGroups -- return all platform tools unfiltered
+      // No effectiveGroups or "full" in effectiveGroups -- return all platform tools unfiltered
       platformToolProvider = agentPlatformTools;
     }
 
