@@ -24,6 +24,7 @@ import {
   type TimerHandle,
   type DurableRunPort,
   type AgentCapability,
+  type ResultRef,
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
   RequiredToolsUnreachableError,
@@ -414,6 +415,24 @@ export interface SubAgentRunnerDeps {
       cost: number;
     }): Promise<void>;
   };
+  /**
+   * Phase 218 (SUMREF-02): materialize the child's FULL output to the CHILD's
+   * own jailed workspace as a structured {@link ResultRef} (preview + ref +
+   * bytes + kind), so the lead's announcement carries a bounded summary + a
+   * HANDLE instead of the megabyte body (the longevity invariant). The daemon
+   * supplies a `createResultRefStore`-backed impl targeting
+   * `resolveWorkspaceDir(spawnAgentConfig, childAgentId, dataDir)`; the runner
+   * stays `@comis/skills`-free (DI, mirroring {@link resultCondenser}). The
+   * contract IS the store's own 3-way union — the runner discriminates it by
+   * structure (a `ResultRef` has `.ref`; a refusal has `.error`; `undefined` is
+   * the contained-write-failed signal). **Absent ⇒ the announcement embeds the
+   * condensed summary + diskPath only (today's behavior)** — the no-op is the
+   * absence of the dep / a no-handle outcome, never a flag.
+   */
+  materializeFullOutput?: (
+    content: string,
+    ctx: { runId: string; nowMs: number },
+  ) => Promise<ResultRef | { error: string } | undefined>;
 }
 
 export interface SpawnParams {
@@ -1740,6 +1759,43 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
+        // Phase 218 (SUMREF-02): materialize the child's FULL output to its OWN
+        // jailed workspace as a structured ResultRef, so the lead's announcement
+        // grows by a bounded summary + a HANDLE, never the megabyte body (the
+        // longevity invariant). The condenser (SUMREF-01 summary) and the store
+        // (SUMREF-02 handle) are complementary — both run. The drill-in line that
+        // follows the summary defaults to the condenser's diskPath: the genuine
+        // "no store wired / no handle produced" path (no store to materialize
+        // through, so the on-disk condensed result IS the handle — NOT a shim).
+        let fullResultLine = condensedResult ? `\n\nFull result: ${condensedResult.diskPath}` : "";
+        if (condensedResult && deps.materializeFullOutput) {
+          const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now() });
+          if (materialized && "ref" in materialized && typeof materialized.ref === "string") {
+            // Success: the lead drills into the handle on demand (read/grep/jq).
+            fullResultLine = `\n\nFull result (drill in with read/grep/jq): ${materialized.ref} (${materialized.bytes}B, ${materialized.kind})`;
+            deps.logger?.debug({
+              runId, step: "child-result-materialize",
+              bytes: materialized.bytes, kind: materialized.kind,
+            }, "Child output materialized to ResultRef");
+          } else if (materialized && "error" in materialized && typeof materialized.error === "string") {
+            // Refused (over per-file cap / path-traversal); the store wrote
+            // nothing. Degrade to the summary + diskPath and surface a WARN — the
+            // `.error` is a content-free CODE string, safe to echo in the hint.
+            deps.logger?.warn({
+              runId, step: "child-result-materialize",
+              errorKind: "resource" as const,
+              hint: `Child output materialize refused (${materialized.error}); the lead falls back to the condensed summary + diskPath.`,
+            }, "Child output materialize refused");
+          } else {
+            // undefined: the contained write itself failed (the store already
+            // logged it). Degrade to the summary + diskPath WITHOUT a WARN — no
+            // double-report; a DEBUG of the no-handle degrade is sufficient.
+            deps.logger?.debug({
+              runId, step: "child-result-materialize",
+            }, "Child output materialize produced no handle; using condensed summary + diskPath");
+          }
+        }
+
         // Emit completion event
         const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
         deps.eventBus.emit("session:sub_agent_completed", {
@@ -1906,7 +1962,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 task: params.task,
                 status: "completed",
                 response: condensedResult
-                  ? `${condensedResult.result.summary}\n\nFull result: ${condensedResult.diskPath}`
+                  ? `${condensedResult.result.summary}${fullResultLine}`
                   : sanitizeAssistantResponse(result.response),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
