@@ -237,7 +237,9 @@ describe("registerRpcMethods", () => {
       // reads/lifecycle). delete/export stay admin (in-handler admin check +
       // arbitrary-session targeting → deny-by-origin).
       "session.delete", "session.export",
-      "memory.stats", "memory.browse", "memory.delete", "memory.flush", "memory.export", "memory.store",
+      // MD-02: memory.store re-scoped admin→rpc (agent-reachable — the
+      // memory_store tool is the primary caller); asserted as rpc below.
+      "memory.stats", "memory.browse", "memory.delete", "memory.flush", "memory.export",
       "models.list", "models.test",
       "tokens.list", "tokens.create", "tokens.revoke", "tokens.rotate",
       "channels.list", "channels.get", "channels.enable", "channels.disable", "channels.restart",
@@ -247,6 +249,14 @@ describe("registerRpcMethods", () => {
       expect(call, `expected ${name} to be registered`).toBeDefined();
       expect(call![1]).toBe("admin");
     }
+  });
+
+  it("MD-02: memory.store is registered as an rpc passthrough (agent-reachable; the memory_store tool's backing RPC)", () => {
+    registerRpcMethods(deps);
+    const calls = registerMethod.mock.calls;
+    const call = calls.find(([m]: [string]) => m === "memory.store");
+    expect(call, "expected memory.store to be registered").toBeDefined();
+    expect(call![1]).toBe("rpc");
   });
 
   it("210-GAP MD-01: session.list/reset/compact are registered as rpc passthroughs (agent-reachable self reads/lifecycle)", () => {
