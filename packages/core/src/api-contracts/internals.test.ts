@@ -52,8 +52,8 @@ describe("stripInternalFields()", () => {
     expect(Object.keys(result)).toHaveLength(0);
   });
 
-  it("exposes 17 dispatcher-injected internal field names in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(17);
+  it("exposes 18 dispatcher-injected internal field names in sorted order", () => {
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(18);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -76,5 +76,25 @@ describe("stripInternalFields()", () => {
     const result = stripInternalFields({ _outwardStepIndex: 999, foo: 1 });
     expect(result).toEqual({ foo: 1 });
     expect(result._outwardStepIndex).toBeUndefined();
+  });
+
+  it("includes `_autonomyMode` and strips a forged inbound value (Phase 217 UNATT-01/EVICT-02)", () => {
+    // A jailed/external caller must NOT be able to forge `_autonomyMode: "max"`
+    // to perturb the chokepoint's deny-vs-escalate decision. The strip drops any
+    // inbound `_autonomyMode` BEFORE the chokepoint reads it; the trusted in-process
+    // leg re-injects the server-resolved mode (strip-then-inject, like _agentId).
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_autonomyMode");
+    const result = stripInternalFields({ _autonomyMode: "max", foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._autonomyMode).toBeUndefined();
+  });
+
+  it("places `_autonomyMode` immediately after `_agentId` (the canonical sort order)", () => {
+    // The array is maintained in JS `.sort()`/localeCompare alphabetical order
+    // (asserted by the sorted-order test above). "_agentId" < "_autonomyMode"
+    // (2nd char 'g' < 'u'), so `_autonomyMode` is index 1, right after `_agentId`.
+    // Catches an accidental mis-insertion of the new entry.
+    expect(INTERNAL_FIELD_NAMES[0]).toBe("_agentId");
+    expect(INTERNAL_FIELD_NAMES[1]).toBe("_autonomyMode");
   });
 });

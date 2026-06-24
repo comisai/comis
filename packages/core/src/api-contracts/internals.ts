@@ -17,9 +17,19 @@
  * @module
  */
 
-/** The 17 dispatcher-injected internal-field names (sorted alphabetically). */
+/** The 18 dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
   "_agentId",
+  // The trusted autonomy mode signal (Phase 217). Injected by createAgentRpcCall
+  // on the in-process leg from resolveAutonomy(...).mode; listed here so
+  // stripInternalFields STRIPS a forged inbound value BEFORE the chokepoint reads
+  // it — the exact strip-then-inject pattern `_agentId`/`_outwardStepIndex` use, so
+  // a jailed/external caller cannot forge mode:"max" to perturb the deny-vs-escalate
+  // decision. Agent-origin-only by construction; absent ⇒ the chokepoint fail-closes
+  // to "default" (EVICT-02). Sorted position: after `_agentId` — JS `.sort()` (and
+  // localeCompare) order "_agentId" < "_autonomyMode" (the 2nd char 'g' < 'u'), the
+  // canonical order the colocated self-check test enforces.
+  "_autonomyMode",
   "_callerChannelId",
   "_callerChannelType",
   "_callerMetadata",

@@ -81,9 +81,13 @@ export function makeCreateAgentRpcCall(
     // The bare cap-string list is what the handler-boundary requireCapability
     // predicate reads (the per-cap autoApprovable detail stays on the resolver
     // result for Plan 06's auto-allow door).
-    const heldCapabilities = resolveAutonomy(
+    // Phase 217 (UNATT-01): resolve ONCE and read BOTH caps and mode from the SAME
+    // object so the injected `_capabilities` and `_autonomyMode` cannot drift
+    // (T-217-11 — a single source of truth, not two resolve calls).
+    const resolved = resolveAutonomy(
       (agents[agentId] ?? agents[defaultAgentId])?.autonomy,
-    ).capabilities;
+    );
+    const heldCapabilities = resolved.capabilities;
     return async (method, params) => {
       const ctx = tryGetContext();
       // Build delivery target from context for cron job routing
@@ -120,6 +124,12 @@ export function makeCreateAgentRpcCall(
         ...params,
         _agentId: agentId,
         _capabilities: heldCapabilities,
+        // Phase 217 (UNATT-01): the trusted autonomy mode for THIS run, from the
+        // same resolve as caps. Always injected (resolveAutonomy always yields a
+        // mode), so the Wave-2 chokepoint's in-process leg always sees the run's
+        // true mode through this forgery-proof channel. `_autonomyMode` is in
+        // INTERNAL_FIELD_NAMES, so a forged inbound value was stripped before here.
+        _autonomyMode: resolved.mode,
         ...(ctx?.sessionKey && { _callerSessionKey: ctx.sessionKey }),
         ...(deliveryTarget && { _deliveryTarget: deliveryTarget }),
         ...(origin && { _callerChannelType: origin.channelType }),

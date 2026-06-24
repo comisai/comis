@@ -379,6 +379,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
           // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
           // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
           // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
+          // Phase 217: no `_autonomyMode` here — the chokepoint server-resolves the jail-leg mode (see the general dispatch below).
           await rpcCall(route.method, {
             ...stripInternalFields(args),
             _agentId: lease.agentId,
@@ -622,6 +623,11 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // inject — stripInternalFields above dropped any forged inbound value, NEW-3). Two
     // sends in one run get 0 then 1; absent store / non-outward method ⇒ no index.
     const outwardStep = await allocateOutwardStepIfNeeded(method, lease.rootRunId);
+    // Phase 217 (UNATT-01/EVICT-02): the jail leg injects NO `_autonomyMode` — the
+    // Lease carries caps/agentId/rootRunId but not mode. The rpc-dispatch chokepoint
+    // (Plan 05) server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
+    // (absent ⇒ server resolve ⇒ fail-closed "default"), kept in lockstep with the
+    // in-process leg's INJECTED mode there — NOT by widening the Lease schema (wrong layer).
     return dispatchAudited(
       method,
       {

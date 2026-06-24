@@ -23,13 +23,27 @@ vi.mock("@comis/core", () => ({
     if (!tenantId || !channelId || !userId) return undefined;
     return { tenantId, channelId, userId };
   },
-  // Stand-in autonomy resolver returning the `standard` floor capability set.
-  // The real resolver is unit-tested against the schema in
-  // schema-agent-autonomy.test.ts; here we only need a deterministic cap list.
-  resolveAutonomy: vi.fn((_cfg?: unknown) => ({
-    profile: "standard",
-    capabilities: ["orch:spawn", "orch:graph", "orch:cron"],
-  })),
+  // Stand-in autonomy resolver returning the `standard` floor capability set and a
+  // `mode` derived from the input config's profile. The real resolver maps each
+  // profile to its mode (standard->accept-reversible, unattended->unattended, …)
+  // and is unit-tested against the schema in schema-agent-autonomy.test.ts; here we
+  // need a deterministic caps list PLUS a mode that varies by the passed-in profile
+  // so the _autonomyMode-injection assertions can drive distinct postures from ONE
+  // resolve call (caps + mode come from the same returned object).
+  resolveAutonomy: vi.fn((cfg?: { profile?: string }) => {
+    const profileToMode: Record<string, string> = {
+      assistant: "default",
+      standard: "accept-reversible",
+      unattended: "unattended",
+      max: "max",
+    };
+    const profile = cfg?.profile ?? "standard";
+    return {
+      profile,
+      capabilities: ["orch:spawn", "orch:graph", "orch:cron"],
+      mode: profileToMode[profile] ?? "accept-reversible",
+    };
+  }),
 }));
 
 const { makeCreateAgentRpcCall } = await import("./setup-tools-capabilities.js");
@@ -55,6 +69,66 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(forwarded._capabilities).toContain("orch:cron");
     // Original params survive the merge.
     expect(forwarded.task).toBe("do a thing");
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 217 (UNATT-01 / EVICT-02): the in-process leg injects the trusted
+  // _autonomyMode from the SAME resolveAutonomy call that yields _capabilities.
+  // This is the forgery-proof channel the Wave-2 chokepoint reads to learn the
+  // run's mode (a forged inbound value is stripped by INTERNAL_FIELD_NAMES first).
+  // -------------------------------------------------------------------------
+
+  it("injects _autonomyMode:'unattended' for an agent whose autonomy resolves the unattended mode", async () => {
+    currentCtx = undefined;
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": { autonomy: { profile: "unattended" } } as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("session.spawn", { task: "run unattended" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._autonomyMode).toBe("unattended");
+    // Caps injection is unchanged by the refactor to a single resolve call.
+    expect(forwarded._capabilities).toEqual(["orch:spawn", "orch:graph", "orch:cron"]);
+    expect(forwarded._agentId).toBe("agent-1");
+  });
+
+  it("injects _autonomyMode:'accept-reversible' for a standard-profile agent (the standard default mode)", async () => {
+    currentCtx = undefined;
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": { autonomy: { profile: "standard" } } as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("cron.add", { schedule: "* * * * *" });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._autonomyMode).toBe("accept-reversible");
+    // The refactor must not drop or alter caps.
+    expect(forwarded._capabilities).toEqual(["orch:spawn", "orch:graph", "orch:cron"]);
+  });
+
+  it("sources _autonomyMode and _capabilities from ONE resolve call (a zero-config agent gets the standard default mode)", async () => {
+    // A zero-config agent (no autonomy block) resolves to the standard posture for
+    // BOTH caps and mode — one source of truth, no divergence (T-217-11).
+    currentCtx = undefined;
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("session.spawn", {});
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._autonomyMode).toBe("accept-reversible");
+    expect(forwarded._capabilities).toEqual(["orch:spawn", "orch:graph", "orch:cron"]);
   });
 
   it("derives _callerSessionKey, _deliveryTarget, and caller channel metadata from the request context", async () => {
