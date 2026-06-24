@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: createOrderPreservingResultBuffer (221-05) invariant guards — RangeError on a non-negative-integer toolCallCount / out-of-range record index; Error on duplicate-fill or incomplete-flush (a hole would tear the cache-stable prefix). These are programmer-error fail-fast guards on the buffer's contract (it is called once-per-index by construction by the executor loop), not recoverable runtime conditions; consumed on the executor tool-parallelism path.
 /**
  * Tool Parallelism: Read-only classifier and mutation serializer.
  *
