@@ -940,8 +940,7 @@ function buildRpcDispatchDeps(deps: {
     tokenTracker: c.tokenTracker,
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
-    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, // Phase 213 QUOTA-01/02: the outward-quota service the message handlers gate on
-    leaseManager: c.capEndpointHandle?.leaseManager, // Phase 213-06 (REVOKE-01/03): the SAME cap-endpoint handle's LeaseManager gates lease.revoke + run.kill registration — omitting it (while boundedAutonomy WAS threaded) left REVOKE unreachable live ("Unknown RPC method" with the lease layer ACTIVE — VPS finding)
+    boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, leaseManager: c.capEndpointHandle?.leaseManager, // Phase 213 QUOTA-01/02 + 213-06 REVOKE-01/03: the outward-quota service the message handlers gate on, plus the SAME cap-endpoint handle's LeaseManager gating lease.revoke + run.kill registration — omitting leaseManager (while boundedAutonomy WAS threaded) left REVOKE unreachable live ("Unknown RPC method" with the lease layer ACTIVE — VPS finding)
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
