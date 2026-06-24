@@ -293,6 +293,7 @@ behavior.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `profile` | `enum` | `"standard"` | `assistant`, `standard`, `unattended`, or `max`. `standard` is the zero-config default. `unattended`'s never-hang mode behaviors (deny+escalate, the denial breaker, operator evict) are **active**; its capability set stays `standard`-equivalent (no over-grant). `max` still resolves to `standard`-equivalent in this release plus an "available later" notice. |
+| `role` | `enum` | `"worker"` | `worker` (default) or `coordinator`. `worker` does its work inline -- no change to existing agents. `coordinator` strips a long-running lead to the orchestration surface (`sessions_spawn`/`pipeline`/`cron`/`message` + the read-only drill-in tools `read`/`grep`/`find`/`ls` + the `obs_query` observability tool) under a delegate-then-synthesize doctrine -- heavy work always routes to a fresh-window child (`exec`/`edit`/`write`/`browser` are not on the coordinator surface). **Narrows the tool surface only; never widens a capability** -- the resolved `orch:*` set is byte-identical with and without the role. An explicit `tool_groups`/`full` overrides it. See [Long-Running Coordinator](/agents/efficiency). |
 | `enabled` | `boolean` | _(from profile)_ | Whether autonomy surfaces are on. Defaults from the profile (`standard` -> true, `assistant` -> false); an explicit value overrides it. |
 | `capabilities` | `string[]` | _(from profile)_ | Explicit `orch:*` capability list. Overrides the profile's base set (still bounded by the structural floor). |
 | `mode` | `enum` | _(from profile)_ | Autonomy mode: `default`, `accept-reversible`, `unattended`, `max`. Operator-set; the agent cannot self-raise it. |
@@ -332,6 +333,14 @@ agents:
       profile: standard
       aggregateBudgetUsd: 5
       browse: true            # opt into orch:browse (still always escalates)
+```
+
+```yaml title="~/.comis/config.yaml -- a long-running coordinator lead"
+agents:
+  orchestrator:
+    autonomy:
+      profile: standard
+      role: coordinator       # narrow to the orchestration surface; delegate heavy work
 ```
 
 #### Budget (agents.*.budgets)
