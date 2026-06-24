@@ -120,6 +120,12 @@ export function registerAllToolMetadata(): void {
   // --- Concurrency-safe mutating tool ---
   registerToolMetadata("message", { isReadOnly: false, isConcurrencySafe: true });
 
+  // --- Read-only concurrency-safe pacing primitive (STREAM-03) ---
+  // sleep mutates NO state: read-only + concurrency-safe so the parallel-execution
+  // serializer lets it overlap concurrency-safe reads (it must not serialize them
+  // behind a pure timer) and the input-strip / read-only detection see it correctly.
+  registerToolMetadata("sleep", { isReadOnly: true, isConcurrencySafe: true });
+
   // =========================================================================
   // Input Validators
   // =========================================================================
@@ -701,6 +707,9 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("ctx_search",  { mcpExportPolicy: "never-export" });
   registerToolMetadata("ctx_inspect", { mcpExportPolicy: "never-export" });
   registerToolMetadata("ctx_expand",  { mcpExportPolicy: "never-export" });
+  // Sleep (STREAM-03) — never-export; an internal between-turns pacing primitive
+  // inside Comis's trust boundary, not a capability an external MCP client needs.
+  registerToolMetadata("sleep", { mcpExportPolicy: "never-export" });
 
   // Failure Detectors (§16.10/§16.11) — web_search / web_fetch structured-field
   // failure classification. Extracted to keep this file ≤800 lines (the

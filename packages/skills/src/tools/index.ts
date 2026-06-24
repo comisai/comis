@@ -58,6 +58,12 @@ export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
 
+// Built-in tools -- Sleep (STREAM-03): the pacing primitive the model calls to
+// defer for the ~5-min prompt-cache TTL instead of polling in a token-burning
+// loop. Consumed by the daemon toolset assembly (setup-tools.ts) next to the
+// other always-on builtins (createExecTool/createProcessTool).
+export { createSleepTool } from "./builtin/sleep-tool.js";
+
 // Built-in tools -- Interactive terminal driver. The nine never-export
 // tool factories + the daemon-side registry + the allowlist/IPC types the
 // daemon wiring (setup-tools.ts, the composition root) consumes.

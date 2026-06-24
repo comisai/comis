@@ -52,6 +52,7 @@ import {
   createProcessTool,
   createProcessRegistry,
   createApplyPatchTool,
+  createSleepTool,
   createFileStateTracker,
   sanitizeImageForApi,
   createMediaPersistenceService,
@@ -617,6 +618,13 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
+
+      // Sleep primitive (STREAM-03) -- always included. The model calls it to PACE
+      // between turns (defer for the ~5-min prompt-cache TTL) instead of polling in
+      // a token-burning loop. Stateless (no deps); the sanctioned systemSetTimeout is
+      // .unref()'d so a pending sleep never blocks daemon drain, and it honors the
+      // run abort signal. Registered isReadOnly/isConcurrencySafe so it overlaps reads.
+      tools.push(createSleepTool());
 
       // Orchestrate tool (Phase 212 Plan 04, ORCH-01) — built by buildAutonomyToolWiring above.
       if (orchestrateTool) tools.push(orchestrateTool);
