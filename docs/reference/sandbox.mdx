@@ -284,12 +284,22 @@ Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides canno
 | Source Profiles | Tool result time | Caps external content size | Content truncated to limit |
 | Exec Sandbox | Execution time | Wraps exec child process in OS namespace (bwrap/sandbox-exec) | Logs WARN, runs unsandboxed (graceful fallback) |
 | Node Permissions | OS level | Restricts file system and network access | ERR_ACCESS_DENIED thrown |
+| Bound `comis-agent` binary | Jail construction | sha256-verifies the in-jail CLI binary; binds it read-only (`--ro-bind`) | Loud WARN; CLI surface left unavailable (script surface intact) |
 
 ### Node.js Permissions
 
 When enabled, child processes spawned during skill execution run with restricted OS-level permissions. This provides a defense layer beneath application-level controls.
 
 See [Node Permissions](/reference/node-permissions) for full configuration reference.
+
+### Bound `comis-agent` binary
+
+The in-jail [`comis-agent` CLI](/reference/comis-agent-cli) is itself a defense surface, so the binary the daemon makes available inside an agent's jail is locked down two ways:
+
+- **Read-only bind (`--ro-bind`).** The binary is bind-mounted read-only into the jail (source path equals destination, so [`COMIS_AGENT_BIN`](/reference/environment-variables#comis_agent_bin) / PATH resolves it) — exactly like the daemon's own Node binary. A **writable** interpreter or binary inside a sandbox is a host-RCE vector, so it is never bound read-write and never copied to a writable location. The §4.7 writable-path audit (`bwrap-hardening.linux.test.ts`) proves a write to the bound binary from inside the jail **fails** (the read-only bind rejects it).
+- **sha256-pinned.** A committed build manifest (`comis-agent-manifest.json`) pins the sha256 of the Comis-built binary. At jail construction the daemon **re-hashes the bound bytes** and refuses to bind a binary whose hash does not match the pin — a swapped or tampered binary is never made available.
+
+**Honest-degrade.** When the binary is missing, fails the hash check, or in-jail Node is unavailable, the daemon emits a loud WARN, leaves `COMIS_AGENT_BIN` unset, and the `comis-agent` CLI surface is unavailable — while the `orchestrate(script)` surface still runs (the degrade is scoped to the CLI, never a silent bind of an unverified binary). See the [`comis-agent` CLI reference](/reference/comis-agent-cli#pinned-and-honest-the-bound-binary).
 
 ## Exec Sandbox (OS-Level)
 
