@@ -4,8 +4,10 @@ import {
   AutonomyConfigSchema,
   AUTONOMY_PROFILES,
   resolveAutonomy,
-  resolveEffectiveMode,
 } from "./schema-agent-autonomy.js";
+// 217: resolveEffectiveMode lives in the mode leaf (file-size split); the barrel
+// re-exports it, so @comis/core consumers reach it unchanged.
+import { resolveEffectiveMode } from "./schema-agent-autonomy-mode.js";
 // PROFILE-03 honest-degrade moved to its own leaf (213-03 file-size split).
 import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy-degrade.js";
 
@@ -15,8 +17,9 @@ import { degradeAutonomy, type AutonomyDownshift } from "./schema-agent-autonomy
 // zero-config great-out-of-box default + the MIG-01 migration target), plus a
 // PURE `resolveAutonomy()` that expands `profile:` into the full §3.3
 // cap/guard block (an explicit field OVERRIDES the profile — progressive
-// disclosure). Per v8 §3.8, `unattended`/`max` MUST CLAMP to `standard`'s cap
-// set in M1 (no silent over-grant) + carry an "available in M2/M3" notice.
+// disclosure). Per v8 §3.8, `unattended`/`max` keep `standard`'s cap set (no
+// silent over-grant); `max` carries an "available in M3" clamp notice, while
+// `unattended`'s notice (Phase 217) says its never-hang MODE behaviors are ACTIVE.
 //
 // These cases fail on the pre-patch tree (the schema file does not exist yet,
 // so the import itself is unresolvable) — RED proof. The resolver is a pure
@@ -129,13 +132,18 @@ describe("resolveAutonomy (PROFILE-01 — pure profile → §3.3 block)", () => 
     expect(max.m1Notice).toMatch(/M2|M3/);
   });
 
-  it("PROFILE-01-S10: unattended is likewise CLAMPED + carries an m1Notice", () => {
+  it("PROFILE-01-S10: unattended keeps a standard-equivalent cap set + carries a notice that the never-hang behaviors are ACTIVE (217 — no longer deferred to M2/M3)", () => {
     const un = resolveAutonomy({ profile: "unattended" });
     const std = resolveAutonomy({ profile: "standard" });
     const stdSet = new Set(std.capabilities);
+    // The cap set stays standard-equivalent (no over-grant — that is unchanged).
     expect(un.capabilities.every((c) => stdSet.has(c))).toBe(true);
     expect(un.m1Notice).toBeTruthy();
-    expect(un.m1Notice).toMatch(/M2|M3/);
+    // Phase 217: the notice now describes the ACTIVE never-hang behaviors, NOT a
+    // deferral. It must NOT claim the surface is "available in M2/M3" any more.
+    expect(un.m1Notice).not.toMatch(/M2|M3/);
+    expect(un.m1Notice).toMatch(/active/i);
+    expect(un.m1Notice).toMatch(/escalate/i);
   });
 
   it("PROFILE-01-S11: an explicit field OVERRIDES the profile (progressive disclosure)", () => {

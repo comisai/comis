@@ -106,7 +106,7 @@ export interface AutonomyBootLogRecord {
   readonly aggregateBudgetUsd: number;
   /** The ONE config field that changes all of the above — the legibility contract. */
   readonly changeField: "autonomy.profile";
-  /** Present for `unattended`/`max` in M1 — the "available in M2/M3" notice. */
+  /** Present for `unattended` (Phase-217 mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
 }
 

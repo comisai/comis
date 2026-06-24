@@ -12,8 +12,9 @@
  *   (3) `standard`/`unattended`/`max` resolve with the budget/rate/spawn
  *       ceiling ENABLED (a profile cannot ship the floor's guards off);
  *   (4) `assistant` resolves with ZERO orchestration surfaces, and
- *       `unattended`/`max` are CLAMPED to a subset of `standard`'s caps + carry
- *       the M1 "available in M2/M3" notice (no silent over-grant).
+ *       `unattended`/`max` keep a subset of `standard`'s caps (no silent
+ *       over-grant). `max` carries an M3-deferral notice; `unattended`'s notice
+ *       (Phase 217) states its never-hang MODE behaviors are now ACTIVE.
  *
  * It imports the COMPILED `resolveAutonomy` from `@comis/core` (dist) — the
  * runtime resolver, not its AST — so a future change that over-grants in the
@@ -154,7 +155,13 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
     ).toEqual([]);
   });
 
-  it("(4) unattended/max are CLAMPED to ⊆ standard's caps + carry the M1 notice", () => {
+  it("(4) unattended/max keep ⊆ standard's caps (no over-grant) + carry the correct per-profile notice", () => {
+    // The CAP-CLAMP half is the load-bearing Elevation-of-Privilege invariant
+    // (T-210-06) and holds for BOTH profiles forever: neither may resolve a cap
+    // outside standard's set in M1. The NOTICE half differs by profile as of
+    // Phase 217: `max` still defers its sandbox-auto-allow surface (an M3 notice),
+    // while `unattended`'s never-hang MODE behaviors are now ACTIVE — its notice
+    // must NOT claim deferral. (Caps are unchanged; only the mode is activated.)
     const standardCaps = new Set(resolveAutonomy({ profile: "standard" }).capabilities);
     const clamped = ["unattended", "max"] as const;
     const violations = clamped.flatMap((profile) => {
@@ -166,8 +173,22 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
           out.push({ file: where, line: 0, snippet: `cap "${cap}" is not in standard's cap set (M1 over-grant)` });
         }
       }
-      if (!r.m1Notice || !/M2|M3/.test(r.m1Notice)) {
-        out.push({ file: where, line: 0, snippet: `m1Notice missing or does not mention M2/M3 (got: ${String(r.m1Notice)})` });
+      if (!r.m1Notice) {
+        out.push({ file: where, line: 0, snippet: `m1Notice missing (every clamped/mode-activated profile must surface one)` });
+      } else if (profile === "max") {
+        // max still has a deferred surface → must name a future milestone.
+        if (!/M2|M3/.test(r.m1Notice)) {
+          out.push({ file: where, line: 0, snippet: `max m1Notice must mention its still-deferred (M3) surface (got: ${r.m1Notice})` });
+        }
+      } else {
+        // unattended (Phase 217): the never-hang behaviors are ACTIVE — the notice
+        // must NOT claim deferral, and must say the behaviors are active.
+        if (/M2|M3/.test(r.m1Notice)) {
+          out.push({ file: where, line: 0, snippet: `unattended m1Notice must NOT claim a deferred M2/M3 surface (Phase 217 activates it) (got: ${r.m1Notice})` });
+        }
+        if (!/active/i.test(r.m1Notice)) {
+          out.push({ file: where, line: 0, snippet: `unattended m1Notice must state its never-hang behaviors are active (got: ${r.m1Notice})` });
+        }
       }
       return out;
     });
@@ -175,10 +196,10 @@ describe("PROFILE-02 — named profiles never over-grant (v8 §3.8 / §22.3)", (
       violations,
       formatViolations({
         description:
-          "unattended/max over-granted past standard's cap set in M1, or omitted the clamp notice (Elevation of Privilege, T-210-06).",
+          "unattended/max over-granted past standard's cap set in M1, or carried the wrong per-profile notice (Elevation of Privilege, T-210-06).",
         violations,
         suggestedFix:
-          "In M1, unattended/max clamp to standard's cap set + an 'available in M2/M3' notice — caps whose floor (lease, durability) is not built yet must not be granted.",
+          "In M1, unattended/max clamp to standard's cap set. `max` keeps an M3-deferral notice; `unattended`'s notice (Phase 217) states its never-hang behaviors are ACTIVE — caps whose floor is not built yet must not be granted.",
         designRef: DESIGN_REF,
       }),
     ).toEqual([]);
