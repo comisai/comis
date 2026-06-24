@@ -17,10 +17,15 @@ import { registerToolMetadata } from "@comis/core";
 import {
   isReadOnlyChild,
   economiseChildPrompt,
+  economiseForReadOnlyChild,
   READ_ONLY_CHILD_DROP_HEADINGS,
   READ_ONLY_CHILD_KEEP_HEADINGS,
 } from "./child-prompt-economy.js";
-import { assembleRichSystemPrompt, SECTION_SEPARATOR } from "../bootstrap/index.js";
+import {
+  assembleRichSystemPrompt,
+  assembleRichSystemPromptBlocks,
+  SECTION_SEPARATOR,
+} from "../bootstrap/index.js";
 import type { AssemblerParams } from "../bootstrap/index.js";
 
 // ---------------------------------------------------------------------------
@@ -243,5 +248,94 @@ describe("economiseChildPrompt — safety core preserved (STRIP-5 / Pitfall 5)",
     for (const keep of READ_ONLY_CHILD_KEEP_HEADINGS) {
       expect(READ_ONLY_CHILD_DROP_HEADINGS).not.toContain(keep);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// economiseForReadOnlyChild — the spawn-side wiring + STRIP-02 input window
+// ---------------------------------------------------------------------------
+
+describe("economiseForReadOnlyChild — spawn-side input window (STRIP-02)", () => {
+  /** Build the assembled string + blocks the spawn side passes downstream. */
+  function assembleChild(toolNames: string[]) {
+    const params: AssemblerParams = {
+      agentName: "Comis",
+      promptMode: "full",
+      workspaceDir: "/home/agent/workspace",
+      skillsPrompt: "Filesystem skill body.",
+      hasMemoryTools: true,
+      reasoningEnabled: true,
+      bootstrapFiles: [
+        { path: "AGENTS.md", content: "Project engineering protocol overlay." },
+      ],
+      excludeBootstrapFromContext: false,
+      toolNames,
+    };
+    return {
+      systemPrompt: assembleRichSystemPrompt(params),
+      systemPromptBlocks: assembleRichSystemPromptBlocks(params),
+    };
+  }
+
+  it("a read-only child's input window excludes the heavy blocks AND keeps safety (string + blocks)", () => {
+    const { systemPrompt, systemPromptBlocks } = assembleChild(["read", "grep", "find"]);
+    const out = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, ["read", "grep", "find"]);
+
+    // The boot string (the input window) excludes every heavy block...
+    for (const heading of READ_ONLY_CHILD_DROP_HEADINGS) {
+      expect(out.systemPrompt, `string must exclude: ${heading}`).not.toContain(heading);
+    }
+    // ...and the cache-block body (which OVERRIDES the string in
+    // breakpoint-orchestration) must also exclude them — else the strip is a
+    // no-op at the wire.
+    expect(out.systemPromptBlocks).toBeDefined();
+    for (const heading of READ_ONLY_CHILD_DROP_HEADINGS) {
+      expect(out.systemPromptBlocks!.semiStableBody, `body must exclude: ${heading}`).not.toContain(
+        heading,
+      );
+    }
+
+    // Safety core survives in BOTH representations.
+    expect(out.systemPrompt).toContain("## Safety");
+    expect(out.systemPrompt).toContain("### Constitutional Principles");
+    // safety lives in the attribution block; autonomy in the body.
+    expect(out.systemPromptBlocks!.attribution).toContain("## Safety");
+    expect(out.systemPromptBlocks!.semiStableBody).toContain("## Autonomy");
+  });
+
+  it("a mutating child gets the FULL prompt — nothing stripped (string + blocks unchanged)", () => {
+    const { systemPrompt, systemPromptBlocks } = assembleChild(["read", "edit"]);
+    const out = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, ["read", "edit"]);
+
+    expect(out.systemPrompt).toBe(systemPrompt);
+    expect(out.systemPromptBlocks).toEqual(systemPromptBlocks);
+    // The heavy blocks are still present for the mutating child.
+    expect(out.systemPrompt).toContain("## Project Context");
+    expect(out.systemPrompt).toContain("## Workspace");
+  });
+
+  it("an unknown-tool child is treated as mutating — full prompt (conservative)", () => {
+    const { systemPrompt, systemPromptBlocks } = assembleChild(["read", "some_unknown_tool"]);
+    const out = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, [
+      "read",
+      "some_unknown_tool",
+    ]);
+    expect(out.systemPrompt).toBe(systemPrompt);
+    expect(out.systemPrompt).toContain("## Workspace");
+  });
+
+  it("handles a missing blocks object (string-only path) without throwing", () => {
+    const { systemPrompt } = assembleChild(["read", "grep"]);
+    const out = economiseForReadOnlyChild(systemPrompt, undefined, ["read", "grep"]);
+    expect(out.systemPromptBlocks).toBeUndefined();
+    expect(out.systemPrompt).not.toContain("## Workspace");
+    expect(out.systemPrompt).toContain("## Safety");
+  });
+
+  it("strips a read-only child identified by an explicit role even with no tools resolved", () => {
+    const { systemPrompt, systemPromptBlocks } = assembleChild(["read"]);
+    const out = economiseForReadOnlyChild(systemPrompt, systemPromptBlocks, [], "read-only");
+    expect(out.systemPrompt).not.toContain("## Workspace");
+    expect(out.systemPrompt).toContain("## Safety");
   });
 });
