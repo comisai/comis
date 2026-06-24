@@ -215,6 +215,33 @@ describe("orchestrate-tool", () => {
     expect(bindIdx).toBeGreaterThanOrEqual(0);
   });
 
+  // CI finding (#236 carry-over): in BIND mode the daemon's node is --ro-bind'd at
+  // its absolute execPath but is NOT on the jail's scrubbed PATH (/usr/bin:/bin),
+  // so the jailed `node <script>` was command-not-found → exit 127 on every real
+  // run whose host node lives outside SYSTEM_RO_PATHS (the CI hostedtoolcache node).
+  // The runner must invoke node by the resolved absolute path. (Passed every macOS
+  // unit test because the default resolveJailNodeFn is PATH mode.)
+  it("invokes node by its absolute execPath in BIND mode (not a bare `node` → exit 127)", async () => {
+    let spawnArgs: string[] | undefined;
+    const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+      spawnArgs = args;
+      return makeFakeChild("y\n");
+    };
+    const execPath = "/opt/hostedtoolcache/node/22.0.0/x64/bin/node";
+    const { deps } = makeDeps({
+      spawnFn,
+      resolveJailNodeFn: () => ({ mode: "bind", execPath }),
+    });
+    const tool = createOrchestrateTool(deps);
+
+    await tool.execute("c", { script: "1", language: "ts" });
+
+    const cmdIdx = spawnArgs!.indexOf("-c");
+    const command = spawnArgs![cmdIdx + 1] ?? "";
+    expect(command.startsWith(`${execPath} `)).toBe(true);
+    expect(command).not.toMatch(/^node\s/);
+  });
+
   // Live VPS finding (2026-06-23): the runner passes `tempDir: <workspace>/.tmp`
   // to BwrapProvider.buildArgs, which `--bind`s it into the jail — and bwrap
   // requires the bind SOURCE to exist. The runner never created `.tmp`, so EVERY

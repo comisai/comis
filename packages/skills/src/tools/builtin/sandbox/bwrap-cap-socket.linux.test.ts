@@ -22,7 +22,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
 import * as net from "node:net";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 
 import { systemNowMs } from "@comis/core";
 import { BwrapProvider } from "./bwrap-provider.js";
@@ -61,6 +61,10 @@ describe.skipIf(!capSocketAvailable)(
       socketPath = `/tmp/comis-cap-socket-test-${systemNowMs()}.sock`;
       workspacePath = `/tmp/comis-cap-socket-ws-${systemNowMs()}`;
       createdSocketPaths.push(socketPath);
+      // bwrap `--bind`s workspacePath; the bind SOURCE must exist or construction
+      // fails with "Can't find source path … No such file or directory" → exit 1
+      // (same bind-source class as the orchestrate `.tmp` fix). Create it here.
+      mkdirSync(workspacePath, { recursive: true });
 
       server = net.createServer((conn) => {
         conn.on("data", () => {
@@ -84,6 +88,7 @@ describe.skipIf(!capSocketAvailable)(
 
     afterEach((ctx) => {
       server?.close();
+      rmSync(workspacePath, { recursive: true, force: true });
       void ctx;
     });
 

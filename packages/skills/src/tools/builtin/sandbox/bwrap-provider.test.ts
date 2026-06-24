@@ -92,6 +92,20 @@ describe("BwrapProvider", () => {
       return provider;
     }
 
+    // REGRESSION (#236 orchestrate-jail.linux suite): the orchestrate jail builds
+    // args on a FRESH provider without first calling available() — buildArgs must
+    // self-prime bwrapPath rather than return `[null, …]`, which exploded as
+    // `spawn(null)` → `TypeError: The "file" argument must be of type string`.
+    it("self-primes bwrapPath when available() was not called first (never a null bin)", () => {
+      vi.mocked(execFileSync).mockReturnValue("/usr/bin/bwrap\n");
+      const provider = new BwrapProvider();
+      // Deliberately NOT calling available() — mirrors orchestrate-jail.linux.test.ts:156,
+      // where the jail builds args on a fresh provider. Pre-fix this returned a null
+      // bin → spawn(null) → "TypeError: file argument must be string" on Linux.
+      const args = provider.buildArgs(makeOpts());
+      expect(args[0]).toBe("/usr/bin/bwrap");
+    });
+
     it("includes all expected bwrap flags in correct order", () => {
       // Only a few system paths "exist"
       vi.mocked(existsSync).mockImplementation((p) => {
