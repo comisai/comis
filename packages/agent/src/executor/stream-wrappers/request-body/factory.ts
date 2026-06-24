@@ -48,6 +48,7 @@ import { applyRenderedToolCache } from "./tool-cache.js";
 import {
   runTimeBasedMicrocompact,
   runTokenCeilingMicrocompact,
+  runEveryTurnMicrocompact,
 } from "./microcompact.js";
 import { runPrefixStabilityDiagnostic } from "./prefix-stability.js";
 import { runCacheBreakpointPhase } from "./breakpoint-orchestration.js";
@@ -294,6 +295,11 @@ export function createRequestBodyInjector(
 
           // Token-ceiling microcompact (size trigger)
           if (needsCacheBreakpoints) runTokenCeilingMicrocompact(result, config, logger);
+
+          // Every-turn microcompact (EFF-01) -- unconditional Tier-0 pass, fence-protected
+          // (EFF-03). Keeps the coordinator's context flat every turn, not just after an
+          // idle gap; cache-stable (clears nothing at/below the fence; byte-stable placeholder).
+          if (needsCacheBreakpoints) runEveryTurnMicrocompact(result, config, logger);
 
           // Prefix stability diagnostic
           if (needsCacheBreakpoints) runPrefixStabilityDiagnostic(result, config, logger);
