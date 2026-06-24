@@ -103,6 +103,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "perRootCallsPerSec": 20,
         "perSocketCallsPerSec": 10
       },
+      "role": "worker",
       "spawn": {
         "maxChildrenPerAgent": 5,
         "maxConcurrentSelfAgents": 4,
@@ -334,6 +335,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.autonomy.rate.perSocketCallsPerSec",
     "type": "integer"
+  },
+  {
+    "default": "worker",
+    "immutable": true,
+    "path": "agents.autonomy.role",
+    "type": "string"
   },
   {
     "immutable": true,
@@ -8730,6 +8737,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "perRootCallsPerSec": 20,
             "perSocketCallsPerSec": 10
           },
+          "role": "worker",
           "spawn": {
             "maxChildrenPerAgent": 5,
             "maxConcurrentSelfAgents": 4,
@@ -16306,6 +16314,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "perRootCallsPerSec": 20,
           "perSocketCallsPerSec": 10
         },
+        "role": "worker",
         "spawn": {
           "maxChildrenPerAgent": 5,
           "maxConcurrentSelfAgents": 4,
@@ -16573,6 +16582,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
+        "role": {
+          "default": "worker",
+          "enum": [
+            "worker",
+            "coordinator"
+          ],
+          "type": "string"
+        },
         "script": {
           "type": "boolean"
         },
@@ -16619,6 +16636,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       },
       "required": [
         "profile",
+        "role",
         "denialBreakerN",
         "evictOnPolicyUnreachable",
         "message",
@@ -27745,6 +27763,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "perRootCallsPerSec": 20,
                 "perSocketCallsPerSec": 10
               },
+              "role": "worker",
               "spawn": {
                 "maxChildrenPerAgent": 5,
                 "maxConcurrentSelfAgents": 4,
@@ -28012,6 +28031,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
+              "role": {
+                "default": "worker",
+                "enum": [
+                  "worker",
+                  "coordinator"
+                ],
+                "type": "string"
+              },
               "script": {
                 "type": "boolean"
               },
@@ -28058,6 +28085,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "required": [
               "profile",
+              "role",
               "denialBreakerN",
               "evictOnPolicyUnreachable",
               "message",
@@ -32574,6 +32602,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "perRootCallsPerSec": 20,
               "perSocketCallsPerSec": 10
             },
+            "role": "worker",
             "spawn": {
               "maxChildrenPerAgent": 5,
               "maxConcurrentSelfAgents": 4,
