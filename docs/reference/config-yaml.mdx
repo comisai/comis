@@ -610,7 +610,7 @@ Context engine configuration. Controls the system that manages what your agent s
 |-----|------|---------|-------------|
 | `historyTurns` | `number` | `15` | Recent user turns to keep in context (3-100) |
 | `historyTurnOverrides` | `Record<string, number>` | -- | Per-channel-type turn count overrides (e.g., `{ dm: 10, group: 5 }`) |
-| `observationKeepWindow` | `number` | `25` | Recent tool uses that retain full results (1-50) |
+| `observationKeepWindow` | `number` | `25` | Recent tool uses that retain full results -- the "last K". Read-time observation masking keeps this many, and the [Tier-0 micro-compaction pass](/agents/compaction#tier-0-micro-compaction-every-turn) runs **every turn** keeping this many before evicting older read-only tool results (1-50) |
 | `observationTriggerChars` | `number` | `120000` | Character threshold before observation masking activates (50K-1M) |
 | `compactionCooldownTurns` | `number` | `5` | Turns to wait before re-triggering LLM compaction (1-50) |
 | `compactionPrefixAnchorTurns` | `number` | `2` | User turns preserved at conversation head for cache prefix stability (0-10) |
