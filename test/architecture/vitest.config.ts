@@ -42,6 +42,14 @@ export default defineConfig({
       // their AST — the planted-value invariant must hold against actual
       // persistence. Same rationale as @comis/core/@comis/observability above.
       { find: /^@comis\/memory$/, replacement: resolve(packagesRoot, "memory/dist/index.js") },
+      // CLI-02/03 (219-05): comis-agent-same-gate / comis-agent-no-admin DERIVE
+      // the denylisted-method set from the COMPILED `DENYLISTED_RPC_METHODS`
+      // re-exported by the @comis/daemon top-level barrel (the cap socket's own
+      // closed-door source), so the proof can never drift from a hand-copied
+      // literal. Same rationale as @comis/core/@comis/observability above — the
+      // denylist is a runtime closed set, not source AST. Routed to the TOP-LEVEL
+      // barrel only (daemon/dist/index.js); no daemon subpath alias.
+      { find: /^@comis\/daemon$/, replacement: resolve(packagesRoot, "daemon/dist/index.js") },
     ],
   },
   test: {

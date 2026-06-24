@@ -104,7 +104,7 @@ const OUTWARD_MESSAGE_METHODS: ReadonlySet<string> = new Set(["message.send", "m
  * `packages/skills/src/platform-tools/tools/<tool>-tool.ts`. Every value is
  * asserted at module load to be a SUB_AGENT_TOOL_DENYLIST member (a rename fails loud).
  */
-const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
+export const DENYLISTED_RPC_METHODS: Readonly<Record<string, string>> = {
   // gateway (config.* + env.* + gateway.* — config persistence → SIGUSR2)
   "config.apply": "gateway",
   "config.diff": "gateway",
