@@ -544,7 +544,25 @@ function phaseDiffFiles(): string[] {
     .filter((s) => s.length > 0);
 }
 
-describe("CHAN2-02 Stage-B — THE ZERO-CHANGE PROOF + zero-production-change + SEC-02 (no COMIS_LIVE)", () => {
+/**
+ * Whether the Phase-209 base is derivable from git history. These two proofs are
+ * DEV-TIME guards: they assert the in-flight phase-209 diff touched only test
+ * files. Once the phase is squash-merged (v2.28 / #234), the individual `(209-NN)`
+ * commits no longer exist, so `phaseBase()` cannot anchor the diff — and the
+ * "diff is test-only" premise is moot on a merged `main` carrying later phases'
+ * production changes. Skip (don't fail) when the base is unresolvable; the proof
+ * keeps its teeth during phase-209 development, where the commits are present.
+ */
+const PHASE_BASE_RESOLVABLE = ((): boolean => {
+  try {
+    phaseBase();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!PHASE_BASE_RESOLVABLE)("CHAN2-02 Stage-B — THE ZERO-CHANGE PROOF + zero-production-change + SEC-02 (no COMIS_LIVE)", () => {
   it("the foundation-proof PASS: assert/channel-trace.ts AND harness/chanlive-handle.ts are UNCHANGED across the whole phase diff (the expensive parts already generalized)", () => {
     // The strongest CHAN2-02 evidence: the EXPENSIVE parts of the foundation —
     // the channel-agnostic dual oracle (assert/channel-trace.ts) and the

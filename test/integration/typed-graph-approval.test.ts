@@ -168,8 +168,14 @@ describe("Typed Graph Approval-Gate Integration", () => {
       try {
         ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 
-        // 1. Submit graph with an approval-gate node
-        const execResult = (await wsRpc(ws, "graph.execute", {
+        // 1. Submit graph with an approval-gate node. Use the daemon's direct
+        //    rpcCall (the in-process agent leg), NOT the gateway WS: an
+        //    approval-gate graph must carry the caller channel context, and the
+        //    gateway STRIPS forged `_caller*` fields (ORIGIN-02 anti-forgery), so
+        //    a gateway trigger has no announcement channel. The direct leg also
+        //    carries `_capabilities` (orch:graph) the way createAgentRpcCall does
+        //    in production — the M1 (#236) cap gate now requires it.
+        const execResult = (await handle.daemon.rpcCall("graph.execute", {
           nodes: [
             {
               nodeId: "gate",
@@ -180,6 +186,7 @@ describe("Typed Graph Approval-Gate Integration", () => {
             },
           ],
           label: "Approval Gate Test",
+          _capabilities: ["orch:graph"],
           _callerChannelType: "echo",
           _callerChannelId: "test-approval-ch",
           _callerSessionKey: "test:test-user:test-approval-ch",
@@ -271,6 +278,10 @@ describe("Typed Graph Approval-Gate Integration", () => {
           },
         ],
         label: "Approval Gate Timeout Test",
+        // The in-process agent leg injects orch:graph (M1 #236 cap gate); the
+        // direct rpcCall does not pass through the gateway injector, so the test
+        // supplies it the way createAgentRpcCall would in production.
+        _capabilities: ["orch:graph"],
         _callerChannelType: "echo",
         _callerChannelId: "test-timeout-ch",
         _callerSessionKey: "test:test-user:test-timeout-ch",
