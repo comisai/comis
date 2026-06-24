@@ -408,7 +408,14 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           jailAgentCli,
         });
         // The jailed command runs the script with node, from the workspace cwd.
-        const command = `node ${scriptName}`;
+        // In BIND mode the daemon's node is --ro-bind'd at its absolute execPath
+        // but is NOT on the jail's scrubbed PATH (e.g. /usr/bin:/bin), so a bare
+        // `node` exits 127 (command not found). Invoke it by the resolved absolute
+        // path; in PATH mode the bare name resolves off a bound PATH dir. Latent
+        // since #236 — surfaced by the CI runner's hostedtoolcache node, which sits
+        // outside SYSTEM_RO_PATHS → BIND. Guarded by orchestrate-tool.test.ts.
+        const nodeBin = jailNode.mode === "bind" ? jailNode.execPath : "node";
+        const command = `${nodeBin} ${scriptName}`;
         const bin = args[0]!;
         const spawnArgs = [...args.slice(1), "/bin/bash", "-c", command];
 
