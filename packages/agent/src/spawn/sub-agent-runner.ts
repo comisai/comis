@@ -430,10 +430,15 @@ export interface SubAgentRunnerDeps {
    * the contained-write-failed signal). **Absent ⇒ the announcement embeds the
    * condensed summary + diskPath only (today's behavior)** — the no-op is the
    * absence of the dep / a no-handle outcome, never a flag.
+   *
+   * `ctx.agentId` is the CHILD's agent id — the daemon resolves the materialize
+   * target (`resolveWorkspaceDir(config[agentId], agentId, dataDir)`) from it so
+   * the write lands in the CHILD's OWN jailed workspace, NEVER the lead's
+   * (T-218-08); the store is additionally `safePath`-confined to that root.
    */
   materializeFullOutput?: (
     content: string,
-    ctx: { runId: string; nowMs: number },
+    ctx: { runId: string; nowMs: number; agentId: string },
   ) => Promise<ResultRef | { error: string } | undefined>;
 }
 
@@ -1775,7 +1780,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // handle, not the diskPath (SUMREF-02 longevity invariant on every path).
         let materializedRef: ResultRef | undefined;
         if (condensedResult && deps.materializeFullOutput) {
-          const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now() });
+          const materialized = await deps.materializeFullOutput(result.response, { runId, nowMs: clock.now(), agentId: params.agentId });
           if (materialized && "ref" in materialized && typeof materialized.ref === "string") {
             // Success: the lead drills into the handle on demand (read/grep/jq).
             materializedRef = materialized;

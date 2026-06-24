@@ -3593,6 +3593,35 @@ describe("materializeFullOutput child-output ResultRef in completion path", () =
     expect(typeof ctx.nowMs).toBe("number");
   });
 
+  it("passes the child agentId in the ctx so the daemon targets the CHILD's jailed workspace", async () => {
+    // Security (T-218-08): the materialize target MUST be the child's own jailed
+    // workspace, never the lead's — the daemon resolves it from this agentId.
+    const localDeps = makeMaterializeDeps();
+    const materializeMock = vi.fn().mockResolvedValue({
+      ref: "results/r3.json",
+      kind: "json",
+      bytes: 100,
+      preview: "{...}",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    localDeps.materializeFullOutput = materializeMock;
+
+    const runner = createSubAgentRunner(localDeps);
+    runner.spawn({
+      task: "report",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "discord",
+      announceChannelId: "ch1",
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    const ctx = materializeMock.mock.calls[0]![1];
+    expect(ctx.agentId).toBe("researcher");
+  });
+
   it("falls back to summary plus diskPath when materializeFullOutput is absent", async () => {
     const localDeps = makeMaterializeDeps();
     // No materializeFullOutput dep — the worker/no-autonomy path.
