@@ -264,6 +264,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ? createAutonomyHandlers({
           ...deps,
           leaseManager: deps.leaseManager,
+          // FLEET-03: the LIVE autonomy:revoked/killed bus (the same typed bus the
+          // execution:aborted emit uses below, ~:678) + systemNowMs as the
+          // wiring-layer clock (globals-gate-safe; no Date.now() here). Without
+          // this the handler's optional eventBus? is absent in prod → the daemon
+          // emits nothing → Plan 03's counts are silently zero.
+          eventBus: deps.container.eventBus,
+          now: systemNowMs,
         })
       : {}),
     // INTRO-01/02 (Phase 215-04): capabilities.introspect (the `comis whoami`

@@ -35,6 +35,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { systemNowMs, type DurableRunPort, type DurableRunRecord } from "@comis/core";
@@ -52,6 +53,11 @@ export interface DurableRunStoreOptions {
 // ---------------------------------------------------------------------------
 
 const durableRunMapper = createRowMapper(DurableRunDbRowSchema);
+
+// FLEET-03: the GROUP BY status COUNT(*) projection for countByStatus. No raw
+// `as Foo[]` cast (AGENTS §6.8) — a malformed aggregate row degrades to err.
+const statusCountRowSchema = z.strictObject({ status: z.string(), c: z.number() });
+const statusCountMapper = createRowMapper(statusCountRowSchema);
 
 /**
  * Map a validated DB row to the domain `DurableRunRecord`. Returns a `Result`
@@ -188,6 +194,13 @@ export function createSqliteDurableRunStore(
   const allocCounterSchema = DurableRunDbRowSchema.pick({ outward_step: true });
   const allocCounterMapper = createRowMapper(allocCounterSchema);
 
+  // FLEET-03 — windowed status counts. Mirrors getRollingSpendUsd's `WHERE … >= ?`
+  // windowed aggregate: only rows updated within the fleet window are counted,
+  // grouped by status. Prepared once; folded into the 4-key object (default 0).
+  const countByStatusStmt = db.prepare(`
+    SELECT status, COUNT(*) AS c FROM durable_runs WHERE updated_at_ms >= ? GROUP BY status
+  `);
+
   // --- Store implementation ---
 
   const store: DurableRunPort = {
@@ -301,6 +314,30 @@ export function createSqliteDurableRunStore(
           );
         }
         return Promise.resolve(ok(parsed.value.outward_step));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    countByStatus(
+      sinceMs: number,
+    ): Promise<Result<{ orphaned: number; revoked: number; running: number; completed: number }, Error>> {
+      try {
+        const parsed = statusCountMapper.parseRows(countByStatusStmt.all(sinceMs));
+        if (!parsed.ok) {
+          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
+        }
+        // Default every status key to 0, then fold the grouped rows in. An
+        // unknown status (DDL drift) is simply ignored — the 4 tracked counts
+        // are the fleet-relevant set.
+        const counts = { orphaned: 0, revoked: 0, running: 0, completed: 0 };
+        for (const row of parsed.value) {
+          if (row.status === "orphaned") counts.orphaned = row.c;
+          else if (row.status === "revoked") counts.revoked = row.c;
+          else if (row.status === "running") counts.running = row.c;
+          else if (row.status === "completed") counts.completed = row.c;
+        }
+        return Promise.resolve(ok(counts));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

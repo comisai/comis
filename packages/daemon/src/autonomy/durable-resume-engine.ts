@@ -104,6 +104,30 @@ export interface DurableEventEmitter {
   emit(event: string, payload: Record<string, unknown>): void;
 }
 
+/**
+ * FLEET-03 (Phase 220-01): map the engine's free-text orphan reason to the
+ * CLOSED enum the `durable:orphaned` EVENT carries (events-orchestration.ts).
+ * TOTAL over `string` — the `default` arm guarantees every input (including a
+ * brand-new unmapped reason) returns a union member and the function NEVER
+ * echoes its `freeText` argument. This is the T-220-01 content-free invariant AT
+ * THE SOURCE: the free string stays ONLY on the WARN log / notify (the operator's
+ * debugging surface); the closed enum is the only thing that crosses onto the
+ * event/obs-row. Mirrors the closed-union discriminator pattern of
+ * `execution:aborted.reason`.
+ */
+export function orphanReasonToEnum(
+  freeText: string,
+): "not_resumable" | "reread_failed" | "invalid_caps" | "resume_failed" {
+  // Match against the engine's known orphan() call-site reasons (durable-resume-engine
+  // orphan() invocations). Order matters only where substrings overlap; they do not here.
+  if (/not resumable|status=/i.test(freeText)) return "not_resumable";
+  if (/re-?read|reconcile|query failed/i.test(freeText)) return "reread_failed";
+  if (/invalid caps|caps/i.test(freeText)) return "invalid_caps";
+  // The default arm makes the function TOTAL — "resume failed" AND any unmatched
+  // input collapse to resume_failed, so a free-text reason can never leak through.
+  return "resume_failed";
+}
+
 /** Dependencies for {@link reconcileLedgerRow}. */
 export interface ReconcileLedgerDeps {
   readonly ledger: OutwardSendLedgerPort;
@@ -334,7 +358,13 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
       );
     }
     notify({ kind: "run_orphaned", rootRunId, reason, hint });
-    eventBus.emit("durable:orphaned", { rootRunId, reason });
+    // FLEET-03: the EVENT carries the CLOSED enum (T-220-01) — the free-text
+    // `reason` stays on the notify + logger.info below (the operator surface).
+    eventBus.emit("durable:orphaned", {
+      rootRunId,
+      reason: orphanReasonToEnum(reason),
+      timestamp: nowMs(),
+    });
     logger.info({ rootRunId, reason }, "Durable resume: run orphaned");
   }
 
@@ -451,7 +481,12 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         const resumeResult = await resumeRun(record, lease.leaseId);
         if (resumeResult.ok) {
           resumed++;
-          eventBus.emit("durable:resumed", { rootRunId, stepIndex: record.stepIndex });
+          // FLEET-03: numeric stepIndex + timestamp (content-free, §2.7).
+          eventBus.emit("durable:resumed", {
+            rootRunId,
+            stepIndex: record.stepIndex,
+            timestamp: nowMs(),
+          });
           logger.info(
             { rootRunId, stepIndex: record.stepIndex, durationMs: nowMs() - runStart },
             "Durable resume: run resumed",

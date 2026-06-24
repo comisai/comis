@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * FLEET-03 (v2.30 Phase 220-01) autonomy/durable-run lifecycle row-builders.
+ *
+ * The four typed durable/autonomy events — orphaned / resumed / revoked / killed —
+ * mapped to content-free `health_signal` diagnostic rows (the GENQ-01 / ORCH-OBS
+ * clone: a new `signal:` label rides the EXISTING `obs_diagnostics`
+ * `health_signal` category, NO migration). Extracted into this sibling module —
+ * mirroring `obs-orchestration-rows.ts` — to keep `obs-persistence-wiring.ts`
+ * under the 800-line cap (the Plan 01/03 file-size-extraction precedent).
+ * Re-exported by the wiring file so the public API (and the test imports) stay
+ * byte-identical.
+ *
+ * CONTENT-FREE by construction (T-220-01 / T-220-02): each `details` carries the
+ * closed `signal` label + the closed reason ENUM (orphaned) / the integer COUNT
+ * (revoked/killed) / the numeric stepIndex (resumed) + the rootRunId (an id)
+ * ONLY — NEVER the engine's free-text orphan reason, a lease bearer/selector, or
+ * any body (§2.7). The free-text orphan reason stays on the WARN log / notify at
+ * the source (durable-resume-engine.ts); it never reaches the typed event or this
+ * row. The report is therefore SAFE to paste into a review.
+ *
+ * @module obs-autonomy-rows
+ */
+
+import type { EventMap } from "@comis/core";
+import type { DiagnosticRow } from "@comis/memory";
+
+/**
+ * Map a `durable:orphaned` event to a `health_signal` diagnostic row. An orphaned
+ * durable run (a cron-fired/in-flight run that did NOT resume after a restart) had
+ * NO fleet surface; an operator could not learn (cross-session) how often runs are
+ * orphaned and for which closed reason. `details` carries the CLOSED reason enum
+ * ONLY (not_resumable / reread_failed / invalid_caps / resume_failed) — NEVER the
+ * engine's free-text reason (which stays on the WARN log / notify). The engine event
+ * has no agentId/sessionKey (insertDiagnostic defaults absent columns to "").
+ * severity:"warning" (an orphaned run is operator-visible degradation).
+ */
+export function durableOrphanedEventToRow(payload: EventMap["durable:orphaned"]): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "durable:orphaned",
+    details: JSON.stringify({
+      signal: "durable_orphaned",
+      reason: payload.reason, // CLOSED enum — never the engine free string
+      rootRunId: payload.rootRunId, // an id, not a body
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map a `durable:resumed` event to a `health_signal` diagnostic row. A resumed
+ * in-flight run is healthy crash-recovery, not degradation, so severity:"info" —
+ * a resume does NOT inflate the fleet degrade count (the A2 / BENIGN_DAG_DEGRADED
+ * precedent). `details` carries the numeric stepIndex (the resumed checkpoint
+ * position) + the rootRunId ONLY.
+ */
+export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "info",
+    agentId: "",
+    sessionKey: "",
+    message: "durable:resumed",
+    details: JSON.stringify({
+      signal: "durable_resumed",
+      stepIndex: payload.stepIndex,
+      rootRunId: payload.rootRunId,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map an `autonomy:revoked` event to a `health_signal` diagnostic row. A
+ * cooperative lease/tree revoke had no fleet surface (it was INFO-log-only).
+ * `details` carries the revoked COUNT + the rootRunId ONLY — NEVER the lease
+ * bearer, selector, or any body (T-220-02). severity:"warning" (an operator
+ * intervention an admin must see in the fleet roll-up).
+ */
+export function autonomyRevokedEventToRow(payload: EventMap["autonomy:revoked"]): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "autonomy:revoked",
+    details: JSON.stringify({
+      signal: "autonomy_revoked",
+      revoked: payload.revoked,
+      rootRunId: payload.rootRunId,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * Map an `autonomy:killed` event to a `health_signal` diagnostic row. A hard
+ * kill (run.kill) flips durable status to 'revoked' INDISTINGUISHABLY from a
+ * cooperative revoke in the table — so the DISTINCT `autonomy_killed` signal
+ * label is the ONLY way the fleet lens separates killed from revoked counts
+ * (RESEARCH OQ1). `details` carries the killed COUNT + the rootRunId ONLY.
+ * severity:"warning".
+ */
+export function autonomyKilledEventToRow(payload: EventMap["autonomy:killed"]): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "autonomy:killed",
+    details: JSON.stringify({
+      signal: "autonomy_killed",
+      killed: payload.killed,
+      rootRunId: payload.rootRunId,
+    }),
+    traceId: undefined,
+  };
+}
