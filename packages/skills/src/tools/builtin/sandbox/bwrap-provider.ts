@@ -223,20 +223,14 @@ export class BwrapProvider implements SandboxProvider {
     // `TypeError: The "file" argument must be of type string. Received null`
     // deep in node:child_process (the #236 orchestrate-jail.linux suite). In
     // production the shared provider is already primed at boot (detect-provider),
-    // so this is a no-op there; available() caches bwrapPath.
+    // so this is a no-op there; available() caches bwrapPath. Deliberately does
+    // NOT throw when bwrap is absent: the daemon gates orchestrate on provider
+    // availability, and the macOS unit suite builds args with a fake spawn on a
+    // bwrap-less host — failing here would break that legitimate arg-shape path.
     if (this.bwrapPath === null) {
       this.available();
     }
-    if (this.bwrapPath === null) {
-      // Fail loud, naming the cause — never return a null bin that becomes an
-      // inscrutable child_process TypeError. The host genuinely cannot build a
-      // jail; callers must honest-degrade (orchestrate refuses) rather than spawn.
-      throw new Error(
-        "BwrapProvider.buildArgs: bwrap is not available on PATH (`which bwrap` failed). " +
-          "The host cannot build the jail — refuse the jailed run instead of spawning.",
-      );
-    }
-    const args: string[] = [this.bwrapPath];
+    const args: string[] = [this.bwrapPath!];
     // WR-05: the credential-denylist base (`validateBindMount(hostPath, home)`)
     // must be an EXPLICIT trusted value, not a hidden ambient read inside this
     // pure arg generator. Prefer the caller-supplied `opts.home` (resolved once

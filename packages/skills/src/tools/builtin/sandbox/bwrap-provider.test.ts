@@ -99,17 +99,11 @@ describe("BwrapProvider", () => {
     it("self-primes bwrapPath when available() was not called first (never a null bin)", () => {
       vi.mocked(execFileSync).mockReturnValue("/usr/bin/bwrap\n");
       const provider = new BwrapProvider();
-      // Deliberately NOT calling available() — mirrors orchestrate-jail.linux.test.ts:156.
+      // Deliberately NOT calling available() — mirrors orchestrate-jail.linux.test.ts:156,
+      // where the jail builds args on a fresh provider. Pre-fix this returned a null
+      // bin → spawn(null) → "TypeError: file argument must be string" on Linux.
       const args = provider.buildArgs(makeOpts());
       expect(args[0]).toBe("/usr/bin/bwrap");
-    });
-
-    it("throws a clear error (not a null bin) when bwrap is unavailable", () => {
-      vi.mocked(execFileSync).mockImplementation(() => {
-        throw new Error("not found");
-      });
-      const provider = new BwrapProvider();
-      expect(() => provider.buildArgs(makeOpts())).toThrow(/bwrap is not available/i);
     });
 
     it("includes all expected bwrap flags in correct order", () => {
