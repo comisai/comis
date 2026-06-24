@@ -33,6 +33,13 @@ import {
 } from "./sub-agent-result-processor.js";
 import { createDeliveryDedup } from "./announce-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import {
+  attenuateCaps,
+  AGENT_CAPABILITIES,
+  resolveWorkspaceDir,
+  type AgentCapability,
+  type AgentConfig,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
@@ -4805,5 +4812,196 @@ describe("createSubAgentRunner killByRootRun tree fan-out", () => {
     runner.spawn({ task: "live", agentId: "x", depth: 1, rootRunId: "root-K" });
 
     expect(runner.killByRootRun("no-such-root")).toEqual({ killed: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COORD-03: the ~30s read-only progress fork lifecycle in the spawn path
+// ---------------------------------------------------------------------------
+//
+// The runner starts the read-only progress fork when a child run begins and
+// stops it on the run's terminal settle (the completion finally) so it never
+// outlives the child (T-218-15: no leaked timer). vi.useFakeTimers() drives the
+// injected clock/timers (testClock/testTimers delegate to the faked globals).
+
+describe("COORD-03 progress fork lifecycle (sub-agent-runner)", () => {
+  let deps: SubAgentRunnerDeps;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("emits a content-free session:sub_agent_progress ~30s into a long-running child", async () => {
+    // A never-resolving exec keeps the child in-flight so the fork can tick.
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "long research",
+      agentId: "child-long",
+      callerSessionKey: "default:user1:channel1",
+    });
+
+    // No progress before the first tick.
+    expect(emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress")).toHaveLength(0);
+
+    // Advance ~30s → exactly one progress tick.
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const progress = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress");
+    expect(progress).toHaveLength(1);
+    const payload = progress[0]![1] as {
+      runId: string; agentId: string; progressLine: string;
+      elapsedMs: number; stepsExecuted: number; timestamp: number;
+    };
+    expect(payload.agentId).toBe("child-long");
+    expect(typeof payload.runId).toBe("string");
+    expect(payload.elapsedMs).toBeGreaterThanOrEqual(30_000);
+    expect(payload.progressLine.length).toBeGreaterThan(0);
+    // Content-free: only the 6 bounded status keys, no child output/body.
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "elapsedMs", "progressLine", "runId", "stepsExecuted", "timestamp"].sort(),
+    );
+    // No explicit shutdown: the fork interval is .unref()'d so it never blocks
+    // exit; afterEach's vi.useRealTimers() reclaims the faked timer. (Awaiting
+    // shutdown() here would hang on the never-resolving exec under fake timers.)
+  });
+
+  it("stops the fork on the completion finally — no progress after the child settles", async () => {
+    // Default mock exec resolves immediately → the run completes, the fork stops.
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({ task: "quick task", agentId: "child-quick" });
+
+    // Drive the completion path (the terminal finally stops the fork).
+    await vi.advanceTimersByTimeAsync(0);
+
+    const before = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress").length;
+
+    // Advance well past the interval AFTER completion → no further progress.
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    const after = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress").length;
+    expect(after).toBe(before); // fork was stopped — no new ticks
+  });
+
+  it("ticks repeatedly while the child stays in-flight (~90s ⇒ 3 progress events)", async () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const emit = vi.mocked((deps.eventBus as unknown as { emit: ReturnType<typeof vi.fn> }).emit);
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({ task: "very long", agentId: "child-vlong" });
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    const progress = emit.mock.calls.filter((c) => c[0] === "session:sub_agent_progress");
+    expect(progress.length).toBe(3);
+    // No shutdown await (never-resolving exec) — the .unref()'d interval is
+    // reclaimed by afterEach's vi.useRealTimers().
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COORD-03 security: window isolation is NOT escalation
+// ---------------------------------------------------------------------------
+//
+// Each fresh-window coordinator child inherits an ATTENUATED lease (parent ∩
+// requested — never broader, T-218-16) and writes to its OWN jailed workspace,
+// distinct from the lead's (T-218-17). The lease mint lives in daemon wiring
+// (setup-broker-activation.ts via attenuateCaps); the runner consumes the
+// already-minted params.caps verbatim and NEVER broadens them. We assert the
+// invariant directly against the security primitives (the single source of
+// truth) plus a runner-level check that a spawn carries no cap outside the
+// parent set.
+
+describe("COORD-03 attenuated lease + own jailed workspace (no escalation)", () => {
+  it("attenuateCaps yields a subset of the parent caps — never broader (T-218-16)", () => {
+    const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
+    // A coordinator child requests a SUPERSET (incl. caps the parent lacks).
+    const requested: AgentCapability[] = ["orch:read", "orch:write", "orch:spawn", "orch:cron"];
+
+    const childLease = attenuateCaps(parent, requested);
+
+    // Every minted cap is held by the parent (subset).
+    for (const cap of childLease) {
+      expect(parent).toContain(cap);
+    }
+    // The result is exactly parent ∩ requested — the cross-window broadening
+    // (orch:write, orch:cron) is dropped; window isolation is not escalation.
+    expect([...childLease].sort()).toEqual(["orch:read", "orch:spawn"].sort());
+    // And it never holds a cap the parent does not.
+    expect(childLease).not.toContain("orch:write");
+    expect(childLease).not.toContain("orch:cron");
+  });
+
+  it("a coordinator child cannot mint a cap outside the full capability set", () => {
+    // Even requesting EVERY known capability, a narrow parent stays narrow.
+    const narrowParent: AgentCapability[] = ["orch:read"];
+    const childLease = attenuateCaps(narrowParent, [...AGENT_CAPABILITIES]);
+    expect(childLease).toEqual(["orch:read"]); // intersection with a singleton parent
+  });
+
+  it("each child resolves its OWN jailed workspace, distinct from the lead's (T-218-17)", () => {
+    const cfg: AgentConfig = {} as AgentConfig; // no explicit workspacePath → suffixed-by-agentId
+    const dataDir = "/data/.comis";
+    const leadWorkspace = resolveWorkspaceDir(cfg, "lead", dataDir);
+    const childA = resolveWorkspaceDir(cfg, "coordinator-child-a", dataDir);
+    const childB = resolveWorkspaceDir(cfg, "coordinator-child-b", dataDir);
+
+    // Each agent's workspace is its own — a child never resolves the lead's dir.
+    expect(childA).not.toBe(leadWorkspace);
+    expect(childB).not.toBe(leadWorkspace);
+    expect(childA).not.toBe(childB);
+    expect(childA).toContain("coordinator-child-a");
+    expect(leadWorkspace).toContain("lead");
+  });
+
+  it("the runner consumes params.caps verbatim — it never broadens the child lease", async () => {
+    // The runner threads the ALREADY-minted (attenuated) caps it is given onto
+    // the durable checkpoint — it does not add to them. Capture what it persists.
+    const deps = createMockDeps();
+    vi.useFakeTimers();
+    try {
+      vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+      const upsertCheckpoint = vi.fn().mockResolvedValue({ ok: true });
+      deps.durableRuns = {
+        upsertCheckpoint,
+        touchHeartbeat: vi.fn().mockResolvedValue({ ok: true }),
+        markCompleted: vi.fn().mockResolvedValue({ ok: true }),
+      } as unknown as NonNullable<SubAgentRunnerDeps["durableRuns"]>;
+
+      const parent: AgentCapability[] = ["orch:spawn", "orch:read", "orch:graph"];
+      const mintedChildLease = attenuateCaps(parent, ["orch:read", "orch:write"]); // ["orch:read"]
+
+      const runner = createSubAgentRunner(deps);
+      runner.spawn({
+        task: "isolated child",
+        agentId: "coordinator-child",
+        depth: 1,
+        rootRunId: "root-COORD",
+        caps: mintedChildLease,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(upsertCheckpoint).toHaveBeenCalled();
+      const persisted = upsertCheckpoint.mock.calls[0]![0] as { caps: AgentCapability[] };
+      // The runner persisted EXACTLY the minted (attenuated) lease — no broadening.
+      expect([...persisted.caps].sort()).toEqual([...mintedChildLease].sort());
+      for (const cap of persisted.caps) {
+        expect(parent).toContain(cap); // still a subset of the parent
+      }
+      expect(persisted.caps).not.toContain("orch:write"); // the dropped cross-window cap
+      // No shutdown await (never-resolving exec) — fake timers reclaimed below.
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

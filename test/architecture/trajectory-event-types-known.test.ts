@@ -311,6 +311,12 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "session:sub_agent_archived",
   "session:sub_agent_completed",
   "session:sub_agent_lifecycle_ended",
+  // COORD-03 (Phase 218): the ~30s read-only progress fork's content-free
+  // advance signal. A cross-tree sub-agent lifecycle signal (like its
+  // siblings above), surfaced via announce/obs — NOT a per-session trajectory
+  // step (the trajectory writer is per-session and does not span the sub-agent
+  // tree). Content-free by construction (progressLine + counts only).
+  "session:sub_agent_progress",
   "session:sub_agent_result_condensed",
   "session:sub_agent_spawn_prepared",
   "session:sub_agent_spawn_queued",

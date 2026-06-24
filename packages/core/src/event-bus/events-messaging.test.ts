@@ -712,6 +712,69 @@ describe("Subagent context lifecycle events", () => {
 });
 
 // ---------------------------------------------------------------------------
+// session:sub_agent_progress (COORD-03 — the 30s read-only progress fork)
+// ---------------------------------------------------------------------------
+//
+// The content-free advance signal a long-running child surfaces every ~30s via
+// the read-only progress fork (coordinator-progress-fork.ts). RED on pre-patch:
+// the `session:sub_agent_progress` member is not in the MessagingEvents map, so
+// the typed payload below fails to COMPILE (per AGENTS §2.10 a compile-RED is the
+// failing state for a closed type addition). §2.7 content-free: the shape carries
+// ONLY runId/agentId/a short progressLine/counts/timestamp — NO field is allowed
+// to carry the child's output, message body, or tool result.
+
+describe("session:sub_agent_progress payload structure (COORD-03 content-free)", () => {
+  it("delivers runId, agentId, progressLine, elapsedMs, stepsExecuted, timestamp", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["session:sub_agent_progress"] = {
+      runId: "run-progress-001",
+      agentId: "child-agent-7",
+      progressLine: "running, step 4",
+      elapsedMs: 30_000,
+      stepsExecuted: 4,
+      timestamp: Date.now(),
+    };
+
+    bus.on("session:sub_agent_progress", handler);
+    bus.emit("session:sub_agent_progress", payload);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const received = handler.mock.calls[0]![0] as EventMap["session:sub_agent_progress"];
+    expect(received.runId).toBe("run-progress-001");
+    expect(received.agentId).toBe("child-agent-7");
+    expect(received.progressLine).toBe("running, step 4");
+    expect(received.elapsedMs).toBe(30_000);
+    expect(received.stepsExecuted).toBe(4);
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("is content-free: the payload exposes ONLY the bounded status keys (no child output/body)", () => {
+    // §2.7 / T-218-14: the only keys the event may carry are the 6 bounded
+    // status fields. A `response`/`output`/`message`/`body`/`toolResult` key
+    // would leak the child's content into the lead's window — assert the key set
+    // is exactly the allow-list so a future widening that adds a payload field is
+    // caught here.
+    const payload: EventMap["session:sub_agent_progress"] = {
+      runId: "r1",
+      agentId: "a1",
+      progressLine: "running tools, step 2",
+      elapsedMs: 60_000,
+      stepsExecuted: 2,
+      timestamp: 1000,
+    };
+    expect(Object.keys(payload).sort()).toEqual(
+      ["agentId", "elapsedMs", "progressLine", "runId", "stepsExecuted", "timestamp"].sort(),
+    );
+    // No content-bearing field exists on the typed shape.
+    expect(payload).not.toHaveProperty("response");
+    expect(payload).not.toHaveProperty("output");
+    expect(payload).not.toHaveProperty("body");
+    expect(payload).not.toHaveProperty("toolResult");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Config nesting integration
 // ---------------------------------------------------------------------------
 
