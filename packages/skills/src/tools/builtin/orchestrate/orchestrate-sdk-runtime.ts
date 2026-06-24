@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `orchestrate-sdk-runtime` — the cap-socket CLIENT shim the generated
- * `comis_tools.js` imports (the stable `./orchestrate-sdk-runtime.js` contract:
- * `invoke` + `wrapResultRef`). It is the in-jail half of the autonomy surface:
- * the model's script `import`s the typed `comis_tools` SDK, each method delegates
- * to {@link invoke}, and {@link invoke} speaks the exact newline-delimited JSON
- * wire the Phase-211 capability endpoint serves
+ * `orchestrate-sdk-runtime` — the cap-socket CLIENT the in-jail autonomy surface
+ * speaks. {@link callCapSocket} is the generalized wire primitive: one
+ * `{ bearer, method, params }` newline-JSON line over the lease-authenticated
+ * unix cap socket for an ARBITRARY method, resolving the `{ result }` (or
+ * rejecting the `{ error }`). {@link invoke} is its `tool.invoke` specialization
+ * — the stable `./orchestrate-sdk-runtime.js` contract the generated
+ * `comis_tools.js` imports (`invoke` + `wrapResultRef`), where each typed SDK
+ * method delegates to {@link invoke}. `comis-agent`'s direct-method subcommands
+ * (CLI-04) ride {@link callCapSocket} directly so they can dispatch a non-tool
+ * method (`session.spawn`, `graph.execute`, …) without the `tool.invoke`
+ * envelope. Both speak the exact wire the Phase-211 capability endpoint serves
  * (`setup-capability-endpoint.ts` — one `{ bearer, method, params }` line per
  * connection → one `{ result }` / `{ error }` line back).
  *
  * Containment context (why this is tiny + dependency-free, AGENTS.md §2.3): this
  * module runs INSIDE the orchestrate jail (`--unshare-net`, `~/.comis` masked).
  * The cap socket bound into the jail is the ONLY reachable egress; the lease
- * (`COMIS_CAP_LEASE`) authenticates every call, audience-bound to the inner tool
- * at the endpoint. So the runtime needs nothing but `node:net` + JSON — no extra
- * dependency could be reached from the jail anyway.
+ * (`COMIS_CAP_LEASE`) authenticates every call, audience-bound at the endpoint.
+ * So the runtime needs nothing but `node:net` + JSON — there is deliberately NO
+ * WebSocket / gateway client: that loopback gateway transport is unreachable
+ * from the `--unshare-net` jail and is the very wire CLI-04 forbids.
  *
  * Globals rule (AGENTS.md §2.2): the two lease env vars are read through the
  * project's standard `systemGetEnv` seam from `@comis/core` (the same seam
@@ -60,32 +66,39 @@ export interface WrappedResultRef extends ResultRef {
 }
 
 /**
- * Send one `{ bearer, method: "tool.invoke", params: { tool, args } }` line over
- * the cap socket and resolve with the `{ result }` (or reject with the
- * `{ error }`). One connection per call mirrors the endpoint's per-connection
- * request/response framing exactly.
+ * Send one `{ bearer, method, params }` line over the cap socket for an ARBITRARY
+ * method and resolve with the `{ result }` (or reject with the `{ error }`). One
+ * connection per call mirrors the endpoint's per-connection request/response
+ * framing exactly. The `method` and `params` are passed THROUGH verbatim — the
+ * caller decides whether it is a `tool.invoke` (see {@link invoke}) or a direct
+ * orchestration method (`session.spawn`, `graph.execute`, `cron.add`, …, the
+ * `comis-agent` CLI-04 subcommands). The lease (`COMIS_CAP_LEASE`) authenticates
+ * every call; the unix cap socket (`COMIS_ORCH_SOCKET`) is the only egress — this
+ * is deliberately NOT the loopback gateway WebSocket (the wire CLI-04 forbids).
  *
- * @param tool - The capability-mapped tool name (e.g. `"memory_search"`).
- * @param args - The tool's arguments (forwarded verbatim as `params.args`).
- * @returns The tool result (the endpoint's `result` field).
+ * @param method - The wire method (e.g. `"tool.invoke"`, `"session.spawn"`).
+ * @param params - The method params, forwarded verbatim (no envelope wrapping).
+ * @returns The endpoint's `result` field.
  * @throws When the lease env is absent (only valid inside an orchestrate jail),
- *   when the endpoint replies `{ error }`, or when the reply line is malformed.
+ *   when the endpoint replies `{ error }`, or when the reply line is malformed /
+ *   the connection closes before a complete reply (a containment fault).
  */
-export function invoke(tool: string, args?: Record<string, unknown>): Promise<unknown> {
+export function callCapSocket(
+  method: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
   const socketPath = systemGetEnv(ENV_ORCH_SOCKET);
   const bearer = systemGetEnv(ENV_CAP_LEASE);
   if (!socketPath || !bearer) {
     return Promise.reject(
       new Error(
-        `orchestrate runtime requires ${ENV_ORCH_SOCKET}/${ENV_CAP_LEASE} — ` +
+        `comis-agent / orchestrate runtime requires ${ENV_ORCH_SOCKET}/${ENV_CAP_LEASE} — ` +
           `only valid inside an orchestrate jail`,
       ),
     );
   }
 
-  const payload =
-    JSON.stringify({ bearer, method: TOOL_INVOKE_METHOD, params: { tool, args: args ?? {} } }) +
-    "\n";
+  const payload = JSON.stringify({ bearer, method, params }) + "\n";
 
   return new Promise<unknown>((resolve, reject) => {
     const socket = net.connect(socketPath);
@@ -133,6 +146,22 @@ export function invoke(tool: string, args?: Record<string, unknown>): Promise<un
       finish(() => reject(new Error("cap socket closed before a complete response line")));
     });
   });
+}
+
+/**
+ * Send one `{ bearer, method: "tool.invoke", params: { tool, args } }` line over
+ * the cap socket and resolve with the `{ result }`. This is the `tool.invoke`
+ * specialization of {@link callCapSocket} — the stable contract the generated
+ * `comis_tools.js` imports; every typed SDK method delegates here.
+ *
+ * @param tool - The capability-mapped tool name (e.g. `"memory_search"`).
+ * @param args - The tool's arguments (forwarded verbatim as `params.args`).
+ * @returns The tool result (the endpoint's `result` field).
+ * @throws When the lease env is absent (only valid inside an orchestrate jail),
+ *   when the endpoint replies `{ error }`, or when the reply line is malformed.
+ */
+export function invoke(tool: string, args?: Record<string, unknown>): Promise<unknown> {
+  return callCapSocket(TOOL_INVOKE_METHOD, { tool, args: args ?? {} });
 }
 
 /**
