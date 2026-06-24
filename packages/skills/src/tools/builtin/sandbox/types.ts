@@ -88,6 +88,23 @@ export interface SandboxOptions {
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    */
   jailNode?: JailNodeResolution;
+  /**
+   * Resolved comis-agent CLI-binary placement for the jail (CLI-05/06).
+   * The provider resolves this via resolveJailAgentCli() — hash-verify the
+   * comis-built `comis-agent-entry.js` against the committed manifest pin, then
+   * bind / unavailable-missing / unavailable-hash-mismatch — and passes the
+   * result in, so buildArgs stays a pure arg generator (no live fs probe / hash).
+   * buildArgs emits `--ro-bind binPath binPath` ONLY when mode === "bind" (the
+   * binary is bound READ-ONLY — a writable binary is a host-RCE vector, and
+   * src==dest so COMIS_AGENT_BIN/PATH resolves it in-jail). "unavailable" (a
+   * missing OR tampered binary) emits NO bind — the orchestrate-tool then makes
+   * ONLY the CLI surface unavailable with a loud signal (CLI-06), while the
+   * orchestrate SCRIPT surface still runs. Unlike jailNode, an unavailable
+   * comis-agent binary does NOT refuse the whole jail (the script surface is
+   * independent of the CLI surface).
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  jailAgentCli?: JailAgentCliResolution;
 }
 
 /**
@@ -97,6 +114,18 @@ export interface SandboxOptions {
 export type JailNodeResolution =
   | { mode: "path" }
   | { mode: "bind"; execPath: string }
+  | { mode: "unavailable"; hint: string };
+
+/**
+ * The two-mode result of resolveJailAgentCli() (CLI-05/06). "bind" only when the
+ * comis-agent binary EXISTS and its sha256 matches the committed manifest pin;
+ * "unavailable" (with a content-free operator hint) when the binary is MISSING
+ * or its bytes do NOT match the pin (tamper). There is no silent third state —
+ * a missing/tampered binary is always a LOUD unavailable, never a silent bind
+ * (T-219-22 tampering / T-219-24 silent-degrade).
+ */
+export type JailAgentCliResolution =
+  | { mode: "bind"; binPath: string }
   | { mode: "unavailable"; hint: string };
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */
