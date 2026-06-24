@@ -136,6 +136,82 @@ const DUCKDB_HARDENING_PRELUDE =
   "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; ";
 
 /**
+ * Statement keywords that let DuckDB install an extension, load one, attach an
+ * external database, or read/write a file/URL outside the confined `results/`
+ * input — the daemon-side SSRF / exfil / file-write surface (T-221-QRY-01). The
+ * query engine is a read-only slicer; ANY of these in a model-supplied query is
+ * refused BEFORE `duckdb` is ever spawned. Matched as whole words, case-insensitive.
+ */
+const DANGEROUS_SQL_KEYWORDS = [
+  "INSTALL",
+  "LOAD",
+  "ATTACH",
+  "DETACH",
+  "COPY",
+  "EXPORT",
+  "IMPORT",
+  "PRAGMA",
+] as const;
+
+/**
+ * URL-reader scheme prefixes DuckDB's `read_*`/httpfs can reach off-host. Even
+ * with autoload off + readonly, a literal `http(s)://` / `s3://` / `gcs://` /
+ * `azure://` inside a reader is a remote-fetch attempt — refuse it (defense in
+ * depth alongside the extension lockdown). Matched as a case-insensitive substring.
+ */
+const DANGEROUS_URL_SCHEMES = ["http://", "https://", "s3://", "gcs://", "gs://", "azure://"] as const;
+
+/**
+ * Screen a model-supplied DuckDB query for the extension / file-write / network
+ * verbs and url-readers a read-only slicer must never run (T-221-QRY-01). Pure —
+ * returns a human reason on the FIRST hit, or `null` when the query is safe to
+ * spawn. Called BEFORE `execFile` so a malicious query NEVER reaches `duckdb`.
+ *
+ * @param query - The model-supplied SQL (already path-confined at the core).
+ * @returns A rejection reason string, or `null` if the query is allowed.
+ */
+export function rejectDangerousSql(query: string): string | null {
+  const upper = query.toUpperCase();
+  for (const kw of DANGEROUS_SQL_KEYWORDS) {
+    // Whole-word match so `INSTALLED_AT` (a column) does not trip on `INSTALL`.
+    // \b handles the surrounding punctuation/space DuckDB statements use.
+    if (new RegExp(`\\b${kw}\\b`).test(upper)) {
+      return `sql rejected: the \`${kw}\` statement is not allowed on the read-only query surface`;
+    }
+  }
+  const lower = query.toLowerCase();
+  for (const scheme of DANGEROUS_URL_SCHEMES) {
+    if (lower.includes(scheme)) {
+      return `sql rejected: remote url readers (${scheme}…) are not allowed — the query may only read the run-scoped results/ file`;
+    }
+  }
+  return null;
+}
+
+/**
+ * A safe JSONPath expression for the `jsonpath` core: a `$`-rooted dot/bracket
+ * path of identifiers and numeric indices only — e.g. `$.items[0].price`,
+ * `$['a']['b']`, `$`. Deliberately conservative: NO wildcards, filters, slices,
+ * functions, or quotes-with-metacharacters, so the compiled `json_extract` path
+ * literal can never carry SQL/quote injection into the DuckDB statement.
+ */
+const SAFE_JSONPATH_RE = /^\$(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]|\['[A-Za-z0-9_ -]+'\]|\["[A-Za-z0-9_ -]+"\])*$/;
+
+/**
+ * Validate a model-supplied JSONPath expression for the `jsonpath` core. Pure —
+ * returns `true` only for the conservative `$`-rooted dot/bracket grammar above.
+ * A `false` is honest-degraded to `{ error }` by the core (never a throw). This
+ * is the no-eval safety floor: the expression becomes a `json_extract(j, '<expr>')`
+ * literal, so it must contain no SQL metacharacters / unmatched quotes.
+ *
+ * @param expr - The model-supplied JSONPath.
+ * @returns `true` if the expression is a safe dot/bracket path, else `false`.
+ */
+export function isSafeJsonPath(expr: string): boolean {
+  return SAFE_JSONPATH_RE.test(expr);
+}
+
+/**
  * Build the shipped daemon-side cores for the orchestrate `tool.invoke` executor.
  * See the module doc for the per-core composition + the jq containment.
  */
@@ -244,14 +320,14 @@ export function createOrchestrateExecutorCores(
   };
 
   /**
-   * Run a model-supplied DuckDB query through the HARDENED CLI and resolve the
+   * Run a model-supplied DuckDB query (already screened by `rejectDangerousSql` /
+   * `isSafeJsonPath` at the calling core) through the HARDENED CLI and resolve the
    * JSON-rows slice (or a content-free `{ error }`). `--readonly :memory:` (no DB
    * file / no writes), `-json` (rows on stdout), `-c` (one statement) with the
    * autoload-off prelude prepended. A missing `duckdb` binary →
    * `errorKind:"precondition"` (the install prerequisite is unmet); a non-zero
    * exit (bad SQL / non-table input) → `errorKind:"validation"`. Never throws —
-   * mirrors the jq ENOENT/non-zero branches. (Task 2 adds the pre-spawn
-   * `rejectDangerousSql` screen + the JSONPath expr validation.)
+   * mirrors the jq ENOENT/non-zero branches.
    */
   function runDuckDb(query: string, toolName: "sql" | "jsonpath", started: number): Promise<unknown> {
     log.debug({ step: "duckdb-spawn", toolName }, "orchestrate duckdb spawning");
@@ -297,10 +373,10 @@ export function createOrchestrateExecutorCores(
 
   /**
    * The `sql` core (QRY-01): run a model-supplied DuckDB query over the
-   * workspace-confined ResultRef file. Path-confined (`safePath`), then run
-   * through the hardened `runDuckDb`. Returns the JSON-rows slice, or a
-   * content-free `{ error }`. (Task 2 inserts the pre-spawn `rejectDangerousSql`
-   * screen for INSTALL/LOAD/ATTACH/COPY/EXPORT/url-readers — the SSRF/exfil floor.)
+   * workspace-confined ResultRef file. Path-confined (`safePath`), then screened
+   * (`rejectDangerousSql` — INSTALL/LOAD/ATTACH/COPY/EXPORT/url-readers refused
+   * BEFORE any spawn, the SSRF/exfil floor), then run through the hardened
+   * `runDuckDb`. Returns the JSON-rows slice, or a content-free `{ error }`.
    */
   const sql: OrchestrateFileCore = async (args, ctx) => {
     const started = systemNowMs();
@@ -330,15 +406,25 @@ export function createOrchestrateExecutorCores(
       );
       return errorResult("sql path escapes the workspace");
     }
+    // Screen the model query for extension / file-write / network verbs + url
+    // readers BEFORE spawning duckdb (T-221-QRY-01) — refuse, never spawn, on a hit.
+    const rejection = rejectDangerousSql(query);
+    if (rejection !== null) {
+      log.warn(
+        { errorKind: "validation" as const, hint: "sql query contained a disallowed extension/file-write/network verb or url-reader — refusing before spawn", toolName: "sql" },
+        "orchestrate sql dangerous query blocked",
+      );
+      return errorResult(rejection);
+    }
     return await runDuckDb(query, "sql", started);
   };
 
   /**
    * The `jsonpath` core (QRY-02): extract a precise value from a JSON ResultRef
    * via DuckDB `json_extract` — NO eval-based JSONPath library (banned, RCE CVEs).
-   * Path-confined (`safePath`), compiled into a `json_extract` query run through
-   * the SAME hardened `runDuckDb` as `sql`. (Task 2 inserts the `isSafeJsonPath`
-   * grammar gate so the expr literal carries no SQL/quote injection.)
+   * Path-confined (`safePath`), the expr validated to a conservative `$`-dot/bracket
+   * grammar (`isSafeJsonPath`) so it carries no SQL/quote injection, then compiled
+   * into a `json_extract` query run through the SAME hardened `runDuckDb` as `sql`.
    */
   const jsonpath: OrchestrateFileCore = async (args, ctx) => {
     const started = systemNowMs();
@@ -369,9 +455,21 @@ export function createOrchestrateExecutorCores(
       );
       return errorResult("jsonpath path escapes the workspace");
     }
+    // Validate the JSONPath to the conservative dot/bracket grammar so it cannot
+    // inject SQL/quotes into the json_extract literal (the no-eval safety floor,
+    // T-221-QRY-03). Refused BEFORE any spawn.
+    if (!isSafeJsonPath(expr)) {
+      log.warn(
+        { errorKind: "validation" as const, hint: "jsonpath expr is not a safe $-rooted dot/bracket path — refusing", toolName: "jsonpath" },
+        "orchestrate jsonpath unsafe expr blocked",
+      );
+      return errorResult(
+        "jsonpath expr must be a $-rooted dot/bracket path (e.g. $.items[0].price) — wildcards/filters/functions are not supported",
+      );
+    }
     // Compile the JSONPath into a DuckDB json_extract query over read_json_auto.
-    // The path literal is the safePath-confined absolute path. read_json_auto
-    // yields one row of the doc as `j`.
+    // The path literal is the safePath-confined absolute path; the expr passed the
+    // grammar gate above. read_json_auto yields one row of the doc as `j`.
     const query = `SELECT json_extract(j, '${expr}') AS value FROM read_json_auto('${absPath}') t(j)`;
     return await runDuckDb(query, "jsonpath", started);
   };
