@@ -2260,6 +2260,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "HANDLER_CAPABILITY_MAP",
       "HandlerCapabilityClassification",
       "GatedMethodName",
+      // SELF_SCOPED_AGENT_READS (Phase 219, CLI-01/02): the tight cap-socket
+      // audience exception. The VALUE const is consumed cross-package by the
+      // @comis/infra lease audience (lease-manager.ts), so it has a real
+      // name-importer and is NOT tracked here. SelfScopedAgentRead is the const's
+      // erased member type (runtime-free, never named cross-package yet) — tracked
+      // here beside GatedMethodName until a real type-importer lands.
+      "SelfScopedAgentRead",
       // ── Durability-resume engine (Phase 216, interface-first Wave 1) ──
       // The DurableRunPort (run checkpoint store) + OutwardSendLedgerPort
       // (three-state outward-send ledger) + the DurableRunRecord domain type +
