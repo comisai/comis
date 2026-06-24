@@ -955,7 +955,9 @@ function insertKilledRow(store: ObservabilityStore, ts: number, killed: number, 
   });
 }
 
-/** A session_summary row that degraded on a denial_breaker (the FLEET-02 breaker source). */
+/** A session_summary row for a real breaker-tripped run: breakerTripCount >= 1. The FLEET-02
+ *  breaker source is the summed breakerTripCount (→ breakerTripTotal), NOT the endReason —
+ *  `denial_breaker` is never a session endReason, only an execution:aborted event reason. */
 function insertBreakerDegradedRow(store: ObservabilityStore, ts: number, sessionKey: string): void {
   store.insertDiagnostic({
     timestamp: ts,
@@ -963,7 +965,7 @@ function insertBreakerDegradedRow(store: ObservabilityStore, ts: number, session
     severity: "warning",
     sessionKey,
     message: "session:summary",
-    details: summaryDetails({ degraded: true, costUsd: 0.3, breakerTripCount: 1, endReason: "denial_breaker" }),
+    details: summaryDetails({ degraded: true, costUsd: 0.3, breakerTripCount: 1, endReason: "context_exhausted" }),
   });
 }
 
@@ -1023,10 +1025,10 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
     expect(report.autonomy?.killed).not.toBe(report.autonomy?.revoked);
   });
 
-  it("FLEET-02: breakerTrips reads back from the synthetic-excluded denial_breaker cause; budgetBreaches from the breach rows", async () => {
+  it("FLEET-02: breakerTrips reads back the synthetic-excluded breakerTripTotal; budgetBreaches from the breach rows", async () => {
     const now = systemNowMs();
     const store = makeStore();
-    // Two denial_breaker-degraded sessions → degradedByCause.denial_breaker = 2.
+    // Two breaker-tripped sessions (breakerTripCount:1 each) → breakerTripTotal = 2.
     insertBreakerDegradedRow(store, now - 100, "b1");
     insertBreakerDegradedRow(store, now - 200, "b2");
     // A budget-breach health_signal (the node_budget_exceeded label is the breach source).
@@ -1044,9 +1046,9 @@ describe("assembleFleetHealthReport — FLEET-01/02/04 autonomy block", () => {
       24,
     );
 
-    // breakerTrips equals the synthetic-excluded degradedByCause["denial_breaker"] (2).
+    // breakerTrips equals the synthetic-excluded breakerTripTotal (2) — summed breakerTripCount.
     expect(report.autonomy?.breakerTrips).toBe(2);
-    expect(report.degradedByCause.denial_breaker).toBe(2); // the read-back source.
+    expect(report.breakerTripTotal).toBe(2); // the real read-back source (NOT a denial_breaker endReason).
     // budgetBreaches reflects the node_budget_exceeded breach count (1).
     expect(report.autonomy?.budgetBreaches).toBe(1);
   });

@@ -362,9 +362,13 @@ export async function assembleFleetHealthReport(
   const autonomy = computeAutonomySlice({
     durableCounts,
     healthSignals,
-    // FLEET-02: the breaker-trip subset reads back from the synthetic-excluded
-    // reduce's denial_breaker cause — NEVER re-derived over raw rows (WR-01/Pitfall 5).
-    breakerTrips: fleet.degradedByCause["denial_breaker"] ?? 0,
+    // FLEET-02: breaker trips read back the synthetic-excluded windowed breakerTripTotal
+    // (summed from per-session breakerTripCount in reduceFleetWindow) — NEVER re-derived over
+    // raw rows. NOT degradedByCause["denial_breaker"]: denial_breaker is an execution:aborted
+    // EVENT reason, never a session endReason (END_REASON_MAP has no such key), so that bucket
+    // is always 0 (WR-01). breakerTripTotal is the real, populated source; breaker trips are an
+    // autonomy-only mechanism (Phase 217), so the window total IS the autonomy-scoped count.
+    breakerTrips: fleet.breakerTripTotal ?? 0,
     // FLEET-01: the window's autonomy-inclusive operator cost (the synthetic-excluded
     // read-back — documented in the schema; a stricter autonomy-only cost is a follow-up).
     costUsd: fleet.costUsd,
