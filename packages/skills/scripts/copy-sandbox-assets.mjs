@@ -46,12 +46,15 @@ if (existsSync(sandboxSrc)) {
   }
 }
 
-// 2. Orchestrate SDK artifacts (ORCH-03): copy the generated comis_tools.{d.ts,js}
-//    → dist so the runner reads them from dist and they ship in the tarball.
-//    tsc ignores the hand-written .js (allowJs: false), so this copy is required.
+// 2. Orchestrate SDK artifacts (ORCH-03) + the comis-agent manifest (CLI-05):
+//    copy the generated comis_tools.{d.ts,js} AND the committed
+//    comis-agent-manifest.json → dist so the runner / resolveJailAgentCli read
+//    them from dist (via import.meta.url) and they ship in the tarball. tsc
+//    ignores the hand-written .js (allowJs: false) and does NOT copy .json data
+//    assets, so this copy is required for both.
 const orchSrc = join(pkgRoot, "src", "tools", "builtin", "orchestrate");
 const orchDist = join(pkgRoot, "dist", "tools", "builtin", "orchestrate");
-const sdkArtifacts = ["comis_tools.js", "comis_tools.d.ts"];
+const sdkArtifacts = ["comis_tools.js", "comis_tools.d.ts", "comis-agent-manifest.json"];
 const presentArtifacts = sdkArtifacts.filter((f) => existsSync(join(orchSrc, f)));
 if (presentArtifacts.length > 0) {
   mkdirSync(orchDist, { recursive: true });
