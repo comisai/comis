@@ -442,6 +442,12 @@ export async function constructCapabilityLayer(
         boundedAutonomy.reserveBudget(rootRunId, provider, model, estUsd, estTokens),
       registerRoot: (rootRunId, leaseId, parentLeaseId) =>
         boundedAutonomy.registerRoot(rootRunId, leaseId, parentLeaseId),
+      // KEYING-01: the bridge calls this once per turn to re-anchor an interactive
+      // session root's wall-clock + token limbs (a session root acquires no spawn
+      // slot, so it would otherwise accumulate across the whole conversation and
+      // falsely abort turns after wallClockMs). A no-op when a live spawn shares the
+      // root. MUST be wired here or the bridge's `?.evictRootIfIdle` silently no-ops.
+      evictRootIfIdle: (rootRunId) => boundedAutonomy.evictRootIfIdle(rootRunId),
     };
   }
   // The daemon-wide OutputGuard the mint registers each bearer in (Pitfall 1 —
