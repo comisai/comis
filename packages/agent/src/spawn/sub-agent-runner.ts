@@ -32,6 +32,10 @@ import {
   type SubAgentSpawnRejectedEvent,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
+import {
+  createCoordinatorProgressFork,
+  type CoordinatorProgressForkHandle,
+} from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
 import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
@@ -709,6 +713,53 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }),
       "durable terminal markCompleted (best-effort)",
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // COORD-03: the ~30s read-only progress fork (coordinator-progress-fork.ts).
+  // One fork per running child, tracked by runId so the terminal `finally`
+  // stops it (no leaked timer — the fork's interval is .unref()'d). The fork is
+  // a READ-ONLY summary of the in-flight child's advance — it never re-executes,
+  // calls a tool, or spawns. It runs INDEPENDENT of the durable store (a long
+  // child should surface progress even when durability is off), so it is started
+  // at the spawn boundary alongside — but not inside — startDurableCheckpoint.
+  // -------------------------------------------------------------------------
+  const progressForks = new Map<string, CoordinatorProgressForkHandle>();
+
+  /**
+   * Start the read-only progress fork for a just-started child run. `getStepState`
+   * is a thin read of the run's live step counter — `run.result` is only
+   * populated on completion (by which point the fork is already stopped), so an
+   * in-flight tick reports `stepsExecuted: 0` and the elapsed wall-clock is the
+   * advance signal (RESEARCH: a count-only advance is still NOT a re-execution).
+   * Idempotent per runId. No model call, no tool, no spawn.
+   */
+  function startProgressFork(run: SubAgentRun, params: SpawnParams): void {
+    if (progressForks.has(run.runId)) return;
+    const fork = createCoordinatorProgressFork({
+      eventBus: deps.eventBus,
+      clock,
+      timers,
+      runId: run.runId,
+      agentId: params.agentId,
+      // Thin read of the existing run handle — no new run-state plumbing.
+      getStepState: () => ({ stepsExecuted: run.result?.stepsExecuted ?? 0 }),
+    });
+    fork.start();
+    progressForks.set(run.runId, fork);
+  }
+
+  /**
+   * Stop + reclaim a child's progress fork on its terminal settle. Idempotent +
+   * inert when none was started (e.g. a queued run that never ran). Mirrors
+   * finishDurableCheckpoint's terminal-seam discipline — the fork never outlives
+   * the child (T-218-15).
+   */
+  function stopProgressFork(run: SubAgentRun): void {
+    const fork = progressForks.get(run.runId);
+    if (!fork) return;
+    fork.stop();
+    progressForks.delete(run.runId);
   }
 
   // WR-02: make the fail-OPEN observable. The sandbox no-downgrade gate (below)
@@ -1587,6 +1638,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // alive is cleared + the record marked completed in the terminal `finally`.
     startDurableCheckpoint(run, params);
 
+    // COORD-03: start the ~30s read-only progress fork so a long-running child
+    // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
+    // completing. Stopped in the terminal `finally` (no leaked timer). Runs
+    // independent of the durable store.
+    startProgressFork(run, params);
+
     deps.logger?.info({
       runId, agentId: params.agentId,
       callerAgentId: params.callerAgentId ?? "unknown",
@@ -2267,6 +2324,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // durable record completed + clear its keep-alive heartbeat (no leaked
       // interval). Inert + idempotent when no durable store is wired.
       finishDurableCheckpoint(run);
+      // COORD-03: stop the read-only progress fork on the same universal terminal
+      // seam so it never outlives the child (no leaked timer; T-218-15).
+      stopProgressFork(run);
       // Drain queue when a slot opens (use abortGroup for graph-scoped draining)
       const drainKey = run.abortGroup ?? run.callerSessionKey;
       if (drainKey) {
