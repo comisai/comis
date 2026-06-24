@@ -31,6 +31,10 @@
 export * from "./schema-agent-model.js";
 export * from "./schema-agent-context.js";
 export * from "./schema-agent-prompt.js";
+// 217: the autonomy MODE vocabulary + the EVICT-02 fail-closed
+// `resolveEffectiveMode` primitive + the per-profile posture notices (split into
+// a sibling leaf for the file-size cap; the autonomy leaf imports it one-way).
+export * from "./schema-agent-autonomy-mode.js";
 export * from "./schema-agent-autonomy.js";
 // 213-03: the autonomy BOUNDS sub-blocks + the honest-degrade path live in
 // sibling leaves (file-size cap + concern split); exported here so the public

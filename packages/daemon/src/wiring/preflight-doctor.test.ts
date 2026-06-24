@@ -5,7 +5,8 @@
  *   1. `buildAutonomyBootLog(agents)` — PURE: for each configured agent, build
  *      the INFO record the boot banner logs (resolved profile, enabled caps,
  *      the budget ceiling, the one field to change it = `autonomy.profile`, and
- *      the M1 `unattended`/`max` "available in M2/M3" notice when present). This
+ *      the per-profile notice when present — `max`'s "available in M3" clamp +
+ *      `unattended`'s Phase-217 mode-active notice). This
  *      is the load-bearing legible-boot evidence (promoted to INFO per CLAUDE.md;
  *      diagnosability must not require logLevel:debug).
  *   2. `buildNamespaceDownshiftFinding(preflight)` — PURE: on a FAILED
@@ -57,15 +58,20 @@ describe("buildAutonomyBootLog (PROFILE-03 — legible resolved-profile boot log
     expect(rec.capabilities).toEqual([]);
   });
 
-  it("PROFILE-03-L3: an unattended/max agent carries the M1 'available in M2/M3' notice (no silent over-grant)", () => {
+  it("PROFILE-03-L3: max carries the 'available in M3' clamp notice while unattended carries the Phase-217 mode-active notice (both surfaced at boot, no silent over-grant)", () => {
     const records = buildAutonomyBootLog(agentsWith({
       coord: { profile: "max" } as AutonomyConfig,
       runner: { profile: "unattended" } as AutonomyConfig,
     }));
     const byId = Object.fromEntries(records.map((r) => [r.agentId, r]));
+    // max still defers its sandbox-auto-allow surface to M3.
     expect(byId.coord!.m1Notice).toBeTruthy();
-    expect(byId.coord!.m1Notice).toMatch(/M2|M3/);
+    expect(byId.coord!.m1Notice).toMatch(/M3/);
+    // Phase 217: unattended's notice describes the now-ACTIVE never-hang behaviors,
+    // NOT a deferral — so the boot banner no longer mislabels it as M2/M3 work.
     expect(byId.runner!.m1Notice).toBeTruthy();
+    expect(byId.runner!.m1Notice).not.toMatch(/M2|M3/);
+    expect(byId.runner!.m1Notice).toMatch(/active/i);
   });
 
   it("PROFILE-03-L4: a standard agent has NO m1Notice (only the clamped profiles do)", () => {

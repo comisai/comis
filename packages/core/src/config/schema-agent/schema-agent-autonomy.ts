@@ -57,6 +57,15 @@ import {
 // off; nested into AutonomyConfigSchema below. Sibling leaf to keep this file
 // under the schema-agent file-size cap; re-exported via the schema-agent barrel.
 import { DurabilityConfigSchema } from "./schema-agent-autonomy-durability.js";
+// 217: the §22 mode vocabulary + the EVICT-02 fail-closed `resolveEffectiveMode`
+// primitive + the two `unattended`/`max` posture notices live in a sibling leaf
+// (file-size cap), exported to `@comis/core` via the schema-agent barrel.
+import {
+  AUTONOMY_MODES,
+  UNATTENDED_NOTICE,
+  MAX_M1_CLAMP_NOTICE,
+  type AutonomyMode,
+} from "./schema-agent-autonomy-mode.js";
 
 /**
  * The nine FLOOR-CONTAINED orchestration caps the `standard` profile turns on
@@ -118,9 +127,6 @@ const ALWAYS_ESCALATE_SET: ReadonlySet<AgentCapability> = new Set(ALWAYS_ESCALAT
 export const AUTONOMY_PROFILE_NAMES = ["assistant", "standard", "unattended", "max"] as const;
 export type AutonomyProfileName = (typeof AUTONOMY_PROFILE_NAMES)[number];
 
-export const AUTONOMY_MODES = ["default", "accept-reversible", "unattended", "max"] as const;
-export type AutonomyMode = (typeof AUTONOMY_MODES)[number];
-
 /**
  * The origin-channel message posture (§3.5/§8.4). `standard` resolves
  * `channels: ["origin"]` (own channel only) under an hourly quota; any NEW
@@ -177,6 +183,22 @@ export const AutonomyConfigSchema = z.strictObject({
   maxSelfSpawnRatePerMin: z.number().int().positive().optional(),
   /** Max agent-authored cron jobs (§8). */
   cronSelfMax: z.number().int().positive().optional(),
+  /**
+   * §8.8/§22.4 denial-limit circuit breaker (BREAK-01). The number of
+   * CONSECUTIVE structural-floor blocks within one root run after which the run
+   * aborts + escalates rather than retry-looping the budget away. A positive int
+   * (a 0 would disable the breaker — `z.number().int().positive()` rejects it so
+   * a malformed config fails CLOSED, T-217-01). Default 5; inert until a deny
+   * actually happens, so a default install is byte-identical.
+   */
+  denialBreakerN: z.number().int().positive().default(5),
+  /**
+   * §22.5 fail-closed evict posture (EVICT-02). When the per-run autonomy mode
+   * cannot be resolved (an unreachable/forged policy source), resolve to the
+   * `default` (SAFE) mode, never a broader profile. Default true — which IS the
+   * already-safe behavior, so a default install is byte-identical.
+   */
+  evictOnPolicyUnreachable: z.boolean().default(true),
   /**
    * Capability-lease posture (§4.2 / LEASE-02). The nested `lease` sub-block —
    * `autonomy.lease.{ leaseMaxTtlMin }` — bounds how long a renewable lease can
@@ -244,6 +266,10 @@ interface ProfileEntry {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate (BREAK-01, §8.8/§22.4). */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02, §22.5). */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02); the LeaseManager clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -252,7 +278,7 @@ interface ProfileEntry {
   readonly rate: AutonomyRateConfig;
   readonly spawn: AutonomySpawnConfig;
   readonly outward: AutonomyOutwardConfig;
-  /** Present for `unattended`/`max` in M1: the "available in M2/M3" clamp notice. */
+  /** Present for `unattended` (mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
 }
 
@@ -268,6 +294,11 @@ const STANDARD_GUARDS = {
   maxConcurrentSelfAgents: 4,
   maxSelfSpawnRatePerMin: 30,
   cronSelfMax: 8,
+  // 217 never-hang scalars (flow into all four profiles). Default-safe: the
+  // breaker is inert until a deny happens; evict fail-closed defaults to the
+  // already-safe `true`. Kept in SSOT lockstep with the schema `.default()`s.
+  denialBreakerN: 5,
+  evictOnPolicyUnreachable: true,
   // LEASE-02: a 1-hour renewal ceiling (Vault-style). Per-renew ttl is shorter
   // (e.g. 15 min) and renewable UP TO this max — so revoke stops renewal.
   leaseMaxTtlMin: 60,
@@ -278,22 +309,15 @@ const STANDARD_GUARDS = {
 const STANDARD_MESSAGE: AutonomyMessageConfig = { channels: ["origin"], maxPerHour: 20 };
 
 /**
- * The M1 clamp notice for `unattended`/`max`. Selecting either resolves to the
- * `standard`-equivalent cap set today; the extra surfaces (coordinator role,
- * durable runs, sandbox-auto-allow) land in M2/M3 (v8 §3.8 / ROADMAP criterion
- * 5). No silent over-grant.
- */
-const M1_CLAMP_NOTICE =
-  "Resolved to standard-equivalent in M1: the unattended/max surfaces (coordinator role, durable runs, max-mode sandbox auto-allow) are available in M2/M3.";
-
-/**
  * The resolved cap/guard sets for the four named profiles (v8 §3.8).
  *
  * - `assistant`: enabled off, zero orchestration surfaces.
  * - `standard` (default): enabled on, the nine floor-contained caps (incl.
  *   origin-channel `orch:message`), guards ON, origin-only message.
- * - `unattended` / `max`: CLAMPED to `standard`'s cap set in M1 + the notice
- *   (Pitfall 4 / §3.8 + ROADMAP criterion 5 — no larger cap set).
+ * - `unattended`: cap set standard-equivalent (no over-grant) + a notice that
+ *   the never-hang MODE behaviors (deny+escalate, denial breaker, evict) are
+ *   ACTIVE as of Phase 217 (UNATT/BREAK/EVICT). `max`: CLAMPED to `standard`'s
+ *   cap set in M1 + a clamp notice (sandbox auto-allow is M3 — no larger cap set).
  */
 export const AUTONOMY_PROFILES = {
   assistant: {
@@ -312,11 +336,11 @@ export const AUTONOMY_PROFILES = {
   },
   unattended: {
     enabled: true,
-    capabilities: STANDARD_FLOOR_CAPABILITIES, // CLAMP — no over-grant in M1
+    capabilities: STANDARD_FLOOR_CAPABILITIES, // cap set standard-equivalent (no over-grant); mode behaviors active (217)
     mode: "unattended",
     ...STANDARD_GUARDS,
     message: STANDARD_MESSAGE,
-    m1Notice: M1_CLAMP_NOTICE,
+    m1Notice: UNATTENDED_NOTICE,
   },
   max: {
     enabled: true,
@@ -324,7 +348,7 @@ export const AUTONOMY_PROFILES = {
     mode: "max",
     ...STANDARD_GUARDS,
     message: STANDARD_MESSAGE,
-    m1Notice: M1_CLAMP_NOTICE,
+    m1Notice: MAX_M1_CLAMP_NOTICE,
   },
 } as const satisfies Record<AutonomyProfileName, ProfileEntry>;
 
@@ -354,6 +378,10 @@ export interface ResolvedAutonomy {
   readonly maxConcurrentSelfAgents: number;
   readonly maxSelfSpawnRatePerMin: number;
   readonly cronSelfMax: number;
+  /** Consecutive floor-blocks → abort+escalate; the denial breaker (BREAK-01) reads this. */
+  readonly denialBreakerN: number;
+  /** Fail-closed to `default` on an unresolvable mode (EVICT-02); the chokepoint reads this. */
+  readonly evictOnPolicyUnreachable: boolean;
   /** Lease renewal ceiling in minutes (LEASE-02) — the LeaseManager (211-01) clamps renew to it. */
   readonly leaseMaxTtlMin: number;
   readonly message: AutonomyMessageConfig;
@@ -364,7 +392,7 @@ export interface ResolvedAutonomy {
   readonly rate: AutonomyRateConfig; // per-root/socket/churn (RATE-01)
   readonly spawn: AutonomySpawnConfig; // concurrent/depth/fanout (CEIL-01)
   readonly outward: AutonomyOutwardConfig; // origin/grants/volume (QUOTA-01/02)
-  /** Present for `unattended`/`max` in M1 — the clamp notice. */
+  /** Present for `unattended` (mode-active notice) + `max` (M3 clamp notice). */
   readonly m1Notice?: string;
 }
 
@@ -442,6 +470,9 @@ export function resolveAutonomy(cfg?: AutonomyConfig): ResolvedAutonomy {
     maxConcurrentSelfAgents: bounds.spawn.maxConcurrentSelfAgents,
     maxSelfSpawnRatePerMin: cfg?.maxSelfSpawnRatePerMin ?? base.maxSelfSpawnRatePerMin,
     cronSelfMax: cfg?.cronSelfMax ?? base.cronSelfMax,
+    denialBreakerN: cfg?.denialBreakerN ?? base.denialBreakerN,
+    // `??` (NOT `||`) so an explicit `false` is honored, not coerced to the default true.
+    evictOnPolicyUnreachable: cfg?.evictOnPolicyUnreachable ?? base.evictOnPolicyUnreachable,
     leaseMaxTtlMin: cfg?.lease?.leaseMaxTtlMin ?? base.leaseMaxTtlMin,
     message: cfg?.message ?? base.message,
     budget: bounds.budget,
