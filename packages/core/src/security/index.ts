@@ -46,6 +46,11 @@ export type { AgentCapability } from "./capability.js";
 // HANDLER_CAPABILITY_MAP — the single auditable method→capability source-of-truth (CAP-04)
 export { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
 export type { HandlerCapabilityClassification, GatedMethodName } from "./handler-capability-map.js";
+// SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02);
+// the @comis/infra lease audience imports it so whoami/status reach the agent's
+// own self-scoped reads with any valid lease.
+export { SELF_SCOPED_AGENT_READS } from "./handler-capability-map.js";
+export type { SelfScopedAgentRead } from "./handler-capability-map.js";
 
 // TOOL_CAPABILITY_MAP / TOOL_ROUTE_MAP — the single source for the tool.invoke
 // surface (gate + lease audience + SDK codegen) (Phase 212, DISPATCH/READ)

@@ -12,7 +12,9 @@
  */
 import { describe, it, expect } from "vitest";
 import { AGENT_CAPABILITIES, type AgentCapability } from "./capability.js";
-import { HANDLER_CAPABILITY_MAP } from "./handler-capability-map.js";
+import { HANDLER_CAPABILITY_MAP, SELF_SCOPED_AGENT_READS } from "./handler-capability-map.js";
+import { API_CONTRACTS_ORDERED } from "../api-contracts/index.js";
+import { SUB_AGENT_TOOL_DENYLIST } from "../domain/sub-agent-tool-denylist.js";
 
 const AGENT_CAP_SET = new Set<string>(AGENT_CAPABILITIES);
 
@@ -145,6 +147,51 @@ describe("HANDLER_CAPABILITY_MAP", () => {
     };
     for (const [method, cap] of Object.entries(gatedTable)) {
       expect(HANDLER_CAPABILITY_MAP[method], `missing/incorrect map entry for ${method}`).toBe(cap);
+    }
+  });
+});
+
+describe("SELF_SCOPED_AGENT_READS — the tight cap-socket audience exception (CLI-01/02, v8 §15)", () => {
+  // The audience exception (lease-manager.ts validate) lets ANY valid lease reach
+  // exactly these three ungated, self-`_agentId`-scoped, scopes:["rpc"] reads
+  // (whoami / status). The set is named + pinned here so a future typo adding a
+  // fourth — or moving one of these to a gated/admin classification — fails the
+  // build instead of silently widening the lease audience.
+
+  it("is exactly the three self-scoped reads {capabilities.introspect, session.status, session.list} (tightness pin)", () => {
+    expect([...SELF_SCOPED_AGENT_READS].sort()).toEqual(
+      ["capabilities.introspect", "session.list", "session.status"].sort(),
+    );
+    // length pin: adding a fourth member without intent fails here.
+    expect(SELF_SCOPED_AGENT_READS).toHaveLength(3);
+  });
+
+  it("classifies every member 'ungated' in HANDLER_CAPABILITY_MAP (NOT an orch:* cap, NOT deny-by-origin)", () => {
+    for (const method of SELF_SCOPED_AGENT_READS) {
+      expect(
+        HANDLER_CAPABILITY_MAP[method],
+        `${method} must stay ungated — the audience exception is for cap-less, non-admin reads only`,
+      ).toBe("ungated");
+    }
+  });
+
+  it("pins every member to scopes:['rpc'] per its API contract (not admin → not deny-by-origin → not destructive)", () => {
+    const scopeByMethod = new Map(API_CONTRACTS_ORDERED.map((c) => [c.method, c.scopes]));
+    for (const method of SELF_SCOPED_AGENT_READS) {
+      const scopes = scopeByMethod.get(method);
+      expect(scopes, `${method} must have a registered API contract`).toBeDefined();
+      expect(scopes, `${method} must be scopes:['rpc'] — an admin scope would be deny-by-origin`).toEqual([
+        "rpc",
+      ]);
+    }
+  });
+
+  it("never includes a SUB_AGENT_TOOL_DENYLIST'd name (the exception can never grant reach to a destructive tool)", () => {
+    for (const method of SELF_SCOPED_AGENT_READS) {
+      expect(
+        SUB_AGENT_TOOL_DENYLIST.has(method),
+        `${method} must not be denylisted`,
+      ).toBe(false);
     }
   });
 });
