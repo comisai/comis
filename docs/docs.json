@@ -118,7 +118,7 @@
       {
         "tab": "Reference",
         "groups": [
-          { "group": "CLI", "pages": ["reference/index", "reference/cli"] },
+          { "group": "CLI", "pages": ["reference/index", "reference/cli", "reference/comis-agent-cli"] },
           { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "reference/configuration/delivery-queue"] },
           { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions", "reference/known-limitations"] },
           { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting", "reference/acp-server"] }

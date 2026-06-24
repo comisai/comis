@@ -78,6 +78,10 @@ These options apply across multiple commands:
 
 ## Command Groups
 
+<Note>
+**Not to be confused with `comis-agent`.** Every command on this page is the operator `comis` CLI: it talks to the daemon over the **gateway** with an **operator token**, runs on the **host**, and includes **admin** commands (`secrets`, `config`, `tokens`, ...). There is a separate, very different CLI named [`comis-agent`](/reference/comis-agent-cli) that an **agent drives from inside its own jail** — it authenticates with a **capability lease** (not an operator token), rides the **loopback capability Unix socket** (not the gateway), has **no admin verbs**, and is **not on the host PATH**. If you are looking for what an autonomous agent can do from inside its sandbox, see the [`comis-agent` CLI reference](/reference/comis-agent-cli) — none of the operator commands below are reachable from there.
+</Note>
+
 ### `comis agent`
 
 Agent management commands for listing, creating, updating, and deleting agent configurations.
