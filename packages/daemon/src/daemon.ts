@@ -941,6 +941,7 @@ function buildRpcDispatchDeps(deps: {
     contextPipelineCollector: c.contextPipelineCollector, execGit: c.execGit,
     deliveryQueue: c.deliveryQueue, deliveryService: c.deliveryService,
     boundedAutonomy: c.capEndpointHandle?.boundedAutonomy, // Phase 213 QUOTA-01/02: the outward-quota service the message handlers gate on
+    leaseManager: c.capEndpointHandle?.leaseManager, // Phase 213-06 (REVOKE-01/03): the SAME cap-endpoint handle's LeaseManager gates lease.revoke + run.kill registration — omitting it (while boundedAutonomy WAS threaded) left REVOKE unreachable live ("Unknown RPC method" with the lease layer ACTIVE — VPS finding)
     channelPlugins: c.channelPlugins, healthMonitor: c.channelHealthMonitor,
     embeddingCacheStats: c.embeddingCacheStats, embeddingCircuitBreakerState: c.embeddingCircuitBreakerState,
     skillRegistries: c.skillRegistries, notificationService: c.notificationContext.notificationService,
@@ -2190,7 +2191,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
-    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle,
+    rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // Phase 211 JAIL-03 → PROFILE-05: degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
     // Phase 216 (HIGH-1 / NEW-4): durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),

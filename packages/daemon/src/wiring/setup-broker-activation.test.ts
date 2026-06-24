@@ -146,6 +146,11 @@ vi.mock("@comis/core", () => ({
   // This wiring test never exercises the cap set, so a zero-cap resolved shape
   // is enough to let the broker activation seam under test load and run.
   resolveAutonomy: vi.fn(() => ({ capabilities: [] })),
+  // PROFILE-05/JAIL-03: buildAutonomyToolWiring degrades the resolved posture via
+  // degradeAutonomy(resolved, {namespacePreflightOk}) before gating orchestrate.
+  // This seam never passes namespacePreflightOk (→ defaults true → no-op degrade),
+  // so a pass-through is faithful; the real fn is unit-tested in schema-agent-autonomy.test.ts.
+  degradeAutonomy: vi.fn((resolved: unknown) => ({ resolved })),
   sanitizeLogString: mockSanitizeLogString,
   systemNowMs: () => 1_700_000_000_000,
   safePath: (...segments: string[]) => segments.join("/"),

@@ -22,16 +22,28 @@
  * WebSocket / gateway client: that loopback gateway transport is unreachable
  * from the `--unshare-net` jail and is the very wire CLI-04 forbids.
  *
- * Globals rule (AGENTS.md §2.2): the two lease env vars are read through the
- * project's standard `systemGetEnv` seam from `@comis/core` (the same seam
- * `sandbox-exec-provider.ts`/`tool-provisioner.ts`/`chrome-detection.ts` use) —
- * never a raw ambient-global env read, so no lint suppression is needed.
+ * Globals rule (AGENTS.md §2.2): this runtime executes INSIDE the jail, which has
+ * NO `node_modules` — so it MUST be self-contained (node built-ins only). It
+ * therefore reads the two lease env vars via a local `process.env` accessor rather
+ * than importing `@comis/core`'s `systemGetEnv` seam: that import is unreachable
+ * from the jail and would make EVERY `comis_tools` import fail `ERR_MODULE_NOT_FOUND`
+ * (live VPS finding 2026-06-23 — guarded by `orchestrate-sdk-self-contained.test.ts`).
  *
  * @module
  */
 import * as net from "node:net";
 
-import { systemGetEnv, type ResultRef } from "@comis/core";
+// Type-only import — fully erased at build, so the emitted .js carries NO @comis/*
+// reference (the jail cannot resolve one). The value half (systemGetEnv) is inlined below.
+import type { ResultRef } from "@comis/core";
+
+/**
+ * Read an env var inside the jail. Inlined (not `@comis/core`'s `systemGetEnv`)
+ * because the jailed runtime has no `node_modules` to resolve it from; `process.env`
+ * is the only env access available here.
+ */
+// eslint-disable-next-line no-restricted-syntax -- jailed runtime: process.env is the sole env source (no @comis/core seam reachable in the jail)
+const systemGetEnv = (name: string): string | undefined => process.env[name];
 
 /** The method the runtime always sends — the one-route dispatch (v8 §6.2). */
 const TOOL_INVOKE_METHOD = "tool.invoke" as const;

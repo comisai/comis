@@ -128,6 +128,33 @@ describe("buildAutonomyToolWiring", () => {
     expect(mockCreateOrchestrateTool).not.toHaveBeenCalled();
   });
 
+  // PROFILE-05 / JAIL-03 / JAIL-05 (live defect 2026-06-23): when the host
+  // namespace preflight FAILED the jail cannot be built, so an autonomy-bearing
+  // agent must genuinely degrade to `assistant` HERE — no orchestrate tool, no
+  // lease mint — not merely in the boot WARN. Pre-patch, buildAutonomyToolWiring
+  // resolved the RAW (un-degraded) posture, so on a non-Linux host (or a Linux
+  // host without unprivileged userns) `orchestrate` was still offered and ran
+  // network-unrestricted under sandbox-exec (`allow network*`), contradicting the
+  // boot WARN's "autonomy surfaces are disabled (no silent unjailed fallback)".
+  it("yields NO orchestrate tool + NO lease mint when the host namespace preflight FAILED (jail unbuildable), even for a standard agent with a sandbox", () => {
+    const input = baseInput({ namespacePreflightOk: false });
+    const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);
+    const handle = input.capEndpointHandle!;
+    expect((handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease).not.toHaveBeenCalled();
+    expect((handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot).not.toHaveBeenCalled();
+    expect(orchestrateTool).toBeUndefined();
+    expect(mockCreateOrchestrateTool).not.toHaveBeenCalled();
+    expect(brokerSpawnEnv).toBeUndefined();
+  });
+
+  // The inverse guard: an explicit `namespacePreflightOk: true` (the Linux happy
+  // path) still offers the surface — the degrade is preflight-driven, not a blanket off.
+  it("DOES offer the orchestrate tool + mint when the namespace preflight PASSED", () => {
+    const { orchestrateTool } = buildAutonomyToolWiring(baseInput({ namespacePreflightOk: true }));
+    expect(orchestrateTool).toBeDefined();
+    expect(mockCreateOrchestrateTool).toHaveBeenCalledTimes(1);
+  });
+
   it("does NOT mint a lease for a non-autonomy (assistant) agent", () => {
     const input = baseInput({ agentConfig: { autonomy: { profile: "assistant" } } as never });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);

@@ -169,11 +169,11 @@ export interface ToolsDeps {
   imageGenProvider?: ImageGenerationPort;
   /** Video generation provider (undefined when disabled -- video_generate tool not registered; the registry descriptor is gated on this context signal). */
   videoGenProvider?: VideoGenerationPort;
-  /** JOB-04 (189): truthy when the async video stack (store + poller) is wired --
-   *  gates the video_status descriptor. Set on the SAME condition videoGenProvider uses. */
+  /** JOB-04 (189): truthy when the async video stack (store + poller) is wired — gates the video_status descriptor (SAME condition videoGenProvider uses). */
   videoStatusEnabled?: unknown;
   /** OS-level sandbox provider detected once at daemon startup. */
   sandboxProvider?: SandboxProvider;
+  namespacePreflightOk?: boolean; // PROFILE-05/JAIL-03: degrade orchestrate surface + lease mint when the host jail is unbuildable; absent ⇒ preflight-OK.
   /** Background task manager for background_tasks tool registration. */
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Per-session FileStateTracker pool. Required -- use createSessionTrackerRegistry(). */
@@ -572,7 +572,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // orchestrate tool minted ONCE (SAME env for exec+orchestrate; both off w/o autonomy/handle/sandbox).
       const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring({
         agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
-        brokerContext: deps.brokerContext, sandboxProvider,
+        brokerContext: deps.brokerContext, sandboxProvider, namespacePreflightOk: deps.namespacePreflightOk,
         sessionKey: options?.sessionKey, logger: skillsLogger, baseEnv: subprocessEnv,
       });
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.

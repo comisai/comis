@@ -102,6 +102,15 @@ const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   // exec the child) — the bootstrap role, like terminal-worker-main.ts. The
   // top-level main() is guarded to run ONLY as the entry script (importable in tests).
   /packages\/skills\/src\/tools\/builtin\/terminal-driver\/egress-relay-init\.ts$/,
+  // The in-jail orchestrate SDK runtime (Phase 212): copied INTO the bwrap jail
+  // and imported by every jailed orchestrate script. The jail has NO node_modules,
+  // so it cannot import @comis/core's `systemGetEnv` seam — it reads the daemon-
+  // injected COMIS_CAP_LEASE/COMIS_ORCH_SOCKET via `process.env` directly. Same
+  // jail-resident-leaf role as egress-relay-init.ts (and the web SPA api/ seam);
+  // its logic is otherwise pure node:net + JSON. A non-self-contained import here
+  // breaks EVERY orchestrate run (live VPS finding 2026-06-23), so the env read
+  // MUST stay inlined — guarded by orchestrate-sdk-self-contained.test.ts.
+  /packages\/skills\/src\/tools\/builtin\/orchestrate\/orchestrate-sdk-runtime\.ts$/,
   /packages\/[^/]+\/src\/__tests__\//,
   /test\//,
 ] as const;

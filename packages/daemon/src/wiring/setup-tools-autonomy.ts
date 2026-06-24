@@ -24,6 +24,7 @@
  */
 import {
   resolveAutonomy,
+  degradeAutonomy,
   systemNowMs,
   formatSessionKey,
   type ComisLogger,
@@ -60,6 +61,17 @@ export interface AutonomyToolInputs {
   readonly brokerContext: BrokerContextDeps | undefined;
   /** The OS sandbox provider — REQUIRED for the orchestrate jail; absent ⇒ no orchestrate tool. */
   readonly sandboxProvider: SandboxProvider | undefined;
+  /**
+   * PROFILE-05/JAIL-03/JAIL-05 — the host namespace preflight RESULT (the
+   * unprivileged-userns + `--unshare-net` probe `constructCapabilityLayer` runs
+   * once at boot). `false` means the jail CANNOT be built on this host, so the
+   * autonomy surface must genuinely degrade to `assistant` here (no orchestrate
+   * tool, no lease mint) — matching the boot WARN's "surfaces disabled (no silent
+   * unjailed fallback)" claim. Defaults to `true` when absent (the daemon always
+   * threads the real probe; an omitted value is the Linux happy path) so this is a
+   * pure tighten — never a new disable.
+   */
+  readonly namespacePreflightOk?: boolean;
   /** The session key the lease is minted for, or undefined (heartbeat/cron). */
   readonly sessionKey: SessionKey | undefined;
   /**
@@ -97,7 +109,19 @@ export interface AutonomyToolWiring {
  * honest-degrade is the second line behind the sandbox gate.
  */
 export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyToolWiring {
-  const resolved = resolveAutonomy(input.agentConfig?.autonomy);
+  // PROFILE-05 / JAIL-03 / JAIL-05 — the honest-degrade must gate the SURFACE, not
+  // just the boot log. When the host namespace preflight failed the jail cannot be
+  // built, so `degradeAutonomy` downshifts the resolved posture to `assistant`
+  // (enabled:false, zero caps) HERE — the SAME shipped single-source-of-truth the
+  // boot WARN + the `doctor` finding already consume. Without this the orchestrate
+  // tool was still assembled and the per-spawn lease still minted on a host that
+  // cannot jail (e.g. macOS, where the child runs network-unrestricted under
+  // sandbox-exec), directly contradicting the boot WARN's "surfaces disabled (no
+  // silent unjailed fallback)". Defaults to preflight-OK when absent (the Linux
+  // happy path / older callers) so this is a pure tighten, never a new disable.
+  const resolved = degradeAutonomy(resolveAutonomy(input.agentConfig?.autonomy), {
+    namespacePreflightOk: input.namespacePreflightOk ?? true,
+  }).resolved;
   const handle = input.capEndpointHandle;
   // Tree-stable rootRunId (Phase 213 — RESEARCH Pitfall 1): INHERIT the caller's
   // id when this assembly is a sub-agent (so the whole tree shares one id the
