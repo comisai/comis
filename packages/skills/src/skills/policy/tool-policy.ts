@@ -63,6 +63,38 @@ export const TOOL_PROFILES: Record<string, string[]> = {
     "heartbeat_manage",
   ],
   /**
+   * COORD-01 lean-coordinator surface (§23.10). The tool set a long-running lead
+   * with `autonomy.role: coordinator` is narrowed to (resolveAutonomy expands the
+   * role into `coordinatorToolGroups: ["coordinator"]`, applied by setup-tools).
+   * NARROWS only: this is the orchestration set + the orch:read drill-in tools
+   * (so the lead can read a child ResultRef — SUMREF-03) + `obs_query` (the obs
+   * surface as a tool NAME, not a capability — AGENT_CAPABILITIES is unchanged).
+   * Deliberately EXCLUDES the heavy-work tools (no exec/edit/write/browser):
+   * heavy/long/high-volume work always routes to a fresh-window child, never
+   * inline (COORD-02).
+   */
+  coordinator: [
+    // orchestration (the group:sessions members + scheduling + messaging)
+    "sessions_spawn",
+    "pipeline",
+    "sessions_list",
+    "sessions_history",
+    "session_status",
+    "session_search",
+    "cron",
+    "message",
+    // orch:read drill-in — read a child ResultRef without ingesting it (SUMREF-03)
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "memory_search",
+    "memory_get",
+    "extract_document",
+    // observability surface (tool NAME only; no obs:read capability is created)
+    "obs_query",
+  ],
+  /**
    * Conservative presets for non-interactive operations.
    *
    * Opt-in via `toolPolicy: { profile: "cron-minimal" }` on a `CronJob` or
