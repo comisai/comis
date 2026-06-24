@@ -125,6 +125,13 @@ export interface BridgeMetricsState {
   // Budget trajectory warning: tracks whether the approaching-exhaustion warning has been emitted
   budgetWarningEmitted: boolean;
 
+  // KEYING-01: tracks whether THIS turn has already re-anchored the per-root
+  // wall-clock/token limbs (evictRootIfIdle). State is per-execution (per turn), so
+  // the flag fires the re-anchor exactly once per turn — at the turn's first
+  // per-root reserve — so an interactive session root measures each turn's
+  // wall-clock from that turn's start, not the whole conversation's age.
+  perRootReanchored: boolean;
+
   // Diagnostic: SHA-256 hashes of thinking blocks captured at each
   // assistant turn_end, keyed by responseId. Used to detect cross-turn
   // mutation of signed thinking blocks (logs only -- never alters flow).
@@ -246,6 +253,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     sessionCumulativeCacheSavedUsd: 0,
     totalThinkingTokens: 0,
     budgetWarningEmitted: false,
+    perRootReanchored: false,
     thinkingBlockHashes: new Map(),
     thinkingBlockCanonical: new Map(),
     // per-execute diagnostic counters
