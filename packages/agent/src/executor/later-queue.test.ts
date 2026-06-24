@@ -148,4 +148,61 @@ describe("createLaterQueue (STREAM-02 'later'-priority between-turns queue)", ()
     expect(announcement.id).toBe("inline");
     expect(announcement.result).toBe("now-result");
   });
+
+  it("WR-03: a throwing 'now' item is ISOLATED — enqueue does not throw, and the failure is announced", () => {
+    const timers = createFakeTimers(0);
+    const clock = createFakeClock(0);
+    const onComplete = vi.fn();
+    const queue = createLaterQueue({ timers, clock, onComplete });
+
+    const boom = new Error("now-boom");
+    // run() throwing must NOT propagate out of enqueue into the executor loop.
+    expect(() =>
+      queue.enqueue({ id: "bad-now", priority: "now", run: () => { throw boom; } }),
+    ).not.toThrow();
+    // The failure is surfaced through the completion channel (announce-on-done),
+    // so a throwing item is distinguishable from one that never ran.
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const c = onComplete.mock.calls[0]![0] as { id: string; result?: unknown; error?: unknown };
+    expect(c.id).toBe("bad-now");
+    expect(c.error).toBe(boom);
+    expect(c.result).toBeUndefined();
+  });
+
+  it("WR-03: a throwing 'later' item is ISOLATED — the timer does not throw, and a completion (with error) is still announced", () => {
+    const timers = createFakeTimers(0);
+    const clock = createFakeClock(0);
+    const onComplete = vi.fn();
+    const queue = createLaterQueue({ timers, clock, onComplete });
+
+    const boom = new Error("later-boom");
+    queue.enqueue({ id: "bad-later", priority: "later", run: () => { throw boom; } });
+    // Pending — nothing announced yet.
+    expect(onComplete).not.toHaveBeenCalled();
+
+    // The deferred fire runs the throwing work. Pre-fix, the throw happens BEFORE
+    // announce() so the parent is NEVER notified (the item silently strands). The
+    // fix wraps run() so a completion carrying the error is announced instead.
+    timers.advance(60_000);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const c = onComplete.mock.calls[0]![0] as { id: string; result?: unknown; error?: unknown };
+    expect(c.id).toBe("bad-later");
+    expect(c.error).toBe(boom);
+    expect(c.result).toBeUndefined();
+    // The pending entry is cleared even though the work threw (no leak).
+    expect(queue.pendingCount()).toBe(0);
+  });
+
+  it("WR-03: a successful item still announces a result with NO error (the error channel is optional)", () => {
+    const timers = createFakeTimers(0);
+    const clock = createFakeClock(0);
+    const onComplete = vi.fn();
+    const queue = createLaterQueue({ timers, clock, onComplete });
+
+    queue.enqueue({ id: "ok", priority: "now", run: () => "ok-result" });
+    const c = onComplete.mock.calls[0]![0] as { id: string; result?: unknown; error?: unknown };
+    expect(c.id).toBe("ok");
+    expect(c.result).toBe("ok-result");
+    expect(c.error).toBeUndefined();
+  });
 });
