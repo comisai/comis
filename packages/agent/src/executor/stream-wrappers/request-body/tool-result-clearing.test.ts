@@ -12,6 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import { clearStaleThinkingBlocks, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./index.js";
+import { clearStaleToolResults, COMPACTABLE_TOOL_NAMES } from "./tool-result-clearing.js";
 
 /** A representative inline-recall block as envelope-wrapper prepends it (hybrid-memory-injector template). */
 const recall = (content: string) =>
@@ -527,5 +528,108 @@ describe("stripReplayReasoningFromResponsesInput (pure) — cache #C5-OAI (reaso
     ];
     expect(stripReplayReasoningFromResponsesInput(input)).toBe(0);
     expect(input.length).toBe(2);
+  });
+});
+
+describe("clearStaleToolResults COMPACTABLE_TOOL_NAMES (pure) — EFF-02 emitted-name fix", () => {
+  // The latent bug (221-RESEARCH Pitfall 1): COMPACTABLE_TOOL_NAMES listed provider/SDK
+  // names (file_read/glob/exec_tool/list_dir/search_files) that match NONE of Comis's
+  // emitted builtin tool names. The emitted names (from the builtin registrations) are
+  // read / grep / find / ls / exec / web_fetch / web_search — so the heaviest results
+  // (read/find/ls/exec) were NEVER cleared. EFF-02 fixes the set to the emitted names.
+  //
+  // INVARIANT (EFF-02, T-221-EFF-01): clearStaleToolResults only ever rewrites role:"tool"
+  // results whose tool_use_id maps to a COMPACTABLE name — NEVER user / assistant / thinking
+  // / recalled-memory content, and never a non-compactable tool result (edit/write/message).
+
+  const STALE = "X".repeat(1500); // > MICROCOMPACT_MIN_CONTENT_LENGTH (1000)
+  const PLACEHOLDER = "[Stale tool result cleared: idle > TTL]";
+
+  /**
+   * Build a message array with a stale tool_result for `toolName` at an index OUTSIDE
+   * the keepWindow, plus a recent (kept) grep result so keepWindow=1 exposes the target.
+   * Layout: [user, assistant(tool_use target), tool(target result), user,
+   *          assistant(tool_use recent grep), tool(recent grep result)]
+   * keepWindow=1 protects only the last tool_result (the recent grep), exposing the target.
+   */
+  function msgsWithStaleResult(toolName: string, toolUseId: string): Array<Record<string, unknown>> {
+    return [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: toolUseId, name: toolName, input: {} }] },
+      { role: "tool", tool_use_id: toolUseId, content: [{ type: "text", text: STALE }] },
+      { role: "user", content: [{ type: "text", text: "More" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "recent_grep", name: "grep", input: {} }] },
+      { role: "tool", tool_use_id: "recent_grep", content: [{ type: "text", text: "D".repeat(1500) }] },
+    ];
+  }
+
+  // Each of these FAILS on the pre-patch set (read/find/ls/exec are absent → not cleared).
+  for (const name of ["read", "find", "ls", "exec"]) {
+    it(`clears a stale ${name} tool_result over the compactable window`, () => {
+      const messages = msgsWithStaleResult(name, `tu_${name}`);
+      const cleared = clearStaleToolResults(messages, 1, -1);
+      expect(cleared).toBeGreaterThanOrEqual(1);
+      // The stale target result (idx 2) is replaced by the byte-stable placeholder.
+      expect((messages[2]!.content as any[])[0].text).toBe(PLACEHOLDER);
+      // The recent grep result (idx 5, within keepWindow) is preserved.
+      expect((messages[5]!.content as any[])[0].text).toBe("D".repeat(1500));
+    });
+  }
+
+  it("grep / web_fetch / web_search remain compactable (the names that already matched)", () => {
+    for (const name of ["grep", "web_fetch", "web_search"]) {
+      const messages = msgsWithStaleResult(name, `tu_${name}`);
+      const cleared = clearStaleToolResults(messages, 1, -1);
+      expect(cleared).toBeGreaterThanOrEqual(1);
+      expect((messages[2]!.content as any[])[0].text).toBe(PLACEHOLDER);
+    }
+  });
+
+  it("COMPACTABLE_TOOL_NAMES is exactly the seven emitted names (dead names removed)", () => {
+    expect([...COMPACTABLE_TOOL_NAMES].sort()).toEqual(
+      ["exec", "find", "grep", "ls", "read", "web_fetch", "web_search"],
+    );
+    // The dead provider/SDK names must be gone (no alias, no backward-compat).
+    for (const dead of ["glob", "file_read", "exec_tool", "list_dir", "search_files"]) {
+      expect(COMPACTABLE_TOOL_NAMES.has(dead)).toBe(false);
+    }
+  });
+
+  it("INVARIANT: never clears a NON-compactable tool result (edit/write/message)", () => {
+    for (const name of ["edit", "write", "message"]) {
+      const messages = msgsWithStaleResult(name, `tu_${name}`);
+      const cleared = clearStaleToolResults(messages, 1, -1);
+      // Only the recent grep is in keepWindow; the non-compactable target stays untouched.
+      expect((messages[2]!.content as any[])[0].text).toBe(STALE);
+      // (cleared counts only the kept-window-excluded compactable results — here, none.)
+      expect(cleared).toBe(0);
+    }
+  });
+
+  it("INVARIANT: never clears user / assistant / thinking content", () => {
+    const bigUser = "U".repeat(2000);
+    const bigAssistantText = "A".repeat(2000);
+    const bigThinking = "T".repeat(2000);
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: bigUser }] },                                  // idx 0
+      { role: "assistant", content: [
+        { type: "thinking", thinking: bigThinking },
+        { type: "text", text: bigAssistantText },
+        { type: "tool_use", id: "tu_read", name: "read", input: {} },
+      ] },                                                                                            // idx 1
+      { role: "tool", tool_use_id: "tu_read", content: [{ type: "text", text: STALE }] },              // idx 2 (compactable, cleared)
+      { role: "user", content: [{ type: "text", text: "More" }] },                                    // idx 3
+      { role: "assistant", content: [{ type: "tool_use", id: "recent_grep", name: "grep", input: {} }] }, // idx 4
+      { role: "tool", tool_use_id: "recent_grep", content: [{ type: "text", text: "D".repeat(1500) }] }, // idx 5 (kept)
+    ];
+    clearStaleToolResults(messages, 1, -1);
+    // User content untouched.
+    expect((messages[0]!.content as any[])[0].text).toBe(bigUser);
+    // Assistant text + thinking untouched (clearStaleToolResults touches role:"tool" only).
+    const a = messages[1]!.content as any[];
+    expect(a.find(b => b.type === "thinking").thinking).toBe(bigThinking);
+    expect(a.find(b => b.type === "text").text).toBe(bigAssistantText);
+    // The read tool_result WAS cleared (it is compactable + outside the window).
+    expect((messages[2]!.content as any[])[0].text).toBe(PLACEHOLDER);
   });
 });
