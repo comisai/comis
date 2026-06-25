@@ -1,4 +1,4 @@
-# 03 — OBSERVABILITY: ground truth · dual oracle · logging · troubleshooting · the two improvement loops
+# 03 — OBSERVABILITY: ground truth · dual oracle · logging · troubleshooting · the three improvement loops (run UNPROMPTED)
 
 > The agent's chat reply is the **least trustworthy** oracle — it refuses, confabulates, or doesn't paste
 > results. Every verdict is read from ground truth. And every diagnosis friction is itself an issue to fix
@@ -85,6 +85,17 @@ The emulator is the **primary instrument**; leave it better than you found it. T
 **Extension seams** (test-only, under `test/live/`; **never** a `@comis/*` edge or `bundledDependencies`): add a Bot API method in `emulators/telegram/tg-emulator.ts`; an inbound shape via a grammy-typed builder in `tg-payloads.ts`; a control verb in `harness/control-api.ts` + `bin/chan.ts`; a fault via `fail(method, error, {once})`; an oracle field in `assert/channel-trace.ts`; a whole new channel via a wire backend on the shared `http/ws/tcp` base + a one-line `startRig({channel})` registration. **A silent stub is the worst outcome** — an unimplemented verb must `log()` what's missing and exit/throw an honest reason. Full architecture + the fault→fallback matrix: `.planning/live-tests/telegram-emulator-harness-design.md` §3, §3A, §4.1–4.7.
 
 **Litmus:** for every capability the rig couldn't reach, "next time `tg <verb>` drives it and `tg history`/`mirror`/`db` observes it, with no workaround" — proven, not asserted.
+
+## The FRAMEWORK-improvement loop (mandatory — improve the KIT itself, unprompted)
+
+You are not just a *user* of this kit — while you drive, you are its **maintainer**. The kit is gitignored and drifts; the moment a KIT friction costs you a cycle, fix the kit **in place** (docs/scripts need no test-first) instead of working around it and moving on:
+- you hand-wrote a one-off helper, or a `scripts/` helper drifted/errored/mis-parsed an arg → fold the fix into `scripts/` (the canonical births: `gate-probe.mjs` when a cautious model refused every jail probe; `media-drive.mjs`'s path-or-base64 auto-detect after an `ENAMETOOLONG`);
+- a driving gotcha cost a cycle (a **stale global CLI masking the deployed build**, a URL-extractor quirk, a DNS-rebind trick, a `db.mjs` column guess, an async-`Result` mis-call that looked like a false-fail) → record it in the relevant kit doc + add a **Phase-0 check** so it never bites again (e.g. `comis --version` vs the deployed SHA);
+- a doc's guidance was wrong/insufficient for the current model or build → rewrite it (e.g. "benign-framed agent probe" → "prove the gate via the deployed dist/kernel, the model now refuses everything").
+
+**Litmus:** the next runner hits this friction *once-documented*, never re-discovered.
+
+> **All three loops (obs · emulator · framework) run the SAME way: UNPROMPTED, default-implement.** Close the gap the moment you realise it, or in the STEP 6 sweep — never wait to be told. A contained improvement is *implemented*; only the structural/security-sensitive ones are *documented* (`02-DISCIPLINE.md §fix-now-vs-document`). If the user has to ask you to make an improvement you already identified, the loop failed.
 
 ## Recurring defect CLASSES to watch for (from FINDINGS — these bite repeatedly)
 - **Built-but-not-wired** (the #1 class): a resolver/handler/fix exists + passes its unit test, but the live call-site/credential/config/composition-root path doesn't reach it. *Only live driving + a wiring-guard arch test catch it.* (e.g. M1 `lease.revoke` unregistered because `leaseManager` wasn't threaded into the dispatch deps; the keyless-summarizer credential bypass.)

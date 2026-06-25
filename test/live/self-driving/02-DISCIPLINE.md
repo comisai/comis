@@ -40,6 +40,8 @@
 
 **Document-as-finding is the EXCEPTION, not an escape hatch.** Most COMIS-FAILs are contained → fix-now. If you catch yourself documenting failure after failure just to keep driving, you are doing the #1 deviation — stop and fix. A documented finding is **never** a silent drop — it enters `runs/FINDINGS-LEDGER.md`, is re-checked at the next run's STEP 1, and it counts as *closing* the open COMIS-FAIL (so the ≤1-open invariant holds and you may proceed).
 
+**This default-implement rule covers self-improvement too (non-negotiable #5).** The same "implement unless structural/security-sensitive" bar applies to the observability / emulator / framework improvements you surface (`03-OBSERVABILITY.md`) — close them UNPROMPTED, on the fly or in the STEP 6 sweep. Waiting for the user to ask you to implement an improvement you already identified is the same escape-hatch drift, not deference.
+
 **Honest-exit makes the loop trustworthy.** `scripts/drive.mjs` returns an honest empty (`[NO SUBSTANTIVE ANSWER]`) on a no-reply, never a fabricated success. Branch your score on the captured ground truth + the daemon log, not on prose.
 
 ---
