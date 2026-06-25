@@ -5846,7 +5846,10 @@ describe("session-index emit sites", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_end 'Tool not found' enrichment", () => {
-    it("'Tool mcp_manage not found' with activeToolGroups=['coding'] enriches errorText with supervisor re-spawn hint", () => {
+    it("'Tool obs_query not found' with activeToolGroups=['coding'] enriches errorText with supervisor re-spawn hint", () => {
+      // obs_query is in the 'supervisor' profile only — NOT in 'coding' and NOT
+      // denylisted (mcp_manage was moved to SUB_AGENT_TOOL_DENYLIST by #254, so it
+      // no longer classifies as outside_profile — it is now 'denied to ALL sub-agents').
       // Cast via unknown since activeToolGroups is an optional extension to PiEventBridgeDeps.
       const enrichedDeps = createMockDeps({
         activeToolGroups: ["coding"],
@@ -5854,13 +5857,13 @@ describe("session-index emit sites", () => {
       const { listener } = createPiEventBridge(enrichedDeps);
 
       // Use { message: "..." } shape so extractErrorText returns the raw SDK text
-      const result = { message: "Tool mcp_manage not found" };
-      listener(makeToolExecutionEndEvent("mcp_manage", "tc-suba02-a", true, result) as any);
+      const result = { message: "Tool obs_query not found" };
+      listener(makeToolExecutionEndEvent("obs_query", "tc-suba02-a", true, result) as any);
 
       // The warn log must include errorText containing "supervisor" (re-spawn hint)
       const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
       const toolFailWarn = warnCalls.find(
-        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp_manage",
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "obs_query",
       );
       expect(toolFailWarn).toBeDefined();
       expect(toolFailWarn![0].errorText).toContain("supervisor");

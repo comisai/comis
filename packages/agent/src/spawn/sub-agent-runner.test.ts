@@ -3995,9 +3995,11 @@ describe("spawn required_tools gate", () => {
     vi.useRealTimers();
   });
 
-  it("spawn with requiredTools=['mcp_manage'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {
-    // 'mcp_manage' is in the 'supervisor' profile only — not in 'coding'.
-    // The daemon provides reachableToolNames (coding set); gate detects mcp_manage is absent.
+  it("spawn with requiredTools=['obs_query'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {
+    // 'obs_query' is in the 'supervisor' profile only — not in 'coding' — and is NOT
+    // denylisted (mcp_manage was moved to SUB_AGENT_TOOL_DENYLIST by #254, so it now
+    // classifies as 'denylist', not 'outside_profile' — see the gateway case below).
+    // The daemon provides reachableToolNames (coding set); gate detects obs_query is absent.
     const runner = createSubAgentRunner(deps);
     const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
 
@@ -4007,7 +4009,7 @@ describe("spawn required_tools gate", () => {
         task: "test",
         agentId: "default",
         toolGroups: ["coding"],
-        requiredTools: ["mcp_manage"],
+        requiredTools: ["obs_query"],
         reachableToolNames: codingSet,
       });
     } catch (e) {
@@ -4017,7 +4019,7 @@ describe("spawn required_tools gate", () => {
     expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
     const err = caughtErr as RequiredToolsUnreachableError;
     expect(err.unreachableTools).toHaveLength(1);
-    expect(err.unreachableTools[0]!.toolName).toBe("mcp_manage");
+    expect(err.unreachableTools[0]!.toolName).toBe("obs_query");
     expect(err.unreachableTools[0]!.reason).toBe("outside_profile");
     expect(err.unreachableTools[0]!.hint).toContain("supervisor");
 
