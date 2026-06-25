@@ -2417,6 +2417,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "setupSkillBundles",
       "buildSkillRegistriesForBundles",
       "SetupSkillBundlesDeps",
+      // Resolve-seam learned-skill promote/demote loop body + the in-process
+      // decay-aware trend tracker, surfaced through the daemon barrel so the
+      // Phase-222 MODEL-04 source-agnostic characterization
+      // (test/integration/mental-model-readonly-lifecycle.test.ts) drives the
+      // REAL transition path (a hand-authored no-synthesis mental_models doc
+      // promotes via promoteByName exactly as a synthesized skill) rather than a
+      // store-only fallback. Two test-driven exports, the sanctioned
+      // skill-bundle-install pattern; both are name-keyed + (tenant, agent)-scoped
+      // (no new data path / secret / cross-tenant widening). The
+      // public-export-consumers AST walker excludes test/**, so the orphan list is
+      // the canonical place to record the planned test consumer.
+      "applySkillOutcomeTransitions",
+      "createSkillTrendTracker",
       // Extracted single-writer persistMcpServers, surfaced through the
       // daemon barrel as the rule-of-three fulfillment. Direct in-repo
       // consumers live in packages/daemon/src/ leaf modules
