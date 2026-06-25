@@ -324,6 +324,35 @@ describe("createMemoryHandlers - memory management", () => {
       expect(result.failed).toBe(1);
       expect(result.total).toBe(3);
     });
+
+    it("does NOT phantom-count a not-found id as deleted (real adapter returns ok:true,value:false)", async () => {
+      // Live regression (admin-manage-tools live-test 2026-06-25, H-NOFAB oracle):
+      // the REAL sqlite adapter returns ok(result.changes > 0) — a not-found id is
+      // { ok: true, value: false }, NOT { ok: false }. The handler must count `deleted`
+      // off result.VALUE (a row was actually removed), never result.OK (the DELETE
+      // statement ran without error). The pre-existing "partial failures" test above
+      // modelled not-found as { ok: false } (an ERROR result), so it NEVER exercised
+      // the real not-found path — and the bug shipped: live `memory_manage delete
+      // ['nonexistent-id-99999']` returned `{ deleted: 1, failed: 0, total: 1 }`
+      // (phantom — exactly the false-count class H-NOFAB guards).
+      const deps = makeDeps({
+        memoryAdapter: {
+          delete: vi.fn(async (id: string) =>
+            id === "real-id" ? { ok: true, value: true } : { ok: true, value: false },
+          ),
+        } as never,
+      });
+      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
+
+      const result = (await handlers["memory.delete"]!({
+        ids: ["real-id", "nonexistent-id"],
+        _trustLevel: "admin",
+      })) as { deleted: number; failed: number; total: number };
+
+      expect(result.deleted).toBe(1); // ONLY the row actually removed — not a phantom 2
+      expect(result.failed).toBe(1); // the not-found id is NOT a deletion
+      expect(result.total).toBe(2);
+    });
   });
 
   // -------------------------------------------------------------------------

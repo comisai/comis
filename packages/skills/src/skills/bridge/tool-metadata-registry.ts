@@ -351,15 +351,24 @@ export function registerAllToolMetadata(): void {
   });
 
   registerToolMetadata("memory_manage", {
-    validActions: ["stats", "browse", "delete", "flush", "export"],
+    // pin/unpin + the `id` key were added in #163 (memory pinning) but this
+    // metadata entry was not updated — the schema-validator then rejected the
+    // agent's `memory_manage({action:"pin", id})` with "[invalid_value] invalid
+    // action 'pin' ... unknown key 'id'" BEFORE execute(), despite the tool +
+    // memory.pin RPC fully supporting it (admin-manage-tools live-test 2026-06-25).
+    // Kept in lockstep with the tool's TypeBox action enum + `id` param by the
+    // schema↔metadata parity test in tool-metadata-registry.test.ts.
+    validActions: ["stats", "browse", "delete", "flush", "export", "pin", "unpin"],
     validKeys: [
-      "action", "tenant_id", "agent_id", "ids", "offset", "limit", "sort",
+      "action", "tenant_id", "agent_id", "ids", "id", "offset", "limit", "sort",
       "memory_type", "trust_level", "tags",
     ],
-    // tenant_id / agent_id are scope filters with defaults; only ids is
-    // strictly required (for delete).
+    // tenant_id / agent_id are scope filters with defaults; ids is required for
+    // delete; id is required for pin/unpin (the single-entry pinning actions).
     requiredByAction: {
       delete: ["ids"],
+      pin: ["id"],
+      unpin: ["id"],
     },
   });
 

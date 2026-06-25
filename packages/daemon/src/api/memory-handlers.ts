@@ -345,7 +345,14 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       let failCount = 0;
       for (const id of ids) {
         const result = await deps.memoryAdapter.delete(id, tenantId);
-        if (result.ok) {
+        // Count `deleted` from the ACTUAL row-removed signal (result.value:
+        // the adapter returns ok(result.changes > 0)), NOT result.ok (which is
+        // merely "the DELETE statement ran without error"). A not-found id is
+        // ok:true/value:false — it removed nothing, so it must NOT be counted as
+        // deleted (the phantom `deleted:1` class — H-NOFAB, admin-manage-tools
+        // live-test 2026-06-25). `failed` therefore covers both real errors
+        // (!result.ok) and not-found ids (ok:true/value:false): deleted+failed===total.
+        if (result.ok && result.value) {
           successCount++;
         } else {
           failCount++;

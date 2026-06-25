@@ -2,7 +2,7 @@
 /**
  * Memory management tool: multi-action tool for memory lifecycle management.
  *
- * Supports 5 actions: stats, browse, delete, flush, export.
+ * Supports 7 actions: stats, browse, delete, flush, export, pin, unpin.
  * Destructive actions (delete, flush) require approval via the ApprovalGate.
  * All actions enforce admin trust level via createTrustGuard.
  * Delegates to memory.* RPC handlers via rpcCall.

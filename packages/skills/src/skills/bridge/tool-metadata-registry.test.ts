@@ -8,6 +8,7 @@ import { wrapWithMetadataEnforcement } from "./tool-metadata-enforcement.js";
 import { wrapWithAudit } from "./tool-audit.js";
 import { validateToolEntry } from "./schema-validator.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
+import { createMemoryManageTool } from "../../platform-tools/tools/memory-manage-tool.js";
 
 // ---------------------------------------------------------------------------
 // Ensure metadata is registered before all tests
@@ -56,6 +57,43 @@ describe("tool-metadata-registry -- registry count", () => {
     // surface over the LCD store.
     const all = getAllToolMetadata();
     expect(all.size).toBe(64);
+  });
+});
+
+// ===========================================================================
+// memory_manage schema↔metadata parity (admin-manage-tools live-test 2026-06-25)
+//
+// The metadata-registry entry (validActions/validKeys/requiredByAction) is a SECOND
+// source of truth, consumed by schema-validator.validateToolEntry BEFORE the tool's
+// own execute() runs. memory_manage's entry drifted from the tool's TypeBox schema:
+// it listed only the pre-#163 5 actions (stats/browse/delete/flush/export — NO
+// pin/unpin) and omitted the `id` key. Live shape: the admin agent's
+// `memory_manage({action:"pin", id})` was rejected
+//   "[invalid_value] invalid action 'pin'. valid actions: stats, browse, delete,
+//    flush, export. unknown key 'id' -- did you mean 'ids'?"
+// BEFORE execute() — even though the tool's schema, VALID_ACTIONS, and the memory.pin
+// RPC fully support pin/unpin/id (proven live: direct memory.pin → {pinned,found}).
+// These guards tie the metadata back to the schema so the drift can't recur.
+// ===========================================================================
+
+describe("tool-metadata-registry -- memory_manage schema↔metadata parity", () => {
+  it("metadata validActions == the tool's actual schema action enum (no drift)", () => {
+    const tool = createMemoryManageTool((() => {}) as never);
+    // memory_manage's `action` is a Type.Union([Type.Literal(...)]) → schema.anyOf[].const.
+    const actionSchema = (tool.parameters as unknown as { properties: { action: { anyOf?: { const: string }[] } } })
+      .properties.action;
+    const schemaActions = (actionSchema.anyOf ?? []).map((s) => s.const).sort();
+    expect(schemaActions.length).toBeGreaterThan(0); // guard the extraction itself
+    const meta = getToolMetadata("memory_manage");
+    expect([...(meta?.validActions ?? [])].sort()).toEqual(schemaActions);
+  });
+
+  it("metadata covers the pin/unpin actions, the id key, and their required field", () => {
+    const meta = getToolMetadata("memory_manage");
+    expect(meta?.validActions).toEqual(expect.arrayContaining(["pin", "unpin"]));
+    expect(meta?.validKeys).toContain("id");
+    expect(meta?.requiredByAction?.pin).toEqual(["id"]);
+    expect(meta?.requiredByAction?.unpin).toEqual(["id"]);
   });
 });
 
@@ -889,7 +927,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
     ["sessions_manage",  ["delete", "reset", "export", "compact"], 3],
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
-    ["memory_manage",    ["stats", "browse", "delete", "flush", "export"], 10],
+    ["memory_manage",    ["stats", "browse", "delete", "flush", "export", "pin", "unpin"], 11],
     ["models_manage",    ["list", "test", "list_providers"], 3],
     ["heartbeat_manage", ["get", "update", "status", "trigger"], 21],
   ] as const)(
@@ -941,9 +979,9 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     expect(meta?.requiredByAction).toEqual({});
   });
 
-  it("memory_manage requires only ids for delete (scope filters have defaults)", () => {
+  it("memory_manage requires ids for delete and id for pin/unpin (scope filters have defaults)", () => {
     const meta = getToolMetadata("memory_manage");
-    expect(meta?.requiredByAction).toEqual({ delete: ["ids"] });
+    expect(meta?.requiredByAction).toEqual({ delete: ["ids"], pin: ["id"], unpin: ["id"] });
   });
 
   it("registry's validKeys covers every field listed in managed-sections schemaFragment.requiredByAction", async () => {
