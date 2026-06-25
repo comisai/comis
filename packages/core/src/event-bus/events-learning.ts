@@ -61,6 +61,30 @@ export interface LearningEvents {
   };
 
   /**
+   * OBS (hermes-usecases obs-loop 2026-06-25): the synthesis-run FUNNEL — counts
+   * ONLY, emitted DAEMON-SIDE alongside `learning:skill_synthesized` after
+   * `runSkillSynthesis` returns. Where `skill_synthesized.count` is only the
+   * ADMITTED tail, this carries the whole funnel so `comis explain` answers "why
+   * didn't a skill get learned" WITHOUT a DEBUG-log grep — the load-bearing field
+   * is `maxClusterCardinality` (a value of 1 = a single uncorroborated instance,
+   * so admission CORRECTLY refused; the same conservatism that defeats skill-
+   * poisoning). COUNT ONLY — a procedure body/script is a compile error here (the
+   * §2.7 / SEC-01 firewall). Bridged (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
+   */
+  "learning:skill_synthesis_funnel": {
+    agentId: string;
+    /** Candidate skills the LLM synthesized this run (count only). */
+    synthesized: number;
+    /** Synthesized candidates that cleared (or failed) validation (count only). */
+    validated: number;
+    /** Candidates admitted to the store (trust=learned) this run (count only). */
+    admitted: number;
+    /** The largest corroborating trajectory cluster (1 = single instance → not admissible). */
+    maxClusterCardinality: number;
+    timestamp: number;
+  };
+
+  /**
    * SKILL-09: a synthesized candidate cleared (or failed) validation. Emitted
    * DAEMON-SIDE after the validation adapter returns. The static/dynamic verdict
    * BOOLEANS + the `coverage` CLOSED-ENUM ONLY — never the offending field name, a

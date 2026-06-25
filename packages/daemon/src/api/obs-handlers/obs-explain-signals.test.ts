@@ -281,6 +281,26 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     expect(f!.httpStatus).toBe(200);
   });
 
+  // OBS gap (hermes-usecases live-test 2026-06-25): the trajectory tool.result event
+  // carries the failure REASON as `errorMessage` (translate-payload.ts), but the
+  // event-shape normalizer read `data.errorText` (a non-existent field on that event)
+  // → `errorPreview` was always empty, so `comis explain` showed NO reason and an
+  // operator had to grep the raw daemon log. The reason must reconstruct from the
+  // trajectory alone.
+  it("reconstructs the failure reason from the trajectory's errorMessage field (event shape)", () => {
+    const s = toIncidentSignals([
+      event("tool.result", 1, {
+        toolName: "orchestrate",
+        success: false,
+        errorKind: "dependency",
+        errorMessage: "orchestrate jailed child exited with code 1: TypeError content.trim is not a function",
+      }),
+    ]);
+    const f = s.failures.find((x) => x.toolName === "orchestrate");
+    expect(f).toBeDefined();
+    expect(f!.errorPreview).toContain("content.trim is not a function");
+  });
+
   it("records a breaker_opened event with consecutiveFailures and sets breakerOpenedTool", () => {
     const s = signalsEvent();
     const opened = s.breakerEvents.filter((e) => e.event === "opened");

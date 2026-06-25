@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveReplyLanguage } from "./resolve-reply-language.js";
 import {
@@ -860,6 +860,48 @@ describe("unrecoveredFailedToolNames", () => {
         ],
       ),
     ).toEqual(["search"]);
+  });
+});
+
+// recoveredFailedToolNames — the complement: surfaces self-healed failures on the
+// bookend so a recovered turn is distinguishable from a terminal one (hermes-usecases
+// obs-loop 2026-06-25). Does NOT change the degraded classification (HR-01 design).
+describe("recoveredFailedToolNames", () => {
+  it("returns failed tools that later succeeded in the same turn", () => {
+    expect(
+      recoveredFailedToolNames(
+        ["write", "search"],
+        [
+          { toolName: "write", success: false, durationMs: 8 },
+          { toolName: "write", success: true, durationMs: 15 },
+          { toolName: "search", success: false, durationMs: 9 },
+        ],
+      ),
+    ).toEqual(["write"]);
+  });
+
+  it("empty when nothing recovered + safe fallback (missing/empty results → none recovered)", () => {
+    expect(recoveredFailedToolNames(["write"], undefined)).toEqual([]);
+    expect(recoveredFailedToolNames(["write"], [])).toEqual([]);
+    expect(recoveredFailedToolNames([], undefined)).toEqual([]);
+    expect(
+      recoveredFailedToolNames(["search"], [{ toolName: "search", success: false, durationMs: 9 }]),
+    ).toEqual([]);
+  });
+
+  it("is the exact complement of unrecoveredFailedToolNames over failedTools", () => {
+    const failed = ["write", "search", "pipeline"];
+    const results = [
+      { toolName: "write", success: false, durationMs: 8 },
+      { toolName: "write", success: true, durationMs: 15 },
+      { toolName: "pipeline", success: false, durationMs: 21 },
+      { toolName: "pipeline", success: true, durationMs: 27 },
+      { toolName: "search", success: false, durationMs: 9 },
+    ];
+    const recovered = recoveredFailedToolNames(failed, results);
+    const unrecovered = unrecoveredFailedToolNames(failed, results);
+    expect([...recovered, ...unrecovered].sort()).toEqual([...new Set(failed)].sort());
+    expect(recovered.filter((t) => unrecovered.includes(t))).toEqual([]);
   });
 });
 

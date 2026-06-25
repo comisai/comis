@@ -302,6 +302,8 @@ export function translatePayload(
     case "learning:skill_demoted": // SURFACE-06: counts ONLY (SEC-01)
       // FORGET-06 / SKILL-09 / SURFACE-06: the soft-eviction / admitted / promoted / demoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
       return { count: payload.count };
+    case "learning:skill_synthesis_funnel": // OBS: synthesis FUNNEL COUNTS ONLY (synthesized/validated/admitted + maxClusterCardinality) — never a procedure body/script (SEC-01). Answers "why 0 admitted" from the trajectory.
+      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality };
     case "learning:skill_validated": // SKILL-09: the verdict BOOLEANS + coverage CLOSED-ENUM ONLY — NEVER a field name/finding/script (SEC-01).
       return { staticOk: payload.staticOk, dynamicOk: payload.dynamicOk, coverage: payload.coverage };
     // REVISE-/GENERAL- (203): COUNTS + durationMs ONLY — never a profile/memory body, entryType, or source id (SEC-01 / T-203-leak).

@@ -935,6 +935,28 @@ export function unrecoveredFailedToolNames(
 }
 
 /**
+ * The COMPLEMENT of {@link unrecoveredFailedToolNames}: failed tools that LATER
+ * succeeded in the same turn — a self-heal (the live case: a `write` rejected on
+ * an absolute /tmp path, then re-run to the workspace and succeeded).
+ *
+ * Surfaced on the execution bookend (`recoveredTools`) so an operator reading
+ * `failedTools:["write"]` + `completed_with_tool_errors` can tell a SELF-HEALED
+ * turn from a terminally-degraded one without diffing the raw per-call
+ * `toolExecResults`. This does NOT change the degraded classification: by the
+ * HR-01 design effectiveFinishReason / the rollup STILL record the failure (the
+ * tool DID error); this only makes the recovery VISIBLE. (hermes-usecases
+ * obs-loop 2026-06-25.) Pure; deduped; empty when nothing was recovered.
+ */
+export function recoveredFailedToolNames(
+  failedTools: string[],
+  toolExecResults?: Array<{ toolName: string; success: boolean }>,
+): string[] {
+  if (failedTools.length === 0) return [];
+  const unrecovered = new Set(unrecoveredFailedToolNames(failedTools, toolExecResults));
+  return [...new Set(failedTools)].filter((name) => !unrecovered.has(name));
+}
+
+/**
  * Returns true when the model response already acknowledges the failure of
  * one of the failed tools — used to suppress the auto-appended failure notice
  * when the model has explicitly mentioned the error.
@@ -1144,6 +1166,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // fields read from the same observation (the getter is cheap but the
   // read-twice pattern would still be a micro-divergence risk).
   const scrubCounters = ceSetup.getSignatureScrubCounters();
+  // recoveredTools: failed tools that self-healed in the same turn (in failedTools
+  // AND with a later same-name success). Surfaced on the bookend so a self-healed
+  // turn is distinguishable from a terminally-degraded one. effectiveFinishReason
+  // STILL records the failure (HR-01 design) — this is visibility only.
+  const recoveredTools = recoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
   deps.logger.info(
     {
       step: "agent-execute",
@@ -1228,6 +1258,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       signatureScrubs: scrubCounters.signatureScrubs,
       signatureScrubsToolCallsAffected: scrubCounters.signatureScrubsToolCallsAffected,
       ...(bridgeResult.failedTools && bridgeResult.failedTools.length > 0 && { failedTools: bridgeResult.failedTools }),
+      ...(recoveredTools.length > 0 && { recoveredTools }),
       truncatedTools: truncSummary.truncatedTools,
       totalTruncatedChars: truncSummary.totalTruncatedChars,
       turnsExceeded: turnBudgetSummary.turnsExceeded,
