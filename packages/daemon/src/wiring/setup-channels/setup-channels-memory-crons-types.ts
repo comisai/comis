@@ -11,31 +11,36 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, SkillValidationPort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
-import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
+import type { ReflectionSourceTrajectory } from "@comis/agent";
 
 /**
- * The closed-graph skill-synthesis injectables for the __SKILL_SYNTHESIS__ sentinel
- * (SKILL-08/09). Assembled DAEMON-SIDE (registerCronEventListeners, setup-channels-
- * credentials.ts — the SOLE composition root that may import @comis/memory +
- * @comis/skills + @comis/agent together) and threaded here so the handler injects
- * the real adapters into `runSkillSynthesis` (which consumes @comis/core PORT TYPES
- * only — the agent↛memory/skills build cut). Absent ⇒ the sentinel cannot run
+ * The closed-graph REFLECTION injectables for the `__REFLECT__` sentinel (v2.31
+ * Reflection, Phase 223, REFLECT-01/02 — the reflect-engine replacement for the
+ * deleted `SkillSynthesisCronDeps`). Assembled DAEMON-SIDE (registerCronEventListeners,
+ * setup-channels-credentials.ts — the SOLE composition root that may import
+ * @comis/memory + @comis/agent together) and threaded here so the handler injects
+ * the real store + source into `runReflection` (which consumes @comis/core PORT
+ * TYPES only — the agent↛memory build cut). Absent ⇒ the sentinel cannot run
  * (off-by-default, so a default-config agent never reaches it).
+ *
+ * DROPPED vs the synthesis bundle: `buildValidationAdapter` (the sandbox adapter —
+ * an advisory doc has no executable surface; the only validation is the JOB's
+ * static `validateLearnedDocBody`, INV-3) and `approvalGate` (no mutating-admission
+ * gate — removing it removes an attack surface). The reflect ADAPTER is built
+ * per-run in the handler (it needs the resolved model/key), like the synthesis one.
  */
-export interface SkillSynthesisCronDeps {
-  /** The @comis/memory learned-skill store (the admit target), built on the shared db handle. */
-  learnedSkillStore: Pick<MentalModelStorePort, "admit">;
+export interface ReflectionCronDeps {
+  /** The @comis/memory mental-model store. `get` reads the prior doc for delta-ops;
+   *  `admit` is the candidate/learned write target. Built on the shared db handle. */
+  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit">;
   /** The @comis/memory outcome-signal store (the fail-closed success gate the job selects on). */
   outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
-  /** Build the @comis/skills sandbox validation adapter for an agent (injects its tool list + policy). */
-  buildValidationAdapter: (agentId: string) => Promise<Pick<SkillValidationPort, "validate">>;
-  /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed). */
-  buildSourceTrajectories: (agentId: string, tenantId: string) => Promise<SynthesisSourceTrajectory[]>;
-  /** The mutating-admission approval gate (the daemon's shared ApprovalGate). */
-  approvalGate: SkillApprovalGate;
+  /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed);
+   *  each carries a daemon-derived `trustedOrigin` (INV-5/D-04) the job filters on. */
+  buildSourceTrajectories: (agentId: string, tenantId: string) => Promise<ReflectionSourceTrajectory[]>;
 }
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
@@ -86,8 +91,9 @@ export interface MemoryCronContext {
    *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
    *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
   memoryApi?: MemoryApi;
-  /** The closed-graph skill-synthesis injectables (the __SKILL_SYNTHESIS__ sentinel, SKILL-08/09).
-   *  Assembled daemon-side; the handler injects the store + validation adapter + LCD source into
-   *  runSkillSynthesis. Absent ⇒ off-by-default (a default-config agent never reaches the sentinel). */
-  skillSynthesis?: SkillSynthesisCronDeps;
+  /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,
+   *  REFLECT-01/02). Assembled daemon-side; the handler injects the mental-model store + the
+   *  trusted-origin LCD source into runReflection. Absent ⇒ off-by-default (a default-config
+   *  agent never reaches the sentinel). */
+  reflection?: ReflectionCronDeps;
 }
