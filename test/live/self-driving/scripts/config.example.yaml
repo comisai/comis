@@ -1,0 +1,47 @@
+# Reference config for VPS emulator live-testing. Copy to /home/comis/.comis/config.yaml AS the comis user
+# (preserve 0600 ownership) and adjust the marked lines. See ../01-SETUP.md §3.
+logLevel: debug
+dataDir: /home/comis/.comis
+agents:
+  default:
+    name: comis-agent
+    provider: anthropic                              # or openai-codex / openai / google …
+    model: claude-sonnet-4-6                         # a VALID catalog model for the provider (see models-sweep.sh)
+    oauthProfiles:
+      openai-codex: openai-codex:you@example.com     # only consulted when provider=openai-codex
+    elevatedReply:
+      enabled: true
+      senderTrustMap:
+        # Emulator sender's per-message trust. admin => this sender's AGENT INHERITS admin
+        # (can use the *_manage tools + control plane, trust-tiered deny-by-origin). To test
+        # the DENY path (confused-deputy floor), flip to `user`/`guest` or __DELETE__ the
+        # elevatedReply block via cfg-patch.mjs (01-SETUP.md §3 — test both sides).
+        "678314278": admin
+    autonomy:
+      budget:
+        aggregateUsd: 30                             # NESTED key — raise from the $2 standard default so a full DAG completes
+security:
+  storage: encrypted                                 # never downgrade to file (secrets.db + master key live here)
+gateway:
+  enabled: true
+  host: 127.0.0.1
+  port: 4766
+  tokens:
+    - id: default
+      secret: REPLACE-WITH-YOUR-OWN-GATEWAY-TOKEN-min-32-chars   # LITERAL >=32 chars — ${ENV} refs do NOT resolve
+      scopes: ["*"]
+  web:
+    enabled: true
+channels:
+  telegram:
+    enabled: true
+    botToken: "1234567:emulator-fake-token"          # == the emulator's FAKE_BOT_TOKEN (constant)
+    apiRoot: "http://127.0.0.1:PORT"                 # the kernel-allocated port from /tmp/comis-emu.json
+    allowFrom:                                       # ONLY these senders reach the agent (un-listed => dropped at ingress,
+      - "678314278"                                  # no turn). Drop/replace this id to test the not-allowed path (01-SETUP §3).
+integrations:
+  media:
+    transcription:
+      provider: auto
+    tts:
+      provider: edge

@@ -1,0 +1,5 @@
+# Per-run outputs (TEST-PLAN / RESULTS-LOG / FIX-VERIFY-LOG under <target>-<date>/) regenerate each run
+# and are NOT tracked. Only the cross-run findings ledger + this file are committed.
+*
+!.gitignore
+!FINDINGS-LEDGER.md

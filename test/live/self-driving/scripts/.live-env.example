@@ -1,0 +1,14 @@
+# Per-box live-test rig config. THIS is where your VPS ssh target + the gateway token go.
+#
+#   Setup:  cp .live-env.example .live-env   &&  $EDITOR .live-env   (it's gitignored — never committed)
+#
+# The LOCAL scripts (deploy-dist.sh, deploy-scripts.sh) AUTO-SOURCE ./.live-env, so once it exists you
+# just run them. For ad-hoc ssh/RPC one-liners, `source .live-env` first to load these into your shell.
+# GWTOKEN must also be set on the VPS in ~/.comis/.env (restart-m1.sh sources it there) and MUST equal
+# config.yaml's gateway.tokens[].secret. Generate a fresh >=32-char token per box.
+
+export VPS="user@your-vps-host-or-ip"   # ssh target — how you reach the test VPS (ssh KEY lives in ~/.ssh)
+export GWTOKEN="REPLACE-WITH-YOUR-OWN-GATEWAY-TOKEN-min-32-chars"   # gateway bearer token (>=32 chars)
+export CHATID="678314278"               # emulator chat/sender id to drive
+export SRC="/root/comis-src"            # daemon source tree on the VPS (deploy target)
+export DATA="/home/comis/.comis"        # daemon data dir on the VPS
