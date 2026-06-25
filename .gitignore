@@ -81,3 +81,6 @@ packages/comis/package.json.workspace-backup
 *.log
 
 design/
+
+# Live-test rig per-box secret (kit: test/live/self-driving) — never commit the real gateway token
+test/live/self-driving/scripts/.live-env
