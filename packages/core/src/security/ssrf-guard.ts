@@ -91,6 +91,46 @@ export interface ValidatedUrl {
 }
 
 /**
+ * The closed-enum reason an outbound URL was blocked — the forensically-relevant
+ * subset only (a non-http protocol, the cloud-metadata IP, or a blocked IP range).
+ * Parse failures + unresolvable DNS are deliberately NOT audited (malformed/unreachable
+ * input, not an attempt to REACH a blocked target).
+ */
+export type SsrfBlockReason =
+  | "protocol"
+  | "cloud_metadata"
+  | "private"
+  | "loopback"
+  | "linkLocal"
+  | "uniqueLocal"
+  | "unspecified"
+  | "reserved";
+
+/**
+ * SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): a fire-and-forget audit
+ * side-channel. The daemon registers a hook (the audit-sink wiring) that emits a
+ * content-free `security:ssrf_blocked` event so an SSRF block lands in the audit
+ * log — previously such blocks were SILENT (a forensics blind spot), unlike the
+ * destructive-command floor's `command:blocked`. Absent (unit tests / pre-wire) it
+ * is a no-op. `validateUrl` stays a PURE Result-returning function: the hook NEVER
+ * changes its return and NEVER throws (a broken audit sink must not break the guard).
+ */
+let ssrfBlockHook: ((info: { url: string; reason: SsrfBlockReason }) => void) | undefined;
+export function setSsrfBlockHook(
+  hook: ((info: { url: string; reason: SsrfBlockReason }) => void) | undefined,
+): void {
+  ssrfBlockHook = hook;
+}
+function auditSsrfBlock(url: string, reason: SsrfBlockReason): void {
+  if (!ssrfBlockHook) return;
+  try {
+    ssrfBlockHook({ url, reason });
+  } catch {
+    /* an audit hook must never break the guard — fail-open on the side-channel only */
+  }
+}
+
+/**
  * Validate a URL for SSRF safety by resolving DNS and checking the IP.
  *
  * This is a pure validation function -- it does NOT perform the actual fetch.
@@ -122,6 +162,7 @@ export async function validateUrl(
 
       // 2. Protocol check
       if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+        auditSsrfBlock(urlString, "protocol");
         throw new Error(
           `Blocked protocol: ${parsed.protocol} — only http and https are allowed`,
         );
@@ -137,6 +178,7 @@ export async function validateUrl(
 
       // 4. Cloud metadata IP blocklist
       if (CLOUD_METADATA_IPS.includes(address)) {
+        auditSsrfBlock(urlString, "cloud_metadata");
         throw new Error(
           `Blocked: resolved IP ${address} is a cloud metadata service address`,
         );
@@ -147,6 +189,8 @@ export async function validateUrl(
       const range = ip.range();
 
       if (BLOCKED_RANGES.includes(range)) {
+        // `range` is one of BLOCKED_RANGES here → it IS a SsrfBlockReason member.
+        auditSsrfBlock(urlString, range as SsrfBlockReason);
         throw new Error(
           `Blocked: resolved IP ${address} is in ${range} range`,
         );

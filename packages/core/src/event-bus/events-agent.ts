@@ -440,6 +440,28 @@ export interface AgentEvents {
   };
 
   /**
+   * SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): an outbound URL was BLOCKED by
+   * the SSRF guard (`validateUrl`). A forensics signal so `comis security audit-log`
+   * records an agent/injected-instruction attempt to reach a cloud-metadata IP /
+   * RFC1918 / loopback / non-http target — previously such blocks were SILENT (no
+   * audit row), unlike the destructive-command floor (`command:blocked`).
+   * CONTENT-FREE BY CONSTRUCTION: `origin` is the URL's `origin` (scheme+host+port)
+   * ONLY — `new URL().origin` strips the path, query, fragment AND userinfo, so no
+   * secret-bearing query string or embedded `user:pass@` credential can ride it.
+   * `reason` is a closed enum. Emitted daemon-side from the registered SSRF block
+   * hook (setSsrfBlockHook); subscribed by wireAuditSink → the `ssrf_blocked` row.
+   */
+  "security:ssrf_blocked": {
+    timestamp: number;
+    /** The blocked URL's origin (scheme+host+port) — never path/query/fragment/userinfo. */
+    origin: string;
+    /** Why it was blocked (closed enum: a non-http protocol, the metadata IP, or a blocked IP range). */
+    reason: "protocol" | "cloud_metadata" | "private" | "loopback" | "linkLocal" | "uniqueLocal" | "unspecified" | "reserved";
+    agentId?: string;
+    traceId?: string;
+  };
+
+  /**
    * Critic isolation: canary token detected in the critic's verdict output
    * (prompt-extraction attempt). 100% capture per AI-SPEC §7 (S2, Phase 154).
    */

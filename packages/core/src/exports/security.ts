@@ -59,7 +59,8 @@ export type {
   RedactOptions,
   RedactLimits,
 } from "../security/index.js";
-export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "../security/index.js";
+export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS, setSsrfBlockHook } from "../security/index.js";
+export type { SsrfBlockReason } from "../security/index.js";
 export type { ValidatedUrl } from "../security/index.js";
 export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "../security/index.js";
 export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
