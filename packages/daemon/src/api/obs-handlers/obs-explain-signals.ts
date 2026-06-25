@@ -299,6 +299,23 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     }
     // SPEND (WEBUI-04, 179-04): the spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
     case "spend.exceeded": accumulateSpendExceeded(acc, data); return;
+    // OBS-3: the terminal `execution.aborted` record carries the per-ROOT
+    // autonomy.budget limb + numbers when a per-root meter (not the priced
+    // observability.spend ceiling) tripped. Capture it (LAST wins) so the spend
+    // verdict names `autonomy.budget.<limb>` + the numbers in their unit, instead
+    // of an operator grepping the "Per-root … budget exceeded" daemon-log line.
+    case "execution.aborted": {
+      const prb = (data as { perRootBudget?: Record<string, unknown> }).perRootBudget;
+      if (prb && typeof prb === "object") {
+        const limb = asString(prb.limb);
+        const spent = asNumber(prb.spent);
+        const cap = asNumber(prb.cap);
+        if (limb !== undefined && spent !== undefined && cap !== undefined) {
+          acc.perRootBudget = { limb, spent, cap, unit: asString(prb.unit) ?? "usd" };
+        }
+      }
+      return;
+    }
     // OBS-02: fold learning-family records → the learning block — outcome (198) / skills (201) / revision+generalization (203); ids/counts only (SEC-01).
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
@@ -495,6 +512,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     // SPEND (WEBUI-04, 179-04): the terminal spend-kill breach (undefined when not spend-killed — never {}); the verdict stays amount-free, this carries the numbers.
     ...(acc.spend !== undefined ? { spend: acc.spend } : {}),
+    // OBS-3: the per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
+    // with its numbers in their unit — lets the spend verdict name the exact knob.
+    ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),

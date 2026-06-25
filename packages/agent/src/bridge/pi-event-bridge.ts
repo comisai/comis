@@ -2087,7 +2087,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 m.aborted = true;
                 // SPEND-ABORT-OBS: this is the per-ROOT autonomy.budget meter, NOT the
                 // observability.spend ceiling — steer the operator hint at the right knob.
-                emitSpendAbort(deps, "per_root"); // content-free; also calls onAbort (the existing emit)
+                // OBS-3: carry the tripped limb + its numbers (token/wall-clock/$ in
+                // their own unit) onto the abort event so `explain` names the exact
+                // knob instead of the operator grepping the "Per-root … budget
+                // exceeded" log line. The WARN stays content-free (§2.7).
+                emitSpendAbort(
+                  deps,
+                  "per_root",
+                  rootGate.error.limb !== undefined
+                    ? {
+                        limb: rootGate.error.limb,
+                        spent: rootGate.error.currentUsd,
+                        cap: rootGate.error.capUsd,
+                        unit: rootGate.error.unit ?? "usd",
+                      }
+                    : undefined,
+                );
               }
             }
 

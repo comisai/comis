@@ -91,6 +91,14 @@ export interface SpendCeilings {
  * `BudgetError` (budget-guard.ts) but carries the dollars scope + numeric amounts
  * only — never a message body.
  */
+/** Which limb of the per-root autonomy.budget meter tripped (OBS-3). The priced
+ *  $-ceiling gate leaves it undefined (→ the aggregate USD spend). The per-root
+ *  token / wall-clock limbs set it so `explain` can name the exact knob + the
+ *  correct unit — the `currentUsd`/`capUsd` numbers are tokens / ms (NOT dollars)
+ *  for those limbs. */
+export type SpendLimb = "aggregateUsd" | "tokens" | "wallClockMs";
+export type SpendUnit = "usd" | "tokens" | "ms";
+
 export class SpendError extends Error {
   public readonly name = "SpendError";
 
@@ -99,6 +107,10 @@ export class SpendError extends Error {
     public readonly currentUsd: number,
     public readonly capUsd: number,
     public readonly estUsd: number,
+    /** OBS-3: the tripped per-root limb (undefined for the priced $-ceiling gate). */
+    public readonly limb?: SpendLimb,
+    /** OBS-3: the unit of `currentUsd`/`capUsd` for this limb (defaults to usd). */
+    public readonly unit?: SpendUnit,
   ) {
     super(`Spend ceiling exceeded (${scope})`);
   }

@@ -70,6 +70,12 @@ export interface Acc {
    *  superseded by the breach that actually killed it). `totalUsd` is the record's
    *  `spentUsd`; `capUsd` its ceiling. Content-free (a scope enum + two numbers). */
   spend?: { scope: string; totalUsd: number; capUsd: number };
+  /** OBS-3: the per-ROOT autonomy.budget limb that tripped (from the terminal
+   *  `execution.aborted` record's `perRootBudget`). DISTINCT from `spend` (the
+   *  priced observability.spend $-ceiling): the token / wall-clock limbs carry
+   *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
+   *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
+  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts

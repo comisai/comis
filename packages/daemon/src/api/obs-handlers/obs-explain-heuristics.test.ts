@@ -232,6 +232,27 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.some((s) => /observability\.spend\./.test(s))).toBe(true);
   });
 
+  it("OBS-3: a per-ROOT autonomy.budget abort names autonomy.budget.<limb> + the numbers, NOT observability.spend ceilings", () => {
+    // The per-root meter (token / wall-clock / aggregateUsd) is a DIFFERENT knob tree
+    // than the priced observability.spend ceiling — pointing the operator at
+    // observability.spend.* misdirects them (the SPEND-ABORT-OBS class). The terminal
+    // execution.aborted record now carries the tripped limb + numbers, so the verdict
+    // names the RIGHT knob in one `explain` call (openclaw-usecases 2026-06-25).
+    const r = rootCause(
+      makeSignals({
+        endReason: "spend_exceeded",
+        perRootBudget: { limb: "tokens", spent: 30640, cap: 60000, unit: "tokens" },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("spend_exceeded");
+    expect(r!.detail).toMatch(/autonomy\.budget/);
+    expect(r!.detail).toContain("tokens");
+    expect(r!.detail).toContain("30640");
+    expect(r!.detail).toContain("60000");
+    expect(r!.suggestedNextSteps.some((s) => /autonomy\.budget\.tokens/.test(s))).toBe(true);
+  });
+
   it("WR-4: the X3-frozen misclassification verdict OUT-RANKS the spend_exceeded cause (the one signal above spend)", () => {
     // A spend-killed session that ALSO carries the content_heuristic_misclassification
     // signal still reports misclassification: spend_exceeded was promoted above the

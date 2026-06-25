@@ -47,6 +47,29 @@ type SpendVerdict = { code: string; detail: string; suggestedNextSteps: string[]
  */
 export const spendExceededVerdict = (s: IncidentSignals): SpendVerdict | null => {
   if (s.endReason !== "spend_exceeded") return null;
+
+  // OBS-3 (openclaw-usecases 2026-06-25): a per-ROOT `autonomy.budget` abort (the
+  // token / wall-clock / aggregateUsd limb) is a DIFFERENT knob tree than the priced
+  // `observability.spend` ceiling — pointing the operator at observability.spend.*
+  // misdirects them (the SPEND-ABORT-OBS class — already fixed in the WARN; this is
+  // the same fix at the `explain` VERDICT layer). When the terminal abort carried the
+  // per-root limb, name `autonomy.budget.<limb>` + the numbers in their own unit so
+  // the verdict answers "which limb, by how much, which knob" in one call.
+  const prb = s.perRootBudget;
+  if (prb !== undefined) {
+    return {
+      code: "spend_exceeded",
+      detail:
+        `per-root autonomy.budget exhausted — the ${prb.limb} limb tripped ` +
+        `(${prb.spent}/${prb.cap} ${prb.unit}), aborting the run's spawn tree. This is the ` +
+        `per-ROOT autonomy.budget meter, NOT the observability.spend $-ceiling.`,
+      suggestedNextSteps: [
+        `raise this agent's autonomy.budget.${prb.limb} (currently ${prb.cap} ${prb.unit}) for heavier/longer turns — NOT observability.spend.*`,
+        "note the token limb counts cache-read tokens, so a cache-heavy multi-tool turn hits it fast at trivial actual $ (BUDGET-02); the wall-clock limb is the stuck-tree backstop",
+      ],
+    };
+  }
+
   return {
     code: "spend_exceeded",
     detail:

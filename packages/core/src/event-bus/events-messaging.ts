@@ -542,6 +542,13 @@ export interface MessagingEvents {
     reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
     timestamp: number;
+    /** OBS-3: on a per-ROOT autonomy.budget abort, the exact tripped limb + its
+     *  numbers in their own unit (token/wall-clock breaches carry tokens/ms, NOT
+     *  dollars). Content-free (closed-enum limb + unit strings + 2 numbers). Lets
+     *  `explain` name the exact knob ("token limb: 30640/60000") instead of an
+     *  operator grepping the "Per-root … budget exceeded" daemon-log line. Absent
+     *  for non-spend aborts and for the priced $-ceiling path. */
+    perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */

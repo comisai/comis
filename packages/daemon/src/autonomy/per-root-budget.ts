@@ -195,7 +195,7 @@ export function createPerRootBudget(deps: {
         );
         // SpendError carries the limb's own (current, cap, est) in ms — scope
         // "agent" (the per-root agent-scope). The chokepoint routes on kind alone.
-        return { kind: "exceeded", error: new SpendError("agent", elapsedMs, config.wallClockMs, 0) };
+        return { kind: "exceeded", error: new SpendError("agent", elapsedMs, config.wallClockMs, 0, "wallClockMs", "ms") };
       }
 
       // ── Limb 2: TOKEN (enforced regardless of pricing — bites a zero-price loop). ──
@@ -207,7 +207,7 @@ export function createPerRootBudget(deps: {
           "Per-root token budget exceeded",
         );
         // Do NOT mutate the token total on a breach (no overshoot accrual).
-        return { kind: "exceeded", error: new SpendError("agent", priorTokens, config.tokens, estTokens) };
+        return { kind: "exceeded", error: new SpendError("agent", priorTokens, config.tokens, estTokens, "tokens", "tokens") };
       }
       tokenTotals.set(rootRunId, nextTokens);
 

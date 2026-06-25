@@ -413,6 +413,9 @@ export function translatePayload(
     case "execution:aborted":
       return {
         reason: payload.reason,
+        // OBS-3: the per-root autonomy.budget limb + numbers (content-free: closed-enum
+        // limb/unit strings + 2 numbers) so `explain` names the exact tripped knob.
+        ...(payload.perRootBudget !== undefined ? { perRootBudget: payload.perRootBudget } : {}),
       };
 
     case "execution:budget_warning":
