@@ -670,6 +670,46 @@ describe("gateway denylist invariant", () => {
   });
 });
 
+describe("admin manage-tool denylist invariant", () => {
+  // The supervisor profile/group is the admin-management bundle. Any *_manage tool reachable
+  // through it MUST be denied to ALL sub-agents (defense-in-depth BEYOND the trust-guard +
+  // deny-by-origin gates): these tools mutate config or purge state. Regression caught by the
+  // admin-manage-tools live-test (2026-06-25): `mcp_manage` was omitted from the denylist while it
+  // IS in the supervisor profile/group — and mcp.connect/disconnect/reconnect persist MCP config
+  // (mcp-handlers persistToConfig), so a supervisor-profile sub-agent could mutate MCP config. The
+  // pre-existing "gateway denylist invariant" above only guarded `gateway` (the test blind spot).
+  it("every *_manage tool exposed by the supervisor profile/group is in SUB_AGENT_TOOL_DENYLIST", () => {
+    const supervisorManageTools = new Set(
+      [
+        ...(SUB_AGENT_TOOL_PROFILES.supervisor ?? []),
+        ...(SUB_AGENT_TOOL_GROUPS["group:supervisor"] ?? []),
+      ].filter((t) => t.endsWith("_manage")),
+    );
+    expect(supervisorManageTools.size).toBeGreaterThan(0); // guard against the set silently emptying
+    for (const tool of supervisorManageTools) {
+      expect(
+        SUB_AGENT_TOOL_DENYLIST.has(tool),
+        `'${tool}' is a supervisor-profile management tool and MUST be in SUB_AGENT_TOOL_DENYLIST (config-mutating / state-purging — never delegatable to a sub-agent)`,
+      ).toBe(true);
+    }
+  });
+
+  it("contains all 8 admin platform *_manage tools (target contract)", () => {
+    for (const tool of [
+      "agents_manage",
+      "channels_manage",
+      "heartbeat_manage",
+      "mcp_manage",
+      "memory_manage",
+      "models_manage",
+      "providers_manage",
+      "tokens_manage",
+    ]) {
+      expect(SUB_AGENT_TOOL_DENYLIST.has(tool), `'${tool}' must be denylisted`).toBe(true);
+    }
+  });
+});
+
 describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
   it("core classification data is consistent with skills canonical TOOL_PROFILES (no drift)", () => {
     // Every profile name in @comis/core must exist in the skills canonical TOOL_PROFILES
