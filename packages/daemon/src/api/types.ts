@@ -446,6 +446,14 @@ export interface ConfigApiDeps {
   container: AppContainer;
   configPaths: string[];
   defaultConfigPaths: string[];
+  /**
+   * Daemon build version (`packages/daemon/package.json`), surfaced on the
+   * `gateway.status` RPC response so `comis doctor`'s version-skew check can
+   * detect a stale CLI talking to a newer daemon. Read once at boot
+   * (`setupLogging`) and threaded here via the dispatch deps; "unknown" if the
+   * package read failed.
+   */
+  daemonVersion: string;
   configGitManager?: import("@comis/core").ConfigGitManager;
   configWebhook?: { url?: string; timeoutMs?: number; secret?: string };
   // Env handler deps

@@ -892,6 +892,9 @@ function buildRpcDispatchDeps(deps: {
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
     mediaConfig: c.container.config.integrations.media, ttsAdapter: c.ttsAdapter, linkRunner: c.linkRunner,
     logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths,
+    // VERSION-SKEW: surface the daemon build version on gateway.status so
+    // `comis doctor` can flag a stale CLI talking to a newer daemon.
+    daemonVersion: c.daemonVersion,
     configGitManager: c.configGitManager,
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
     secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,

@@ -104,6 +104,18 @@ export interface DoctorContext {
    * operator).
    */
   readonly refreshTest?: boolean;
+  /**
+   * Version of the running `comis` CLI binary (from `packages/cli/package.json`),
+   * threaded in by the doctor command so the version-skew check can compare it
+   * against the daemon's reported version WITHOUT re-reading the package at
+   * check time (keeps the check deterministic and unit-testable).
+   *
+   * Motivates the version-skew check: a stale global `comis` (e.g. an old
+   * `npm i -g comisai`) earlier on PATH than a freshly-built daemon validates
+   * config with an OUT-OF-DATE schema and reports phantom failures. When this
+   * is absent the check reads `../../package.json` itself as a fallback.
+   */
+  readonly cliVersion?: string;
 }
 
 /**

@@ -459,9 +459,13 @@ export const ConfigGcContract = defineContract({
  * Request: `{}`.
  *
  * Response: `{ pid, uptime, memoryUsage, nodeVersion, configPaths[],
- * sections[], secretsStoreAvailable }` (handler). `pid` is the daemon
+ * sections[], secretsStoreAvailable, version? }` (handler). `pid` is the daemon
  * process id; `uptime` is `process.uptime()` seconds; `memoryUsage` is
- * `process.memoryUsage().rss`; `nodeVersion` is `process.version`.
+ * `process.memoryUsage().rss`; `nodeVersion` is `process.version`. `version`
+ * is the daemon's own build version (`packages/daemon/package.json`), used by
+ * `comis doctor`'s version-skew check to detect a stale CLI talking to a newer
+ * daemon. It is OPTIONAL so an older daemon predating the field still satisfies
+ * the contract (the CLI treats its absence as "version unknown" → skip).
  * `secretsStoreAvailable` is `true` when a writable store (file or
  * encrypted) is wired — used by the `env_set` preflight in
  * gateway-tool.ts to distinguish "writable store ready" from "env-only
@@ -481,6 +485,13 @@ export const GatewayStatusContract = defineContract({
     sections: z.array(z.string()),
     /** True when a writable store (file or encrypted) is wired and available for env.set. In env mode this is false (adapter present but read-only). */
     secretsStoreAvailable: z.boolean(),
+    /**
+     * Daemon build version (`packages/daemon/package.json`). Optional so an
+     * older daemon predating this field still parses; `comis doctor`'s
+     * version-skew check compares it against the CLI's own version and treats
+     * absence as "version unknown".
+     */
+    version: z.string().optional(),
   }),
   scopes: ["admin"] as const,
 });
