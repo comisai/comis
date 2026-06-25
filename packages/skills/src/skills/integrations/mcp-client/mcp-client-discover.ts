@@ -329,6 +329,63 @@ export function createTransport(
 }
 
 // ---------------------------------------------------------------------------
+// tools/list_changed diff (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable, content-free fingerprint of a tool's MUTABLE contract surface
+ * (`description` + `inputSchema`). Two tools sharing a name are "changed"
+ * iff their fingerprints differ. JSON.stringify gives a deterministic
+ * serialization for the plain JSON-Schema objects MCP servers return
+ * (object/array/string/number/boolean/null — no functions, no symbols).
+ */
+function toolContractFingerprint(tool: McpToolDefinition): string {
+  return JSON.stringify({
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  });
+}
+
+/**
+ * Diff a previous vs. new MCP tool list by NAME, plus detect IN-PLACE
+ * mutation of a surviving tool's contract.
+ *
+ *   - addedTools:   names present in `next` but not `previous`
+ *   - removedTools: names present in `previous` but not `next`
+ *   - changedTools: names present in BOTH whose `description` or `inputSchema`
+ *     changed — the CVE-2025-54136 "rug-pull" (a tool approved/seen with one
+ *     schema is silently swapped for another mid-session). A name-only diff
+ *     misses this entirely.
+ *
+ * Returns NAMES ONLY in every bucket — never the (untrusted, server-controlled)
+ * schemas/descriptions themselves, so the result is safe to put on an event
+ * payload / log line. Pure: no I/O, no state.
+ */
+export function diffToolLists(
+  previousTools: readonly McpToolDefinition[],
+  newTools: readonly McpToolDefinition[],
+): { addedTools: string[]; removedTools: string[]; changedTools: string[] } {
+  const previousByName = new Map(previousTools.map((t) => [t.name, t] as const));
+  const currentNames = new Set(newTools.map((t) => t.name));
+
+  const addedTools = newTools.filter((t) => !previousByName.has(t.name)).map((t) => t.name);
+  const removedTools = previousTools
+    .filter((t) => !currentNames.has(t.name))
+    .map((t) => t.name);
+
+  const changedTools: string[] = [];
+  for (const t of newTools) {
+    const prev = previousByName.get(t.name);
+    if (!prev) continue; // added — handled above
+    if (toolContractFingerprint(prev) !== toolContractFingerprint(t)) {
+      changedTools.push(t.name);
+    }
+  }
+
+  return { addedTools, removedTools, changedTools };
+}
+
+// ---------------------------------------------------------------------------
 // MCP Client creation helper (with listChanged handler)
 // ---------------------------------------------------------------------------
 
@@ -376,24 +433,34 @@ export function createClient(
                 lastHealthCheck: systemNowMs(),
               });
 
-              const previousNames = new Set(previousTools.map(t => t.name));
-              const currentNames = new Set(newTools.map(t => t.name));
-              const addedTools = newTools.filter(t => !previousNames.has(t.name)).map(t => t.name);
-              const removedTools = previousTools.filter(t => !currentNames.has(t.name)).map(t => t.name);
-
-              deps.eventBus!.emit("mcp:server:tools_changed", {
-                serverName,
-                previousToolCount: previousTools.length,
-                currentToolCount: newTools.length,
-                addedTools,
-                removedTools,
-                timestamp: systemNowMs(),
-              });
-
-              logger.info(
-                { serverName, previousCount: previousTools.length, currentCount: newTools.length, added: addedTools, removed: removedTools },
-                "MCP server tool list changed",
+              // Diff BY NAME (added/removed) AND detect in-place mutation of a
+              // surviving tool's contract (changedTools) — the CVE-2025-54136
+              // "rug-pull" a name-only diff would miss.
+              const { addedTools, removedTools, changedTools } = diffToolLists(
+                previousTools,
+                newTools,
               );
+
+              // Fire only when something actually changed (add / remove /
+              // in-place schema-or-description mutation). A bare
+              // tools/list_changed notification that resolves to an identical
+              // list emits no signal.
+              if (addedTools.length || removedTools.length || changedTools.length) {
+                deps.eventBus!.emit("mcp:server:tools_changed", {
+                  serverName,
+                  previousToolCount: previousTools.length,
+                  currentToolCount: newTools.length,
+                  addedTools,
+                  removedTools,
+                  changedTools,
+                  timestamp: systemNowMs(),
+                });
+
+                logger.info(
+                  { serverName, previousCount: previousTools.length, currentCount: newTools.length, added: addedTools, removed: removedTools, changed: changedTools },
+                  "MCP server tool list changed",
+                );
+              }
             },
           },
         },
