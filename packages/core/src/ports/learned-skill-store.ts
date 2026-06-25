@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { LearningScope } from "./outcome-signal-port.js";
+import type { StructuredBody } from "./reflection-port.js";
 
 /**
  * MentalModelStorePort: the SEGREGATED hexagonal boundary for the v2.31 Mental
@@ -35,9 +36,11 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * `kind` tags the doc family; `mutating` drives the approval gate; `proofCount`
  * drives promote/demote; `sourceTrajIds` is the opaque provenance.
  *
- * NOTE: the DB-only `structured_body`/`history` columns (provisioned this phase,
- * populated by Phase 223) are NOT mirrored on this domain interface yet — the
- * interface widens with `kind`/`topicKey` only.
+ * NOTE: `structuredBody` (the v2.31 Reflection section-AST) IS now mirrored
+ * (Phase 223 / REFLECT-04) — `get`/`list` surface it (undefined when the
+ * `structured_body` column is NULL or holds garbage) so a reflect refresh can
+ * delta-op against the prior doc. The `history` column stays DB-only/NULL until
+ * Phase 224 (FORGET-04 supersession) wires it.
  */
 export interface MentalModel {
   /** Deterministic id (hash of the (tenant, agent, kind, topicKey, name) natural key — replay-stable). */
@@ -64,6 +67,13 @@ export interface MentalModel {
   mutating: boolean;
   /** Opaque source-trajectory ids the doc was distilled from — provenance (ids only). */
   sourceTrajIds: ReadonlyArray<string>;
+  /**
+   * The Reflection section-AST (v2.31 / REFLECT-04) — the structured form a
+   * delta-op refresh reads and writes. `undefined` when the `structured_body`
+   * column is NULL (a doc never reflected, or whose AST failed to parse). Render
+   * to the `body` markdown via `renderStructuredBody`.
+   */
+  structuredBody?: StructuredBody | undefined;
   /** Injected epoch ms the row was admitted. */
   createdAt: number;
 }
@@ -82,8 +92,15 @@ export interface AdmitMentalModelInput {
   name: string;
   /** Short description of the doc. */
   description: string;
-  /** The doc body. */
+  /** The doc body (rendered markdown — typically `renderStructuredBody(structuredBody)`). */
   body: string;
+  /**
+   * The Reflection section-AST (v2.31 / REFLECT-04) — bound to `structured_body`
+   * (JSON) so a later reflect refresh can delta-op against it. Omitted ⇒ the
+   * column is written NULL (a doc with no structured form). Updated in lockstep
+   * with `body` on a re-admit (the idempotent upsert).
+   */
+  structuredBody?: StructuredBody | undefined;
   /** Whether the doc describes a state-mutating action (drives the approval gate). */
   mutating: boolean;
   /** Doc family — omitted ⇒ `'skill'` (a skill admit stays unchanged). */

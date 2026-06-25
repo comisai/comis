@@ -59,6 +59,7 @@ import type {
   MentalModel,
   AdmitMentalModelInput,
   LearningScope,
+  StructuredBody,
 } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
@@ -96,6 +97,28 @@ function parseIdList(raw: string | null): string[] {
     return parsed.success ? parsed.data : [];
   } catch {
     return [];
+  }
+}
+
+// Lenient parser for the structured_body AST column (the v2.31 Reflection
+// section-list). The shape mirrors @comis/core's StructuredBody — a NULL column,
+// non-JSON text, or a payload that does not match the shape degrades to
+// `undefined` (NOT a throw — T-223-09: a corrupt AST row must not crash recall;
+// the doc is treated as "no AST" and re-synthesized).
+const StructuredBodySchema = z.object({
+  sections: z.array(
+    z.object({ id: z.string(), heading: z.string(), body: z.string() }),
+  ),
+});
+
+/** Parse a nullable JSON-encoded structured-body AST; undefined on NULL or corrupt data. */
+function parseStructuredBody(raw: string | null): StructuredBody | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = StructuredBodySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -137,6 +160,11 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
     confidence: row.confidence,
     mutating: row.mutating === 1,
     sourceTrajIds: parseIdList(row.source_traj_ids),
+    // The Reflection section-AST (REFLECT-04) — lenient parse so delta-ops read
+    // the prior doc; undefined when the column is NULL or holds garbage (the
+    // doc is then treated as new — synthesize fresh, A6). `history` stays DB-only
+    // (Phase 224 supersession) — NOT surfaced here.
+    structuredBody: parseStructuredBody(row.structured_body),
     createdAt: row.created_at,
   };
 }
@@ -160,15 +188,19 @@ export function createSqliteMentalModelStore(
   // the SAME row. trust_level is the LITERAL 'learned' (the SEC-01 keystone —
   // never a bound caller value); all other columns are bound `?` params (never
   // string-built). kind/topic_key are bound (default 'skill'/'' at the call site).
+  // structured_body (the v2.31 Reflection section-AST, REFLECT-04) is bound as a
+  // JSON `?` (NULL when the caller omits it) and updated in lockstep with body on
+  // conflict. `history` stays the DB default NULL (Phase 224 owns supersession).
   // The dropped `scripts` column was the literal NULL — its removal is a no-op.
   const insertStmt = db.prepare(
     "INSERT INTO mental_models " +
-      "(id, tenant_id, agent_id, kind, topic_key, name, description, body, required_tools, params_schema, " +
+      "(id, tenant_id, agent_id, kind, topic_key, name, description, body, structured_body, required_tools, params_schema, " +
       " trust_level, state, proof_count, confidence, strength, source_traj_ids, validation_result, " +
       " mutating, pinned, validated_at, created_at, updated_at, evicted_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
       "ON CONFLICT(id) DO UPDATE SET " +
-      "description = excluded.description, body = excluded.body, proof_count = excluded.proof_count, " +
+      "description = excluded.description, body = excluded.body, " +
+      "structured_body = excluded.structured_body, proof_count = excluded.proof_count, " +
       "confidence = excluded.confidence, strength = excluded.strength, " +
       "source_traj_ids = excluded.source_traj_ids, mutating = excluded.mutating, " +
       // A re-admit of a previously-evicted doc resurrects it (clears evicted_at,
@@ -277,6 +309,9 @@ export function createSqliteMentalModelStore(
           input.name,
           input.description,
           input.body,
+          // structured_body: JSON-stringify the AST, or NULL when omitted. Updated
+          // in lockstep with body on the idempotent ON CONFLICT upsert (REFLECT-04).
+          input.structuredBody !== undefined ? JSON.stringify(input.structuredBody) : null,
           input.proofCount,
           input.confidence,
           // strength seeds from confidence (a verified candidate enters with a

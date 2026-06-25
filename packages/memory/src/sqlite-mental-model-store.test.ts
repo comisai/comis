@@ -32,7 +32,7 @@ import { createHash } from "node:crypto";
 import { initSchema } from "./schema.js";
 import { createSqliteMentalModelStore } from "./sqlite-mental-model-store.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
-import type { AdmitMentalModelInput, LearningScope } from "@comis/core";
+import type { AdmitMentalModelInput, LearningScope, StructuredBody } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -57,6 +57,9 @@ function makeInput(overrides: Partial<AdmitMentalModelInput> = {}): AdmitMentalM
     // that exercises a non-skill kind overrides these explicitly.
     ...(overrides.kind !== undefined ? { kind: overrides.kind } : {}),
     ...(overrides.topicKey !== undefined ? { topicKey: overrides.topicKey } : {}),
+    // structuredBody is OPTIONAL — forwarded only when a test supplies it, so a
+    // legacy admit (no AST) stays byte-identical to the pre-Phase-223 shape.
+    ...(overrides.structuredBody !== undefined ? { structuredBody: overrides.structuredBody } : {}),
     proofCount: overrides.proofCount ?? 1,
     confidence: overrides.confidence ?? 0.8,
     sourceTrajIds: overrides.sourceTrajIds ?? ["traj_1"],
@@ -862,5 +865,126 @@ describe("createSqliteMentalModelStore — error handling (catch branches)", () 
     const r = await store.demoteByName("any-name", SCOPE_A);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+  });
+});
+
+// ===========================================================================
+// REFLECT-04: structuredBody round-trip. Phase 222 provisioned the
+// `structured_body` column + the row schema but left it DB-only — NOT bound in
+// the admit INSERT, NOT mapped in rowToMentalModel, NOT on the MentalModel /
+// AdmitMentalModelInput domain interface. Phase 223 widens all three IN ONE DIFF
+// so delta-ops have a prior AST to read and a place to write. `history` stays
+// NULL (Phase 224 owns supersession — A5).
+// ===========================================================================
+describe("createSqliteMentalModelStore — structuredBody round-trip (REFLECT-04)", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 384);
+    store = createSqliteMentalModelStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Read the raw structured_body / history columns of a named doc under SCOPE_A. */
+  function rawCols(name: string): { structured_body: string | null; history: string | null } {
+    return db
+      .prepare("SELECT structured_body, history FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, name) as { structured_body: string | null; history: string | null };
+  }
+
+  it("admit WITH structuredBody → get() returns the SAME AST (deep-equal round-trip)", async () => {
+    const ast: StructuredBody = {
+      sections: [
+        { id: "s1", heading: "Steps", body: "do X" },
+        { id: "s2", heading: "Notes", body: "watch out" },
+      ],
+    };
+    const a = await store.admit(makeInput({ name: "with-ast", structuredBody: ast }), SCOPE_A);
+    expect(a.ok).toBe(true);
+    const r = await store.get("with-ast", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value?.structuredBody).toEqual(ast); // deep-equal — round-trips through JSON
+    }
+    // And the raw column is the JSON-stringified AST (not NULL).
+    const raw = rawCols("with-ast");
+    expect(raw.structured_body).toBe(JSON.stringify(ast));
+  });
+
+  it("admit with NO structuredBody → get() returns structuredBody undefined (and a NULL column)", async () => {
+    await store.admit(makeInput({ name: "no-ast" }), SCOPE_A);
+    const r = await store.get("no-ast", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.structuredBody).toBeUndefined();
+    expect(rawCols("no-ast").structured_body).toBeNull();
+  });
+
+  it("a kind:'skill' admit WITHOUT structuredBody behaves exactly as before (MODEL-05 no-regression)", async () => {
+    // The pre-Phase-223 skill admit shape — no structuredBody field at all.
+    await store.admit(makeInput({ name: "legacy-skill", proofCount: 2, sourceTrajIds: ["a", "b"] }), SCOPE_A);
+    const r = await store.get("legacy-skill", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value?.kind).toBe("skill");
+      expect(r.value?.trustLevel).toBe("learned");
+      expect(r.value?.state).toBe("candidate");
+      expect(r.value?.proofCount).toBe(2);
+      expect(r.value?.sourceTrajIds).toEqual(["a", "b"]);
+      expect(r.value?.structuredBody).toBeUndefined(); // omitted ⇒ undefined
+    }
+  });
+
+  it("a re-admit with a DIFFERENT structuredBody updates the AST in lockstep with body (idempotent upsert)", async () => {
+    const first: StructuredBody = { sections: [{ id: "s1", heading: "Steps", body: "OLD" }] };
+    const second: StructuredBody = {
+      sections: [
+        { id: "s1", heading: "Steps", body: "NEW" },
+        { id: "s2", heading: "Extra", body: "added" },
+      ],
+    };
+    await store.admit(makeInput({ name: "upsert-ast", body: "old body", structuredBody: first }), SCOPE_A);
+    await store.admit(makeInput({ name: "upsert-ast", body: "new body", structuredBody: second }), SCOPE_A);
+    // Still ONE row (deterministic id collides → ON CONFLICT upsert).
+    const count = db
+      .prepare("SELECT COUNT(*) AS c FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "upsert-ast") as { c: number };
+    expect(count.c).toBe(1);
+    const r = await store.get("upsert-ast", SCOPE_A);
+    if (r.ok) {
+      expect(r.value?.body).toBe("new body"); // body updated
+      expect(r.value?.structuredBody).toEqual(second); // AST updated in lockstep
+    }
+  });
+
+  it("a re-admit that OMITS structuredBody resets the column to NULL (in lockstep with the new body)", async () => {
+    const ast: StructuredBody = { sections: [{ id: "s1", heading: "Steps", body: "X" }] };
+    await store.admit(makeInput({ name: "drop-ast", structuredBody: ast }), SCOPE_A);
+    expect(rawCols("drop-ast").structured_body).toBe(JSON.stringify(ast));
+    // Re-admit the same doc with no AST — excluded.structured_body is NULL.
+    await store.admit(makeInput({ name: "drop-ast" }), SCOPE_A);
+    expect(rawCols("drop-ast").structured_body).toBeNull();
+    const r = await store.get("drop-ast", SCOPE_A);
+    if (r.ok) expect(r.value?.structuredBody).toBeUndefined();
+  });
+
+  it("history stays NULL on a freshly-admitted doc (Phase 224 owns supersession — A5)", async () => {
+    const ast: StructuredBody = { sections: [{ id: "s1", heading: "H", body: "B" }] };
+    await store.admit(makeInput({ name: "no-history", structuredBody: ast }), SCOPE_A);
+    expect(rawCols("no-history").history).toBeNull();
+  });
+
+  it("tolerates corrupt JSON in structured_body (degrades to undefined, never throws)", async () => {
+    await store.admit(makeInput({ name: "corrupt-ast" }), SCOPE_A);
+    db.prepare(
+      "UPDATE mental_models SET structured_body = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+    ).run(TENANT_A, AGENT_A, "corrupt-ast");
+    const r = await store.get("corrupt-ast", SCOPE_A);
+    expect(r.ok).toBe(true); // never throws on a garbage AST (T-223-09)
+    if (r.ok) expect(r.value?.structuredBody).toBeUndefined();
   });
 });
