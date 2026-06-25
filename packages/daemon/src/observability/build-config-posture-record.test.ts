@@ -2,7 +2,20 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, isLoopbackHost } from "./build-config-posture-record.js";
+
+describe("isLoopbackHost (OBS-7 — TLS-off is benign on a loopback bind)", () => {
+  it("treats 127.0.0.1 / ::1 / localhost / 127.x as loopback (TLS-off suppressed)", () => {
+    for (const h of ["127.0.0.1", "::1", "localhost", "127.0.1.1", "LOCALHOST", " 127.0.0.1 "]) {
+      expect(isLoopbackHost(h)).toBe(true);
+    }
+  });
+  it("treats 0.0.0.0 / a routable IP / undefined as NON-loopback (TLS-off still flags)", () => {
+    for (const h of ["0.0.0.0", "10.0.0.5", "2.25.210.60", "example.com", undefined]) {
+      expect(isLoopbackHost(h)).toBe(false);
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // buildConfigPostureRecord (I3 — boot-time config_posture snapshot row)

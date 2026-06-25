@@ -139,7 +139,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countPricingGaps } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countPricingGaps, isLoopbackHost } from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2828,7 +2828,16 @@ async function bootShutdown(
   // already honors an encrypted/file secret-store entry — the same source the
   // per-agent path resolves (setup-agents-runtime.ts). True ⇒ no secret set ⇒
   // every agent uses the deterministic fallback. KISS — no deep per-agent plumbing.
-  const tlsOff = (boot.container.config.gateway.tls === undefined) && (boot.container.config.gateway.allowInsecureHttp !== true);
+  // OBS-7 (openclaw-usecases 2026-06-25): TLS-off is a posture concern only on a
+  // NON-loopback bind. A loopback gateway has no off-host exposure, so flagging it
+  // made `fleet` headline `config_posture` (TLS-off) on a clean dev/loopback box —
+  // noise. The gate matches the gateway-exposure security check (only 0.0.0.0-without-
+  // TLS is critical). `gateway.host` defaults to 127.0.0.1, so a default daemon stays
+  // benign; an operator-set 0.0.0.0/routable host WITHOUT TLS still flags.
+  const tlsOff =
+    boot.container.config.gateway.tls === undefined &&
+    boot.container.config.gateway.allowInsecureHttp !== true &&
+    !isLoopbackHost(boot.container.config.gateway.host);
   const allowInsecureHttp = boot.container.config.gateway.allowInsecureHttp === true;
   const canaryFallbackActive = !boot.env.get("CANARY_SECRET");
   // KNOB-03: derived from the SAME boot comparisons the KNOB-01 WARN used (no second comparison).
