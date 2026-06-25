@@ -184,10 +184,37 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
       // L3: pi runtime session (the resurrection source when skipped).
       const runtimeSessionDestroyed = await destroyRuntime(agentId, key, formattedKey);
 
-      logger.info(
-        { agentId, sessionKey: formattedKey, lcdRowsDeleted, sessionMessagesCleared, runtimeSessionDestroyed, submodule: "conversation-reset" },
-        "Conversation reset (complete three-layer forget)",
-      );
+      // A reset that cleared NOTHING across all three layers is almost always a
+      // session_key-format mismatch — the LCD is keyed by the FORMATTED key
+      // ("<tenant>:<agent>:<chat>:peer:<chat>"), so a caller passing the
+      // trajectory-filename form ("<chat>~peer~<chat>") silently clears 0 rows and
+      // a "cross-session" test then runs against an un-severed LCD (openclaw-usecases
+      // 2026-06-25 — a near-miss invalid test). Surface it as a WARN naming the
+      // formatted key instead of a silent 0-count info line.
+      if (lcdRowsDeleted === 0 && sessionMessagesCleared === 0 && !runtimeSessionDestroyed) {
+        logger.warn(
+          {
+            agentId,
+            sessionKey: formattedKey,
+            lcdRowsDeleted,
+            sessionMessagesCleared,
+            runtimeSessionDestroyed,
+            errorKind: "validation" as const,
+            hint:
+              `Reset cleared 0 rows across all layers — the session was already empty, OR the ` +
+              `session_key did not match the stored keying. The LCD is keyed by the formatted ` +
+              `"${formattedKey}" form; a trajectory-filename "<chat>~peer~<chat>" key silently ` +
+              `clears 0. If you expected rows, verify the key against lcd_messages.session_key.`,
+            submodule: "conversation-reset",
+          },
+          "Conversation reset was a no-op (session_key matched nothing — likely already-empty or a key-format mismatch)",
+        );
+      } else {
+        logger.info(
+          { agentId, sessionKey: formattedKey, lcdRowsDeleted, sessionMessagesCleared, runtimeSessionDestroyed, submodule: "conversation-reset" },
+          "Conversation reset (complete three-layer forget)",
+        );
+      }
 
       return { lcdRowsDeleted, sessionMessagesCleared, runtimeSessionDestroyed };
     },

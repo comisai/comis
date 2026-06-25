@@ -307,6 +307,10 @@ export function emitSpendAbort(
     onAbort?: () => void;
   },
   source: "ceiling" | "per_root" = "ceiling",
+  /** OBS-3: the tripped per-root limb + its numbers (named units). Carried onto the
+   *  `execution:aborted` event so `explain` answers "which limb, by how much" in one
+   *  call instead of a daemon-log grep for the "Per-root … budget exceeded" line. */
+  perRootBudget?: { limb: string; spent: number; cap: number; unit: string },
 ): void {
   deps.onAbort?.();
   deps.eventBus.emit("execution:aborted", {
@@ -314,6 +318,7 @@ export function emitSpendAbort(
     reason: "spend_exceeded",
     agentId: deps.agentId,
     timestamp: systemNowMs(),
+    ...(perRootBudget ? { perRootBudget } : {}),
   });
   const perRoot = source === "per_root";
   deps.logger.warn(

@@ -400,13 +400,18 @@ export interface InfraEvents {
   // MCP server events
   // -------------------------------------------------------------------------
 
-  /** MCP server tool list changed via tools/list_changed notification */
+  /** MCP server tool list changed via tools/list_changed notification.
+   *  `changedTools` lists names that survived (present in both lists) but whose
+   *  `description` or `inputSchema` was mutated IN PLACE — the CVE-2025-54136
+   *  "rug-pull" a name-only add/remove diff would miss. Names only; never the
+   *  (untrusted, server-controlled) schemas/descriptions themselves. */
   "mcp:server:tools_changed": {
     serverName: string;
     previousToolCount: number;
     currentToolCount: number;
     addedTools: string[];
     removedTools: string[];
+    changedTools: string[];
     timestamp: number;
   };
 

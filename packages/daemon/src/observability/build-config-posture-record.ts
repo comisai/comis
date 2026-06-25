@@ -59,6 +59,26 @@ export function countChimericModels(
 }
 
 /**
+ * OBS-7 (openclaw-usecases 2026-06-25): is the gateway bound to a LOOPBACK address?
+ *
+ * A loopback-bound gateway has no off-host network exposure, so running it WITHOUT
+ * TLS is benign — it matches the `gateway-exposure` security check, which flags only
+ * a `0.0.0.0`-without-TLS bind as critical, never a loopback one. Used to suppress the
+ * `tlsOff` config-posture finding on a loopback bind so it does not become the fleet
+ * `likelyRootCause` headline on a dev / loopback box (where it is noise). A non-loopback
+ * bind (`0.0.0.0` or a routable IP) WITHOUT TLS still flags — correct for production.
+ *
+ * `gateway.host` defaults to `127.0.0.1`, so a default daemon is loopback (benign by
+ * default); only an operator-set non-loopback host opts into the TLS-off finding. An
+ * absent/unknown host is treated as NON-loopback (conservative — never suppress on doubt).
+ */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (typeof host !== "string") return false;
+  const h = host.trim().toLowerCase();
+  return h === "127.0.0.1" || h === "::1" || h === "localhost" || h.startsWith("127.");
+}
+
+/**
  * SPEND-05: count configured agents burning tokens on remote-unknown-priced models
  * — those whose configured `provider`+`model` resolves to the `"unknown"` pricing
  * state (a NATIVE single-family provider with NO catalog rate — the `ffe11736`

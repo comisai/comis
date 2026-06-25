@@ -116,6 +116,51 @@ describe("user asks the platform to completely forget a conversation", () => {
     );
   });
 
+  // OBS-2: a reset that clears 0 across all three layers is almost always a
+  // session_key-format mismatch (the LCD is keyed by the formatted key, not the
+  // trajectory-filename "<chat>~peer~<chat>" form). Surface it as a WARN naming
+  // the formatted key instead of a silent 0-count info line (openclaw-usecases
+  // 2026-06-25 — a near-miss invalid cross-session test).
+  it("WARNs with the formatted-key hint when the reset clears NOTHING across all layers", async () => {
+    const deps = makeDeps({ lcdStore: makeLcdStore(0), sessionStore: makeSessionStore([]) });
+
+    const result = await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+
+    expect(result).toEqual({ lcdRowsDeleted: 0, sessionMessagesCleared: 0, runtimeSessionDestroyed: false });
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        hint: expect.stringContaining("lcd_messages.session_key"),
+      }),
+      expect.stringContaining("no-op"),
+    );
+    // The silent 0-count info line must NOT fire for a no-op reset.
+    expect(deps.logger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Conversation reset (complete three-layer forget)",
+    );
+  });
+
+  it("logs info (not the no-op WARN) when a real clear happened", async () => {
+    const adapter = makeAdapter();
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(7),
+      sessionStore: makeSessionStore(),
+      piSessionAdapters: new Map([["agent-a", adapter]]),
+    });
+
+    await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.anything(),
+      "Conversation reset (complete three-layer forget)",
+    );
+    expect(deps.logger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "validation" }),
+      expect.anything(),
+    );
+  });
+
   it("a failing LCD layer does not undo the runtime destroy (best-effort isolation)", async () => {
     const lcdStore = {
       runOnConversation: vi.fn().mockRejectedValue(new Error("db locked")),

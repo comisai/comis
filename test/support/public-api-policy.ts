@@ -1343,6 +1343,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "BLOCKED_RANGES",
       "CLOUD_METADATA_IPS",
       "ValidatedUrl",
+      // SsrfBlockReason: the public union naming WHY the SSRF guard blocked a URL
+      // (protocol / cloud_metadata / private / loopback / …), exported from the
+      // core security barrel alongside ValidatedUrl. It is part of the documented
+      // ssrfBlockHook callback surface ({ url, reason: SsrfBlockReason }); the only
+      // in-repo value-level user is the guard itself (intra-core, excluded from the
+      // consumer scan). Tracked here — shrink if a cross-package consumer lands.
+      "SsrfBlockReason",
       "ExternalContentSource",
       "detectCanaryLeakage",
       "isSecretAccessible",

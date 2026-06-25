@@ -14,6 +14,13 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // Helper: create temp config env per test
 // ---------------------------------------------------------------------------
 
+/**
+ * Recognizable daemon build version threaded through the deps fixture so the
+ * gateway.status test can assert the version is surfaced on the RPC response
+ * (the field `comis doctor`'s version-skew check reads).
+ */
+const TEST_DAEMON_VERSION = "9.9.9-test";
+
 function createTempConfig(): { dir: string; configPath: string; cleanup: () => void } {
   const dir = join(tmpdir(), `comis-test-${randomUUID().slice(0, 8)}`);
   mkdirSync(dir, { recursive: true });
@@ -37,6 +44,7 @@ function makeDeps(configPath: string): ConfigHandlerDeps & { logger: ComisLogger
     container: result.value,
     configPaths: [configPath],
     defaultConfigPaths: [configPath],
+    daemonVersion: TEST_DAEMON_VERSION,
     logger,
   };
 }
@@ -59,6 +67,7 @@ function makeDepsWithEnv(
     container: result.value,
     configPaths: [configPath],
     defaultConfigPaths: [configPath],
+    daemonVersion: TEST_DAEMON_VERSION,
     logger,
   };
 }
@@ -1974,9 +1983,19 @@ describe("gateway.status admin trust enforcement", () => {
 
     const result = (await handlers["gateway.status"]!({
       _trustLevel: "admin",
-    })) as { pid: number; uptime: number };
+    })) as { pid: number; uptime: number; version?: string };
     expect(result.pid).toBe(process.pid);
     expect(result.uptime).toEqual(expect.any(Number));
+  });
+
+  it("surfaces the daemon build version (for comis doctor's version-skew check)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    const result = (await handlers["gateway.status"]!({
+      _trustLevel: "admin",
+    })) as { version?: string };
+    expect(result.version).toBe(TEST_DAEMON_VERSION);
   });
 });
 

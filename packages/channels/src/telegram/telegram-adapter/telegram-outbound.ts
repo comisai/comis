@@ -285,9 +285,36 @@ export async function sendAttachment(
 
     const sent = await sendWithThreadFallback(doSend, threadParams, deps.logger);
 
+    // A successful Telegram send ALWAYS returns a numeric message_id. A missing id
+    // means the platform did not accept the media — returning ok(String(undefined))
+    // === "undefined" is a false success that hides a real delivery failure
+    // (openclaw-usecases 2026-06-25: image-gen/TTS produced real artifacts but were
+    // never delivered; the adapter logged "attachment sent" with
+    // messageId:"undefined" and the channel oracle showed 0 media sends). Fail
+    // honestly + name the knob instead of a silent false-success.
+    const sentMessageId = (sent as { message_id?: number } | undefined)?.message_id;
+    if (sentMessageId == null) {
+      deps.logger.warn(
+        {
+          channelType: "telegram",
+          chatId,
+          fileName: attachment.fileName,
+          attachmentType: attachment.type,
+          hint: "Telegram media send returned no message_id — the send was not accepted (a non-standard/empty response or a dropped upload); verify the chat exists and that the Bot API method supports this media type",
+          errorKind: "platform" as const,
+        },
+        "Media attachment send returned no message_id",
+      );
+      return err(
+        new Error(
+          `Telegram ${attachment.type} send returned no message_id (send not accepted)`,
+        ),
+      );
+    }
+
     if (isLocalPath) {
       deps.logger.info(
-        { channelType: "telegram", messageId: String(sent.message_id), chatId, fileName: attachment.fileName },
+        { channelType: "telegram", messageId: String(sentMessageId), chatId, fileName: attachment.fileName },
         "Local file attachment sent",
       );
     }

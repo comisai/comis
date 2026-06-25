@@ -181,6 +181,10 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
         uptime: process.uptime(),
         memoryUsage,
         nodeVersion: process.version,
+        // Daemon build version (packages/daemon/package.json), read once at
+        // boot. Surfaced so `comis doctor`'s version-skew check can flag a
+        // stale CLI talking to a newer daemon.
+        version: deps.daemonVersion,
         configPaths: deps.configPaths,
         sections: getConfigSections(),
         // secretsStoreAvailable means "a *writable* store is wired",

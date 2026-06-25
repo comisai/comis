@@ -27,6 +27,12 @@ import type { LearningFoldState } from "./obs-explain-signal-folds.js";
  *  `IncidentSignals["spawnTree"]` at the end of `toIncidentSignals`. */
 export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
+// @optional-field-count: internal mutable fold accumulator — each optional field
+// is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
+// toolSchemaUnsupported, lastRecall, spend, perRootBudget, the four media turns,
+// agentId, channel) that is absent until its trajectory record class is seen. They
+// are not a configuration surface; collapsing or splitting them would only obscure
+// the one-fold-per-record-class structure.
 export interface Acc {
   toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];
@@ -70,6 +76,12 @@ export interface Acc {
    *  superseded by the breach that actually killed it). `totalUsd` is the record's
    *  `spentUsd`; `capUsd` its ceiling. Content-free (a scope enum + two numbers). */
   spend?: { scope: string; totalUsd: number; capUsd: number };
+  /** OBS-3: the per-ROOT autonomy.budget limb that tripped (from the terminal
+   *  `execution.aborted` record's `perRootBudget`). DISTINCT from `spend` (the
+   *  priced observability.spend $-ceiling): the token / wall-clock limbs carry
+   *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
+   *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
+  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
   learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts
@@ -87,6 +99,14 @@ export interface Acc {
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
+  /** OBS-4 (openclaw-usecases 2026-06-25): the distinct turn ids (envelope `traceId`,
+   *  one per agent turn) seen in the trajectory. The session trajectory JSONL is
+   *  APPEND-ONLY across `session.reset_conversation` severs, so a single file (and the
+   *  whole-session `toolStats` derived from it) can span MANY turns — counting these
+   *  lets the report flag the tool counts as cumulative-across-N-turns rather than
+   *  this-turn (the near-miss that cost a cycle: a `toolStats` count read as one turn
+   *  was actually the sum across several). */
+  turnTraceIds: Set<string>;
   /** W8: agentId from the first record envelope that carries one. */
   agentId?: string;
   /** W8: channel identity from the session.started record's data. */

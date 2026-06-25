@@ -20,7 +20,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { systemEnvSnapshot, systemNowMs } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -50,115 +50,13 @@ export {
 // the connect / reconnect call sites.
 type ComisLoggerLike = McpClientManagerDeps["logger"];
 
-// ---------------------------------------------------------------------------
-// Stdio env allowlist
-// ---------------------------------------------------------------------------
-
-/**
- * Built-in safe-to-pass-through env keys for stdio MCP children.
- *
- * Superset of the MCP SDK's `DEFAULT_INHERITED_ENV_VARS` (POSIX baseline:
- * HOME, LOGNAME, PATH, SHELL, TERM, USER). Extended for:
- *
- *   - Locale (LC_*, LANG): real MCP servers (Notion, Linear) crash on
- *     non-ASCII without locale set.
- *   - XDG Base Directory: config/data/cache lookup broken without these.
- *   - TMPDIR / TMP / TEMP: child cannot create temp files.
- *   - NODE_ENV / NODE_PATH: Node MCP servers respect for module resolution.
- *   - PYTHON{IOENCODING,PATH}: Python MCP servers (uvx) need.
- *   - npm_config_*: npx-launched servers respect npm_config_user_agent
- *     and npm_config_cache (matched by PREFIX, not literal key).
- *
- * Operator-extension via `config.integrations.mcp.safetyAllowedEnvKeys` is
- * additive — the built-in allowlist always applies.
- */
-export const MCP_STDIO_BUILTIN_ENV_ALLOWLIST: readonly string[] = [
-  // Standard POSIX (SDK's default 6)
-  "HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER",
-  // Locale
-  "LANG", "LC_ALL", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
-  "LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
-  "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
-  // XDG Base Directory (literals; XDG_* prefix-match handled below too)
-  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
-  "XDG_RUNTIME_DIR", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS",
-  // Temp
-  "TMPDIR", "TMP", "TEMP",
-  // Node
-  "NODE_ENV", "NODE_PATH",
-  // Python
-  "PYTHONIOENCODING", "PYTHONPATH",
-];
-
-const NPM_CONFIG_PREFIX = "npm_config_";
-const XDG_PREFIX = "XDG_";
-
-/**
- * Interpreter-control vars blocked from child env unconditionally.
- * These instruct runtimes to load attacker-controlled code at startup.
- * Blocked even via operator config.env — NEVER remove without security review.
- */
-const INTERPRETER_CONTROL_BLOCKLIST: ReadonlySet<string> = new Set([
-  "BASH_ENV", "ENV",          // sh/bash startup file injection
-  "PYTHONSTARTUP",             // Python startup code
-  "RUBYOPT",                   // Ruby option injection (-r loads modules)
-  "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", // JVM agent injection
-  "PERL5OPT",                  // Perl option injection (-M loads modules)
-  "NODE_OPTIONS",              // Node.js --require / --experimental-* injection
-]);
-
-/**
- * Build the stdio-child env from the allowlist + operator extension +
- * explicit config.env passthrough.
- *
- * Order of precedence (later overrides earlier):
- *   1. Daemon env keys matching MCP_STDIO_BUILTIN_ENV_ALLOWLIST (or the
- *      XDG_ / npm_config_ prefix predicate).
- *   2. Daemon env keys matching extraAllowedKeys (operator-extension from
- *      `config.integrations.mcp.safetyAllowedEnvKeys`).
- *   3. Explicit `config.env` (operator-named per-server pairs).
- *
- * Function-export values (starting with `()`) are SKIPPED — matches the
- * MCP SDK's own behavior and avoids Shellshock-style command injection
- * (Bash CVE-2014-6271).
- *
- * Pure function; the only side-effect is the `systemEnvSnapshot()` read,
- * which is the sanctioned env-access path (always use systemEnvSnapshot, never process.env directly).
- */
-export function scrubStdioEnv(
-  configEnv: Record<string, string> | undefined,
-  extraAllowedKeys: readonly string[] | undefined,
-): Record<string, string> {
-  const allowlist = new Set<string>([
-    ...MCP_STDIO_BUILTIN_ENV_ALLOWLIST,
-    ...(extraAllowedKeys ?? []),
-  ]);
-  const result: Record<string, string> = {};
-  const snapshot = systemEnvSnapshot();
-  for (const key of Object.keys(snapshot)) {
-    // Interpreter-control vars are blocked even if they appear in the
-    // allowlist or a prefix-match — defense-in-depth against accidental addition.
-    if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue;
-    const passes =
-      allowlist.has(key) ||
-      key.startsWith(NPM_CONFIG_PREFIX) ||
-      key.startsWith(XDG_PREFIX);
-    if (!passes) continue;
-    const v = snapshot[key];
-    if (typeof v !== "string") continue;
-    if (v.startsWith("()")) continue; // Shellshock / function-export skip
-    result[key] = v;
-  }
-  // Operator-named config.env passes through — EXCEPT interpreter-control vars
-  // (these must never reach a child process even via explicit operator config).
-  if (configEnv) {
-    for (const [key, value] of Object.entries(configEnv)) {
-      if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // interpreter-control block
-      result[key] = value;
-    }
-  }
-  return result;
-}
+// The stdio env allowlist + interpreter-control blocklist + `scrubStdioEnv`
+// builder were moved to a sibling leaf to keep this file under the 500-line
+// per-subdirectory cap (the tools/list_changed diff helpers pushed it over).
+// Re-exported here so existing callers and the co-located
+// mcp-client-discover.test.ts keep importing from this leaf — not an API change.
+import { scrubStdioEnv, MCP_STDIO_BUILTIN_ENV_ALLOWLIST } from "./mcp-client-stdio-env.js";
+export { scrubStdioEnv, MCP_STDIO_BUILTIN_ENV_ALLOWLIST };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -329,6 +227,63 @@ export function createTransport(
 }
 
 // ---------------------------------------------------------------------------
+// tools/list_changed diff (pure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable, content-free fingerprint of a tool's MUTABLE contract surface
+ * (`description` + `inputSchema`). Two tools sharing a name are "changed"
+ * iff their fingerprints differ. JSON.stringify gives a deterministic
+ * serialization for the plain JSON-Schema objects MCP servers return
+ * (object/array/string/number/boolean/null — no functions, no symbols).
+ */
+function toolContractFingerprint(tool: McpToolDefinition): string {
+  return JSON.stringify({
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  });
+}
+
+/**
+ * Diff a previous vs. new MCP tool list by NAME, plus detect IN-PLACE
+ * mutation of a surviving tool's contract.
+ *
+ *   - addedTools:   names present in `next` but not `previous`
+ *   - removedTools: names present in `previous` but not `next`
+ *   - changedTools: names present in BOTH whose `description` or `inputSchema`
+ *     changed — the CVE-2025-54136 "rug-pull" (a tool approved/seen with one
+ *     schema is silently swapped for another mid-session). A name-only diff
+ *     misses this entirely.
+ *
+ * Returns NAMES ONLY in every bucket — never the (untrusted, server-controlled)
+ * schemas/descriptions themselves, so the result is safe to put on an event
+ * payload / log line. Pure: no I/O, no state.
+ */
+export function diffToolLists(
+  previousTools: readonly McpToolDefinition[],
+  newTools: readonly McpToolDefinition[],
+): { addedTools: string[]; removedTools: string[]; changedTools: string[] } {
+  const previousByName = new Map(previousTools.map((t) => [t.name, t] as const));
+  const currentNames = new Set(newTools.map((t) => t.name));
+
+  const addedTools = newTools.filter((t) => !previousByName.has(t.name)).map((t) => t.name);
+  const removedTools = previousTools
+    .filter((t) => !currentNames.has(t.name))
+    .map((t) => t.name);
+
+  const changedTools: string[] = [];
+  for (const t of newTools) {
+    const prev = previousByName.get(t.name);
+    if (!prev) continue; // added — handled above
+    if (toolContractFingerprint(prev) !== toolContractFingerprint(t)) {
+      changedTools.push(t.name);
+    }
+  }
+
+  return { addedTools, removedTools, changedTools };
+}
+
+// ---------------------------------------------------------------------------
 // MCP Client creation helper (with listChanged handler)
 // ---------------------------------------------------------------------------
 
@@ -376,24 +331,34 @@ export function createClient(
                 lastHealthCheck: systemNowMs(),
               });
 
-              const previousNames = new Set(previousTools.map(t => t.name));
-              const currentNames = new Set(newTools.map(t => t.name));
-              const addedTools = newTools.filter(t => !previousNames.has(t.name)).map(t => t.name);
-              const removedTools = previousTools.filter(t => !currentNames.has(t.name)).map(t => t.name);
-
-              deps.eventBus!.emit("mcp:server:tools_changed", {
-                serverName,
-                previousToolCount: previousTools.length,
-                currentToolCount: newTools.length,
-                addedTools,
-                removedTools,
-                timestamp: systemNowMs(),
-              });
-
-              logger.info(
-                { serverName, previousCount: previousTools.length, currentCount: newTools.length, added: addedTools, removed: removedTools },
-                "MCP server tool list changed",
+              // Diff BY NAME (added/removed) AND detect in-place mutation of a
+              // surviving tool's contract (changedTools) — the CVE-2025-54136
+              // "rug-pull" a name-only diff would miss.
+              const { addedTools, removedTools, changedTools } = diffToolLists(
+                previousTools,
+                newTools,
               );
+
+              // Fire only when something actually changed (add / remove /
+              // in-place schema-or-description mutation). A bare
+              // tools/list_changed notification that resolves to an identical
+              // list emits no signal.
+              if (addedTools.length || removedTools.length || changedTools.length) {
+                deps.eventBus!.emit("mcp:server:tools_changed", {
+                  serverName,
+                  previousToolCount: previousTools.length,
+                  currentToolCount: newTools.length,
+                  addedTools,
+                  removedTools,
+                  changedTools,
+                  timestamp: systemNowMs(),
+                });
+
+                logger.info(
+                  { serverName, previousCount: previousTools.length, currentCount: newTools.length, added: addedTools, removed: removedTools, changed: changedTools },
+                  "MCP server tool list changed",
+                );
+              }
             },
           },
         },

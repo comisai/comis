@@ -1127,12 +1127,22 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         // return type is Message-or-true).
         return editMessageText(body);
 
+      case "sendPhoto":
+      case "sendAudio":
+      case "sendVideo":
       case "sendVoice":
       case "sendDocument":
-        // FAULT-01 (c) — the voice→document fallback. RECORD both so the
-        // fallback's recorded sendDocument outbound (caption "Voice message
-        // (sent as file)") is assertable on the oracle. grammy sends these as
-        // multipart; `parseBody` extracted the scalar caption/chat_id fields.
+        // Media OUTBOUND delivery. The real grammy adapter (telegram-outbound.ts)
+        // calls sendPhoto (image-gen), sendAudio (TTS/music), sendVideo (video-gen),
+        // sendVoice (voice note), sendDocument (file / the FAULT-01 (c) voice→document
+        // fallback). RECORD all so media delivery is assertable on the chat oracle —
+        // grammy sends these as multipart; `parseBody` extracted the scalar
+        // caption/chat_id fields.
+        // (openclaw-usecases 2026-06-25: image-gen produced a real 1536×1024 PNG and
+        // TTS a real MP3, but delivery was UNOBSERVABLE — sendPhoto/sendAudio fell to
+        // the default `okEnvelope({})` → no message_id minted (`messageId:"undefined"`
+        // in the adapter log) and nothing recorded, so the channel oracle showed 0
+        // media sends. Routing them through sendMediaMethod mints the id + records.)
         return sendMediaMethod(method, body);
 
       // COVER-01 — the Tier-3 group-admin methods implemented ON DEMAND (the set
@@ -1293,6 +1303,17 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       messageId,
       raw: body,
     };
+    // Map the Bot API method → the RecordedOutbound.mediaKind the channel oracle
+    // asserts on (so a test can read `mediaKind === "photo"` not just `method`).
+    const mediaKindByMethod: Record<string, string> = {
+      sendPhoto: "photo",
+      sendAudio: "audio",
+      sendVoice: "voice",
+      sendVideo: "video",
+      sendDocument: "document",
+    };
+    const mk = mediaKindByMethod[method];
+    if (mk !== undefined) ro.mediaKind = mk;
     if (typeof body["caption"] === "string") ro.caption = body["caption"];
     record(chatId, ro);
     return okEnvelope({
