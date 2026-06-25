@@ -845,6 +845,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // its own deny-branch tests (intra-core, excluded from the consumer scan).
       // Shrink this entry once 211-05 wires it into the bwrap provider.
       "validateBindMount",
+      // ── learned-doc static scan (v2.31 Reflection, 223-02, interface-first) ──
+      // validateLearnedDocBody is the STATIC poison/secret scan an advisory Mental
+      // Model doc receives (SKILL-02 / INV-3) — the renamed `scanFields` extracted to
+      // @comis/core (where validateMemoryWrite already lives). It lands FIRST so the
+      // agent reflection job (223-04) + the daemon reflect path (223-05) consume it
+      // without a @comis/skills dependency. Until those plans land, the only callers
+      // are its own static-scan tests (intra-core, excluded from the consumer scan).
+      // Mirrors the validateBindMount interface-first precedent above. Shrink each
+      // entry once 223-04/05 wire it into the reflection path.
+      "validateLearnedDocBody",
+      "MAX_DOC_NAME_LENGTH",
+      "LearnedDocValidation",
+      "LearnedDocFinding",
       // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
       // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
