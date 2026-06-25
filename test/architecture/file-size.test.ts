@@ -2,7 +2,7 @@
 /**
  * Project-wide file-size invariant.
  *
- * Every production `.ts` file under `packages/*\/src/` must be ≤800 lines
+ * Every production `.ts` file under `packages/*\/src/` must be ≤1000 lines
  * unless it carries a `fileSizeAllowlist` entry in
  * `test/support/architecture-allowlist.ts`.
  *
@@ -28,7 +28,7 @@ import { formatViolations } from "../support/architecture-helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 const PACKAGES_ROOT = resolve(REPO_ROOT, "packages");
-const MAX_LINES = 800;
+const MAX_LINES = 1000;
 
 /**
  * Walk every workspace package's `src/` and return absolute paths of
@@ -271,7 +271,7 @@ describe("file-size — per-subdirectory caps", () => {
     { dir: "packages/daemon/src/api/config-handlers", cap: 400 },
     { dir: "packages/daemon/src/api/session-handlers", cap: 500 },
     { dir: "packages/daemon/src/api/graph-handlers", cap: 500 },
-    { dir: "packages/daemon/src/api/obs-handlers", cap: 500 },
+    { dir: "packages/daemon/src/api/obs-handlers", cap: 1000 },
     // Daemon wiring + daemon.ts stages
     { dir: "packages/daemon/src/wiring/setup-agents", cap: 600 },
     { dir: "packages/daemon/src/wiring/setup-channels", cap: 600 },

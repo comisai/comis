@@ -57,7 +57,9 @@ const turnEndedSince = (p, baseLines) => {
     for (const l of lines) {
       if (l.includes('"type":"session.summary"') || l.includes('"type":"execution.aborted"')) return true;
     }
-  } catch {}
+  } catch {
+    /* best-effort: missing or mid-write trajectory file → treat as not ended */
+  }
   return false;
 };
 
