@@ -62,7 +62,7 @@ describe("versionSkewHealthCheck", () => {
     vi.mocked(rpcClient.callTyped).mockResolvedValue({ version: "1.0.42" } as never);
   });
 
-  it("never throws", async () => {
+  it("resolves to a defined result instead of throwing when the probe fails", async () => {
     await expect(
       versionSkewHealthCheck.run({ ...baseContext }),
     ).resolves.toBeDefined();

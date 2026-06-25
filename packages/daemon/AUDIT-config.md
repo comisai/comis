@@ -3,7 +3,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts`
 **Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
-**Field count:** 11 (7 required + 4 optional + 0 stale-fallback)
+**Field count:** 12 (8 required + 4 optional + 0 stale-fallback)
 **Co-location:** This audit doc lives alongside @comis/daemon package source. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes it from the npm tarball.
 
 ## Field Classification
@@ -15,6 +15,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | container | required | — | packages/daemon/src/api/types.ts:303 |
 | configPaths | required | — | packages/daemon/src/api/types.ts:304 |
 | defaultConfigPaths | required | — | packages/daemon/src/api/types.ts:305 |
+| daemonVersion | required | — | packages/daemon/src/api/types.ts:456 |
 | configGitManager | optional | config.patch / config.reload skip the git auto-commit / hash-snapshot flow; changes still take effect but are not versioned in the config-history repo | packages/daemon/src/api/types.ts:306 |
 | configWebhook | optional | config.patch / config.reload do not POST a change notification to an external webhook; downstream subscribers must poll | packages/daemon/src/api/types.ts:307 |
 | envFilePath | required | — | packages/daemon/src/api/types.ts:309 |
@@ -31,7 +32,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 10
-- **Final count:** 11 (7 required + 4 optional)
+- **Final count:** 12 (8 required + 4 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

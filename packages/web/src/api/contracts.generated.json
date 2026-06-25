@@ -3150,6 +3150,9 @@
         },
         "secretsStoreAvailable": {
           "type": "boolean"
+        },
+        "version": {
+          "type": "string"
         }
       },
       "required": [
@@ -8344,6 +8347,33 @@
             "capUsd"
           ],
           "additionalProperties": false
+        },
+        "perRootBudget": {
+          "type": "object",
+          "properties": {
+            "limb": {
+              "type": "string"
+            },
+            "spent": {
+              "type": "number"
+            },
+            "cap": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "limb",
+            "spent",
+            "cap",
+            "unit"
+          ],
+          "additionalProperties": false
+        },
+        "turnCount": {
+          "type": "number"
         },
         "summary": {
           "type": "string"

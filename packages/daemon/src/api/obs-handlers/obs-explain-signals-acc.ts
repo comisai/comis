@@ -27,6 +27,12 @@ import type { LearningFoldState } from "./obs-explain-signal-folds.js";
  *  `IncidentSignals["spawnTree"]` at the end of `toIncidentSignals`. */
 export type SpawnNode = NonNullable<IncidentSignals["spawnTree"]>[number];
 
+// @optional-field-count: internal mutable fold accumulator — each optional field
+// is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
+// toolSchemaUnsupported, lastRecall, spend, perRootBudget, the four media turns,
+// agentId, channel) that is absent until its trajectory record class is seen. They
+// are not a configuration surface; collapsing or splitting them would only obscure
+// the one-fold-per-record-class structure.
 export interface Acc {
   toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];

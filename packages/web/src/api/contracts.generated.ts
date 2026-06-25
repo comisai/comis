@@ -3272,6 +3272,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "secretsStoreAvailable": {
           "type": "boolean"
+        },
+        "version": {
+          "type": "string"
         }
       },
       "required": [
@@ -8466,6 +8469,33 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "capUsd"
           ],
           "additionalProperties": false
+        },
+        "perRootBudget": {
+          "type": "object",
+          "properties": {
+            "limb": {
+              "type": "string"
+            },
+            "spent": {
+              "type": "number"
+            },
+            "cap": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "limb",
+            "spent",
+            "cap",
+            "unit"
+          ],
+          "additionalProperties": false
+        },
+        "turnCount": {
+          "type": "number"
         },
         "summary": {
           "type": "string"
