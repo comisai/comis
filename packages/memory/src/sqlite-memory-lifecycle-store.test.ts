@@ -795,4 +795,79 @@ describe("createSqliteMemoryLifecycleStore", () => {
       });
     });
   });
+
+  // ── RC-3: corroborated-failure eviction at the REALISTIC strengthThreshold ──
+  // (EVI-STRENGTH-FLOOR fix, live 2026-06-25). The LIVE tests above use an artificial
+  // strengthThreshold:0.99 — at the DEFAULT 0.2 the recall-shape strength (floored >0.25)
+  // can NEVER drop below threshold, so a failure-implicated memory could only ever evict
+  // via the 90-day dormant-age disjunct (proven inert live). These pin the new
+  // corroborated-failure disjunct: a LOW-proof, non-exempt memory implicated in failures
+  // >= failureEvictionFloor is soft-evicted; a HIGH-proof / pinned / system one NEVER
+  // (the FORGET-03 anti-induced-eviction belt holds — each failure_count increment is
+  // itself corroboration-gated).
+  describe("runLifecycleSweep (RC-3: corroborated-failure eviction at the realistic threshold)", () => {
+    let adapter: SqliteMemoryAdapter;
+    let db: Database.Database;
+    let store: ReturnType<typeof createSqliteMemoryLifecycleStore>;
+    // strengthThreshold 0.2 (the REALISTIC default, NOT 0.99): the strength disjunct
+    // cannot fire for a failure-implicated memory, so only the failure floor can.
+    const REALISTIC_POLICY: MemoryLifecyclePolicy = {
+      thetaPromote: 0.7, thetaDemote: 0.3, epsilonPrune: 0.05, maxDormantDays: 90,
+      evictionEnabled: true, strengthThreshold: 0.2, failurePenalty: 0.5, highProofFloor: 5,
+      failureEvictionFloor: 3,
+    };
+    beforeEach(() => { adapter = new SqliteMemoryAdapter(memoryConfig); db = adapter.getDb(); store = createSqliteMemoryLifecycleStore({ db, policy: REALISTIC_POLICY }); });
+    afterEach(() => { adapter.close(); });
+
+    it("evicts a LOW-proof RECENT memory with corroborated failures >= floor (strength alone could NOT — EVI-STRENGTH-FLOOR)", async () => {
+      // Recent (1 day → base strength ~1.0) + low-proof + 3 corroborated failures: strength
+      // stays >0.25 (>threshold 0.2) and it is NOT dormant → the ONLY eviction path is the
+      // corroborated-failure disjunct. RED pre-fix (no disjunct → the memory survives).
+      insertMemory(db, { id: "wrong-recent-lowproof", content: "repeatedly wrong", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      seedLastUseful(db, { memoryId: "wrong-recent-lowproof", lastUsefulAt: T0 - 1 * DAY_MS });
+      seedFailureCount(db, { memoryId: "wrong-recent-lowproof", failureCount: 3 });
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBeGreaterThanOrEqual(1);
+      expect(evictedAtOf(db, "wrong-recent-lowproof"), "low-proof sustained-wrong must evict").not.toBeNull();
+    });
+
+    it("NEVER evicts a HIGH-proof memory with the SAME failures (FORGET-03 anti-induced-eviction holds)", async () => {
+      insertMemory(db, { id: "wrong-but-corroborated", content: "wrong but well-proven", occurredAt: T0 - 1 * DAY_MS, proofCount: 5 });
+      seedLastUseful(db, { memoryId: "wrong-but-corroborated", lastUsefulAt: T0 - 1 * DAY_MS });
+      seedFailureCount(db, { memoryId: "wrong-but-corroborated", failureCount: 8 });
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "wrong-but-corroborated"), "high-proof memory must survive induced failures").toBeNull();
+    });
+
+    it("NEVER evicts a PINNED memory with failures >= floor (pinned exemption holds)", async () => {
+      insertMemory(db, { id: "wrong-but-pinned", content: "wrong but pinned", occurredAt: T0 - 1 * DAY_MS, proofCount: 1, pinned: true });
+      seedLastUseful(db, { memoryId: "wrong-but-pinned", lastUsefulAt: T0 - 1 * DAY_MS });
+      seedFailureCount(db, { memoryId: "wrong-but-pinned", failureCount: 8 });
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "wrong-but-pinned"), "pinned memory must survive induced failures").toBeNull();
+    });
+
+    it("does NOT evict below the floor: a recent low-proof memory with failures < floor survives", async () => {
+      insertMemory(db, { id: "few-failures", content: "occasionally wrong", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      seedLastUseful(db, { memoryId: "few-failures", lastUsefulAt: T0 - 1 * DAY_MS });
+      seedFailureCount(db, { memoryId: "few-failures", failureCount: 2 }); // < floor 3 → not a candidate
+      const res = await store.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      expect(evictedAtOf(db, "few-failures"), "below-floor failures must not evict").toBeNull();
+    });
+
+    it("a DORMANT policy (evictionEnabled off) ignores the failure floor — byte-identity", async () => {
+      const dormant = createSqliteMemoryLifecycleStore({ db, policy: { ...REALISTIC_POLICY, evictionEnabled: false } });
+      insertMemory(db, { id: "wrong-dormant-policy", content: "wrong", occurredAt: T0 - 1 * DAY_MS, proofCount: 1 });
+      seedLastUseful(db, { memoryId: "wrong-dormant-policy", lastUsefulAt: T0 - 1 * DAY_MS });
+      seedFailureCount(db, { memoryId: "wrong-dormant-policy", failureCount: 8 });
+      const res = await dormant.runLifecycleSweep({ tenantId: "tenant_a", agentId: "agent_x", now: T0 });
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value.evicted).toBe(0);
+      expect(evictedAtOf(db, "wrong-dormant-policy")).toBeNull();
+    });
+  });
 });

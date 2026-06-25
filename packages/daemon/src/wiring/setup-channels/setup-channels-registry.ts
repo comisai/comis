@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, EmbeddingPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -251,6 +251,10 @@ export interface ChannelsDeps {
   /** Learned-skill store (WS2/skills) — forwarded to the __SKILL_SYNTHESIS__ cron path (runSkillSynthesis
    *  admit). Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
   learnedSkillStore?: LearnedSkillStorePort;
+  /** RC-1: the embedder (setup-memory's `cachedPort`) — forwarded to the __SKILL_SYNTHESIS__ cron path so
+   *  buildSourceTrajectories attaches clustering embeddings. Threaded (NOT on AppContainer — the embedder
+   *  is kept off the agent-accessible path). Absent ⇒ no clustering ⇒ every trajectory is a singleton. */
+  embeddingPort?: EmbeddingPort;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -436,6 +440,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     // ride the SAME cron-deps chain → the __SKILL_SYNTHESIS__ sentinel assembles the closed-graph bundle.
     outcomeStore: deps.outcomeStore,
     learnedSkillStore: deps.learnedSkillStore,
+    embeddingPort: deps.embeddingPort, // RC-1: ride the cron-deps chain to buildSourceTrajectories
     approvalGate: deps.approvalGate,
     memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,

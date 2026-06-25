@@ -128,6 +128,21 @@ export interface MemoryLifecyclePolicy {
    * well-corroborated memory. Defaults to {@link DEFAULT_HIGH_PROOF_FLOOR}.
    */
   highProofFloor?: number;
+  /**
+   * RC-3 (EVI-STRENGTH-FLOOR fix): the corroborated-`failure_count` floor at/above which
+   * a NON-EXEMPT memory is soft-evicted regardless of its decayed strength. This makes
+   * "wrongness eviction" actually reachable: the `strength` math floors at >0.25 (above
+   * the 0.2 strengthThreshold), so the strength disjunct alone can NEVER evict a
+   * failure-implicated memory — only the 90-day dormant-age disjunct ever fired. A
+   * memory repeatedly + corroboratedly implicated in failures (each `failure_count`
+   * increment is itself corroboration-gated — ≥2 independent sessions OR a deterministic
+   * source, setup-learning-corroboration.ts) is forgotten. SECURITY: gated entirely by
+   * the SAME FORGET-03 exemptions (pinned / system / `proof_count >= highProofFloor`),
+   * so an induced-failure attacker still cannot evict a well-corroborated/pinned/system
+   * memory — the floor only reaches LOW-proof, non-pinned, non-system rows. Default
+   * {@link DEFAULT_FAILURE_EVICTION_FLOOR}; a higher value is more conservative.
+   */
+  failureEvictionFloor?: number;
 }
 
 /** The design-default DORMANT policy (mirrors MemoryLifecycleConfigSchema defaults). */
@@ -145,6 +160,15 @@ const DEFAULT_POLICY: MemoryLifecyclePolicy = {
  * the design's high-proof exemption; the daemon can override via the policy.
  */
 const DEFAULT_HIGH_PROOF_FLOOR = 5;
+
+/**
+ * RC-3: the default corroborated-`failure_count` eviction floor. Each `failure_count`
+ * increment is corroboration-gated (≥2 independent sessions OR a deterministic source),
+ * so 3 means a memory implicated in failures across multiple independent corroborated
+ * events — sustained wrongness, not a stray transient. Deliberately conservative; only
+ * reaches LOW-proof, non-pinned, non-system rows (the FORGET-03 exemptions still hold).
+ */
+const DEFAULT_FAILURE_EVICTION_FLOOR = 3;
 
 /**
  * The wrongness-coupling saturation constant K (FORGET-02). The bounded monotone
@@ -307,6 +331,9 @@ export function createSqliteMemoryLifecycleStore(
         const strengthThreshold = effStrengthThreshold ?? policy.epsilonPrune;
         const failurePenalty = effFailurePenalty ?? 0;
         const highProofFloor = policy.highProofFloor ?? DEFAULT_HIGH_PROOF_FLOOR;
+        // RC-3: the corroborated-failure eviction floor (the EVI-STRENGTH-FLOOR fix). Only
+        // consulted under the LIVE policy; the FORGET-03 exemptions still gate it.
+        const failureEvictionFloor = ov?.failureEvictionFloor ?? policy.failureEvictionFloor ?? DEFAULT_FAILURE_EVICTION_FLOOR;
 
         // COMPUTE per-row: the importance-decayed strength + the hysteresis-banded
         // tier + the eviction candidacy. Under the LIVE policy the eligible
@@ -384,9 +411,17 @@ export function createSqliteMemoryLifecycleStore(
           // `disuseDays` (days since last recall), NOT `dormantDays` (event age), so a
           // recently-recalled old-event memory survives the age branch (FORGET-04); a
           // never-recalled old memory still trips it (disuseDays falls back to event age).
+          // RC-3: the corroborated-failure disjunct makes wrongness-eviction REACHABLE —
+          // the strength math floors >0.25 (above strengthThreshold), so a failure-
+          // implicated memory could never evict on strength alone (EVI-STRENGTH-FLOOR).
+          // Gated on `liveEviction` so the DORMANT candidacy count stays byte-identical;
+          // `!exempt` keeps the FORGET-03 anti-induced-eviction guarantee (high-proof /
+          // pinned / system are never reached, no matter how many failures).
           const isEvictionCandidate =
             !exempt &&
-            (strength < strengthThreshold || disuseDays > policy.maxDormantDays);
+            (strength < strengthThreshold ||
+              disuseDays > policy.maxDormantDays ||
+              (liveEviction && failureCount >= failureEvictionFloor));
           if (isEvictionCandidate) {
             evictionCandidates += 1;
             // Only mark rows not already evicted (idempotent re-sweeps).

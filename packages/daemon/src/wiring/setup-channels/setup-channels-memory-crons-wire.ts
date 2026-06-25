@@ -192,7 +192,7 @@ export async function handleWireMemoryCronSentinel(
     // sweep CALL. OFF (the default) → no override → DORMANT sweep (byte-identical).
     const lf = agentConfig?.learningForgetting;
     const evictionPolicy = lf?.enabled
-      ? { evictionEnabled: lf.eviction?.enabled !== false, strengthThreshold: lf.eviction?.strengthThreshold, failurePenalty: lf.failurePenalty }
+      ? { evictionEnabled: lf.eviction?.enabled !== false, strengthThreshold: lf.eviction?.strengthThreshold, failurePenalty: lf.failurePenalty, failureEvictionFloor: lf.eviction?.failureEvictionFloor }
       : undefined;
     const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({
       tenantId: lifecycleTenantId,
@@ -418,6 +418,8 @@ export async function handleWireMemoryCronSentinel(
         validated: v.validated,
         admitted: v.admitted,
         maxClusterCardinality: v.maxClusterCardinality,
+        // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel.
+        admissionOutcome: v.admissionOutcome,
         timestamp: clock.now(),
       });
       // WR-01: emit one learning:skill_validated per validated candidate (booleans +

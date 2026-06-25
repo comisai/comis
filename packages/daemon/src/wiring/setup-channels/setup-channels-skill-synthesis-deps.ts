@@ -18,7 +18,7 @@
  * @module
  */
 
-import type { OutcomeSignalPort, LearnedSkillStorePort, ContextStorePort, ContextBrowsePort, AppContainer } from "@comis/core";
+import type { OutcomeSignalPort, LearnedSkillStorePort, ContextStorePort, ContextBrowsePort, AppContainer, EmbeddingPort } from "@comis/core";
 import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
 import { createSandboxSkillValidationAdapter } from "@comis/skills";
 import { buildReviewSessionSource } from "./review-session-source.js";
@@ -36,10 +36,91 @@ export interface SkillSynthesisDepsInput {
   outcomeStore?: OutcomeSignalPort;
   learnedSkillStore?: LearnedSkillStorePort;
   approvalGate?: SkillApprovalGate;
+  /**
+   * RC-1: the daemon's embedder (the cached + circuit-broken `EmbeddingPort`, threaded
+   * from setupMemory's `cachedPort` alongside the other memory stores). Used to attach
+   * clustering embeddings to the synthesis source trajectories. Deliberately threaded
+   * (NOT read off `container`) because the embedder is kept OFF `AppContainer` (the
+   * agent-accessible path — daemon-types.ts isolation boundary). Absent ⇒ no clustering
+   * embeddings ⇒ every trajectory is a singleton (the prior behaviour).
+   */
+  embeddingPort?: EmbeddingPort;
 }
 
 /** A no-op approval gate (deny-all) when none is wired — a mutating candidate is then never admitted. */
 const DENY_ALL_GATE: SkillApprovalGate = { requestApproval: async () => ({ approved: false }) };
+
+/**
+ * The embedding window for clustering (~1536 tokens — mirrors @comis/memory's
+ * `truncateForEmbedding` default). A session transcript can exceed an embedder's
+ * context; truncating the LEADING chars keeps the signal while staying in-window.
+ */
+const MAX_CLUSTER_EMBED_CHARS = 6_000;
+
+/**
+ * RC-2: recover the RAW user request from a stored inbound message by stripping the
+ * executor's injected envelope. The executor wraps every inbound turn as
+ * `[System context]\n<preamble incl. a VOLATILE timestamp>\n[End system context]\n\n[<channel>] <id> (<time>):\n<actual message>`
+ * (envelope-wrapper.ts). Both the system-context preamble AND the channel header carry a
+ * per-turn timestamp, so the stored "user message" of two IDENTICAL requests DIFFERS —
+ * which is why raw user-message clustering failed live (2026-06-25). This recovers the
+ * stable request. Mirrors `@comis/web`'s `stripUserSystemContext` (the daemon must not
+ * import @comis/web); if the envelope format in envelope-wrapper.ts changes, update both.
+ */
+function stripUserSystemContext(text: string): string {
+  if (!text.includes("[System context]") && !text.includes("[End system context]")) return text;
+  const endMarker = "[End system context]";
+  const endIdx = text.lastIndexOf(endMarker);
+  if (endIdx === -1) return text;
+  const afterContext = text.slice(endIdx + endMarker.length);
+  // Strip the channel header `[telegram] 678314278 (9:34 AM):` — its time is also volatile.
+  const channelHeaderMatch = afterContext.match(/\s*\[[\w-]+\]\s+\S+\s+\([^)]*\):\s*/);
+  if (channelHeaderMatch) {
+    const msgStart = afterContext.indexOf(channelHeaderMatch[0]) + channelHeaderMatch[0].length;
+    return afterContext.slice(msgStart).trim();
+  }
+  return afterContext.trim();
+}
+
+/**
+ * RC-1 (SYNTH-EMBED-DEAD) + RC-2 (clustering signal) fix: attach a clustering
+ * embedding to each source trajectory via the threaded embedder (`cachedPort` — the
+ * cached + circuit-broken {@link import("@comis/core").EmbeddingPort} already used for
+ * recall). The synthesis CLUSTER step groups by cosine similarity of `embedding`; a
+ * trajectory with NO embedding is a SINGLETON, so `maxClusterCardinality` stays 1 and
+ * nothing is ever admitted — which is exactly why skill synthesis was dead in production.
+ *
+ * - Embeds an aligned `embedTexts[i]` per trajectory — the caller passes a STABLE task
+ *   SIGNATURE (the user request — RC-2), NOT the raw transcript, so two analogous
+ *   successful tasks cluster even when the agent's response wording differs (raw-
+ *   transcript cosine fell below the 0.82 threshold on near-identical tasks — live 2026-06-25).
+ * - DEDUPES by the embed text — many per-turn trajectories share one session signature,
+ *   so we embed each unique signature once and fan the vector back out.
+ * - GRACEFUL: an absent/faulting/short-returning embedder leaves `embedding` undefined
+ *   (= the prior singleton behaviour) and NEVER throws — the nightly synthesis cron
+ *   must not break on an embedding hiccup (the circuit breaker may be open).
+ */
+async function attachClusteringEmbeddings(
+  trajectories: SynthesisSourceTrajectory[],
+  embedTexts: string[],
+  embedder: EmbeddingPort | undefined,
+): Promise<void> {
+  if (!embedder || trajectories.length === 0 || embedTexts.length !== trajectories.length) return;
+  const uniqueTexts = [...new Set(embedTexts)];
+  const truncated = uniqueTexts.map((t) => (t.length > MAX_CLUSTER_EMBED_CHARS ? t.slice(0, MAX_CLUSTER_EMBED_CHARS) : t));
+  let res: Awaited<ReturnType<EmbeddingPort["embedBatch"]>>;
+  try {
+    res = await embedder.embedBatch(truncated);
+  } catch {
+    return; // a misbehaving provider must never break the cron
+  }
+  if (!res.ok || res.value.length !== uniqueTexts.length) return; // graceful degradation
+  const byText = new Map<string, number[]>();
+  uniqueTexts.forEach((t, i) => byText.set(t, res.value[i]));
+  trajectories.forEach((t, i) => {
+    t.embedding = byText.get(embedTexts[i]);
+  });
+}
 
 /**
  * Build the SKILL-08/09 cron bundle, or `undefined` when the @comis/memory stores
@@ -99,32 +180,54 @@ export function buildSkillSynthesisCronDeps(deps: SkillSynthesisDepsInput): Skil
       // sessionKey → sender (userId), from the session view.
       const senderBySession = new Map<string, string>();
       for (const e of source.listDetailed(tenantId)) senderBySession.set(e.sessionKey, e.userId);
-      // sessionKey → flattened transcript, loaded at most once per session.
-      const textCache = new Map<string, string | undefined>();
-      const sessionText = (sessionKey: string): string | undefined => {
+      // sessionKey → { full transcript (the synthesis input), task signature (the
+      // clustering input) }, loaded at most once per session.
+      const contentOf = (m: unknown): string => {
+        const c = (m as { content?: unknown }).content;
+        return typeof c === "string" ? c : "";
+      };
+      const roleOf = (m: unknown): string => {
+        const r = (m as { role?: unknown }).role;
+        return typeof r === "string" ? r : "";
+      };
+      const textCache = new Map<string, { text: string; signature: string } | undefined>();
+      const sessionTexts = (sessionKey: string): { text: string; signature: string } | undefined => {
         if (textCache.has(sessionKey)) return textCache.get(sessionKey);
         const loaded = source.loadByFormattedKey(sessionKey);
-        const text =
-          loaded === undefined
-            ? ""
-            : loaded.messages
-                .map((m) => {
-                  const content = (m as { content?: unknown }).content;
-                  return typeof content === "string" ? content : "";
-                })
-                .filter((t) => t.length > 0)
-                .join("\n");
-        const val = text.length > 0 ? text : undefined;
+        let val: { text: string; signature: string } | undefined;
+        if (loaded !== undefined) {
+          const text = loaded.messages.map(contentOf).filter((t) => t.length > 0).join("\n");
+          // RC-2: the CLUSTERING signature = the user-role messages (the task INTENT the
+          // user controls), which is stable across the agent's response wording. Two
+          // analogous successful tasks then cluster even when the agent phrased its
+          // answer differently (raw-transcript cosine fell below 0.82 on near-identical
+          // tasks — live 2026-06-25). Fall back to the full text when a session has no
+          // user message (so the signature is never empty).
+          const userText = loaded.messages
+            .filter((m) => roleOf(m) === "user")
+            .map((m) => stripUserSystemContext(contentOf(m))) // RC-2: drop the volatile envelope so identical requests match
+            .filter((t) => t.length > 0)
+            .join("\n");
+          const signature = userText.length > 0 ? userText : text;
+          val = text.length > 0 ? { text, signature } : undefined;
+        }
         textCache.set(sessionKey, val);
         return val;
       };
 
       const out: SynthesisSourceTrajectory[] = [];
+      const signatures: string[] = []; // aligned with `out`; the per-trajectory clustering input (RC-2)
       for (const { trajectoryId, sessionId } of idsRes.value) {
-        const text = sessionText(sessionId);
-        if (text === undefined) continue; // no transcript for this turn's session → skip
-        out.push({ trajectoryId, sessionId, sender: senderBySession.get(sessionId) ?? "", text });
+        const texts = sessionTexts(sessionId);
+        if (texts === undefined) continue; // no transcript for this turn's session → skip
+        out.push({ trajectoryId, sessionId, sender: senderBySession.get(sessionId) ?? "", text: texts.text });
+        signatures.push(texts.signature);
       }
+      // RC-1/RC-2: attach clustering embeddings of the task SIGNATURE so structurally-
+      // similar successes cluster (without them every trajectory is a singleton →
+      // maxClusterCardinality 1 → admit:0). `text` (the full transcript) is unchanged —
+      // it remains the synthesis INPUT the LLM distills the skill body from.
+      await attachClusteringEmbeddings(out, signatures, deps.embeddingPort);
       return out;
     },
   };

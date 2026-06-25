@@ -23,7 +23,7 @@ describe("LearningForgettingConfigSchema — per-agent soft-eviction config (def
   it("parse({}) yields the documented default-ON block (enabled:true, eviction{enabled:true, strengthThreshold:0.2}, failurePenalty:0.5)", () => {
     expect(LearningForgettingConfigSchema.parse({})).toEqual({
       enabled: true,
-      eviction: { enabled: true, strengthThreshold: 0.2 },
+      eviction: { enabled: true, strengthThreshold: 0.2, failureEvictionFloor: 3 },
       failurePenalty: 0.5,
     });
   });
@@ -32,6 +32,7 @@ describe("LearningForgettingConfigSchema — per-agent soft-eviction config (def
     expect(LearningForgettingConfigSchema.parse({ failurePenalty: 0.3 }).eviction).toEqual({
       enabled: true,
       strengthThreshold: 0.2,
+      failureEvictionFloor: 3,
     });
   });
 
@@ -57,7 +58,7 @@ describe("LearningForgettingConfigSchema — per-agent soft-eviction config (def
   it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningForgetting.enabled === true", () => {
     const agent = PerAgentConfigSchema.parse({});
     expect(agent.learningForgetting.enabled).toBe(true);
-    expect(agent.learningForgetting.eviction).toEqual({ enabled: true, strengthThreshold: 0.2 });
+    expect(agent.learningForgetting.eviction).toEqual({ enabled: true, strengthThreshold: 0.2, failureEvictionFloor: 3 });
     expect(agent.learningForgetting.failurePenalty).toBe(0.5);
   });
 });

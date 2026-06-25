@@ -28,10 +28,37 @@ import type {
 } from "@comis/core";
 import {
   runSkillSynthesis,
+  classifyAdmissionOutcome,
   type SkillSynthesisJobDeps,
   type SkillSynthesisJobConfig,
   type SynthesisSourceTrajectory,
 } from "./skill-synthesis-job.js";
+
+// ── RC-4: admissionOutcome classifier (the diagnosability verdict; live 2026-06-25) ──
+describe("classifyAdmissionOutcome (RC-4 — why a synthesis run admitted nothing)", () => {
+  const base = { selected: 2, hadEmbeddings: true, maxClusterCardinality: 2, synthesized: 1, admitted: 0, approvalRequested: 0 };
+  it("admitted wins (success short-circuits)", () => {
+    expect(classifyAdmissionOutcome({ ...base, admitted: 1 })).toBe("admitted");
+  });
+  it("no_successful_sources when SELECT kept nothing", () => {
+    expect(classifyAdmissionOutcome({ ...base, selected: 0 })).toBe("no_successful_sources");
+  });
+  it("no_embeddings (SYNTH-EMBED-DEAD signature) — sources but none carry an embedding → all singletons", () => {
+    expect(classifyAdmissionOutcome({ ...base, hadEmbeddings: false, maxClusterCardinality: 1 })).toBe("no_embeddings");
+  });
+  it("uncorroborated when embeddings exist but no cluster reached cardinality 2", () => {
+    expect(classifyAdmissionOutcome({ ...base, maxClusterCardinality: 1 })).toBe("uncorroborated");
+  });
+  it("no_procedure_synthesized when a corroborated cluster yielded no candidate", () => {
+    expect(classifyAdmissionOutcome({ ...base, synthesized: 0 })).toBe("no_procedure_synthesized");
+  });
+  it("mutating_deferred when a candidate routed to the approval gate", () => {
+    expect(classifyAdmissionOutcome({ ...base, approvalRequested: 1 })).toBe("mutating_deferred");
+  });
+  it("validation_failed when synthesized but the admission predicate failed (e.g. unvalidated script)", () => {
+    expect(classifyAdmissionOutcome(base)).toBe("validation_failed");
+  });
+});
 
 const NOW = 1_700_000_000_000;
 const SCOPE = { tenantId: "t1", agentId: "a1", now: NOW };

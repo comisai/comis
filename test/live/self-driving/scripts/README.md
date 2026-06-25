@@ -56,6 +56,12 @@ ssh root@<vps> 'MODELS="claude-sonnet-4-6 claude-opus-4-8" PRIMARY=claude-sonnet
 | `models-sweep.sh` | VPS | root | sweep a model list: swap config → restart → PONG → check actual `modelId` |
 | `config.example.yaml` | — | — | reference config (literal token, nested budget, emulator apiRoot) |
 
+## Gotchas (hindsight-verified-learning 2026-06-25 — don't re-discover)
+- **`db.mjs count vec_memories` / `vec_learned_skills` fails `no such module: vec0`** — `db.mjs`'s plain better-sqlite3 handle doesn't load the sqlite-vec extension, so the `vec0` virtual tables are unreadable. To check the **vector+FTS reconcile** on a forget/delete (REC-3), count the plain **shadow** table `vec_memories_rowids` (and `memory_fts`) instead — they drop in lockstep with `memories`. (A kit improvement would be to load the vec extension in `db.mjs`, or add a `veccount <t>` that reads the `_rowids` shadow.)
+- **`db.mjs sql "… WHERE x='lit'"` dies `unrecognized token: "\"`** — single-quoted SQL string literals don't survive the `ssh → su - comis -c "…" → node` quoting layers (the `\x27`/`'…'` escapes mangle). Prefer **`db.mjs pick <t> <cols> [n]`** (no literals) and filter/grep the JSON locally, or write the query to a `/tmp/q.sql` file and have `db.mjs` read it. Numeric/no-literal `sql` (e.g. `SELECT DISTINCT session_id FROM outcome_events`) is fine.
+- **`logscan --msg <substr> --fields a,b` often prints `{}`** — `--msg` matches by substring so it catches the WRONG lines (`--msg completed` matches "Request completed"/"RPC call completed"; `--msg outcome`/`recall`/`memory_store` matched lines without those fields), and the `--fields` projection only reads TOP-LEVEL keys, returning `{}` when the field is nested or absent. When it returns `{}`, fall back to a **traceId-anchored raw grep** + `node -e` JSON.parse to read the real `err`/`hint`/`errorText` (the tool-failure errorText lives on a `level:40/50` `module:agent` "Tool execution failed" line, NOT on the `module:skills` audit line). A kit improvement: make `--fields` walk nested paths + tighten `--msg` to anchored/exact.
+- **Skill-synthesis `admitted:0` is NOT "needs more corroboration" at HEAD — it's SYNTH-EMBED-DEAD** (embeddings never injected → all singletons). See `targets/EXAMPLE-verified-learning.md` + `runs/FINDINGS-LEDGER.md`. Don't re-investigate.
+
 ## Notes
 - The **emulator** itself is launched from the repo's existing tooling: `tsx test/live/bin/vps-emu.ts`
   (deploy `test/live/` per runbook §0). It writes `/tmp/comis-emu.json` (`{apiRoot, port, botToken}`) which

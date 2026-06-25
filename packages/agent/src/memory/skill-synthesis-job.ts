@@ -191,8 +191,38 @@ export interface SkillValidationSummary {
   coverage: "full" | "static-only";
 }
 
+/**
+ * RC-4 (diagnosability): the ACUTE reason a synthesis run admitted nothing (or did).
+ * A closed, content-free enum so "why didn't a skill get learned?" is ONE readable
+ * field on the funnel — closing the gap that made three live-test runs mis-diagnose a
+ * dead pipeline. First-match-wins, computed from the funnel counts:
+ * - `abstained`            — the capability gate abstained (weak model, benign).
+ * - `no_successful_sources`— no `success`-outcome trajectory cleared the SELECT gate.
+ * - `no_embeddings`        — sources exist but NONE carry a clustering embedding → all
+ *                            singletons (the SYNTH-EMBED-DEAD signature — RC-1).
+ * - `uncorroborated`       — clusters formed but `maxClusterCardinality < 2` (the
+ *                            anti-domination gate: needs ≥2 distinct (session, sender)).
+ * - `no_procedure_synthesized` — a corroborated cluster reached the synthesizer but it
+ *                            emitted no candidate (the LLM judged nothing reusable).
+ * - `mutating_deferred`    — candidate(s) routed to the (dormant) approval gate.
+ * - `validation_failed`    — synthesized but failed the admission predicate (e.g. an
+ *                            embedded script with no dynamic sandbox coverage).
+ * - `admitted`             — ≥1 skill admitted.
+ */
+export type SkillAdmissionOutcome =
+  | "abstained"
+  | "no_successful_sources"
+  | "no_embeddings"
+  | "uncorroborated"
+  | "no_procedure_synthesized"
+  | "mutating_deferred"
+  | "validation_failed"
+  | "admitted";
+
 /** What `runSkillSynthesis` returns — counts/ids/closed-scalars only; the daemon emits the events. */
 export interface SkillSynthesisJobResult {
+  /** RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free verdict. */
+  admissionOutcome: SkillAdmissionOutcome;
   /** True when the run abstained (weak model, benign skip). */
   abstained: boolean;
   /** How many candidate skills were synthesized this run. */
@@ -274,6 +304,30 @@ function clusterSuccesses(
   }
 
   return clusters;
+}
+
+/**
+ * RC-4: classify the ACUTE reason a synthesis run admitted nothing (or did) from the
+ * funnel counts. Pure + first-match-wins (the order encodes precedence: a success
+ * short-circuits, then each upstream gate in pipeline order). `hadEmbeddings`
+ * distinguishes the SYNTH-EMBED-DEAD signature (no embeddings → all singletons) from a
+ * genuine corroboration shortfall.
+ */
+export function classifyAdmissionOutcome(f: {
+  selected: number;
+  hadEmbeddings: boolean;
+  maxClusterCardinality: number;
+  synthesized: number;
+  admitted: number;
+  approvalRequested: number;
+}): SkillAdmissionOutcome {
+  if (f.admitted > 0) return "admitted";
+  if (f.selected === 0) return "no_successful_sources";
+  if (!f.hadEmbeddings && f.maxClusterCardinality < 2) return "no_embeddings";
+  if (f.maxClusterCardinality < 2) return "uncorroborated";
+  if (f.synthesized === 0) return "no_procedure_synthesized";
+  if (f.approvalRequested > 0) return "mutating_deferred";
+  return "validation_failed";
 }
 
 /** Flatten a cluster's member text into one block for synthesis (the adapter wraps it). */
@@ -364,6 +418,7 @@ export async function runSkillSynthesis(
     );
     // No failure metric, no breaker — the benign-skip contract.
     return ok({
+      admissionOutcome: "abstained",
       abstained: true,
       synthesized: 0,
       admitted: 0,
@@ -406,6 +461,7 @@ export async function runSkillSynthesis(
 
   if (selected.length === 0) {
     return ok({
+      admissionOutcome: "no_successful_sources",
       abstained: false,
       synthesized: 0,
       admitted: 0,
@@ -508,6 +564,17 @@ export async function runSkillSynthesis(
     }
   }
 
+  // RC-4: the acute admit verdict (the SELECTED set is what clustering ran on, so its
+  // embedding presence is the SYNTH-EMBED-DEAD signal — `no_embeddings` vs `uncorroborated`).
+  const admissionOutcome = classifyAdmissionOutcome({
+    selected: selected.length,
+    hadEmbeddings: selected.some((t) => t.embedding !== undefined),
+    maxClusterCardinality,
+    synthesized,
+    admitted,
+    approvalRequested,
+  });
+
   logger.info(
     {
       agentId,
@@ -517,6 +584,7 @@ export async function runSkillSynthesis(
       admitted,
       approvalRequested,
       maxClusterCardinality,
+      admissionOutcome, // RC-4: the readable "why 0 admitted" verdict, grep-able in the log
       ...(boundedBy ? { boundedBy } : {}),
       durationMs: clock.now() - startMs,
     },
@@ -524,6 +592,7 @@ export async function runSkillSynthesis(
   );
 
   return ok({
+    admissionOutcome,
     abstained: false,
     synthesized,
     admitted,

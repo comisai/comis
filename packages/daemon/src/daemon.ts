@@ -425,7 +425,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue, cachedPort,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
@@ -521,6 +521,10 @@ function buildChannelManagerDeps(deps: {
     // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ / __MEMORY_LIFECYCLE__ sentinels (the last two are KEYLESS: the bandit over the FEED signal + the DORMANT lifecycle sweep).
     // outcomeStore + learnedSkillStore ride the SAME chain → the __SKILL_SYNTHESIS__ sentinel (SKILL-08/09): the daemon assembles the closed-graph skillSynthesis bundle from them + the tool list/policy + the LCD source inside registerCronEventListeners.
     tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, memoryApi,
+    // RC-1 (SYNTH-EMBED-DEAD): the embedder rides the SAME cron-deps chain as outcomeStore/
+    // learnedSkillStore → the __SKILL_SYNTHESIS__ sentinel attaches clustering embeddings to the
+    // source trajectories (without it every trajectory is a singleton → admit:0 forever).
+    embeddingPort: cachedPort,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,

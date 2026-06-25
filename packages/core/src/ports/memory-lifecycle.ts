@@ -62,6 +62,14 @@ export interface MemoryLifecycleEvictionOverride {
   strengthThreshold?: number;
   /** The [0,1] wrongness-coupling weight on `failure_count` (`learningForgetting.failurePenalty`). */
   failurePenalty?: number;
+  /**
+   * RC-3 (EVI-STRENGTH-FLOOR fix): the corroborated-`failure_count` floor at/above which a
+   * NON-EXEMPT memory is soft-evicted regardless of its (floored >0.25) decayed strength.
+   * Each `failure_count` increment is corroboration-gated; the FORGET-03 exemptions
+   * (pinned / system / high-proof) still gate it, so an induced-failure attacker cannot
+   * evict a well-corroborated memory. Omitted ⇒ the store default.
+   */
+  failureEvictionFloor?: number;
 }
 
 /**

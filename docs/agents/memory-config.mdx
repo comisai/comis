@@ -167,10 +167,11 @@ agents:
       exploration: 0.1               # UCB confidence weight [0..1]
 
     learningForgetting:              # LEARN-FORGET — wrongness-based soft eviction
-      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
+      enabled: true                  # default ON (opt-out); force-disabled by memory.costFeatures.enabled: false
       eviction:
         enabled: true                # the parent `enabled` is the real gate
         strengthThreshold: 0.2       # strength floor below which a non-pinned/non-system memory is soft-evicted
+        failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted regardless of strength (RAISE for a more conservative policy)
       failurePenalty: 0.5            # weight on a memory's failure_count when decaying strength [0..1]
 ```
 
@@ -198,15 +199,15 @@ agents:
 | Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
 | Online tuning | `memoryOnlineTuning.enabled` | The bandit cron that learns the alphas for LEARN-RANK |
 | Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep (the soft-eviction behaviour is gated by `learningForgetting`, below) |
-| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default false)* | Outcome-rewarded, per-query-intent ranking: gates the bandit on a real task outcome + learns a vector per intent. Composes with `memoryOnlineTuning` + `rag.onlineTuning` |
-| **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default false)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
+| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default true, opt-out)* | Outcome-rewarded, per-query-intent ranking: gates the bandit on a real task outcome + learns a vector per intent. Composes with `memoryOnlineTuning` + `rag.onlineTuning` |
+| **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default true, opt-out)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
 
 ## Outcome-gated ranking & forgetting (v2.26)
 
-**Verified Learning** adds two per-agent loops that gate ranking and forgetting on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy. Both are **default-OFF** and force-disabled by the master `memory.costFeatures.enabled` switch, so a default install is byte-identical — the tables exist but nothing learns or evicts.
+**Verified Learning** adds two per-agent loops that gate ranking and forgetting on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy. Both **default ON (opt-out)**, gated by the master `memory.costFeatures.enabled` switch (also default on) — so a default install **does** learn-to-rank and forget. Set a per-agent flag (`learningTuning.enabled` / `learningForgetting.enabled`) **or** the master `memory.costFeatures.enabled` to `false` to opt out.
 
 - **Ranking** — `agents.<id>.learningTuning.enabled` turns the tuned-alpha learner into an **outcome-rewarded, per-query-intent** bandit: it learns a separate ranking-weight vector per deterministic `classifyIntent` bucket, rewarded when a recalled memory rides a `success` trajectory and penalised on `failure`/`corrected`. The learner is deterministic, and the **trust weight is never tuned** (it stays config-sourced and provably frozen). It composes with the existing `memoryOnlineTuning` (the cron) + `rag.onlineTuning` (the apply) — all must be on for tuning to be live.
-- **Forgetting** — `agents.<id>.learningForgetting.enabled` couples a memory's decay to its outcome-attributed `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently weak memory: it is marked `evicted_at` (excluded from recall, still resolvable via `asOf`/inspect, **reversible**, never hard-deleted). A **corroboration gate** (≥2 independent failures, or one deterministic source) and **exemptions** for pinned / `system` / high-`proof_count` memories make induced eviction impractical. It composes with `memoryLifecycle` (the sweep schedule) + `rag.forget` (score-decay).
+- **Forgetting** — `agents.<id>.learningForgetting.enabled` couples a memory's decay to its outcome-attributed `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently weak memory: it is marked `evicted_at` (excluded from recall, still resolvable via `asOf`/inspect, **reversible**, never hard-deleted). A memory implicated in **`eviction.failureEvictionFloor`** (default 3) or more **corroborated** failures is soft-evicted regardless of its decayed strength — the recall-shape strength floors above the threshold, so this floor is what makes wrongness-eviction reachable. A **corroboration gate** (≥2 independent failures, or one deterministic source, on every `failure_count` increment) and **exemptions** for pinned / `system` / high-`proof_count` memories make induced eviction impractical: a poisoner cannot evict a well-corroborated, pinned, or system memory no matter how many failures it induces. It composes with `memoryLifecycle` (the sweep schedule) + `rag.forget` (score-decay).
 
 See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`tuned_alpha` / `memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. Both loops emit **counts-only** signals (`memory:online_tuning_applied`, `learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
 

@@ -57,8 +57,16 @@ export const LearningForgettingConfigSchema = z.strictObject({
       /** Strength floor [0,1] below which a non-pinned/non-system candidate is soft-evicted.
        *  DISTINCT from MemoryLifecycleConfigSchema.epsilonPrune (0.05) — resolved decision #3. */
       strengthThreshold: z.number().min(0).max(1).default(0.2),
+      /** RC-3 (EVI-STRENGTH-FLOOR fix): the corroborated-`failure_count` floor at/above which a
+       *  NON-EXEMPT memory is soft-evicted regardless of its decayed strength (which floors >0.25,
+       *  above strengthThreshold, so the strength disjunct alone never evicts a failure-implicated
+       *  memory). Each failure_count increment is itself corroboration-gated; the FORGET-03
+       *  exemptions (pinned / system / high-proof) still hold, so a poisoner cannot evict a
+       *  well-corroborated memory. RAISE for a more conservative policy; the default requires
+       *  sustained corroborated wrongness. */
+      failureEvictionFloor: z.number().int().min(1).default(3),
     })
-    .default(() => ({ enabled: true, strengthThreshold: 0.2 })),
+    .default(() => ({ enabled: true, strengthThreshold: 0.2, failureEvictionFloor: 3 })),
   /** Weight [0,1] applied to a recalled memory's failure_count when decaying strength. */
   failurePenalty: z.number().min(0).max(1).default(0.5),
 });

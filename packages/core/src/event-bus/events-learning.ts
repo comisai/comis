@@ -81,6 +81,14 @@ export interface LearningEvents {
     admitted: number;
     /** The largest corroborating trajectory cluster (1 = single instance → not admissible). */
     maxClusterCardinality: number;
+    /**
+     * RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free
+     * closed enum so `comis explain` answers "why was 0 admitted" from ONE field:
+     * `no_embeddings` (the SYNTH-EMBED-DEAD signature) / `uncorroborated` (cardinality<2) /
+     * `no_procedure_synthesized` / `mutating_deferred` / `validation_failed` / `admitted` /
+     * `no_successful_sources` / `abstained`.
+     */
+    admissionOutcome: string;
     timestamp: number;
   };
 
