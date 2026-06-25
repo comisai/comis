@@ -405,6 +405,11 @@ export const IncidentReportSchema = z.object({
       unit: z.string(),
     })
     .optional(),
+  /** OBS-4 (openclaw-usecases 2026-06-25): distinct turns (envelope traceId) the
+   *  trajectory spans. Present only when >1 — it flags the whole-session toolStats as
+   *  cumulative-across-N-turns (the trajectory JSONL is append-only across severs), so
+   *  a reader does not misread a multi-turn count as this-turn. Additive (schemaVersion 1). */
+  turnCount: z.number().optional(),
   summary: z.string(),
   likelyRootCause: z
     .object({
@@ -650,6 +655,15 @@ export interface IncidentSignals {
    * not a per-root spend-abort.
    */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /**
+   * OBS-4 (openclaw-usecases 2026-06-25): the number of DISTINCT turns (envelope
+   * `traceId`, one per agent turn) the trajectory spans. The session trajectory JSONL
+   * is append-only across `session.reset_conversation` severs, so the whole-session
+   * `toolStats` can be the SUM across many turns — surfacing this (only when >1) flags
+   * the counts as cumulative so a reader does not misread a multi-turn count as
+   * this-turn. Absent for a single-turn session.
+   */
+  turnCount?: number;
   /**
    * OBS-03/OBS-04 (Phase 186): the image-generation turn reconstructed from the
    * session's `image.*` trajectory records (the terminal image.generated /

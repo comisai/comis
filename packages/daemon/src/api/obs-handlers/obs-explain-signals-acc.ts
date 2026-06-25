@@ -93,6 +93,14 @@ export interface Acc {
   /** W8: event-shape tool.result toolCallIds already counted (dedup — the same
    *  call must not count twice if its result event is duplicated across sources). */
   seenToolResultCallIds: Set<string>;
+  /** OBS-4 (openclaw-usecases 2026-06-25): the distinct turn ids (envelope `traceId`,
+   *  one per agent turn) seen in the trajectory. The session trajectory JSONL is
+   *  APPEND-ONLY across `session.reset_conversation` severs, so a single file (and the
+   *  whole-session `toolStats` derived from it) can span MANY turns — counting these
+   *  lets the report flag the tool counts as cumulative-across-N-turns rather than
+   *  this-turn (the near-miss that cost a cycle: a `toolStats` count read as one turn
+   *  was actually the sum across several). */
+  turnTraceIds: Set<string>;
   /** W8: agentId from the first record envelope that carries one. */
   agentId?: string;
   /** W8: channel identity from the session.started record's data. */

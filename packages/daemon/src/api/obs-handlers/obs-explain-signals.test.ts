@@ -113,6 +113,38 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — turnCount (OBS-4: flag cumulative-across-turns toolStats)", () => {
+  // The trajectory JSONL is append-only across session.reset_conversation severs, so one
+  // file (and the whole-session toolStats) can span MANY turns — each turn a distinct
+  // envelope traceId. turnCount surfaces that span so a reader does not misread a
+  // multi-turn count as this-turn (the near-miss that cost a cycle: openclaw-usecases).
+  const evt = (traceId: string, type: string, seq: number, data: Record<string, unknown>): Record<string, unknown> => ({
+    traceSchema: "comis-trajectory",
+    schemaVersion: 1,
+    traceId,
+    type,
+    seq,
+    data,
+  });
+
+  it("surfaces turnCount = distinct traceIds when the trajectory spans MULTIPLE turns", () => {
+    const s = toIncidentSignals([
+      evt("turn-A", "tool.result", 1, { toolName: "agents_manage", success: true }),
+      evt("turn-B", "tool.result", 2, { toolName: "agents_manage", success: true }),
+      evt("turn-C", "tool.result", 3, { toolName: "web_search", success: true }),
+    ]);
+    expect(s.turnCount).toBe(3);
+  });
+
+  it("OMITS turnCount for a single-turn session (no cumulative ambiguity to flag)", () => {
+    const s = toIncidentSignals([
+      evt("only-turn", "tool.result", 1, { toolName: "web_search", success: true }),
+      evt("only-turn", "tool.result", 2, { toolName: "web_search", success: true }),
+    ]);
+    expect(s.turnCount).toBeUndefined();
+  });
+});
+
 describe("toIncidentSignals — log shape (678-like)", () => {
   function signals678(): IncidentSignals {
     return toIncidentSignals([

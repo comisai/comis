@@ -410,6 +410,9 @@ export function assembleIncidentReport(
     // numbers from the terminal execution.aborted record (absent unless a per-root
     // meter tripped). Lets the Incident view + the spend verdict name the exact knob.
     ...(signals.perRootBudget !== undefined ? { perRootBudget: signals.perRootBudget } : {}),
+    // OBS-4 (openclaw-usecases 2026-06-25): the turn span (>1 only) — flags the
+    // whole-session toolStats as cumulative across N turns (append-only trajectory).
+    ...(signals.turnCount !== undefined ? { turnCount: signals.turnCount } : {}),
     // OBS-03/OBS-04 (186): the image-generation turn reconstructed from the
     // trajectory's image.* records (absent when the session generated no image).
     // The cost rides here so `comis explain` shows it (Route a — NOT cost.costUsd,
