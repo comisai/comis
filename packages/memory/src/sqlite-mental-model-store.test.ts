@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for `createSqliteLearnedSkillStore` — the @comis/memory SQLite
- * adapter for the segregated `LearnedSkillStorePort` (@comis/core, v2.26 Verified
- * Learning WS2 / SKILL-01). The store owns ALL `learned_skills` SQL: the
+ * Unit tests for `createSqliteMentalModelStore` — the @comis/memory SQLite
+ * adapter for the segregated `MentalModelStorePort` (@comis/core, the v2.31
+ * Mental Model doc store generalized from the v2.26 Verified Learning WS2 /
+ * SKILL-01 procedural store). The store owns ALL `mental_models` SQL: the
  * idempotent `admit()` upsert (deterministic-hash id of the UNIQUE
- * `(tenant_id, agent_id, name)` tuple + `ON CONFLICT(id) DO UPDATE`), the scoped
- * `(tenant, agent)`-isolated `get`/`list` reads, and the `promote`/`demote`/
- * `evict` lifecycle transitions (evict is SOFT — sets `evicted_at`, never a hard
+ * `(tenant_id, agent_id, kind, topic_key, name)` tuple + `ON CONFLICT(id) DO
+ * UPDATE`), the scoped `(tenant, agent)`-isolated `get`/`list` reads (the
+ * `list(scope, kind?)` kind filter), and the `promote`/`demote`/`evict`
+ * lifecycle transitions (evict is SOFT — sets `evicted_at`, never a hard
  * DELETE).
  *
- * `learned_skills` has NO foreign key, so a bare `new Database(":memory:")` +
+ * `mental_models` has NO foreign key, so a bare `new Database(":memory:")` +
  * `initSchema(db, dims)` is sufficient — no `SqliteMemoryAdapter` / seeded
  * memories needed (the `sqlite-outcome-store.test.ts` / no-FK precedent).
  *
  * The two load-bearing security invariants under test:
  *  - SEC-01 trust ceiling: a raw `INSERT … trust_level='system'` THROWS (the DB
  *    `CHECK (trust_level IN ('learned'))` rejects any non-'learned' value) — a
- *    synthesized procedure can NEVER be `system`.
- *  - SEC-01 (tenant, agent) isolation: a skill admitted under (tenantA, agentA)
+ *    learned mental-model doc can NEVER be `system`.
+ *  - SEC-01 (tenant, agent) isolation: a doc admitted under (tenantA, agentA)
  *    is INVISIBLE to a read under (tenantB, agentB); an empty/unresolved scope
  *    fails-closed with `err(...)` (never widens to a shared pool).
  *
@@ -28,8 +30,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { initSchema } from "./schema.js";
-import { createSqliteLearnedSkillStore } from "./sqlite-learned-skill-store.js";
-import type { AdmitSkillInput, LearningScope } from "@comis/core";
+import { createSqliteMentalModelStore } from "./sqlite-mental-model-store.js";
+import { ensureMentalModelsTable } from "./schema-mental-models.js";
+import type { AdmitMentalModelInput, LearningScope } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -42,13 +45,18 @@ const AGENT_B = "agent_b";
 const SCOPE_A: LearningScope = { tenantId: TENANT_A, agentId: AGENT_A };
 const SCOPE_B: LearningScope = { tenantId: TENANT_B, agentId: AGENT_B };
 
-/** Build a minimal AdmitSkillInput, overridable per test. */
-function makeInput(overrides: Partial<AdmitSkillInput> = {}): AdmitSkillInput {
+/** Build a minimal AdmitMentalModelInput, overridable per test. */
+function makeInput(overrides: Partial<AdmitMentalModelInput> = {}): AdmitMentalModelInput {
   return {
     name: overrides.name ?? "deploy-the-thing",
     description: overrides.description ?? "Deploy the thing the safe way",
     body: overrides.body ?? "1. run the build\n2. ship it",
     mutating: overrides.mutating ?? false,
+    // kind/topicKey are OPTIONAL — omitted ⇒ the adapter applies 'skill'/'' so a
+    // skill admit stays byte-identical to the pre-generalization store. A test
+    // that exercises a non-skill kind overrides these explicitly.
+    ...(overrides.kind !== undefined ? { kind: overrides.kind } : {}),
+    ...(overrides.topicKey !== undefined ? { topicKey: overrides.topicKey } : {}),
     proofCount: overrides.proofCount ?? 1,
     confidence: overrides.confidence ?? 0.8,
     sourceTrajIds: overrides.sourceTrajIds ?? ["traj_1"],
@@ -58,22 +66,32 @@ function makeInput(overrides: Partial<AdmitSkillInput> = {}): AdmitSkillInput {
 
 /**
  * Recompute the deterministic id the store derives from the UNIQUE
- * `(tenant, agent, name)` tuple. The test owns this formula independently so a
- * drift in the store's hashing is caught (it is the idempotency backstop beyond
- * the UNIQUE constraint).
+ * `(tenant, agent, kind, topic_key, name)` tuple. The test owns this formula
+ * independently so a drift in the store's hashing is caught (it is the
+ * idempotency backstop beyond the UNIQUE constraint). `kind`/`topicKey` default
+ * to the skill values (`'skill'`/`''`) so the common skill-admit call site stays
+ * a 3-arg call.
  */
-function expectedId(tenantId: string, agentId: string, name: string): string {
-  return createHash("sha256").update([tenantId, agentId, name].join(" ")).digest("hex");
+function expectedId(
+  tenantId: string,
+  agentId: string,
+  name: string,
+  kind = "skill",
+  topicKey = "",
+): string {
+  return createHash("sha256")
+    .update([tenantId, agentId, kind, topicKey, name].join(" "))
+    .digest("hex");
 }
 
-describe("createSqliteLearnedSkillStore", () => {
+describe("createSqliteMentalModelStore", () => {
   let db: Database.Database;
-  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
 
-  /** Count learned_skills rows under a (tenant, agent). */
+  /** Count mental_models rows under a (tenant, agent). */
   function rowCount(tenantId = TENANT_A, agentId = AGENT_A): number {
     const row = db
-      .prepare("SELECT COUNT(*) AS c FROM learned_skills WHERE tenant_id = ? AND agent_id = ?")
+      .prepare("SELECT COUNT(*) AS c FROM mental_models WHERE tenant_id = ? AND agent_id = ?")
       .get(tenantId, agentId) as { c: number };
     return row.c;
   }
@@ -81,7 +99,7 @@ describe("createSqliteLearnedSkillStore", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 384); // a realistic runtime-probed embedding dimension
-    store = createSqliteLearnedSkillStore({ db });
+    store = createSqliteMentalModelStore({ db });
   });
 
   afterEach(() => {
@@ -92,18 +110,18 @@ describe("createSqliteLearnedSkillStore", () => {
   // Schema: the table + the FTS/trigram twins are created on boot
   // -------------------------------------------------------------------------
 
-  it("creates the learned_skills table + the FTS/vec/trigram twins on boot", () => {
+  it("creates the mental_models table + the FTS/vec/trigram twins on boot", () => {
     const tables = new Set(
       (
         db
-          .prepare("SELECT name FROM sqlite_master WHERE type IN ('table') AND name LIKE 'learned_skills%'")
+          .prepare("SELECT name FROM sqlite_master WHERE type IN ('table') AND name LIKE 'mental_models%'")
           .all() as { name: string }[]
       ).map((r) => r.name),
     );
-    expect(tables.has("learned_skills")).toBe(true);
+    expect(tables.has("mental_models")).toBe(true);
     // FTS5 + trigram twins are virtual tables (type='table' in sqlite_master).
-    expect(tables.has("learned_skills_fts")).toBe(true);
-    expect(tables.has("learned_skills_fts_tri")).toBe(true);
+    expect(tables.has("mental_models_fts")).toBe(true);
+    expect(tables.has("mental_models_fts_tri")).toBe(true);
   });
 
   it("is idempotent on a re-run of initSchema (CREATE … IF NOT EXISTS — no throw)", () => {
@@ -111,15 +129,37 @@ describe("createSqliteLearnedSkillStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-04: the learned_skills_fts word-lane twin rebuilds + matches on a body
+  // MODEL-01: the generalized doc shape. The `mental_models` table carries the
+  // NEW kind/topic_key/structured_body/history columns and DROPS the executable
+  // `scripts` column (the v2.31 advisory-doc-only generalization removes the
+  // executable payload entirely). The dead `trigger` column is dropped too.
+  // -------------------------------------------------------------------------
+
+  it("the mental_models table has kind/topic_key/structured_body/history and NO scripts (nor trigger) column", () => {
+    const cols = new Set(
+      (db.prepare("PRAGMA table_info(mental_models)").all() as { name: string }[]).map((c) => c.name),
+    );
+    // The NEW generalized columns are present.
+    expect(cols.has("kind")).toBe(true);
+    expect(cols.has("topic_key")).toBe(true);
+    expect(cols.has("structured_body")).toBe(true);
+    expect(cols.has("history")).toBe(true);
+    // The executable `scripts` column is GONE (advisory-doc-only — no learned code).
+    expect(cols.has("scripts")).toBe(false);
+    // The dead `trigger` column (zero readers at HEAD) is dropped alongside `scripts`.
+    expect(cols.has("trigger")).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-04: the mental_models_fts word-lane twin rebuilds + matches on a body
   // token. The external-content FTS column must name the REAL source column
-  // (`body`) — naming it `content` (no such column on `learned_skills`) makes
+  // (`body`) — naming it `content` (no such column on `mental_models`) makes
   // FTS5 'rebuild' throw "no such column: content" on every boot, leaving the
   // index reliant solely on incremental triggers (stale after an unclean
   // shutdown — the exact scenario memory_fts's rebuild guards against).
   // -------------------------------------------------------------------------
 
-  it("rebuilds learned_skills_fts without throwing and a body token MATCHes after rebuild", async () => {
+  it("rebuilds mental_models_fts without throwing and a body token MATCHes after rebuild", async () => {
     // Admit a row whose body carries a distinctive token.
     await store.admit(makeInput({ name: "fts-rebuild", body: "deploy the zephyrwidget safely" }), SCOPE_A);
     // Drop the incrementally-maintained index contents, then ask FTS5 to
@@ -127,14 +167,157 @@ describe("createSqliteLearnedSkillStore", () => {
     // (FTS column 'content' over a table with no 'content' column) this throws
     // "no such column: content"; the correct schema rebuilds cleanly.
     expect(() => {
-      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('delete-all')");
-      db.exec("INSERT INTO learned_skills_fts(learned_skills_fts) VALUES('rebuild')");
+      db.exec("INSERT INTO mental_models_fts(mental_models_fts) VALUES('delete-all')");
+      db.exec("INSERT INTO mental_models_fts(mental_models_fts) VALUES('rebuild')");
     }).not.toThrow();
     // The rebuilt index finds the body token.
     const hits = db
-      .prepare("SELECT rowid FROM learned_skills_fts WHERE learned_skills_fts MATCH ?")
+      .prepare("SELECT rowid FROM mental_models_fts WHERE mental_models_fts MATCH ?")
       .all("zephyrwidget") as { rowid: number }[];
     expect(hits.length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // MODEL-02: the store admits/gets ANY kind, and `kind`/`topicKey` round-trip
+  // through get(). An omitted kind defaults to 'skill' (the skill admit is
+  // unchanged); a 'topic'/'profile' admit carries its kind + topicKey.
+  // -------------------------------------------------------------------------
+
+  it("a skill admit (kind omitted) round-trips kind='skill', topicKey='' through get()", async () => {
+    await store.admit(makeInput({ name: "default-skill" }), SCOPE_A);
+    const r = await store.get("default-skill", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value?.kind).toBe("skill");
+      expect(r.value?.topicKey).toBe("");
+      // The skill id is the widened (tenant, agent, 'skill', '', name) hash.
+      expect(r.value?.id).toBe(expectedId(TENANT_A, AGENT_A, "default-skill"));
+    }
+  });
+
+  it("admitting with kind:'topic' round-trips kind + topicKey through get()", async () => {
+    await store.admit(
+      makeInput({ name: "deploy-flow", kind: "topic", topicKey: "deployment" }),
+      SCOPE_A,
+    );
+    const r = await store.get("deploy-flow", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value?.kind).toBe("topic");
+      expect(r.value?.topicKey).toBe("deployment");
+      // The id widens with kind + topicKey (distinct from a same-name skill).
+      expect(r.value?.id).toBe(expectedId(TENANT_A, AGENT_A, "deploy-flow", "topic", "deployment"));
+    }
+  });
+
+  it("admitting with kind:'profile' round-trips the profile kind through get()", async () => {
+    await store.admit(makeInput({ name: "user-prefs", kind: "profile" }), SCOPE_A);
+    const r = await store.get("user-prefs", SCOPE_A);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value?.kind).toBe("profile");
+  });
+
+  // -------------------------------------------------------------------------
+  // MODEL-02: list(scope) returns ALL kinds; list(scope, kind) filters by kind.
+  // -------------------------------------------------------------------------
+
+  it("list(scope) returns all kinds; list(scope, 'skill') returns only kind='skill' rows", async () => {
+    await store.admit(makeInput({ name: "a-skill" }), SCOPE_A); // kind='skill' (default)
+    await store.admit(makeInput({ name: "a-topic", kind: "topic", topicKey: "t1" }), SCOPE_A);
+    const all = await store.list(SCOPE_A);
+    expect(all.ok).toBe(true);
+    if (all.ok) expect(all.value.length).toBe(2); // both kinds
+    const skillsOnly = await store.list(SCOPE_A, "skill");
+    expect(skillsOnly.ok).toBe(true);
+    if (skillsOnly.ok) {
+      expect(skillsOnly.value.length).toBe(1);
+      expect(skillsOnly.value[0]?.name).toBe("a-skill");
+      expect(skillsOnly.value[0]?.kind).toBe("skill");
+    }
+    const topicsOnly = await store.list(SCOPE_A, "topic");
+    expect(topicsOnly.ok).toBe(true);
+    if (topicsOnly.ok) {
+      expect(topicsOnly.value.length).toBe(1);
+      expect(topicsOnly.value[0]?.name).toBe("a-topic");
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // MODEL-01 / D-04: forward-only copy-forward REBUILD. A pre-existing
+  // `learned_skills` table (the OLD shape, with `scripts`) is copied forward
+  // into `mental_models` as kind='skill' and DROPPED. Row count is preserved;
+  // the old table no longer exists. (Prod is empty — this is the dev/test path.)
+  // -------------------------------------------------------------------------
+
+  it("ensureMentalModelsTable copies a pre-existing learned_skills row forward as kind='skill' and drops the old table", () => {
+    // A fresh in-memory db, then hand-build the OLD `learned_skills` table with
+    // the pre-generalization DDL (the `scripts` + `trigger` columns present) and
+    // insert one row, BEFORE the mental_models table exists.
+    const old = new Database(":memory:");
+    try {
+      old.exec(`
+        CREATE TABLE learned_skills (
+          id               TEXT PRIMARY KEY,
+          tenant_id        TEXT NOT NULL,
+          agent_id         TEXT NOT NULL,
+          name             TEXT NOT NULL,
+          description      TEXT NOT NULL DEFAULT '',
+          trigger          TEXT,
+          body             TEXT NOT NULL,
+          scripts          TEXT,
+          required_tools   TEXT,
+          params_schema    TEXT,
+          trust_level      TEXT NOT NULL CHECK (trust_level IN ('learned')) DEFAULT 'learned',
+          state            TEXT NOT NULL CHECK (state IN ('candidate','active','stale','archived')) DEFAULT 'candidate',
+          proof_count      INTEGER NOT NULL DEFAULT 0,
+          confidence       REAL NOT NULL DEFAULT 0,
+          strength         REAL NOT NULL DEFAULT 0,
+          source_traj_ids  TEXT,
+          validation_result TEXT,
+          mutating         INTEGER NOT NULL DEFAULT 0,
+          pinned           INTEGER NOT NULL DEFAULT 0,
+          validated_at     INTEGER,
+          created_at       INTEGER NOT NULL,
+          updated_at       INTEGER,
+          evicted_at       INTEGER,
+          UNIQUE (tenant_id, agent_id, name)
+        );
+      `);
+      old
+        .prepare(
+          "INSERT INTO learned_skills (id, tenant_id, agent_id, name, description, body, scripts, trust_level, state, proof_count, confidence, created_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'learned', 'active', ?, ?, ?)",
+        )
+        .run("old-id-1", TENANT_A, AGENT_A, "legacy-deploy", "old desc", "old body", "['echo']", 3, 0.9, 1_000);
+      const oldCount = (old.prepare("SELECT COUNT(*) AS c FROM learned_skills").get() as { c: number }).c;
+      expect(oldCount).toBe(1);
+
+      // Run the migration directly (the same fn initSchema calls on boot).
+      ensureMentalModelsTable(old, 384, false);
+
+      // (a) the row now appears in mental_models as kind='skill'.
+      const migrated = old
+        .prepare("SELECT kind, topic_key, name, proof_count FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+        .get(TENANT_A, AGENT_A, "legacy-deploy") as
+        | { kind: string; topic_key: string; name: string; proof_count: number }
+        | undefined;
+      expect(migrated).toBeDefined();
+      expect(migrated?.kind).toBe("skill");
+      expect(migrated?.topic_key).toBe("");
+      expect(migrated?.proof_count).toBe(3);
+
+      // (b) the row count is preserved (no loss / no dup).
+      const newCount = (old.prepare("SELECT COUNT(*) AS c FROM mental_models").get() as { c: number }).c;
+      expect(newCount).toBe(oldCount);
+
+      // (c) the old learned_skills table no longer exists in sqlite_master.
+      const oldStillThere = old
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_skills'")
+        .get();
+      expect(oldStillThere).toBeUndefined();
+    } finally {
+      old.close();
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -145,7 +328,7 @@ describe("createSqliteLearnedSkillStore", () => {
     const insertSystem = () =>
       db
         .prepare(
-          "INSERT INTO learned_skills (id, tenant_id, agent_id, name, description, body, trust_level, state, created_at) " +
+          "INSERT INTO mental_models (id, tenant_id, agent_id, name, description, body, trust_level, state, created_at) " +
             "VALUES (?, ?, ?, ?, ?, ?, 'system', 'candidate', ?)",
         )
         .run("forged-id", TENANT_A, AGENT_A, "evil", "evil", "rm -rf /", 1_000);
@@ -156,7 +339,7 @@ describe("createSqliteLearnedSkillStore", () => {
     const r = await store.admit(makeInput(), SCOPE_A);
     expect(r.ok).toBe(true);
     const row = db
-      .prepare("SELECT trust_level FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .prepare("SELECT trust_level FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
       .get(TENANT_A, AGENT_A, "deploy-the-thing") as { trust_level: string };
     expect(row.trust_level).toBe("learned");
   });
@@ -193,7 +376,7 @@ describe("createSqliteLearnedSkillStore", () => {
     const first = await store.admit(makeInput({ name: "ghost" }), SCOPE_A);
     expect(first.ok).toBe(true);
     // Soft-evict then a fresh admit re-uses the same id (replay-stable).
-    db.prepare("DELETE FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?").run(
+    db.prepare("DELETE FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?").run(
       TENANT_A,
       AGENT_A,
       "ghost",
@@ -239,7 +422,7 @@ describe("createSqliteLearnedSkillStore", () => {
   it("tolerates corrupt JSON in source_traj_ids (degrades to [], never throws)", async () => {
     await store.admit(makeInput({ name: "corrupt" }), SCOPE_A);
     db.prepare(
-      "UPDATE learned_skills SET source_traj_ids = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+      "UPDATE mental_models SET source_traj_ids = '{not json' WHERE tenant_id = ? AND agent_id = ? AND name = ?",
     ).run(TENANT_A, AGENT_A, "corrupt");
     const r = await store.get("corrupt", SCOPE_A);
     expect(r.ok).toBe(true);
@@ -259,14 +442,14 @@ describe("createSqliteLearnedSkillStore", () => {
 // ===========================================================================
 // SEC-01 isolation matrix + fail-closed scope + soft lifecycle (Task 2)
 // ===========================================================================
-describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycle", () => {
+describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle", () => {
   let db: Database.Database;
-  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
 
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 384);
-    store = createSqliteLearnedSkillStore({ db });
+    store = createSqliteMentalModelStore({ db });
   });
 
   afterEach(() => {
@@ -317,7 +500,7 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
     const r = await store.admit(makeInput({ name: "no-scope" }), EMPTY_TENANT);
     expect(r.ok).toBe(false);
     // Nothing was written under any scope.
-    const count = db.prepare("SELECT COUNT(*) AS c FROM learned_skills").get() as { c: number };
+    const count = db.prepare("SELECT COUNT(*) AS c FROM mental_models").get() as { c: number };
     expect(count.c).toBe(0);
   });
 
@@ -383,11 +566,11 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
     expect(r.ok).toBe(true);
     // The row STILL EXISTS in the table (soft-close).
     const rawCount = db
-      .prepare("SELECT COUNT(*) AS c FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .prepare("SELECT COUNT(*) AS c FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
       .get(TENANT_A, AGENT_A, "evict-me") as { c: number };
     expect(rawCount.c).toBe(1);
     const raw = db
-      .prepare("SELECT evicted_at, state, source_traj_ids FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .prepare("SELECT evicted_at, state, source_traj_ids FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
       .get(TENANT_A, AGENT_A, "evict-me") as { evicted_at: number; state: string; source_traj_ids: string };
     expect(raw.evicted_at).toBe(5_000);
     expect(raw.state).toBe("archived");
@@ -406,14 +589,14 @@ describe("createSqliteLearnedSkillStore — (tenant, agent) isolation + lifecycl
 // (NOT on the first call). The §12 first-RED: today's unconditional CASE flips on
 // call 1, so the "stays candidate after call 1" assertions are RED on pre-patch.
 // ===========================================================================
-describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (D2)", () => {
+describe("createSqliteMentalModelStore — promote() proof-bar threshold gate (D2)", () => {
   let db: Database.Database;
-  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
 
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 384);
-    store = createSqliteLearnedSkillStore({ db });
+    store = createSqliteMentalModelStore({ db });
   });
 
   afterEach(() => {
@@ -493,7 +676,7 @@ describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (
     await store.promote(id, SCOPE_A, 3);
     await store.promote(id, SCOPE_A, 3); // crosses to active
     const raw = db
-      .prepare("SELECT trust_level FROM learned_skills WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .prepare("SELECT trust_level FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
       .get(TENANT_A, AGENT_A, "trust-untouched") as { trust_level: string };
     expect(raw.trust_level).toBe("learned"); // no promote path raises trust
   });
@@ -512,14 +695,14 @@ describe("createSqliteLearnedSkillStore — promote() proof-bar threshold gate (
 // rows-changed so a 0-row write (an unknown/evicted name) is detectable and the
 // caller can stop the telemetry from lying.
 // ===========================================================================
-describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name→id + rows-changed)", () => {
+describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→id + rows-changed)", () => {
   let db: Database.Database;
-  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
 
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 384);
-    store = createSqliteLearnedSkillStore({ db });
+    store = createSqliteMentalModelStore({ db });
   });
 
   afterEach(() => {
@@ -627,19 +810,19 @@ describe("createSqliteLearnedSkillStore — promoteByName / demoteByName (name�
   });
 });
 
-describe("createSqliteLearnedSkillStore — error handling (catch branches)", () => {
+describe("createSqliteMentalModelStore — error handling (catch branches)", () => {
   // evict()/promote()/demote() must NEVER throw — a DB failure mid-operation is
   // caught and surfaced as err() with a WARN (errorKind + hint, the §2.7 bar). We
   // force the failure by dropping the table out from under the eagerly-prepared
   // UPDATE statements (better-sqlite3 re-validates the schema at step time, so the
   // prepared UPDATE throws "no such table").
   let db: Database.Database;
-  let store: ReturnType<typeof createSqliteLearnedSkillStore>;
+  let store: ReturnType<typeof createSqliteMentalModelStore>;
 
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 384);
-    store = createSqliteLearnedSkillStore({ db });
+    store = createSqliteMentalModelStore({ db });
   });
 
   afterEach(() => {
@@ -647,35 +830,35 @@ describe("createSqliteLearnedSkillStore — error handling (catch branches)", ()
   });
 
   it("evict() returns err (not throw) when the underlying UPDATE fails", async () => {
-    db.exec("DROP TABLE learned_skills");
+    db.exec("DROP TABLE mental_models");
     const r = await store.evict("any-id", SCOPE_A);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
   it("promote() returns err (not throw) when the underlying UPDATE fails (dedicated-body catch)", async () => {
-    db.exec("DROP TABLE learned_skills");
+    db.exec("DROP TABLE mental_models");
     const r = await store.promote("any-id", SCOPE_A, 3);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
   it("demote() returns err (not throw) when the underlying UPDATE fails (runTransition catch)", async () => {
-    db.exec("DROP TABLE learned_skills");
+    db.exec("DROP TABLE mental_models");
     const r = await store.demote("any-id", SCOPE_A);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
   it("promoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
-    db.exec("DROP TABLE learned_skills");
+    db.exec("DROP TABLE mental_models");
     const r = await store.promoteByName("any-name", SCOPE_A, 3);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });
 
   it("demoteByName() returns err (not throw) when the underlying UPDATE fails", async () => {
-    db.exec("DROP TABLE learned_skills");
+    db.exec("DROP TABLE mental_models");
     const r = await store.demoteByName("any-name", SCOPE_A);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);

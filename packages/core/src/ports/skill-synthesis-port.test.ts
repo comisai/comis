@@ -11,9 +11,9 @@ import type {
   SkillValidationResult,
   SkillValidationFinding,
   ReplayContext,
-  LearnedSkillStorePort,
-  LearnedSkill,
-  AdmitSkillInput,
+  MentalModelStorePort,
+  MentalModel,
+  AdmitMentalModelInput,
   LearningScope,
 } from "../index.js";
 
@@ -83,14 +83,16 @@ describe("the three NEW port source files exist and honor the closed-graph impor
   });
 
   it("learned-skill-store.ts pins the trust literal 'learned' (the DB-CHECK type mirror — SEC-01)", () => {
-    expect(read(storeSrc)).toMatch(/LearnedSkillStorePort/);
+    expect(read(storeSrc)).toMatch(/MentalModelStorePort/);
     expect(read(storeSrc)).toMatch(/"learned"/);
   });
 });
 
 /**
  * Phase 201 Plan 01 — the three NEW @comis/core procedural-learning ports
- * (SkillSynthesisPort, SkillValidationPort, LearnedSkillStorePort) + their DTOs.
+ * (SkillSynthesisPort, SkillValidationPort, MentalModelStorePort) + their DTOs.
+ * (The store port + its DTOs were generalized `LearnedSkill*` → `MentalModel*` in
+ * Phase 222 — the kind-generic Mental Model doc store.)
  *
  * This is the interface-first contract test (the 198 OutcomeSignalPort precedent).
  * It pins:
@@ -98,8 +100,8 @@ describe("the three NEW port source files exist and honor the closed-graph impor
  *  - LearningScope is REUSED (not redefined) — the same isolation DTO threads every method,
  *  - SkillValidationResult has the verbatim design §WS2 shape
  *    (staticOk/dynamicOk/reproducedEffect:boolean, the closed coverage union, sandboxProvider),
- *  - every port method returns a `Result<T, Error>` (no skill-specific error type),
- *  - LearnedSkill.trustLevel is the literal `"learned"` (the type mirror of the DB CHECK — SEC-01).
+ *  - every port method returns a `Result<T, Error>` (no store-specific error type),
+ *  - MentalModel.trustLevel is the literal `"learned"` (the type mirror of the DB CHECK — SEC-01).
  */
 describe("SkillSynthesisPort — type-only @comis/core contract (interface-first)", () => {
   it("exposes synthesize(input): Promise<Result<CandidateSkill[], Error>>", () => {
@@ -151,35 +153,41 @@ describe("SkillValidationPort — type-only @comis/core contract", () => {
   });
 });
 
-describe("LearnedSkillStorePort — type-only @comis/core contract", () => {
+describe("MentalModelStorePort — type-only @comis/core contract", () => {
   it("exposes the admit/get/list/promote/demote/evict triad, each threading LearningScope", () => {
-    expectTypeOf<LearnedSkillStorePort["admit"]>().parameters.toEqualTypeOf<
-      [AdmitSkillInput, LearningScope]
+    expectTypeOf<MentalModelStorePort["admit"]>().parameters.toEqualTypeOf<
+      [AdmitMentalModelInput, LearningScope]
     >();
-    expectTypeOf<LearnedSkillStorePort["get"]>().parameters.toEqualTypeOf<[string, LearningScope]>();
-    expectTypeOf<LearnedSkillStorePort["list"]>().parameters.toEqualTypeOf<[LearningScope]>();
-    expectTypeOf<LearnedSkillStorePort["promote"]>().parameters.toEqualTypeOf<
+    expectTypeOf<MentalModelStorePort["get"]>().parameters.toEqualTypeOf<[string, LearningScope]>();
+    // list widens to an OPTIONAL kind filter (D-03): list(scope, kind?).
+    expectTypeOf<MentalModelStorePort["list"]>().parameters.toEqualTypeOf<
+      [LearningScope, ("skill" | "profile" | "topic")?]
+    >();
+    expectTypeOf<MentalModelStorePort["promote"]>().parameters.toEqualTypeOf<
       [string, LearningScope]
     >();
-    expectTypeOf<LearnedSkillStorePort["demote"]>().parameters.toEqualTypeOf<
+    expectTypeOf<MentalModelStorePort["demote"]>().parameters.toEqualTypeOf<
       [string, LearningScope]
     >();
-    expectTypeOf<LearnedSkillStorePort["evict"]>().parameters.toEqualTypeOf<
+    expectTypeOf<MentalModelStorePort["evict"]>().parameters.toEqualTypeOf<
       [string, LearningScope]
     >();
   });
 
-  it("LearnedSkill.trustLevel is the literal 'learned' (never widened to string — SEC-01)", () => {
-    expectTypeOf<LearnedSkill["trustLevel"]>().toEqualTypeOf<"learned">();
-    expectTypeOf<LearnedSkill["state"]>().toEqualTypeOf<
+  it("MentalModel.trustLevel is the literal 'learned' (never widened to string — SEC-01)", () => {
+    expectTypeOf<MentalModel["trustLevel"]>().toEqualTypeOf<"learned">();
+    expectTypeOf<MentalModel["state"]>().toEqualTypeOf<
       "candidate" | "active" | "stale" | "archived"
     >();
-    expectTypeOf<LearnedSkill["proofCount"]>().toEqualTypeOf<number>();
-    expectTypeOf<LearnedSkill["mutating"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<MentalModel["proofCount"]>().toEqualTypeOf<number>();
+    expectTypeOf<MentalModel["mutating"]>().toEqualTypeOf<boolean>();
+    // The generalized doc kind (D-03) — skill | profile | topic.
+    expectTypeOf<MentalModel["kind"]>().toEqualTypeOf<"skill" | "profile" | "topic">();
+    expectTypeOf<MentalModel["topicKey"]>().toEqualTypeOf<string>();
   });
 
   it("admit returns Result<{ id; admitted }, Error>", () => {
-    expectTypeOf<Awaited<ReturnType<LearnedSkillStorePort["admit"]>>>().toMatchTypeOf<{
+    expectTypeOf<Awaited<ReturnType<MentalModelStorePort["admit"]>>>().toMatchTypeOf<{
       ok: boolean;
     }>();
   });
