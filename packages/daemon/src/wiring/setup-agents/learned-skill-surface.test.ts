@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ok, err, type Result } from "@comis/shared";
-import { safePath, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
+import { safePath, type MentalModel, type MentalModelStorePort, type LearningScope } from "@comis/core";
 import type { PromptSkillDescription } from "@comis/skills";
 import {
   mergeLearnedSkillsXml,
@@ -25,6 +25,7 @@ import {
   renderLearnedSkillsXml,
   refreshLearnedSkillSurface,
   createRefreshableLearnedSkillSurface,
+  renderSkillFile,
 } from "./learned-skill-surface.js";
 import { createLearnedSkillSurfaceRegistry, wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 
@@ -41,13 +42,15 @@ function platform(name: string): PromptSkillDescription {
   };
 }
 
-/** A LearnedSkill row mirror; defaults are an active, read-only procedure. */
-function learned(over: Partial<LearnedSkill> = {}): LearnedSkill {
+/** A MentalModel (kind='skill') row mirror; defaults are an active, read-only procedure. */
+function learned(over: Partial<MentalModel> = {}): MentalModel {
   return {
     id: `id-${over.name ?? "alpha"}`,
     name: over.name ?? "alpha",
     description: over.description ?? "an alpha procedure",
     body: over.body ?? "# Alpha\n\nStep 1. Do the thing.\n",
+    kind: over.kind ?? "skill",
+    topicKey: over.topicKey ?? "",
     trustLevel: "learned",
     state: over.state ?? "active",
     proofCount: over.proofCount ?? 3,
@@ -164,6 +167,33 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
 });
 
 // ---------------------------------------------------------------------------
+// MODEL-03 byte-identity goldens — a kind='skill' MentalModel renders + materializes
+// BYTE-FOR-BYTE as the pre-migration learned skill did (the no-behavior-change pin).
+// The renderer is byte-deterministic from {name,description,location,source}; a
+// kind='skill' row maps to the same PromptSkillDescription, so no `kind` branch
+// alters the output. A FIXED workspace dir ('/ws') keeps the absolute <location>
+// reproducible in the inline snapshot.
+// ---------------------------------------------------------------------------
+
+describe("MODEL-03: kind='skill' surface render + SKILL.md are byte-identical (golden)", () => {
+  it("mergeLearnedSkillsXml appends a kind='skill' row LAST with <source>learned</source> + absolute SKILL.md location", () => {
+    const xml = mergeLearnedSkillsXml(
+      [platform("platform-a")],
+      [learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" })],
+      "/ws",
+    );
+    expect(xml).toMatchInlineSnapshot();
+  });
+
+  it("renderSkillFile emits the exact frontmatter (name/description/source:learned) + body + trailing newline", () => {
+    const file = renderSkillFile(
+      learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" }),
+    );
+    expect(file).toMatchInlineSnapshot();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // materializeLearnedSkills — derive-on-refresh, never a stale file
 // ---------------------------------------------------------------------------
 
@@ -271,8 +301,8 @@ describe("renderLearnedSkillsXml — sync seam reader", () => {
 // refreshLearnedSkillSurface — the ASYNC half (list → materialize → cache)
 // ---------------------------------------------------------------------------
 
-/** A minimal LearnedSkillStorePort stub whose list() returns a fixed Result. */
-function makeStore(listResult: Result<LearnedSkill[], Error>): LearnedSkillStorePort {
+/** A minimal MentalModelStorePort stub whose list() returns a fixed Result. */
+function makeStore(listResult: Result<MentalModel[], Error>): MentalModelStorePort {
   return {
     admit: async () => ok({ id: "x", admitted: true }),
     get: async () => ok(undefined),
@@ -280,7 +310,7 @@ function makeStore(listResult: Result<LearnedSkill[], Error>): LearnedSkillStore
     promote: async () => ok(undefined),
     demote: async () => ok(undefined),
     evict: async () => ok(undefined),
-  } as unknown as LearnedSkillStorePort;
+  } as unknown as MentalModelStorePort;
 }
 
 describe("refreshLearnedSkillSurface — async list + materialize + cache", () => {
@@ -349,7 +379,7 @@ describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a prom
   it("a promote (list() now returns the skill active) surfaces it on a subsequent refresh()", async () => {
     // list() starts empty, then returns the skill ACTIVE after a 'promote' — the
     // re-refresh picks up the new surfaceable set (SURFACE-03 next-session pickup).
-    let listed: LearnedSkill[] = [];
+    let listed: MentalModel[] = [];
     const store = {
       admit: async () => ok({ id: "x", admitted: true }),
       get: async () => ok(undefined),
@@ -359,7 +389,7 @@ describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a prom
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
 
     const reg = makeRegistryForSurface();
     const { cache, refresh } = createRefreshableLearnedSkillSurface({
@@ -438,7 +468,7 @@ describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface wor
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
     const registry = createLearnedSkillSurfaceRegistry();
 
     const cache = wireAgentLearnedSkillSurface({
@@ -475,7 +505,7 @@ describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface wor
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
     const registry = createLearnedSkillSurfaceRegistry();
 
     const cache = wireAgentLearnedSkillSurface({
