@@ -20,7 +20,7 @@ icon: "users"
 | `sessions_spawn` | Create a sub-agent session with workspace isolation, artifact references, and an optional objective |
 | `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) |
 | `memory_get` | Retrieve a memory entry by key |
-| `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export) |
+| `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export, pin, unpin) |
 | `memory_search` | Semantic search over agent memory (hybrid text + vector similarity) |
 | `memory_store` | Store a new memory entry (secret-detection guard applied) |
 | `ctx_search` | In-session full-text search over THIS conversation's compressed history (DAG mode) |
@@ -271,16 +271,17 @@ Agents have access to long-term memory that persists across conversations. Four 
   </Accordion>
 
   <Accordion title="memory_manage -- Admin CRUD">
-    Admin-only memory CRUD operations. Requires admin trust level. The `delete` and `flush` sub-actions require user approval.
+    Admin-only memory CRUD operations. Requires admin trust level. The `delete` and `flush` sub-actions require user approval. `pin`/`unpin` mark a single entry as always-injected in recall.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `manage_action` | string | Yes | One of `stats`, `browse`, `delete`, `flush`, `export` |
+    | `manage_action` | string | Yes | One of `stats`, `browse`, `delete`, `flush`, `export`, `pin`, `unpin` |
     | `tenant_id` | string | No | Tenant scope filter |
     | `agent_id` | string | No | Agent scope filter |
     | `ids` | string[] | For delete | Memory entry IDs to delete |
+    | `id` | string | For pin/unpin | Single memory entry ID to pin/unpin |
     | `offset` | integer | No | Pagination offset (default: 0) |
     | `limit` | integer | No | Maximum results |
     | `sort` | string | No | `newest` (default) or `oldest` (for browse) |
