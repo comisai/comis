@@ -211,6 +211,18 @@ const STDOUT_MAX_CHARS = 30_000;
  */
 export const STDOUT_HARD_CAP_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Max chars of the jailed child's stderr retained as a diagnostic TAIL. On the
+ * success path stderr is dropped (stdout-only — diagnostic noise stays out of
+ * context); on a NON-ZERO exit this bounded tail is the only signal of WHY the
+ * child died (a thrown `TypeError`, a bad import, a comis_tools misuse) and is
+ * surfaced in the rejection so the failure is diagnosable without a re-run
+ * (hermes-usecases live-test 2026-06-25). Bounded so a stderr flood can neither
+ * grow the daemon heap nor swamp the error/context. The surfaced tail still
+ * passes the daemon OutputGuard on egress, and the jail env is secret-scrubbed.
+ */
+const STDERR_TAIL_MAX_CHARS = 2_000;
+
 /** Default hard timeout for a jailed run (ms). Exported for the clamp tests. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -508,6 +520,7 @@ function runJailedChild(
 
     let stdout = "";
     let stdoutBytes = 0;
+    let stderrTail = "";
     let settled = false;
     const timer: SystemTimeoutHandle = systemSetTimeout(() => {
       if (settled) return;
@@ -545,9 +558,15 @@ function runJailedChild(
       }
       stdout += chunk.toString("utf8");
     });
-    // Read+discard stderr so it cannot back-pressure the child, but NEVER return
-    // it (stdout-only — intermediate/diagnostic output stays out of context).
-    child.stderr?.on("data", () => {});
+    // Read stderr but keep only a BOUNDED TAIL — it cannot back-pressure the child
+    // and never re-enters context on the SUCCESS path (stdout-only). But on a
+    // NON-ZERO exit the tail is the only signal of WHY the child died, so the close
+    // handler surfaces it in the rejection (otherwise the failure is just
+    // "exited with code N" and undiagnosable without a re-run).
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_MAX_CHARS);
+    });
     child.on("error", (err: Error) => {
       if (settled) return;
       settled = true;
@@ -559,11 +578,21 @@ function runJailedChild(
       settled = true;
       systemClearTimeout(timer);
       if (code !== 0 && code !== null) {
+        const tail = stderrTail.trim();
         ctx.log.warn(
-          { runId: ctx.runId, errorKind: "internal" as const, exitCode: code },
+          {
+            runId: ctx.runId,
+            errorKind: "internal" as const,
+            exitCode: code,
+            stderrTail: tail ? tail.slice(-512) : undefined,
+          },
           "orchestrate jailed child exited non-zero",
         );
-        reject(new Error(`orchestrate jailed child exited with code ${code}`));
+        reject(
+          new Error(
+            `orchestrate jailed child exited with code ${code}${tail ? `:\n${tail}` : ""}`,
+          ),
+        );
         return;
       }
       resolve(stdout);

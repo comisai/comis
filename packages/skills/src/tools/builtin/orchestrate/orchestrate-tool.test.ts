@@ -572,6 +572,40 @@ describe("orchestrate-tool", () => {
     expect(cleanupRun).toHaveBeenCalledTimes(1);
   });
 
+  // OBS finding (hermes-usecases live-test 2026-06-25): a failing orchestrate
+  // script surfaced ONLY "jailed child exited with code 1" — the child's stderr
+  // (the REAL cause, e.g. `content.trim is not a function` when the model's
+  // script mishandled the structured comis_tools.read result) was read+discarded,
+  // so an operator/agent could not diagnose WHY without re-running with try/catch.
+  // The non-zero-exit error must carry a BOUNDED stderr tail. (Success path stays
+  // stdout-only — the tail is surfaced ONLY on a non-zero exit.)
+  it("surfaces the jailed child's stderr tail on a non-zero exit (diagnosability)", async () => {
+    const stderr =
+      "file:///w/run.ts:5\n  const lines = content.trim().split('\\n');\n" +
+      "TypeError: content.trim is not a function\n    at file:///w/run.ts:5:28";
+    const spawnFn: OrchestrateSpawnFn = () => makeFakeChild("", 1, stderr);
+    const { deps } = makeDeps({ spawnFn });
+    const tool = createOrchestrateTool(deps);
+
+    await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow(
+      /content\.trim is not a function/,
+    );
+  });
+
+  it("does NOT append stderr on a SUCCESSFUL run (stdout-only is preserved)", async () => {
+    // A 0-exit run with noisy stderr must still return ONLY its stdout — the tail
+    // is a failure-path diagnostic, never context pollution on success.
+    const spawnFn: OrchestrateSpawnFn = () =>
+      makeFakeChild("THE-ANSWER\n", 0, "warning: deprecation notice on stderr");
+    const { deps } = makeDeps({ spawnFn });
+    const tool = createOrchestrateTool(deps);
+
+    const res = await tool.execute("c", { script: "1", language: "ts" });
+    const text = JSON.stringify(res);
+    expect(text).toContain("THE-ANSWER");
+    expect(text).not.toContain("deprecation notice");
+  });
+
   it("rejects (and surfaces the error) when the spawned child emits an 'error' event", async () => {
     // A child that successfully SPAWNS but then emits a runtime `error` event
     // (e.g. the bwrap exec itself fails post-fork) — distinct from a synchronous
