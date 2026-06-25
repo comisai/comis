@@ -30,6 +30,7 @@ export const SUB_AGENT_TOOL_DENYLIST: ReadonlySet<string> = new Set([
   "sessions_manage",  // session purge is destructive
   "memory_manage",    // memory purge is destructive
   "heartbeat_manage", // heartbeat config -> config persistence -> potential SIGUSR2
+  "mcp_manage",       // mcp connect/disconnect/reconnect -> MCP server config persistence (persistToConfig)
 ]);
 
 /**
