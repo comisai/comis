@@ -168,11 +168,11 @@ export interface SingleAgentDeps {
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
    *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
-   *  (append-after-platform, materialized read-only). The segregated `LearnedSkillStorePort`
+   *  (append-after-platform, materialized read-only). The segregated `MentalModelStorePort`
    *  TYPE from @comis/core (the agent↛memory cut); the daemon injects the concrete
    *  @comis/memory adapter. Default-OFF byte-identity: absent ⇒ the listing is the
    *  platform-only snapshot, unchanged. */
-  learnedSkillStore?: import("@comis/core").LearnedSkillStorePort;
+  learnedSkillStore?: import("@comis/core").MentalModelStorePort;
   /** WR-01: the shared per-agent learned-skill SURFACE registry. setupSingleAgent
    *  registers this agent's surface refresh closure into it (only when learningSkills
    *  is enabled — WR-03); the resolve-seam promote/demote loop (wireLearningOutcome,

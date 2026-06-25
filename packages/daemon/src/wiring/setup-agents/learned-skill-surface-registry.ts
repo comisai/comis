@@ -21,7 +21,7 @@
  */
 
 import { suppressError } from "@comis/shared";
-import type { LearnedSkill, LearnedSkillStorePort, LearningScope } from "@comis/core";
+import type { MentalModel, MentalModelStorePort, LearningScope } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createRefreshableLearnedSkillSurface } from "./learned-skill-surface.js";
 
@@ -84,12 +84,12 @@ export function createLearnedSkillSurfaceRegistry(): LearnedSkillSurfaceRegistry
 export function wireAgentLearnedSkillSurface(args: {
   enabled: boolean;
   agentId: string;
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
   registry?: LearnedSkillSurfaceRegistry;
-}): { readonly current: readonly LearnedSkill[] } {
+}): { readonly current: readonly MentalModel[] } {
   // WR-03: default-off ⇒ no store threaded ⇒ refreshLearnedSkillSurface returns []
   // and runs NO list()/rmSync — the cache stays empty (platform-only, byte-identical).
   if (!args.enabled) return { current: [] };

@@ -1,41 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SqliteLearnedSkillStore: the SOLE adapter for the segregated
- * `LearnedSkillStorePort` (@comis/core, v2.26 Verified Learning WS2 / SKILL-01).
- * It owns ALL the `learned_skills` SQL — the idempotent `admit()` upsert (one row
- * per admitted procedure), the scoped `get`/`list` reads, and the
+ * SqliteMentalModelStore: the SOLE adapter for the segregated
+ * `MentalModelStorePort` (@comis/core, the v2.31 Mental Model doc store
+ * generalized from the v2.26 Verified Learning WS2 / SKILL-01 procedural store).
+ * It owns ALL the `mental_models` SQL — the idempotent `admit()` upsert (one row
+ * per admitted doc), the scoped `get`/`list(scope, kind?)` reads, and the
  * `promote`/`demote`/`evict` lifecycle transitions.
  *
  * ## Idempotency (SKILL-01 / T-201-09)
  *
  * `admit()` derives the row `id` as a deterministic sha256 hash of the UNIQUE
- * tuple `(tenant_id, agent_id, name)` in CODE before insert, AND inserts
- * `ON CONFLICT(id) DO UPDATE`. A re-admit of the same (tenant, agent, name) is a
+ * tuple `(tenant_id, agent_id, kind, topic_key, name)` in CODE before insert, AND
+ * inserts `ON CONFLICT(id) DO UPDATE`. A re-admit of the same tuple is a
  * no-op-plus-refresh: the hash-id collides so it upserts the SAME primary key even
  * if the row was previously deleted/evicted (replay-stable), and the
- * `UNIQUE (tenant_id, agent_id, name)` backstop catches it regardless.
+ * `UNIQUE (tenant_id, agent_id, kind, topic_key, name)` backstop catches it
+ * regardless.
  *
  * ## Trust ceiling (SEC-01 / T-201-05) — the keystone
  *
- * A synthesized procedure can NEVER be `system`. The store writes the LITERAL
- * `'learned'` for `trust_level` on EVERY admit (it never reads a caller-supplied
- * trust), and the DB `CHECK (trust_level IN ('learned'))` rejects any other value
- * at insert time — belt (code coercion) AND suspenders (DB constraint).
+ * A learned doc can NEVER be `system`. The store writes the LITERAL `'learned'`
+ * for `trust_level` on EVERY admit (it never reads a caller-supplied trust), and
+ * the DB `CHECK (trust_level IN ('learned'))` rejects any other value at insert
+ * time — belt (code coercion) AND suspenders (DB constraint).
  *
  * ## Isolation is the load-bearing security boundary (SEC-01 / T-201-06)
  *
  * Comis runs many agents in one DB. EVERY statement filters on
  * `(tenant_id, agent_id)` — parameterized — and the table keys/indexes lead on
- * those columns, so a procedure under one (tenant, agent) is NEVER visible to a
- * read under another even when `name` is byte-identical. An UNRESOLVED
+ * those columns, so a doc under one (tenant, agent) is NEVER visible to a read
+ * under another even when `name` is byte-identical. An UNRESOLVED
  * `(tenant, agent)` scope (empty id) fails-closed with `err(...)` — it NEVER
  * widens to a shared/global pool (the `get_current_schema()` leak vector,
- * T-201-07).
+ * T-201-07). The optional `kind` filter on `list()` is an ADDITIONAL `AND`, never
+ * a replacement for the scope filter.
  *
  * ## Soft lifecycle (never hard-delete)
  *
  * `evict()` sets `evicted_at` (and steps `state` to `archived`); it NEVER issues a
- * `DELETE` — an evicted procedure stops surfacing but its provenance survives.
+ * `DELETE` — an evicted doc stops surfacing but its provenance survives.
  *
  * ## Untrusted input
  *
@@ -43,7 +46,7 @@
  * read parses through `createRowMapper` (no `as Foo[]` casts; `untyped-sqlite.test.ts`).
  * The persisted JSON columns (`source_traj_ids` etc.) are parsed with a
  * graceful-degrade `safeParse` (corrupt JSON → empty list, never a throw). Logs
- * carry counts/ids + metadata only — never procedure bodies/scripts/descriptions
+ * carry counts/ids + metadata only — never doc bodies/descriptions
  * (§2.7 / T-201-10).
  *
  * @module
@@ -52,16 +55,16 @@
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import type {
-  LearnedSkillStorePort,
-  LearnedSkill,
-  AdmitSkillInput,
+  MentalModelStorePort,
+  MentalModel,
+  AdmitMentalModelInput,
   LearningScope,
 } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
-import { LearnedSkillRowSchema } from "./learned-skill-row-schema.js";
+import { MentalModelRowSchema } from "./mental-model-row-schema.js";
 
 /** Minimal pino-compatible logger (mirrors sqlite-outcome-store.ts). */
 interface MemoryLogger {
@@ -70,8 +73,8 @@ interface MemoryLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
-/** Constructor deps for {@link createSqliteLearnedSkillStore}. */
-export interface LearnedSkillStoreDeps {
+/** Constructor deps for {@link createSqliteMentalModelStore}. */
+export interface MentalModelStoreDeps {
   /** The shared better-sqlite3 handle (typically `SqliteMemoryAdapter.getDb()`). */
   db: Database.Database;
   /** Optional structured logger. */
@@ -79,7 +82,7 @@ export interface LearnedSkillStoreDeps {
 }
 
 // Row mapper — the sanctioned read path (no `as Foo[]`).
-const learnedSkillRowMapper = createRowMapper(LearnedSkillRowSchema);
+const mentalModelRowMapper = createRowMapper(MentalModelRowSchema);
 
 // Lenient JSON-string[] parser for the source_traj_ids column: corrupt/non-array
 // JSON degrades to [] (never a throw that breaks get()/list()).
@@ -97,27 +100,39 @@ function parseIdList(raw: string | null): string[] {
 }
 
 /**
- * Compute the deterministic row id from the UNIQUE `(tenant, agent, name)` tuple.
- * A stable sha256 hex of the space-joined fields — never a wall-clock or random
- * id, so a re-admit of the same tuple yields the SAME id (the idempotency
- * backstop beyond the UNIQUE constraint; replay-stable even after a row
- * deletion). The `createHash` precedent is `sqlite-outcome-store.ts:outcomeRowId`.
+ * Compute the deterministic row id from the UNIQUE
+ * `(tenant, agent, kind, topic_key, name)` tuple. A stable sha256 hex of the
+ * space-joined fields — never a wall-clock or random id, so a re-admit of the
+ * same tuple yields the SAME id (the idempotency backstop beyond the UNIQUE
+ * constraint; replay-stable even after a row deletion). For a skill the key is
+ * `(tenant, agent, 'skill', '', name)`. The `createHash` precedent is
+ * `sqlite-outcome-store.ts:outcomeRowId`.
  */
-function learnedSkillId(s: { tenantId: string; agentId: string; name: string }): string {
-  return createHash("sha256").update([s.tenantId, s.agentId, s.name].join(" ")).digest("hex");
+function mentalModelId(s: {
+  tenantId: string;
+  agentId: string;
+  kind: string;
+  topicKey: string;
+  name: string;
+}): string {
+  return createHash("sha256")
+    .update([s.tenantId, s.agentId, s.kind, s.topicKey, s.name].join(" "))
+    .digest("hex");
 }
 
-/** Map a parsed `learned_skills` row to the domain {@link LearnedSkill}. */
-function rowToSkill(row: z.infer<typeof LearnedSkillRowSchema>): LearnedSkill {
+/** Map a parsed `mental_models` row to the domain {@link MentalModel}. */
+function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalModel {
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     body: row.body,
+    kind: row.kind as MentalModel["kind"],
+    topicKey: row.topic_key,
     // The DB CHECK guarantees 'learned'; the literal cast mirrors the type-layer
-    // keystone (a synthesized procedure is never `system`).
+    // keystone (a learned doc is never `system`).
     trustLevel: "learned",
-    state: row.state as LearnedSkill["state"],
+    state: row.state as MentalModel["state"],
     proofCount: row.proof_count,
     confidence: row.confidence,
     mutating: row.mutating === 1,
@@ -127,64 +142,74 @@ function rowToSkill(row: z.infer<typeof LearnedSkillRowSchema>): LearnedSkill {
 }
 
 /**
- * Create the SQLite-backed {@link LearnedSkillStorePort} adapter over a shared db
+ * Create the SQLite-backed {@link MentalModelStorePort} adapter over a shared db
  * handle. The handle's lifecycle (open/close, pragmas) is owned by the caller
  * (the memory adapter) — this factory neither opens nor closes it. Built
  * UNCONDITIONALLY (no model/IO cost, like every dormant store); the per-agent
  * enable flag gates the daemon-side `admit`/`get`/`list` call (Plan 07), not
  * construction.
  */
-export function createSqliteLearnedSkillStore(
-  deps: LearnedSkillStoreDeps,
-): LearnedSkillStorePort {
+export function createSqliteMentalModelStore(
+  deps: MentalModelStoreDeps,
+): MentalModelStorePort {
   const { db, logger } = deps;
 
   // --- Prepared statements (parameterized; reused across calls) ---
   // Idempotent admit keyed on the deterministic id (= hash of the
-  // (tenant_id, agent_id, name) UNIQUE tuple). A re-admit upserts the SAME row.
-  // trust_level is the LITERAL 'learned' (the SEC-01 keystone — never a bound
-  // caller value); all other columns are bound `?` params (never string-built).
+  // (tenant_id, agent_id, kind, topic_key, name) UNIQUE tuple). A re-admit upserts
+  // the SAME row. trust_level is the LITERAL 'learned' (the SEC-01 keystone —
+  // never a bound caller value); all other columns are bound `?` params (never
+  // string-built). kind/topic_key are bound (default 'skill'/'' at the call site).
+  // The dropped `scripts` column was the literal NULL — its removal is a no-op.
   const insertStmt = db.prepare(
-    "INSERT INTO learned_skills " +
-      "(id, tenant_id, agent_id, name, description, body, scripts, required_tools, params_schema, " +
+    "INSERT INTO mental_models " +
+      "(id, tenant_id, agent_id, kind, topic_key, name, description, body, required_tools, params_schema, " +
       " trust_level, state, proof_count, confidence, strength, source_traj_ids, validation_result, " +
       " mutating, pinned, validated_at, created_at, updated_at, evicted_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'learned', 'candidate', ?, ?, ?, ?, NULL, ?, 0, NULL, ?, NULL, NULL) " +
       "ON CONFLICT(id) DO UPDATE SET " +
       "description = excluded.description, body = excluded.body, proof_count = excluded.proof_count, " +
       "confidence = excluded.confidence, strength = excluded.strength, " +
       "source_traj_ids = excluded.source_traj_ids, mutating = excluded.mutating, " +
-      // A re-admit of a previously-evicted skill resurrects it (clears evicted_at,
+      // A re-admit of a previously-evicted doc resurrects it (clears evicted_at,
       // resets state to candidate) — the replay-stable path.
       "state = 'candidate', evicted_at = NULL, updated_at = excluded.created_at",
   );
 
   // Scoped reads — the `tenant_id = ? AND agent_id = ?` filter is the
   // load-bearing isolation boundary (SEC-01); every value is a bound `?` param.
+  // SELECT_COLS drops `scripts` and adds kind/topic_key/structured_body/history —
+  // kept in lockstep with the MentalModelRowSchema strictObject (a drift throws).
   const SELECT_COLS =
-    "id, name, description, trust_level, state, body, scripts, required_tools, params_schema, " +
-    "mutating, pinned, proof_count, confidence, strength, source_traj_ids, validation_result, " +
-    "evicted_at, created_at, updated_at";
-  // get(): exclude soft-evicted rows (evicted_at IS NULL) so an evicted skill
+    "id, name, description, kind, topic_key, trust_level, state, body, structured_body, history, " +
+    "required_tools, params_schema, mutating, pinned, proof_count, confidence, strength, " +
+    "source_traj_ids, validation_result, evicted_at, created_at, updated_at";
+  // get(): exclude soft-evicted rows (evicted_at IS NULL) so an evicted doc
   // stops surfacing.
   const getStmt = db.prepare(
-    `SELECT ${SELECT_COLS} FROM learned_skills ` +
+    `SELECT ${SELECT_COLS} FROM mental_models ` +
       "WHERE tenant_id = ? AND agent_id = ? AND name = ? AND evicted_at IS NULL",
   );
+  // list(scope): all kinds within the scope.
   const listStmt = db.prepare(
-    `SELECT ${SELECT_COLS} FROM learned_skills ` +
+    `SELECT ${SELECT_COLS} FROM mental_models ` +
       "WHERE tenant_id = ? AND agent_id = ? AND evicted_at IS NULL ORDER BY created_at ASC, id ASC",
+  );
+  // list(scope, kind): the kind filter is an ADDITIONAL `AND` over the scope.
+  const listByKindStmt = db.prepare(
+    `SELECT ${SELECT_COLS} FROM mental_models ` +
+      "WHERE tenant_id = ? AND agent_id = ? AND kind = ? AND evicted_at IS NULL ORDER BY created_at ASC, id ASC",
   );
 
   // Lifecycle transitions — all scoped to (tenant, agent) AND id (bound params).
   // promote: proof_count bumps on EVERY call, but the candidate→active flip is
   // GATED on the caller's proof bar — `proof_count + 1 >= promoteAtProofCount`
   // (D2 / T-202-04: a single attributed success must NOT mint an active
-  // procedure). The threshold is the FIRST bound `?` (promote runs its own bind
-  // path, not the shared runTransition); an already-active skill keeps bumping
+  // doc). The threshold is the FIRST bound `?` (promote runs its own bind
+  // path, not the shared runTransition); an already-active doc keeps bumping
   // proof_count but the `state = 'candidate'` guard means its state never moves.
   const promoteStmt = db.prepare(
-    "UPDATE learned_skills SET proof_count = proof_count + 1, " +
+    "UPDATE mental_models SET proof_count = proof_count + 1, " +
       "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
@@ -195,14 +220,14 @@ export function createSqliteLearnedSkillStore(
   // demoteByName's `changed` reflects a REAL state delta (not a no-op write). The CASE
   // is now redundant with the guard but kept for defence-in-depth / readability.
   const demoteStmt = db.prepare(
-    "UPDATE learned_skills SET " +
+    "UPDATE mental_models SET " +
       "state = CASE WHEN state = 'active' THEN 'stale' WHEN state = 'candidate' THEN 'stale' ELSE state END, " +
       "strength = CASE WHEN strength > 0 THEN strength - 1 ELSE strength END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ? AND state IN ('active', 'candidate')",
   );
   // evict: SOFT — set evicted_at + archive; NEVER a hard DELETE (provenance survives).
   const evictStmt = db.prepare(
-    "UPDATE learned_skills SET evicted_at = ?, state = 'archived', updated_at = ? " +
+    "UPDATE mental_models SET evicted_at = ?, state = 'archived', updated_at = ? " +
       "WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
 
@@ -224,18 +249,31 @@ export function createSqliteLearnedSkillStore(
 
   return {
     async admit(
-      input: AdmitSkillInput,
+      input: AdmitMentalModelInput,
       scope: LearningScope,
     ): Promise<Result<{ id: string; admitted: boolean }, Error>> {
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const id = learnedSkillId({ tenantId: scope.tenantId, agentId: scope.agentId, name: input.name });
+        // kind/topicKey default to the skill values when omitted (a skill admit
+        // is unchanged); the widened id joins them so distinct kinds/topics never
+        // collide on the same (tenant, agent, name).
+        const kind = input.kind ?? "skill";
+        const topicKey = input.topicKey ?? "";
+        const id = mentalModelId({
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          kind,
+          topicKey,
+          name: input.name,
+        });
         insertStmt.run(
           id,
           scope.tenantId,
           scope.agentId,
+          kind,
+          topicKey,
           input.name,
           input.description,
           input.body,
@@ -272,15 +310,15 @@ export function createSqliteLearnedSkillStore(
     async get(
       name: string,
       scope: LearningScope,
-    ): Promise<Result<LearnedSkill | undefined, Error>> {
+    ): Promise<Result<MentalModel | undefined, Error>> {
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       try {
-        const parsed = learnedSkillRowMapper.parseOptionalRow(
+        const parsed = mentalModelRowMapper.parseOptionalRow(
           getStmt.get(scope.tenantId, scope.agentId, name),
         );
         if (!parsed.ok) return err(new Error(parsed.error.message));
-        return ok(parsed.value === undefined ? undefined : rowToSkill(parsed.value));
+        return ok(parsed.value === undefined ? undefined : rowToMentalModel(parsed.value));
       } catch (e: unknown) {
         const error = e instanceof Error ? e : new Error(String(e));
         logger?.warn(
@@ -291,19 +329,28 @@ export function createSqliteLearnedSkillStore(
       }
     },
 
-    async list(scope: LearningScope): Promise<Result<LearnedSkill[], Error>> {
+    async list(
+      scope: LearningScope,
+      kind?: "skill" | "profile" | "topic",
+    ): Promise<Result<MentalModel[], Error>> {
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const parsed = learnedSkillRowMapper.parseRows(listStmt.all(scope.tenantId, scope.agentId));
+        // The kind branch binds the ADDITIONAL `AND kind = ?`; the no-kind branch
+        // returns every kind within the scope.
+        const rows =
+          kind === undefined
+            ? listStmt.all(scope.tenantId, scope.agentId)
+            : listByKindStmt.all(scope.tenantId, scope.agentId, kind);
+        const parsed = mentalModelRowMapper.parseRows(rows);
         if (!parsed.ok) return err(new Error(parsed.error.message));
-        const skills = parsed.value.map(rowToSkill);
+        const docs = parsed.value.map(rowToMentalModel);
         logger?.debug(
-          { step: "learned-skill-list", count: skills.length, durationMs: systemNowMs() - startMs },
+          { step: "learned-skill-list", count: docs.length, durationMs: systemNowMs() - startMs },
           "Learned-skill list complete",
         );
-        return ok(skills);
+        return ok(docs);
       } catch (e: unknown) {
         const error = e instanceof Error ? e : new Error(String(e));
         logger?.warn(
@@ -354,13 +401,21 @@ export function createSqliteLearnedSkillStore(
     ): Promise<Result<{ changed: boolean }, Error>> {
       // Resolve the NAME → the deterministic hash id the lifecycle WHERE keys on
       // (the same derivation admit() uses — one place, never duplicated by the
-      // caller). Then run promote's dedicated bind path and report rows-changed so
-      // a 0-row write (an unknown/evicted name) is detectable (not a silent lie).
+      // caller). promoteByName resolves a SKILL by name, so kind/topicKey are the
+      // skill defaults (byte-identity with the pre-generalization id). Then run
+      // promote's dedicated bind path and report rows-changed so a 0-row write
+      // (an unknown/evicted name) is detectable (not a silent lie).
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const id = learnedSkillId({ tenantId: scope.tenantId, agentId: scope.agentId, name });
+        const id = mentalModelId({
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          kind: "skill",
+          topicKey: "",
+          name,
+        });
         const now = scope.now ?? systemNowMs();
         const info = promoteStmt.run(promoteAtProofCount, now, scope.tenantId, scope.agentId, id);
         const changed = info.changes > 0;
@@ -380,14 +435,20 @@ export function createSqliteLearnedSkillStore(
     },
 
     async demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> {
-      // Resolve the NAME → the hash id (same derivation as admit/promote), run
-      // demote, and report rows-changed so an unknown/evicted name (0 rows) is
-      // never counted as a real demote.
+      // Resolve the NAME → the hash id (same derivation as admit/promote; the
+      // skill defaults), run demote, and report rows-changed so an unknown/evicted
+      // name (0 rows) is never counted as a real demote.
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const id = learnedSkillId({ tenantId: scope.tenantId, agentId: scope.agentId, name });
+        const id = mentalModelId({
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          kind: "skill",
+          topicKey: "",
+          name,
+        });
         const now = scope.now ?? systemNowMs();
         const info = demoteStmt.run(now, scope.tenantId, scope.agentId, id);
         const changed = info.changes > 0;

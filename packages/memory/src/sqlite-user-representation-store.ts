@@ -364,7 +364,7 @@ export function createSqliteUserRepresentationStore(
   );
 
   /**
-   * Fail-closed scope guard (mirror sqlite-learned-skill-store.ts
+   * Fail-closed scope guard (mirror sqlite-mental-model-store.ts
    * rejectUnresolvedScope). An empty tenant/agent/user RAISES into an err — the
    * store refuses to widen to a shared pool. Covers the write paths.
    */

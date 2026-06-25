@@ -36,7 +36,7 @@ import {
   createSqliteRelationshipStore,
   createSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore,
-  createSqliteOutcomeStore, createSqliteLearnedSkillStore,
+  createSqliteOutcomeStore, createSqliteMentalModelStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -187,7 +187,7 @@ export interface MemoryResult {
    *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
    *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
-  learnedSkillStore: import("@comis/core").LearnedSkillStorePort; // WS2/skills (SKILL-01): SOLE LearnedSkillStorePort adapter, shared db (trust=learned); the daemon injects it into the __SKILL_SYNTHESIS__ cron admit (DORMANT until learningSkills.enabled).
+  learnedSkillStore: import("@comis/core").MentalModelStorePort; // WS2/skills (SKILL-01): SOLE MentalModelStorePort adapter, shared db (trust=learned); the daemon injects it into the __SKILL_SYNTHESIS__ cron admit (DORMANT until learningSkills.enabled).
   /** REACT-02 (Phase 199): outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). `participantId` (FLAG-2) is the conversation participant (inbound sender) so a reaction from an unmapped group bystander is inert. */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string }) => void;
   /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
@@ -589,8 +589,8 @@ export async function setupMemory(deps: {
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
   // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
-  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE LearnedSkillStorePort adapter; agent↛memory cut — the daemon injects it into the __SKILL_SYNTHESIS__ cron. DORMANT until learningSkills.enabled.
-  const learnedSkillStore = createSqliteLearnedSkillStore({ db, logger: memoryLogger });
+  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE MentalModelStorePort adapter; agent↛memory cut — the daemon injects it into the __SKILL_SYNTHESIS__ cron. DORMANT until learningSkills.enabled.
+  const learnedSkillStore = createSqliteMentalModelStore({ db, logger: memoryLogger });
 
   // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` (NOT a second Database) so the sweep
   // scans the SAME `memories` rows under one (tenant, agent)-scoped FK-enabled connection. Always constructed (no

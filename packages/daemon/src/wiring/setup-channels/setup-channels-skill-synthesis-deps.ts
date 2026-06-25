@@ -18,7 +18,7 @@
  * @module
  */
 
-import type { OutcomeSignalPort, LearnedSkillStorePort, ContextStorePort, ContextBrowsePort, AppContainer, EmbeddingPort } from "@comis/core";
+import type { OutcomeSignalPort, MentalModelStorePort, ContextStorePort, ContextBrowsePort, AppContainer, EmbeddingPort } from "@comis/core";
 import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
 import { createSandboxSkillValidationAdapter } from "@comis/skills";
 import { buildReviewSessionSource } from "./review-session-source.js";
@@ -34,7 +34,7 @@ export interface SkillSynthesisDepsInput {
   lcdStore?: Pick<ContextStorePort, "getMessages">;
   contextBrowse?: ContextBrowsePort;
   outcomeStore?: OutcomeSignalPort;
-  learnedSkillStore?: LearnedSkillStorePort;
+  learnedSkillStore?: MentalModelStorePort;
   approvalGate?: SkillApprovalGate;
   /**
    * RC-1: the daemon's embedder (the cached + circuit-broken `EmbeddingPort`, threaded

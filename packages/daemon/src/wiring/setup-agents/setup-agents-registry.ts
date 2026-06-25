@@ -217,7 +217,7 @@ export async function setupAgents(deps: {
    *  like relationshipStore (the recall buildScoringAlphas tuned-vector read path). Built in
    *  setup-memory on the shared db. */
   tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
-  learnedSkillStore?: import("@comis/core").LearnedSkillStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
+  learnedSkillStore?: import("@comis/core").MentalModelStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
   learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01: shared per-agent surface registry; each agent registers its refresh closure so the promote/demote loop re-refreshes it (next-session pickup)
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;

@@ -84,9 +84,9 @@ export type {
   ReplayContext,
 } from "./skill-validation-port.js";
 export type {
-  LearnedSkillStorePort,
-  LearnedSkill,
-  AdmitSkillInput,
+  MentalModelStorePort,
+  MentalModel,
+  AdmitMentalModelInput,
 } from "./learned-skill-store.js";
 export type {
   MemoryConsolidationStore,

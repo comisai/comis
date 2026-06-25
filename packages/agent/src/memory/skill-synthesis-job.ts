@@ -33,7 +33,7 @@
  *     gate.
  *
  * Closed graph: this job consumes `@comis/core` PORT TYPES only
- * (`SkillSynthesisPort`, `SkillValidationPort`, `LearnedSkillStorePort`,
+ * (`SkillSynthesisPort`, `SkillValidationPort`, `MentalModelStorePort`,
  * `OutcomeSignalPort`, `LearningScope`, `CandidateSkill`, …) + the injected
  * source/clock/eventBus. It imports NO `@comis/memory` / `@comis/skills` value
  * (the agent↛memory / agent↛skills build cut, `architecture-graph.test.ts`); the
@@ -52,7 +52,7 @@ import type {
   SkillSynthesisPort,
   SkillValidationPort,
   SkillValidationResult,
-  LearnedSkillStorePort,
+  MentalModelStorePort,
   OutcomeSignalPort,
 } from "@comis/core";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
@@ -158,7 +158,7 @@ export interface SkillSynthesisJobDeps {
   /** The sandbox/static validation adapter (injected from @comis/skills, Plan 07). */
   validationAdapter: Pick<SkillValidationPort, "validate">;
   /** The learned-skill store (injected from @comis/memory, Plan 07). */
-  learnedSkillStore: Pick<LearnedSkillStorePort, "admit">;
+  learnedSkillStore: Pick<MentalModelStorePort, "admit">;
   /** The mutating-admission approval gate. */
   approvalGate: SkillApprovalGate;
   /** Wall-clock reads — durations + the wall-clock cap. NEVER a wall-clock global. */
@@ -612,7 +612,7 @@ interface AdmitCandidateArgs {
   candidate: CandidateSkill;
   clusterTrajIds: string[];
   validationAdapter: Pick<SkillValidationPort, "validate">;
-  learnedSkillStore: Pick<LearnedSkillStorePort, "admit">;
+  learnedSkillStore: Pick<MentalModelStorePort, "admit">;
   approvalGate: SkillApprovalGate;
   config: SkillSynthesisJobConfig;
   scope: LearningScope;
@@ -804,7 +804,7 @@ function confidenceFromVerdict(verdict: SkillValidationResult): number {
 
 /** Write the admitted candidate at trust=learned / state=candidate / low proof_count. */
 async function doAdmit(
-  store: Pick<LearnedSkillStorePort, "admit">,
+  store: Pick<MentalModelStorePort, "admit">,
   candidate: CandidateSkill,
   clusterTrajIds: string[],
   scope: LearningScope,

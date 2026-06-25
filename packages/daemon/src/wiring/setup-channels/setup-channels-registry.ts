@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, EmbeddingPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, EmbeddingPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -250,7 +250,7 @@ export interface ChannelsDeps {
   outcomeStore?: OutcomeSignalPort;
   /** Learned-skill store (WS2/skills) — forwarded to the __SKILL_SYNTHESIS__ cron path (runSkillSynthesis
    *  admit). Built in setup-memory on the shared db; port TYPE only (the agent↛memory closed-graph cut). */
-  learnedSkillStore?: LearnedSkillStorePort;
+  learnedSkillStore?: MentalModelStorePort;
   /** RC-1: the embedder (setup-memory's `cachedPort`) — forwarded to the __SKILL_SYNTHESIS__ cron path so
    *  buildSourceTrajectories attaches clustering embeddings. Threaded (NOT on AppContainer — the embedder
    *  is kept off the agent-accessible path). Absent ⇒ no clustering ⇒ every trajectory is a singleton. */

@@ -21,7 +21,7 @@
 import type {
   ClockPort,
   ComisLogger,
-  LearnedSkillStorePort,
+  MentalModelStorePort,
   ResolvedOutcome,
   TypedEventBus,
 } from "@comis/core";
@@ -49,7 +49,7 @@ export interface SkillTransitionDeps {
 /** Per-call dependencies for {@link applySkillOutcomeTransitions} (the resolve-seam loop body). */
 export interface SkillOutcomeDeps {
   /** The learned-skill adapter (the name-keyed promote/demote target). */
-  skillStore: LearnedSkillStorePort;
+  skillStore: MentalModelStorePort;
   /** The per-agent `promoteAtProofCount` threshold (candidate→active proof bar). */
   threshold: number;
   /** WR-05: scope-qualified corroboration tally (skillGaugeKey → distinct failing sessions). */

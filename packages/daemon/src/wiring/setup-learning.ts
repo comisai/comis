@@ -27,7 +27,7 @@ import {
   type TypedEventBus,
   type OutcomeSignalPort,
   type MemoryUsefulnessStore,
-  type LearnedSkillStorePort,
+  type MentalModelStorePort,
   type ClockPort,
   type ComisLogger,
   type AppConfig,
@@ -95,7 +95,7 @@ export interface LearningOutcomeWiringDeps {
    * pre-Plan-05 caller, or learning disabled) the promote/demote loop is a no-op
    * (byte-identical). Injected from setup-memory.ts where it is already constructed.
    */
-  learnedSkillStore?: LearnedSkillStorePort;
+  learnedSkillStore?: MentalModelStorePort;
   /**
    * Per-agent learned-skill promote/demote enable (SURFACE-04/05): true ONLY when the
    * agent has `learningSkills.enabled` AND the master `memory.costFeatures.enabled`
@@ -611,7 +611,7 @@ export interface SetupLearningOutcomeDeps {
    * the store (closed graph). Folded onto the existing call so setup-memory.ts stays
    * net-zero on lines.
    */
-  learnedSkillStore: LearnedSkillStorePort;
+  learnedSkillStore: MentalModelStorePort;
   clock: ClockPort;
   logger: ComisLogger;
   /** The parsed app config — the source of the master cost switch + per-agent flag. */

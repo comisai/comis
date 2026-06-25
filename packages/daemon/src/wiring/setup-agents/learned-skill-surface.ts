@@ -28,7 +28,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { suppressError } from "@comis/shared";
-import { safePath, PathTraversalError, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
+import { safePath, PathTraversalError, type MentalModel, type MentalModelStorePort, type LearningScope } from "@comis/core";
 import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
@@ -53,7 +53,7 @@ const LEARNED_SKILLS_DIRNAME = ".learned-skills";
  * only after static + (script-)sandbox validation at `trust=learned`, read-only, so
  * trying one is bounded-safe; `active` remains the corroborated (proof≥N) tier.
  */
-function isSurfaceable(skill: LearnedSkill): boolean {
+function isSurfaceable(skill: MentalModel): boolean {
   return (skill.state === "active" || skill.state === "candidate") && !skill.mutating;
 }
 
@@ -82,7 +82,7 @@ function materializedLocation(workspaceDir: string, name: string): string {
  */
 export function mergeLearnedSkillsXml(
   platformDescriptions: readonly PromptSkillDescription[],
-  learnedSkills: readonly LearnedSkill[],
+  learnedSkills: readonly MentalModel[],
   materializedDir: string,
 ): string {
   const learnedDescriptions: PromptSkillDescription[] = learnedSkills
@@ -113,7 +113,7 @@ export function mergeLearnedSkillsXml(
  */
 export function materializeLearnedSkills(
   workspaceDir: string,
-  learnedSkills: readonly LearnedSkill[],
+  learnedSkills: readonly MentalModel[],
   logger?: ComisLogger,
 ): void {
   const root = safePath(workspaceDir, LEARNED_SKILLS_DIRNAME);
@@ -152,7 +152,7 @@ export function materializeLearnedSkills(
 }
 
 /** Minimal SKILL.md: a frontmatter the discovery parser would accept + the body. */
-function renderSkillFile(skill: LearnedSkill): string {
+function renderSkillFile(skill: MentalModel): string {
   const fm = [
     "---",
     `name: ${skill.name}`,
@@ -178,7 +178,7 @@ function jsonScalar(value: string): string {
  */
 export function renderLearnedSkillsXml(args: {
   skillRegistry: SkillRegistry;
-  learnedSkills: readonly LearnedSkill[];
+  learnedSkills: readonly MentalModel[];
   workspaceDir: string;
 }): string {
   const { skillRegistry, learnedSkills, workspaceDir } = args;
@@ -199,11 +199,11 @@ export function renderLearnedSkillsXml(args: {
  * The `(tenant, agent)` `scope` is the SAME one the runtime resolved.
  */
 export async function refreshLearnedSkillSurface(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): Promise<readonly LearnedSkill[]> {
+}): Promise<readonly MentalModel[]> {
   const { learnedSkillStore, scope, workspaceDir, logger } = args;
   if (!learnedSkillStore) return [];
 
@@ -247,11 +247,11 @@ export async function refreshLearnedSkillSurface(args: {
  * a later refresh updates `.current` (Plan 05 re-refreshes on promote/demote).
  */
 export function createLearnedSkillSurfaceCache(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): { readonly current: readonly LearnedSkill[] } {
+}): { readonly current: readonly MentalModel[] } {
   return createRefreshableLearnedSkillSurface(args).cache;
 }
 
@@ -265,12 +265,12 @@ export function createLearnedSkillSurfaceCache(args: {
  * nothing (byte-identical). Both the boot refresh and `refresh()` are non-fatal.
  */
 export function createRefreshableLearnedSkillSurface(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): { cache: { readonly current: readonly LearnedSkill[] }; refresh: () => Promise<void> } {
-  const cache: { current: readonly LearnedSkill[] } = { current: [] };
+}): { cache: { readonly current: readonly MentalModel[] }; refresh: () => Promise<void> } {
+  const cache: { current: readonly MentalModel[] } = { current: [] };
   const refresh = async (): Promise<void> => {
     cache.current = await refreshLearnedSkillSurface(args);
   };

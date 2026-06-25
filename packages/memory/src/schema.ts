@@ -16,7 +16,7 @@ import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
-import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
+import { ensureMentalModelsTable } from "./schema-mental-models.js";
 import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
@@ -590,7 +590,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureDurableRunTable(db); // durable run checkpoint store (Phase 216, DUR-01)
   ensureOutwardLedgerTable(db); // exactly-once outward send ledger (Phase 216, ONCE-01)
   ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
-  ensureLearnedSkillsTable(db, embeddingDimensions, localVecAvailable); // learned_skills procedural store + FTS/vec/trigram twins (v2.26 WS2, SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped
+  ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (v2.31; generalized from v2.26 WS2 SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
 
   // --- Observation partial indexes (design §4.1) --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).

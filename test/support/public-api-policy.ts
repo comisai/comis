@@ -1233,7 +1233,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutcomePruneResult",
       // Verified Learning procedural-learning ports (v2.26 Phase 201 Plan 01, Wave 1)
       // — the three greenfield type-only ports (SkillSynthesisPort,
-      // SkillValidationPort, LearnedSkillStorePort) + their DTOs, surfaced on the
+      // SkillValidationPort, MentalModelStorePort) + their DTOs, surfaced on the
       // public @comis/core barrel (exports/ports.ts) so the LATER-wave plans can
       // import them BY TYPE. This is interface-first Wave 1 (the OutcomeSignalPort /
       // TunedAlphaStore precedent directly above): the contracts land FIRST, the
@@ -1244,7 +1244,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       //     SkillValidationPort + SkillValidationResult + SkillValidationFinding +
       //     ReplayContext,
       //   - Plan 04/07 (@comis/memory store + @comis/daemon wiring) consume
-      //     LearnedSkillStorePort + LearnedSkill + AdmitSkillInput.
+      //     MentalModelStorePort + MentalModel + AdmitMentalModelInput (the v2.31
+      //     Mental Model doc store — generalized from the LearnedSkill* names).
       // Defining the contracts in @comis/core first is the closed-graph SEC-01 cut
       // (agent↛memory / agent↛skills) — the synthesis job imports PORT TYPES only.
       // Each SHRINKS out of this baseline when its real cross-package NAME-import
@@ -1257,9 +1258,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SkillValidationResult",
       "SkillValidationFinding",
       "ReplayContext",
-      "LearnedSkillStorePort",
-      "LearnedSkill",
-      "AdmitSkillInput",
+      "MentalModelStorePort",
+      "MentalModel",
+      "AdmitMentalModelInput",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
@@ -2768,18 +2769,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryLifecycleStoreDeps above).
       "createSqliteOutcomeStore",
       "OutcomeStoreDeps",
-      // Learned-skill store (v2.26 Verified Learning WS2, Phase 201 Plan 02).
-      // createSqliteLearnedSkillStore is the SOLE LearnedSkillStorePort adapter (the
-      // (tenant, agent)-scoped learned_skills procedural store — idempotent
-      // deterministic-id admit(), scoped get()/list(), and the promote()/demote()/
-      // evict() lifecycle, evict being a soft evicted_at set, never a hard DELETE).
-      // The daemon composition-root consumer LANDED (Plan 07: setup-memory.ts builds
-      // it on the shared db handle, threaded into the __SKILL_SYNTHESIS__ cron), so the
-      // FACTORY orphan createSqliteLearnedSkillStore was REMOVED here (the shrink-only
-      // ratchet fired on schedule; mirror createSqliteMemoryEmbeddingStore below).
-      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (the daemon calls the
-      // factory with an inline `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
-      "LearnedSkillStoreDeps",
+      // Mental Model doc store (v2.31; generalized from the v2.26 Verified Learning
+      // WS2 learned-skill store, Phase 201 Plan 02 / Phase 222 Plan 01).
+      // createSqliteMentalModelStore is the SOLE MentalModelStorePort adapter (the
+      // (tenant, agent)-scoped mental_models doc store — idempotent
+      // deterministic-id admit(), scoped get()/list(scope, kind?), and the
+      // promote()/demote()/evict() lifecycle, evict being a soft evicted_at set,
+      // never a hard DELETE). The daemon composition-root consumer LANDED (Plan 07:
+      // setup-memory.ts builds it on the shared db handle, threaded into the
+      // __SKILL_SYNTHESIS__ cron), so the FACTORY orphan createSqliteMentalModelStore
+      // was REMOVED here (the shrink-only ratchet fired on schedule; mirror
+      // createSqliteMemoryEmbeddingStore below). MentalModelStoreDeps is the
+      // constructor-deps SHAPE type (the daemon calls the factory with an inline
+      // `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
+      "MentalModelStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
