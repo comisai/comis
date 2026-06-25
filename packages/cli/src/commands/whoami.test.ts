@@ -53,6 +53,7 @@ const { withClient } = await import("../client/rpc-client.js");
  */
 const FAKE_REPORT = {
   agentId: "agent-a",
+  enabled: true,
   caps: ["orch:read", "orch:web"],
   budget: { tokensRemaining: 4000, wallClockMsRemaining: 120000, usdRemaining: 1.5 },
   outwardQuota: { perHourRemaining: 7 },
@@ -61,6 +62,7 @@ const FAKE_REPORT = {
 /** A caps-only response (no live root → no budget/quota). */
 const CAPS_ONLY_REPORT = {
   agentId: "agent-a",
+  enabled: true,
   caps: ["orch:read"],
 };
 
