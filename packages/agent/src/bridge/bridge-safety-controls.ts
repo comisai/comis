@@ -289,14 +289,25 @@ export function checkSpendLimit(
  * a body (§2.7): the dollar amounts ride the counts-only `observability:spend_*`
  * events. `systemNowMs()` is the established time source for THIS file's emit
  * functions (bridge-safety-controls is a bridge module, not `budget/`).
+ *
+ * `source` steers the operator hint at the knob that ACTUALLY bounded the trip
+ * (SPEND-ABORT-OBS, hermes-usecases 2026-06-25): the per-(tenant,agent)
+ * `observability.spend` ceiling and the per-ROOT `autonomy.budget` meter both
+ * route their `exceeded` outcome through here, but they live in DIFFERENT config
+ * trees — a per-root trip that points the operator at `observability.spend`
+ * misdirects them. `per_root` names `autonomy.budget.*` instead; the exact limb
+ * ($/token/wall-clock) is in the adjacent `Per-root … budget exceeded` log line.
  */
-export function emitSpendAbort(deps: {
-  eventBus: TypedEventBus;
-  sessionKey: SessionKey;
-  agentId: string;
-  logger: ComisLogger;
-  onAbort?: () => void;
-}): void {
+export function emitSpendAbort(
+  deps: {
+    eventBus: TypedEventBus;
+    sessionKey: SessionKey;
+    agentId: string;
+    logger: ComisLogger;
+    onAbort?: () => void;
+  },
+  source: "ceiling" | "per_root" = "ceiling",
+): void {
   deps.onAbort?.();
   deps.eventBus.emit("execution:aborted", {
     sessionKey: deps.sessionKey,
@@ -304,12 +315,15 @@ export function emitSpendAbort(deps: {
     agentId: deps.agentId,
     timestamp: systemNowMs(),
   });
+  const perRoot = source === "per_root";
   deps.logger.warn(
     {
-      hint: "Spend ceiling exceeded; raise observability.spend.* or set action:'warn'",
+      hint: perRoot
+        ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); the exact limb is named in the adjacent 'Per-root … budget exceeded' log line"
+        : "Spend ceiling exceeded; raise observability.spend.* or set action:'warn'",
       errorKind: "resource" as const,
     },
-    "Spend ceiling exceeded, aborting execution",
+    perRoot ? "Per-root autonomy budget exceeded, aborting execution" : "Spend ceiling exceeded, aborting execution",
   );
 }
 

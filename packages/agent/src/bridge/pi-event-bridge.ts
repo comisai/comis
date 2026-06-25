@@ -2085,7 +2085,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
-                emitSpendAbort(deps); // content-free; also calls onAbort (the existing emit)
+                // SPEND-ABORT-OBS: this is the per-ROOT autonomy.budget meter, NOT the
+                // observability.spend ceiling — steer the operator hint at the right knob.
+                emitSpendAbort(deps, "per_root"); // content-free; also calls onAbort (the existing emit)
               }
             }
 
