@@ -699,3 +699,26 @@ export type {
   SynthesisSourceTrajectory,
   SkillApprovalGate,
 } from "./memory/index.js";
+
+// v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06). The
+// reflection JOB (runReflection) + the cheap-model reflect adapter + the
+// prompt/parser the daemon invokes from the __REFLECT__ cron (Plan 05): SELECT
+// trusted-origin success → group-by-topicKey → ≥2-distinct corroboration gate →
+// delta-ops reflect → validateLearnedDocBody guard → admit at candidate/learned.
+// Consumes @comis/core PORT TYPES + the static guard + the pure delta-ops only
+// (the agent↛memory / agent↛skills cut); the daemon injects the store + adapter.
+// Re-exported from the memory sub-barrel beside its daemon consumer (Plan 05) so
+// the public-export-consumers gate never sees an orphan once that wiring lands.
+// These ship ALONGSIDE the synthesis exports above — deleted in Plan 06.
+export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
+export type {
+  LlmReflectionAdapterDeps,
+  ReflectionAdapter,
+  ReflectInput,
+  ReflectionResult,
+  RunReflectionDeps,
+  RunReflectionResult,
+  RunReflectionConfig,
+  ReflectionSourceTrajectory,
+  ReflectAdmissionOutcome,
+} from "./memory/index.js";

@@ -148,6 +148,7 @@ export type ExternalContentSource =
   | "mcp_resource"
   | "outcome_judge"
   | "learned_skill_synthesis"
+  | "learned_skill_reflection"
   | "memory_generalization"
   | "unknown";
 
@@ -166,6 +167,7 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   mcp_resource: "MCP resource content",
   outcome_judge: "Outcome judge input",
   learned_skill_synthesis: "Learned-skill synthesis input",
+  learned_skill_reflection: "Learned-skill reflection input",
   memory_generalization: "Memory generalization cluster input",
   unknown: "External",
 };

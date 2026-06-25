@@ -535,6 +535,29 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "LlmSkillSynthesisAdapterDeps",
       "SkillSynthesisJobDeps",
       "SkillSynthesisJobResult",
+      // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06) — the
+      // reflection JOB (runReflection) + classifier + the cheap-model reflect
+      // adapter (createLlmReflectionAdapter) + prompt/parser, surfaced on the
+      // @comis/agent barrel ahead of their cross-package consumer (the daemon
+      // __REFLECT__ wiring lands in Plan 05; the LLM-mock A→B harness in Plan 08).
+      // Interface-first orphans (the SkillSynthesis precedent above) — these SHRINK
+      // out of this allowlist as Plan 05 name-imports them cross-package (the
+      // shrink-only ratchet, AGENTS.md §2.8). They ship ALONGSIDE the synthesis
+      // entries; Plan 06 deletes the synthesis half.
+      "createLlmReflectionAdapter",
+      "runReflection",
+      "classifyReflectOutcome",
+      "REFLECT_PROMPT",
+      "parseReflectionResult",
+      "LlmReflectionAdapterDeps",
+      "ReflectionAdapter",
+      "ReflectInput",
+      "ReflectionResult",
+      "RunReflectionDeps",
+      "RunReflectionResult",
+      "RunReflectionConfig",
+      "ReflectionSourceTrajectory",
+      "ReflectAdmissionOutcome",
       // Sandbox-posture primitive (SANDBOX-01/02, phase 172). resolvePostureFromSkills
       // SHRANK out of this baseline — Plan 02's daemon wiring
       // (setup-cross-session-runtime.ts) now name-imports it cross-package to build

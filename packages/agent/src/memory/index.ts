@@ -40,3 +40,31 @@ export type {
   SynthesisSourceTrajectory,
   SkillApprovalGate,
 } from "./skill-synthesis-job.js";
+
+// v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06). The
+// outcome-gated reflection JOB (runReflection) that REPLACES runSkillSynthesis +
+// the cheap-model reflect adapter (createLlmReflectionAdapter) + the prompt/parser
+// (REFLECT_PROMPT/parseReflectionResult). Both ship ALONGSIDE the still-present
+// synthesis pipeline — the cron swap + the synthesis deletes follow in Plans 05/06
+// (delete-order step 1: build the replacement first). The job consumes @comis/core
+// PORT TYPES + the static validateLearnedDocBody + the pure applyDeltaOps/
+// renderStructuredBody only — the daemon injects the @comis/memory store + the
+// reflect adapter (Plan 05).
+export { createLlmReflectionAdapter } from "./llm-reflection-adapter.js";
+export type {
+  LlmReflectionAdapterDeps,
+  ReflectionAdapter,
+  ReflectionAdapterLogger,
+  ReflectInput,
+} from "./llm-reflection-adapter.js";
+export { REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
+export type { ReflectionResult } from "./reflection-prompt.js";
+export { runReflection, classifyReflectOutcome } from "./reflection-job.js";
+export type {
+  RunReflectionDeps,
+  RunReflectionResult,
+  RunReflectionConfig,
+  RunReflectionJobLogger,
+  ReflectionSourceTrajectory,
+  ReflectAdmissionOutcome,
+} from "./reflection-job.js";
