@@ -93,7 +93,7 @@ describe("setup-cross-session-graph", () => {
     expect(MIN_SUB_AGENT_STEPS).toBe(30);
   });
 
-  it("SUB_AGENT_TOOL_DENYLIST contains the 10 documented management tools", () => {
+  it("SUB_AGENT_TOOL_DENYLIST contains the 11 documented management tools", () => {
     const expectedTools = [
       "gateway",
       "channels_manage",
@@ -105,6 +105,7 @@ describe("setup-cross-session-graph", () => {
       "sessions_manage",
       "memory_manage",
       "heartbeat_manage",
+      "mcp_manage",
     ];
     expect(SUB_AGENT_TOOL_DENYLIST.size).toBe(expectedTools.length);
     for (const tool of expectedTools) {
