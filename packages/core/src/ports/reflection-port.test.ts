@@ -20,12 +20,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  applyDeltaOps,
-  renderStructuredBody,
-  type StructuredBody,
-  type DeltaOp,
-} from "./reflection-port.js";
+import type { StructuredBody, DeltaOp } from "./reflection-port.js";
+// The runtime apply functions live in the non-ports home module (the port file
+// is type-only); they are re-exported on the public @comis/core surface.
+import { applyDeltaOps, renderStructuredBody } from "../reflection/delta-ops.js";
 
 /** A 3-section fixture; each section is a distinct object so reference identity is observable. */
 function makePrev(): StructuredBody {

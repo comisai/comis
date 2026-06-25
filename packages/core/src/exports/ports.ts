@@ -200,6 +200,7 @@ export { messageToParts, partsToMessage } from "../context-store/index.js";
 
 // Reflection delta-ops (v2.31 Phase 223). Runtime VALUES (not types) — the pure
 // `applyDeltaOps` (byte-stable section refresh, REFLECT-04) + `renderStructuredBody`
-// (AST → markdown) the agent reflection job (Plan 04) consumes. The DeltaOp /
+// (AST → markdown) the agent reflection job (Plan 04) consumes. They live in the
+// non-ports home module (`core/src/ports/*.ts` is type-only); the DeltaOp /
 // DocSection / StructuredBody TYPES are in the export-type block above.
-export { applyDeltaOps, renderStructuredBody } from "../ports/reflection-port.js";
+export { applyDeltaOps, renderStructuredBody } from "../reflection/delta-ops.js";

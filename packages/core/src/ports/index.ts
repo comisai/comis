@@ -93,7 +93,6 @@ export type {
   StructuredBody,
   DeltaOp,
 } from "./reflection-port.js";
-export { applyDeltaOps, renderStructuredBody } from "./reflection-port.js";
 export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
