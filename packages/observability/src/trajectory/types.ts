@@ -96,6 +96,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   // count + the static/dynamic verdict + the coverage closed-enum ONLY, NEVER a procedure
   // body / script / finding (SEC-01). Daemon-side emit; bridged for `comis explain` (OBS-02).
   "learning.skill_synthesized",
+  // OBS (hermes-usecases 2026-06-25): the synthesis FUNNEL — synthesized/validated/
+  // admitted + maxClusterCardinality (counts only). Answers "why was 0 admitted" from
+  // the trajectory (maxClusterCardinality:1 = uncorroborated → not admissible).
+  "learning.skill_synthesis_funnel",
   "learning.skill_validated",
   // SURFACE-06 (v2.26 WS2, Phase 202): the promote/demote telemetry — the COUNT ONLY,
   // NEVER an id-list / procedure body / script (SEC-01). Daemon-side emit (Plan 05);

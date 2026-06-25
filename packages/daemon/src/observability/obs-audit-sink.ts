@@ -367,6 +367,25 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     }));
   });
 
+  // security:ssrf_blocked (SSRF-AUDIT, hermes-usecases 2026-06-25) — the blocked URL's
+  // ORIGIN (scheme+host+port; secret-free by construction — `new URL().origin` drops the
+  // path/query/fragment/userinfo) + the closed reason enum. Mirrors command:blocked; gives
+  // `comis security audit-log` the SSRF-attempt trail an SSRF block previously left no row for.
+  eventBus.on("security:ssrf_blocked", (payload) => {
+    const ctx = tryGetContext();
+    persistAuditRow(buildAuditRow({
+      kind: "ssrf_blocked",
+      ts: payload.timestamp,
+      tenant: ctx?.tenantId ?? "",
+      agent: payload.agentId ?? ctx?.agentId ?? null,
+      traceId: payload.traceId ?? ctx?.traceId,
+      action: "ssrf_blocked",
+      actor: payload.agentId ?? ctx?.agentId ?? null,
+      outcome: "denied",
+      refs: { origin: payload.origin, reason: payload.reason },
+    }));
+  });
+
   // security:injection_rate_exceeded — counts + the closed action label only.
   eventBus.on("security:injection_rate_exceeded", (payload) => {
     const ctx = tryGetContext();

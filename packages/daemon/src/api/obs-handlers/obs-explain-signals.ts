@@ -165,7 +165,12 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       entry.failed += 1;
       const errorKind = asString(data.errorKind) ?? "internal";
       entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
-      const errorText = asString(data.errorText);
+      // The trajectory `tool.result` event carries the failure reason as `errorMessage`
+      // (translate-payload.ts), NOT `errorText` — reading the wrong field left
+      // `errorPreview` empty so `comis explain` showed no reason (forcing a daemon-log
+      // grep). Prefer `errorMessage`; keep `errorText` as a defensive fallback for any
+      // other producer shape. (hermes-usecases obs-loop 2026-06-25.)
+      const errorText = asString(data.errorMessage) ?? asString(data.errorText);
       const { errorPreview, resultBytes } = previewAndDigest(errorText);
       const httpStatus = asNumber(data.httpStatus);
       acc.failures.push({

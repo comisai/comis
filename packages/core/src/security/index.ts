@@ -26,8 +26,8 @@ export {
 export type { OAuthErrorCode, RewrittenOAuthError } from "./oauth-helpers.js";
 
 // SSRF guard
-export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "./ssrf-guard.js";
-export type { ValidatedUrl } from "./ssrf-guard.js";
+export { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS, setSsrfBlockHook } from "./ssrf-guard.js";
+export type { ValidatedUrl, SsrfBlockReason } from "./ssrf-guard.js";
 export { createSecretManager, createSecretManagerWithMutableHandle, envSubset } from "./secret-manager.js";
 export type { SecretManager, MutableSecretManager } from "./secret-manager.js";
 

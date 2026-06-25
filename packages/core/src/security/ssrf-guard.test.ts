@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "./ssrf-guard.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { validateUrl, validateLocalServerUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS, setSsrfBlockHook } from "./ssrf-guard.js";
 
 // Mock dns/promises so we get deterministic results without real DNS
 vi.mock("node:dns/promises", () => ({
@@ -72,6 +72,53 @@ describe("SSRF Guard", () => {
       if (!result.ok) {
         expect(result.error.message).toMatch(/cloud metadata|linkLocal/i);
       }
+    });
+
+    // SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): an SSRF block must be
+    // auditable — validateUrl fires the registered hook with a closed-enum reason on
+    // the security-relevant blocks (protocol / cloud_metadata / range), but NOT on a
+    // pass or a malformed/unresolvable URL, and the hook NEVER affects the return.
+    describe("setSsrfBlockHook audit side-channel", () => {
+      afterEach(() => setSsrfBlockHook(undefined));
+
+      it("fires reason=cloud_metadata on a metadata-IP block", async () => {
+        mockLookup.mockResolvedValue({ address: "169.254.169.254", family: 4 });
+        const calls: Array<{ url: string; reason: string }> = [];
+        setSsrfBlockHook((info) => calls.push(info));
+        const r = await validateUrl("http://169.254.169.254/latest/meta-data/?token=SECRET");
+        expect(r.ok).toBe(false);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]!.reason).toBe("cloud_metadata");
+      });
+
+      it("fires reason=private on an RFC1918 block, and reason=protocol on a non-http scheme", async () => {
+        mockLookup.mockResolvedValue({ address: "10.0.0.5", family: 4 });
+        const calls: Array<{ url: string; reason: string }> = [];
+        setSsrfBlockHook((info) => calls.push(info));
+        await validateUrl("http://10.0.0.5/admin");
+        expect(calls.at(-1)!.reason).toBe("private");
+        await validateUrl("file:///etc/passwd"); // protocol blocked BEFORE dns lookup
+        expect(calls.at(-1)!.reason).toBe("protocol");
+      });
+
+      it("does NOT fire on a pass, nor on a malformed URL (only real blocked targets are audited)", async () => {
+        mockLookup.mockResolvedValue({ address: "1.1.1.1", family: 4 }); // public unicast → passes
+        const calls: unknown[] = [];
+        setSsrfBlockHook((info) => calls.push(info));
+        const ok = await validateUrl("http://1.1.1.1/");
+        expect(ok.ok).toBe(true);
+        await validateUrl("not a url"); // invalid_url — NOT an attempt to reach a blocked target
+        expect(calls).toHaveLength(0);
+      });
+
+      it("never lets a throwing hook break the guard (the Result return is unaffected)", async () => {
+        mockLookup.mockResolvedValue({ address: "169.254.169.254", family: 4 });
+        setSsrfBlockHook(() => {
+          throw new Error("audit sink down");
+        });
+        const r = await validateUrl("http://169.254.169.254/");
+        expect(r.ok).toBe(false); // a clean err, not a crash
+      });
     });
 
     it("blocks non-http protocols (ftp)", async () => {

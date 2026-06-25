@@ -317,4 +317,29 @@ describe("emitSpendAbort", () => {
     emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger, onAbort });
     expect(onAbort).toHaveBeenCalledOnce();
   });
+
+  // SPEND-ABORT-OBS (hermes-usecases live-test 2026-06-25): the per-root
+  // `autonomy.budget` meter (per-root-budget.ts → pi-event-bridge.ts:2088) routes its
+  // `exceeded` outcome through emitSpendAbort — which hardcoded the `observability.spend`
+  // hint. So tripping `autonomy.budget.aggregateUsd` told the operator to raise the WRONG
+  // config tree. The source must steer the hint at the knob that actually bounds the trip.
+  it("names autonomy.budget (NOT observability.spend) when the source is the per-root meter", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger }, "per_root");
+    const [obj, msg] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(obj.hint).toMatch(/autonomy\.budget/);
+    // The actionable knob is autonomy.budget — it must NOT tell the operator to RAISE
+    // observability.spend (the original misdirection). An explicit "(NOT observability.spend)"
+    // steer is fine — it corrects the instinct the old wrong hint trained.
+    expect(obj.hint).not.toMatch(/raise observability\.spend/);
+    expect(String(msg)).toMatch(/per-root/i);
+  });
+
+  it("names observability.spend for the DEFAULT (ceiling) source — regression guard", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger });
+    expect((logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0].hint).toMatch(/observability\.spend/);
+  });
 });

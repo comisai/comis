@@ -1,0 +1,6 @@
+# Per-run TEST DIRECTIVE prompts (test-<N>.md — the DRIVE-PROMPT a runner is pointed at via /goal)
+# are LOCAL-ONLY and NOT tracked: each is authored per run and may carry execution records.
+# Only this .gitignore stub is committed, to keep the dir present + carry this rule.
+# (The reusable kickoff TEMPLATE lives in ../DRIVE-PROMPT.md, which IS tracked.)
+*
+!.gitignore

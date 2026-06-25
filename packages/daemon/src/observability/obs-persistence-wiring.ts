@@ -10,7 +10,7 @@
  */
 
 import type { TypedEventBus, EventMap } from "@comis/core";
-import { systemNowMs, systemSetInterval, systemClearInterval, resolvePricingState } from "@comis/core";
+import { systemNowMs, systemSetInterval, systemClearInterval, resolvePricingState, setSsrfBlockHook, tryGetContext } from "@comis/core";
 import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
 import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
@@ -760,6 +760,29 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     ...(dataDir !== undefined ? { dataDir } : {}),
     ...(logRotation !== undefined ? { logRotation } : {}),
     ...(auditConfig !== undefined ? { auditConfig } : {}),
+  });
+
+  // SSRF-AUDIT (hermes-usecases obs-loop 2026-06-25): wire the SSRF guard's block hook
+  // to emit a content-free `security:ssrf_blocked` → the wireAuditSink subscriber above
+  // → an `ssrf_blocked` audit row. So an agent/injected-instruction attempt to reach a
+  // metadata IP / RFC1918 / loopback / non-http target is no longer SILENT. The `origin`
+  // (scheme+host+port) is secret-free by construction (`new URL().origin` drops the
+  // path/query/fragment/userinfo); agentId/traceId ride the AsyncLocalStorage context.
+  setSsrfBlockHook((info) => {
+    let origin = "unparseable";
+    try {
+      origin = new URL(info.url).origin;
+    } catch {
+      /* keep the sentinel — a parse failure here is itself bounded + secret-free */
+    }
+    const ctx = tryGetContext();
+    eventBus.emit("security:ssrf_blocked", {
+      timestamp: systemNowMs(),
+      origin: origin.slice(0, 200),
+      reason: info.reason,
+      ...(ctx?.agentId !== undefined ? { agentId: ctx.agentId } : {}),
+      ...(ctx?.traceId !== undefined ? { traceId: ctx.traceId } : {}),
+    });
   });
 
   // c. Periodic channel snapshot timer

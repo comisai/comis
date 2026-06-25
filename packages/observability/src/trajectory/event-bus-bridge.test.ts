@@ -1059,6 +1059,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       count: 2,
       timestamp: 1000,
     },
+    "learning:skill_synthesis_funnel": {
+      agentId: "default",
+      synthesized: 2,
+      validated: 2,
+      admitted: 0,
+      maxClusterCardinality: 1,
+      timestamp: 1000,
+    },
     "learning:skill_validated": {
       agentId: "default",
       staticOk: true,
@@ -3681,7 +3689,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
     //   needed; the mapping is for operator trajectory visibility + arch closure.
     //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(110); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624)
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(111); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); +1 OBS learning:skill_synthesis_funnel (hermes-usecases obs-loop 2026-06-25 — why-0-admitted on the trajectory)
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

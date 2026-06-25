@@ -408,6 +408,18 @@ export async function handleWireMemoryCronSentinel(
       // ADMITTED this run" (events-learning.ts) — emit v.admitted, NOT v.synthesized
       // (synthesized >= admitted; a synthesized candidate may fail validation/admission).
       container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.admitted, timestamp: clock.now() });
+      // OBS (hermes-usecases 2026-06-25): the whole synthesis FUNNEL alongside the
+      // admitted-count event, so `comis explain` answers "why was 0 admitted" from the
+      // trajectory (maxClusterCardinality:1 = single uncorroborated instance → not
+      // admissible) instead of a DEBUG-log grep. Counts only.
+      container.eventBus.emit("learning:skill_synthesis_funnel", {
+        agentId,
+        synthesized: v.synthesized,
+        validated: v.validated,
+        admitted: v.admitted,
+        maxClusterCardinality: v.maxClusterCardinality,
+        timestamp: clock.now(),
+      });
       // WR-01: emit one learning:skill_validated per validated candidate (booleans +
       // coverage ONLY) so the learned_skill_failing validation-failure obs path is
       // reachable (it was consumed by the verdict but never emitted). DAEMON-SIDE,

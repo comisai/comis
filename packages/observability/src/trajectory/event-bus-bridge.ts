@@ -201,6 +201,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // counts (synthesized) + the static/dynamic verdict + the coverage closed-enum ONLY —
   // NEVER a procedure body, a script, or a finding (SEC-01 §7).
   "learning:skill_synthesized": "learning.skill_synthesized",
+  "learning:skill_synthesis_funnel": "learning.skill_synthesis_funnel",
   "learning:skill_validated": "learning.skill_validated",
 
   // SURFACE-06 (v2.26 Verified Learning WS2, Phase 202 Plan 03): the promote/demote

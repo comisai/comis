@@ -47,6 +47,9 @@ export const AUDIT_KINDS = [
   /** A capability or deny-by-origin gate rejected a call — capability.ts /
    *  assert-not-agent-origin (Phase 210). */
   "capability_denied",
+  /** An outbound URL was blocked by the SSRF guard (validateUrl) — metadata IP /
+   *  RFC1918 / loopback / non-http target. hermes-usecases obs-loop 2026-06-25. */
+  "ssrf_blocked",
 ] as const;
 
 /** The closed audit event-family union (inferred from {@link AUDIT_KINDS}). */
@@ -69,6 +72,7 @@ export function kindIsSecuritySignal(kind: AuditKind): boolean {
     case "hook_blocked":
     case "sandbox_downgrade_refused":
     case "capability_denied":
+    case "ssrf_blocked":
       return true;
     case "audit":
     case "auth_mutation":

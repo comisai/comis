@@ -13,9 +13,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"   # per-box rig config (VPS ssh target, GWTOKEN, …) — see .live-env.example
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 
-# /root — the root-run + driver/oracle scripts (drive/revoke/cfg-patch/db/logscan/model-battery + the sweeps)
+# /root — the root-run + driver/oracle scripts (drive/media-drive/revoke/cfg-patch/db/logscan/
+# model-battery/gate-probe + the sweeps)
 scp -o ConnectTimeout=15 \
-  "$HERE"/drive.mjs "$HERE"/revoke.mjs "$HERE"/cfg-patch.mjs "$HERE"/db.mjs "$HERE"/logscan.mjs "$HERE"/model-battery.mjs \
+  "$HERE"/drive.mjs "$HERE"/media-drive.mjs "$HERE"/revoke.mjs "$HERE"/cfg-patch.mjs "$HERE"/db.mjs \
+  "$HERE"/logscan.mjs "$HERE"/model-battery.mjs "$HERE"/gate-probe.mjs \
   "$HERE"/clean-restart.sh "$HERE"/models-sweep.sh "$HERE"/deploy-dist.sh "$HERE"/setup-vps.sh \
   "$VPS:/root/"
 

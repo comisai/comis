@@ -1,5 +1,7 @@
-# Per-run outputs (TEST-PLAN / RESULTS-LOG / FIX-VERIFY-LOG under <target>-<date>/) regenerate each run
-# and are NOT tracked. Only the cross-run findings ledger + this file are committed.
+# Everything under runs/ is LOCAL-ONLY and NOT tracked: the per-run outputs
+# (TEST-PLAN / RESULTS-LOG / FIX-VERIFY-LOG under <target>-<date>/) regenerate each
+# run, and the cross-run FINDINGS-LEDGER.md is local historical deep-reference (it
+# persists on the dev box across runs, like the rest of the gitignored framework).
+# Only this .gitignore stub is committed, to keep the dir present + carry this rule.
 *
 !.gitignore
-!FINDINGS-LEDGER.md
