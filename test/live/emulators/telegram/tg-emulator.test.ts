@@ -166,6 +166,42 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base (EMU-01..05)", 
   });
 
   // -------------------------------------------------------------------------
+  // Media OUTBOUND delivery — sendPhoto / sendAudio / sendVideo (regression for
+  // the openclaw-usecases 2026-06-25 finding: image-gen + TTS produced real
+  // artifacts but delivery was UNOBSERVABLE because only sendVoice/sendDocument
+  // were dispatched → sendPhoto/sendAudio fell to the default `okEnvelope({})`,
+  // minting NO message_id (`messageId:"undefined"` in the adapter log) and
+  // recording nothing on the chat oracle. Each media method must now mint an id
+  // + record a RecordedOutbound carrying its `mediaKind`.)
+  // -------------------------------------------------------------------------
+  describe("media sends (sendPhoto/sendAudio/sendVideo mint id + record mediaKind)", () => {
+    it.each([
+      ["sendPhoto", "photo"],
+      ["sendAudio", "audio"],
+      ["sendVideo", "video"],
+      ["sendVoice", "voice"],
+      ["sendDocument", "document"],
+    ])("%s mints a message_id and records mediaKind=%s + caption", async (method, kind) => {
+      const env = await callMethod(apiRoot, method, {
+        chat_id: CHAT_ID,
+        caption: `cap for ${method}`,
+      });
+      expect(env.ok).toBe(true);
+      // The minted id is what the adapter reads as `sent.message_id` — the bug
+      // was an undefined id from the default okEnvelope({}).
+      const messageId = (env.result as Record<string, unknown>)["message_id"] as number;
+      expect(typeof messageId).toBe("number");
+
+      const recorded = emu.outbound({ chatId: CHAT_ID });
+      const ro = recorded.find((r) => r.method === method);
+      expect(ro).toBeDefined();
+      expect(ro!.messageId).toBe(messageId);
+      expect(ro!.mediaKind).toBe(kind);
+      expect(ro!.caption).toBe(`cap for ${method}`);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // EMU-02 — the TRUE long-poll (the §9 trickiest bit)
   // -------------------------------------------------------------------------
   describe("long-poll (EMU-02 offset / timeout / ack — no dup, no drop)", () => {
