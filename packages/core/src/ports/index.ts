@@ -89,6 +89,12 @@ export type {
   AdmitMentalModelInput,
 } from "./learned-skill-store.js";
 export type {
+  DocSection,
+  StructuredBody,
+  DeltaOp,
+} from "./reflection-port.js";
+export { applyDeltaOps, renderStructuredBody } from "./reflection-port.js";
+export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,

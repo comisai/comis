@@ -1274,6 +1274,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MentalModelStorePort",
       "MentalModel",
       "AdmitMentalModelInput",
+      // Reflection delta-ops (v2.31 Phase 223 Plan 03, Wave 2) — the @comis/core
+      // reflection-port: the DocSection/StructuredBody/DeltaOp types + the pure
+      // applyDeltaOps (byte-stable section refresh, REFLECT-04 — untargeted
+      // sections survive by reference) + renderStructuredBody (AST → markdown).
+      // Surfaced on the public barrel (exports/ports.ts) so the LATER-wave consumer
+      // can import them: Plan 04 (@comis/agent reflection-job + reflection-prompt
+      // parser) applies the LLM's delta-ops against the prior doc's AST. Until that
+      // plan lands, the only callers are this port's own pure tests (intra-core,
+      // excluded from the consumer scan) — interface-first, the SkillSynthesisPort
+      // precedent directly above. Each SHRINKS out when Plan 04's name-import lands
+      // (the shrink-only ratchet, AGENTS.md §2.8). StructuredBody is ALSO consumed
+      // intra-core by learned-skill-store.ts (MentalModel.structuredBody), so it
+      // stays listed only until the cross-package consumer (Plan 04) lands.
+      "DocSection",
+      "StructuredBody",
+      "DeltaOp",
+      "applyDeltaOps",
+      "renderStructuredBody",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
