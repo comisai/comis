@@ -3,8 +3,9 @@
  * Learned-skill surface helper (v2.26 Verified Learning, SURFACE-01/03 + D1).
  *
  * Joins the platform `@comis/skills` registry snapshot with the `@comis/memory`
- * `learned_skills` store into ONE `<available_skills>` listing — platform skills
- * FIRST, promoted read-only learned procedures APPENDED LAST (the cache-stability
+ * `mental_models` store (the `kind='skill'` rows) into ONE `<available_skills>`
+ * listing — platform skills FIRST, promoted read-only learned procedures APPENDED
+ * LAST (the cache-stability
  * keystone: the cached byte-prefix never shifts, so a newly-promoted skill is
  * picked up on the NEXT session via the per-session prompt-skills freeze, never
  * mid-session). Each surfaced procedure is MATERIALIZED to a read-tool-openable
@@ -142,7 +143,7 @@ export function materializeLearnedSkills(
           errorKind,
           err: e instanceof Error ? e : new Error(String(e)),
           hint: isTraversal
-            ? "a learned skill name failed path validation (traversal/absolute) — skipped; check the learned_skills row"
+            ? "a learned skill name failed path validation (traversal/absolute) — skipped; check the mental_models row"
             : "writing a learned skill SKILL.md failed (disk full / permissions / collision) — skipped",
         },
         "Learned-skill materialize skipped one skill (non-fatal)",
@@ -151,8 +152,12 @@ export function materializeLearnedSkills(
   }
 }
 
-/** Minimal SKILL.md: a frontmatter the discovery parser would accept + the body. */
-function renderSkillFile(skill: MentalModel): string {
+/**
+ * Minimal SKILL.md: a frontmatter the discovery parser would accept + the body.
+ * Exported so the MODEL-03 byte-identity golden can pin the exact rendered bytes
+ * for a `kind='skill'` MentalModel (the no-behavior-change guarantee).
+ */
+export function renderSkillFile(skill: MentalModel): string {
   const fm = [
     "---",
     `name: ${skill.name}`,

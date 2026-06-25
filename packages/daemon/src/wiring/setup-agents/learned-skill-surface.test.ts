@@ -182,14 +182,38 @@ describe("MODEL-03: kind='skill' surface render + SKILL.md are byte-identical (g
       [learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" })],
       "/ws",
     );
-    expect(xml).toMatchInlineSnapshot();
+    expect(xml).toMatchInlineSnapshot(`
+      "<available_skills>
+        <skill>
+          <name>platform-a</name>
+          <description>desc-platform-a</description>
+          <location>/abs/skills/platform-a</location>
+          <source>bundled</source>
+        </skill>
+        <skill>
+          <name>deploy</name>
+          <description>deploy the app</description>
+          <location>/ws/.learned-skills/deploy/SKILL.md</location>
+          <source>learned</source>
+        </skill>
+      </available_skills>"
+    `);
   });
 
   it("renderSkillFile emits the exact frontmatter (name/description/source:learned) + body + trailing newline", () => {
     const file = renderSkillFile(
       learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" }),
     );
-    expect(file).toMatchInlineSnapshot();
+    expect(file).toMatchInlineSnapshot(`
+      "---
+      name: deploy
+      description: "deploy the app"
+      source: learned
+      ---
+      1. build
+      2. ship
+      "
+    `);
   });
 });
 

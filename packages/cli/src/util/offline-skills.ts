@@ -4,9 +4,9 @@
  * OBS-02 (Phase 201, P2 skills shadow): OFFLINE procedural-learning telemetry
  * for `comis memory skills`.
  *
- * The learned-skill funnel (`learned_skills`) lives in the local
- * `~/.comis/memory.db`, so reading it must not require a live gateway — the CLI
- * reads the table directly (the same offline-disk discipline `offline-obs.ts` /
+ * The learned-skill funnel (the `kind='skill'` rows of `mental_models`) lives in
+ * the local `~/.comis/memory.db`, so reading it must not require a live gateway —
+ * the CLI reads the table directly (the same offline-disk discipline `offline-obs.ts` /
  * `offline-learning.ts` use). The CLI cannot import `@comis/agent`/`@comis/skills`
  * (closed graph) and the daemon coverage gauge is not a queryable RPC, so the
  * offline `@comis/memory` read is the sanctioned path — CLI→@comis/memory +
@@ -14,9 +14,9 @@
  *
  * COUNTS/IDS ONLY (T-201-44): the SELECT projects `name` (the skill id) +
  * `state`/`proof_count`/`confidence`/`mutating` (closed enum + counts/booleans) +
- * the `(tenant_id, agent_id)` scope — and NEVER `body`, `scripts`, `description`,
- * `trigger`, `params_schema`, `required_tools`, `source_traj_ids`, or
- * `validation_result` (the procedure-body columns). A body never crosses into the
+ * the `(tenant_id, agent_id)` scope — and NEVER `body`, `structured_body`,
+ * `history`, `description`, `params_schema`, `required_tools`, `source_traj_ids`,
+ * or `validation_result` (the doc-body columns). A body never crosses into the
  * CLI output (SEC-01). The db is opened in WAL mode (concurrent with a live
  * daemon) and ONLY when the file already exists — the offline read never creates
  * it; a missing/unreadable/empty store soft-fails to `undefined` so the command
@@ -101,7 +101,7 @@ function demotedFrom(byState: Record<string, number>): number {
   return (byState.stale ?? 0) + (byState.archived ?? 0);
 }
 
-/** One raw `learned_skills` row — the counts/ids projection ONLY (no body columns). */
+/** One raw `mental_models` (kind='skill') row — the counts/ids projection ONLY (no body columns). */
 interface SkillRow {
   tenant_id: string;
   agent_id: string;
@@ -137,18 +137,20 @@ export function readSkillStatsOffline(dataDir: string): SkillStats | undefined {
   let db: ReturnType<typeof openSqliteDatabase> | undefined;
   try {
     db = openSqliteDatabase({ dbPath, initSchema: () => undefined });
-    // A store whose learned_skills table is absent (an old/reset db) → honest empty.
+    // A store whose mental_models table is absent (an old/reset db) → honest empty.
     const present = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='learned_skills'")
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='mental_models'")
       .get();
     if (present === undefined) return undefined;
 
     // Counts/ids projection ONLY — name is the id; state/proof_count/confidence/
-    // mutating are closed-enum/counts/booleans. NO body/scripts/description/etc.
+    // mutating are closed-enum/counts/booleans. NO body/structured_body/description/etc.
+    // Scoped to kind='skill' — the `comis memory skills` verb is the learned-skill
+    // lens onto the kind-generic mental_models store (D-02: surface stays skill-flavored).
     const rows = db
       .prepare(
         "SELECT tenant_id, agent_id, name, state, proof_count, confidence, mutating " +
-          "FROM learned_skills ORDER BY tenant_id, agent_id, name",
+          "FROM mental_models WHERE kind = 'skill' ORDER BY tenant_id, agent_id, name",
       )
       .all() as SkillRow[];
     if (rows.length === 0) return undefined; // empty table → honest empty

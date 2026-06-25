@@ -396,7 +396,7 @@ describe("runSkillSynthesis — admission predicate (SKILL-08, the first-RED)", 
     // The SKILL-04 anti-domination cap: proofCount is LOW (1), not the cluster size.
     expect(admitArg.proofCount).toBe(1);
     // trust=learned / state=candidate are FORCED by the store (verified in 201-02);
-    // the caller supplies neither (AdmitSkillInput omits trustLevel + id).
+    // the caller supplies neither (AdmitMentalModelInput omits trustLevel + id).
     expect(admitArg).not.toHaveProperty("trustLevel");
     // The approval gate is NOT consulted for a read-only candidate.
     expect(mocks.requestApproval).not.toHaveBeenCalled();

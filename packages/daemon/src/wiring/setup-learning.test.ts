@@ -25,10 +25,10 @@ import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { TypedEventBus, runWithContext } from "@comis/core";
-import { createSqliteLearnedSkillStore, initSchema } from "@comis/memory";
+import { createSqliteMentalModelStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
-import type { LearnedSkillStorePort } from "@comis/core";
+import type { MentalModelStorePort } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -89,7 +89,7 @@ function baseVerdict(over?: Partial<ResolvedOutcome>): ResolvedOutcome {
 }
 
 /**
- * A controllable LearnedSkillStorePort stub for the SURFACE-04/05 promote/demote
+ * A controllable MentalModelStorePort stub for the SURFACE-04/05 promote/demote
  * loop. Exposes ONLY the promote/demote write methods the resolve seam calls (the
  * loop reads NO per-skill proof/trust — the threshold gate is store-side, Plan 02);
  * the read/admit/evict methods are present (the port shape) but unused by the seam.
@@ -116,7 +116,7 @@ function mockLearnedSkillStore(opts?: { promoteChanged?: boolean; demoteChanged?
     get: vi.fn(async () => ok(undefined)),
     list: vi.fn(async () => ok([])),
     evict: vi.fn(async () => ok(undefined)),
-  } as unknown as LearnedSkillStorePort;
+  } as unknown as MentalModelStorePort;
   return { store, promoteByName, demoteByName };
 }
 
@@ -1562,10 +1562,10 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     db: import("better-sqlite3").Database,
     verdict: ResolvedOutcome,
     opts?: { promoteAt?: number; bus?: TypedEventBus; logger?: ReturnType<typeof createMockLogger> },
-  ): { bus: TypedEventBus; store: ReturnType<typeof createSqliteLearnedSkillStore> } {
+  ): { bus: TypedEventBus; store: ReturnType<typeof createSqliteMentalModelStore> } {
     const bus = opts?.bus ?? new TypedEventBus();
     const { store: outcomeStore } = makeStubStore(verdict);
-    const skillStore = createSqliteLearnedSkillStore({ db });
+    const skillStore = createSqliteMentalModelStore({ db });
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore,
@@ -1600,7 +1600,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
    */
   async function driveGraphThenAwait(
     bus: TypedEventBus,
-    store: ReturnType<typeof createSqliteLearnedSkillStore>,
+    store: ReturnType<typeof createSqliteMentalModelStore>,
     name: string,
     scope: { tenantId: string; agentId: string },
     until: (s: { state: string; proofCount: number } | undefined) => boolean,
@@ -1625,7 +1625,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
 
   it("a SUCCESS verdict whose usedSkillIds are admitted NAMES actually flips the real row candidate→active", async () => {
     const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
-    const seed = createSqliteLearnedSkillStore({ db });
+    const seed = createSqliteMentalModelStore({ db });
     const admitted = await seed.admit(
       {
         name: "deploy-the-thing",
@@ -1667,7 +1667,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     // proof_count to 1 (the row WAS found + reinforced) but 0+1 >= 3 is false → still
     // candidate. This isolates "the row was located by name" from "it was activated".
     const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
-    const seed = createSqliteLearnedSkillStore({ db });
+    const seed = createSqliteMentalModelStore({ db });
     await seed.admit(
       { name: "below-bar", description: "d", body: "b", mutating: false, proofCount: 0, confidence: 0.8, sourceTrajIds: ["t"], createdAt: NOW },
       scope,
