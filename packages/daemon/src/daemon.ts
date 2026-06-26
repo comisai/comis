@@ -425,7 +425,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, relationshipStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, relationshipStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
@@ -517,15 +517,15 @@ function buildChannelManagerDeps(deps: {
     // __MEMORY_CONSOLIDATION__ cron were deleted); the consolidationStore port + its
     // memories table are retired in Phase 226. Still threaded (its writer is gone, no live consumer).
     consolidationStore,
-    // tripleStore + relationshipStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps
-    // chain → the __SOCIAL_MODELING__ / __MEMORY_LIFECYCLE__ sentinels (the last is KEYLESS: the
-    // DORMANT lifecycle sweep). (The __MEMORY_TRIPLE_EXTRACTION__ + __USEFULNESS_JUDGE__ sentinels
-    // were deleted in Phase 226 SIMPLIFY-03 — usefulnessStore no longer rides the cron chain (the
-    // FORGET-02 recordUsage write is in setup-learning.ts); tripleStore stays for the graphSpread
-    // recall lane via setupAgents. The __MEMORY_REASONING__ / __USER_REPRESENTATION__ sentinels +
-    // the __ONLINE_TUNING__ bandit were deleted in Phase 225 / Phase 224.)
+    // relationshipStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the
+    // __SOCIAL_MODELING__ / __MEMORY_LIFECYCLE__ sentinels (the last is KEYLESS: the DORMANT
+    // lifecycle sweep). (The __MEMORY_TRIPLE_EXTRACTION__ + __USEFULNESS_JUDGE__ sentinels were
+    // deleted in Phase 226 SIMPLIFY-03 — neither tripleStore nor usefulnessStore rides the cron
+    // chain anymore: tripleStore feeds ONLY the graphSpread recall lane via setupAgents (below),
+    // the FORGET-02 recordUsage write is in setup-learning.ts. The __MEMORY_REASONING__ /
+    // __USER_REPRESENTATION__ sentinels + the __ONLINE_TUNING__ bandit were deleted in Phase 225 / 224.)
     // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel (v2.31 Reflection): the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NO LONGER threaded here — the reflection job groups by topicKey, no clustering embeddings; the dead procedural-synthesis embedding wiring was deleted in Phase 223 Plan 05.)
-    tripleStore, relationshipStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
+    relationshipStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,

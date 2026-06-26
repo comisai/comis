@@ -26,7 +26,6 @@ import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningConfigSchema } from "../schema-learning.js";
-import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
@@ -429,10 +428,10 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  writes STAY wired behind this one flag. (Replaces learningSkills/learningTuning/
    *  learningForgetting — those keys are now rejected at parse, the D-01a operator-update path.) */
   learning: LearningConfigSchema.default(() => LearningConfigSchema.parse({})),
-  /** Offline triple-extraction cron (Verified Learning WS7). Opt-OUT posture: default-ON,
-   *  so `.parse({})` yields an active block; the master cost switch force-disables it at
-   *  the registration site. */
-  memoryTripleExtraction: MemoryTripleExtractionConfigSchema.default(() => MemoryTripleExtractionConfigSchema.parse({})),
+  // (The `memoryTripleExtraction` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant no-op
+  //  extraction cron is gone (its `extract` returned []). z.strictObject now rejects a config
+  //  carrying it, the D-01a operator-update path. The TripleStorePort graphSpread recall lane
+  //  survives — only the extraction JOB went, not the read lane.)
   /** SCAFFOLD-DORMANT memory-lifecycle sweep cron. Opt-OUT posture: default-ON for consistency
    *  (a KEYLESS cron) — but it still evicts/demotes NOTHING until the deferred live eviction
    *  policy lands, so default-on is a forward-consistent no-op today. */

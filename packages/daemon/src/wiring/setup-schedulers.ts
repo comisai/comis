@@ -466,35 +466,12 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory triple-extraction cron job (WIRE-01) --
-    // OPT-IN, DEFAULT OFF — the lone OFF-by-default learning seam alongside learningOutcome.
-    // Schedules the exported-but-never-wired runMemoryTripleExtraction (S/P/O from raw turns,
-    // COMPLEMENTARY to __MEMORY_REASONING__). A DEFAULT agent registers NO job → zero added cost,
-    // byte-identical with the config absent. Gated by BOTH the master cost kill switch AND the
-    // per-agent opt-in (force-disabled when memory.costFeatures.enabled is false). Default schedule
-    // 0 6 * * *. The __MEMORY_TRIPLE_EXTRACTION__ sentinel is dispatched in
-    // setup-channels-memory-crons-wire.ts → runMemoryTripleExtraction (trust-first upsertTriple).
-    const tripleCfg = agentConfig.memoryTripleExtraction;
-    if (costFeaturesEnabled && tripleCfg?.enabled) {
-      const tripleJobId = `memory-triple-extraction-${agentId}`;
-      if (!scheduler.getJobs().some((j) => j.id === tripleJobId)) {
-        await scheduler.addJob({
-          id: tripleJobId,
-          name: "Memory triple extraction",
-          agentId,
-          schedule: { kind: "cron", expr: tripleCfg.schedule ?? "0 6 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_TRIPLE_EXTRACTION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: tripleCfg.schedule ?? "0 6 * * *" }, "Registered memory triple-extraction cron job");
-      }
-    }
+    // (The memory triple-extraction cron — __MEMORY_TRIPLE_EXTRACTION__, gated by
+    // memoryTripleExtraction.enabled — was DELETED in Phase 226 SIMPLIFY-03 (D-03). It scheduled
+    // a no-op scaffold whose `extract` returned [] (no triples were ever written). The per-agent
+    // memoryTripleExtraction config key is gone — a config carrying it is now rejected at parse,
+    // the D-01a operator-update path. The TripleStorePort + its sqlite adapter + the graphSpread
+    // recall lane SURVIVE — only the dormant extraction JOB went, not the read lane.)
 
     // -- Reflection cron job (v2.31 Reflection, Phase 223, REFLECT-01) --
     // The reflect-engine replacement for the dead procedural-synthesis clustering cron.

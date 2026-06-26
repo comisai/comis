@@ -54,9 +54,8 @@ export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
 export { LearningConfigSchema } from "./schema-learning.js";
 export type { LearningConfig } from "./schema-learning.js";
 
-// Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
-export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
-export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";
+// (The memory triple-extraction schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+// no-op extraction cron is gone; the TripleStorePort recall lane survives. No alias, I1.)
 
 // SCAFFOLD-DORMANT memory-lifecycle sweep schema (default-OFF, KEYLESS cron)
 export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";

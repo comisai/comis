@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, RelationshipStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
@@ -84,8 +84,9 @@ export interface MemoryCronContext {
   // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
   /** Orphaned in Phase 225-05 (the __MEMORY_CONSOLIDATION__ cron + its writer were deleted); retired in 226. */
   consolidationStore?: MemoryConsolidationStore;
-  /** The deductive trust-first upsertTriple write (__MEMORY_TRIPLE_EXTRACTION__). */
-  tripleStore?: TripleStorePort;
+  // (The cron-context `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  //  deleted triple-extraction dispatch branch. The graphSpread recall lane consumes tripleStore
+  //  via the SEPARATE setupAgents deps chain, NOT this cron context; the port + lane survive.)
   /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
   relationshipStore?: RelationshipStore;
   // (The cron-context `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was

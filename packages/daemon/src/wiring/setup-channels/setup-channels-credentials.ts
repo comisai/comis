@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
@@ -72,10 +72,9 @@ export interface CronEventListenerDeps {
    *  retired in Phase 226. Still threaded (no live writer). Built in setup-memory on the SAME db
    *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store — deductive current-truth write path, threaded into runMemoryTripleExtraction via
-   *  the opt-in `__MEMORY_TRIPLE_EXTRACTION__` sentinel below (port TYPE, agent↛memory cut; same db
-   *  handle as the memory adapter). Absent ⇒ sentinel can't run; cron is off-by-default. */
-  tripleStore?: TripleStorePort;
+  // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
+  //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
   /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
    *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
    *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
@@ -220,7 +219,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       agents,
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
-      tripleStore: deps.tripleStore,
       relationshipStore: deps.relationshipStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
       memoryApi: deps.memoryApi,

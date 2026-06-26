@@ -31,13 +31,11 @@ import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } 
 import {
   resolveOperationModel,
   resolveProviderFamily,
-  runMemoryTripleExtraction,
   runReflection,
   createLlmReflectionAdapter,
   REFLECT_PROMPT,
   PROFILE_REFLECT_PROMPT,
   TOPIC_REFLECT_PROMPT,
-  type TripleCandidate,
   type ReflectionSourceTrajectory,
   type ReflectAdmissionOutcome,
 } from "@comis/agent";
@@ -54,7 +52,7 @@ export async function handleWireMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, tripleStore, memoryApi, memoryLifecycleStore, reflection } = ctx;
+  const { container, logger, clock, agents, tenantId, memoryLifecycleStore, reflection } = ctx;
 
   // (The __USEFULNESS_JUDGE__ sentinel dispatch was DELETED in Phase 226 SIMPLIFY-03 (D-03).
   // It built a cheap-model usefulness-judge seam and WROTE its verdict through
@@ -132,83 +130,13 @@ export async function handleWireMemoryCronSentinel(
     return true;
   }
 
-  // -- Memory triple-extraction sentinel intercept (WIRE-01) --
-  // Dispatches the exported-but-never-scheduled runMemoryTripleExtraction behind the
-  // per-agent default-OFF flag. Complementary (higher-recall S/P/O from raw turns), NOT
-  // redundant with __MEMORY_REASONING__. Mirrors the reasoning block: opt-in re-check +
-  // cheap "cron" model/key, then build the OFFLINE extractor seam and run the job (the
-  // trust-first upsertTriple parser-seam strips any model-asserted trust). Non-fatal.
-  if (resultText === "__MEMORY_TRIPLE_EXTRACTION__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Triple extraction job fired without agentId", errorKind: "config" as const }, "Skipping triple extraction -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for triple extraction" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const cfg = agentConfig?.memoryTripleExtraction;
-    if (!cfg?.enabled) {
-      // The opt-in cost gate (defence-in-depth re-check): a disabled (or default-config) agent does NO work.
-      logger.debug({ agentId }, "Triple extraction disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    if (!tripleStore) {
-      logger.warn({ agentId, hint: "tripleStore not injected -- cannot run triple extraction", errorKind: "config" as const }, "Skipping triple extraction -- triple store not wired");
-      payload.onComplete?.({ status: "error", error: "triple store not wired" });
-      return true;
-    }
-
-    // Resolve the cheap "cron" model + API key by NAME (Pino auto-redacts).
-    const resolved = resolveOperationModel({
-      operationType: "cron",
-      agentProvider: agentConfig.provider ?? "anthropic",
-      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-      operationModels: agentConfig.operationModels ?? {},
-      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-    });
-    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
-    const apiKey = cred.apiKey;
-    if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "triple extraction"), errorKind: "config" as const }, "Skipping triple extraction -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
-      return true;
-    }
-
-    const tripleTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const tripleLogger = logger.child({ agentId, submodule: "triple-extraction" });
-
-    // The OFFLINE extractor `extract` contract (text → TripleCandidate[]). This is a P0
-    // scaffold: it returns [] (no fabricated triples), so no cheap-model seam is built here.
-    // (The reasoning-seam wrapper this scaffold formerly reused was deleted with the
-    // memory-reasoning subsystem in v2.31 Phase 225-05; the real extractor a future plan
-    // supplies will resolve its own seam.) The source text is the bounded recent high-trust
-    // memory content (ids+content via memoryApi.inspect); the job's own validateMemoryWrite +
-    // the trust-first upsertTriple seam cap every candidate's trust in CODE.
-    const extract = async (_text: string): Promise<TripleCandidate[]> => [];
-    const sourceText = memoryApi
-      ? memoryApi
-          .inspect({ tenantId: tripleTenantId, agentId, limit: cfg.maxCandidatesPerRun ?? 200 })
-          .map((r) => r.content)
-          .join("\n")
-      : "";
-
-    const result = await runMemoryTripleExtraction({
-      tripleStore,
-      config: { enabled: cfg.enabled, maxCandidatesPerRun: cfg.maxCandidatesPerRun ?? 200 },
-      agentId,
-      tenantId: tripleTenantId,
-      clock,
-      logger: tripleLogger,
-      eventBus: container.eventBus,
-      extract,
-      sourceText,
-    });
-    payload.onComplete?.({ status: result.ok ? "ok" : "error", error: result.ok ? undefined : result.error?.message });
-    return true;
-  }
+  // (The __MEMORY_TRIPLE_EXTRACTION__ sentinel dispatch was DELETED in Phase 226 SIMPLIFY-03
+  // (D-03). It ran runMemoryTripleExtraction — a no-op scaffold whose `extract` returned []
+  // (no triples were ever written), gated default-OFF. The TripleStorePort + its sqlite adapter
+  // + the graphSpread recall lane (recall-graph-spread-lane.ts, gated rag.lanes.graphSpread)
+  // SURVIVE — only the dormant extraction JOB + its cron-context `tripleStore` field went, not
+  // the read lane. An unrecognized sentinel falls through to `return false` below — the
+  // T-226-08 benign no-op for any persisted stale triple-extraction job row.)
 
   // -- Reflection sentinel intercept (v2.31 Reflection, Phase 223, REFLECT-01/02) --
   // The COMPOSITION ROOT for the reflection loop — the reflect-engine replacement for the

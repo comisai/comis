@@ -1549,34 +1549,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
-    "default": {
-      "enabled": true,
-      "maxCandidatesPerRun": 200,
-      "schedule": "0 6 * * *"
-    },
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.maxCandidatesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": "0 6 * * *",
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.schedule",
-    "type": "string"
-  },
-  {
     "default": "default",
     "immutable": true,
     "path": "agents.model",
@@ -8446,11 +8418,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxSessionsPerRun": 10,
           "minMessages": 5,
           "schedule": "0 2 * * *"
-        },
-        "memoryTripleExtraction": {
-          "enabled": true,
-          "maxCandidatesPerRun": 200,
-          "schedule": "0 6 * * *"
         },
         "model": "default",
         "modelFailover": {
@@ -17625,36 +17592,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
-    "memoryTripleExtraction": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "maxCandidatesPerRun": 200,
-        "schedule": "0 6 * * *"
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "maxCandidatesPerRun": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "0 6 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxCandidatesPerRun"
-      ],
-      "type": "object"
-    },
     "model": {
       "default": "default",
       "minLength": 1,
@@ -20179,7 +20116,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "dialectic",
     "learningOutcome",
     "learning",
-    "memoryTripleExtraction",
     "memoryLifecycle"
   ],
   "type": "object"
@@ -28620,36 +28556,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
-          "memoryTripleExtraction": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "maxCandidatesPerRun": 200,
-              "schedule": "0 6 * * *"
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "maxCandidatesPerRun": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "0 6 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxCandidatesPerRun"
-            ],
-            "type": "object"
-          },
           "model": {
             "default": "default",
             "minLength": 1,
@@ -31174,7 +31080,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "dialectic",
           "learningOutcome",
           "learning",
-          "memoryTripleExtraction",
           "memoryLifecycle"
         ],
         "type": "object"
@@ -31336,11 +31241,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxSessionsPerRun": 10,
             "minMessages": 5,
             "schedule": "0 2 * * *"
-          },
-          "memoryTripleExtraction": {
-            "enabled": true,
-            "maxCandidatesPerRun": 200,
-            "schedule": "0 6 * * *"
           },
           "model": "default",
           "modelFailover": {

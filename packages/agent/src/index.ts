@@ -198,15 +198,11 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
-// Offline triple extraction (conversation text → S/P/O triples
-// written into the trust-first bi-temporal KG; default-OFF, NEVER on the recall path)
-export { runMemoryTripleExtraction } from "./memory/memory-triple-extraction-job.js";
-export type {
-  MemoryTripleExtractionDeps,
-  MemoryTripleExtractionConfig,
-  MemoryTripleExtractionStats,
-  TripleCandidate,
-} from "./memory/memory-triple-extraction-job.js";
+// (The offline triple-extraction job — runMemoryTripleExtraction + its
+// MemoryTripleExtractionDeps/Config/Stats + TripleCandidate types — was DELETED in Phase 226
+// SIMPLIFY-03 alongside its dormant __MEMORY_TRIPLE_EXTRACTION__ cron (the `extract` returned
+// [] — no triples were ever written). The TripleStorePort + its sqlite adapter + the
+// graphSpread recall lane (recall-graph-spread-lane.ts) survive — only the extraction JOB went.)
 
 // (The offline usefulness-judge seam — createUsefulnessJudgeSeam — was DELETED in Phase 226
 // SIMPLIFY-03 alongside its dormant __USEFULNESS_JUDGE__ cron. The keyless citation-marker
