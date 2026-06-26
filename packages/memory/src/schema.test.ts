@@ -1168,6 +1168,59 @@ describe("initSchema", () => {
       expect(colNames).toContain("report_json");
     });
   });
+
+  // ── memory_usefulness.failure_count migration (FORGET-02 source) ─────
+  //
+  // `failure_count` is the outcome-attributed task-failure signal the lifecycle
+  // sweep JOINs on (Phase 224 FORGET-02; distinct from `ignored_count`). Its
+  // migration (`ensureUsefulnessFailureColumn`) is the CRITICAL relocation
+  // HAZARD of this phase: at HEAD it co-lived in `schema-tuned-alpha.ts`, the
+  // file Plan 04 DELETES. This canary boots a fresh DB via initSchema and proves
+  // the column exists + the sweep's SUM(failure_count) JOIN-shape resolves — it
+  // must stay green THROUGH the relocation (Plan 224-01) AND the eventual
+  // schema-tuned-alpha.ts deletion (Plan 224-04). A red here means a fresh DB
+  // throws `no such column: failure_count` and FORGET-02 silently never fires.
+  describe("memory_usefulness.failure_count migration (FORGET-02 source)", () => {
+    it("a fresh DB booted via initSchema has the memory_usefulness.failure_count column", () => {
+      initSchema(db, 1536);
+
+      const colNames = (
+        db.prepare("PRAGMA table_info(memory_usefulness)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      expect(colNames).toContain("failure_count");
+    });
+
+    it("the lifecycle-sweep failure_count JOIN-shape resolves on a fresh DB (no 'no such column')", () => {
+      initSchema(db, 1536);
+
+      // The sweep aggregates failure_count per (tenant, agent); prove the column
+      // resolves at PREPARE time on a fresh DB (a missing column throws here).
+      expect(() =>
+        db.prepare("SELECT SUM(failure_count) AS total FROM memory_usefulness").get(),
+      ).not.toThrow();
+    });
+
+    it("failure_count defaults to 0 (NOT NULL count) for an inserted usefulness row", () => {
+      initSchema(db, 1536);
+      // `memory_usefulness.memory_id` has a FK → memories(id), enforced on this
+      // connection, so insert the parent memory row first.
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('m-fc', 'default', 'u1', 'a usefulness-tracked fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      ).run();
+      db.prepare(
+        `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count)
+         VALUES ('default', 'agent', 'm-fc', '', 0, 0)`,
+      ).run();
+
+      const row = db
+        .prepare(
+          "SELECT failure_count FROM memory_usefulness WHERE tenant_id='default' AND agent_id='agent' AND memory_id='m-fc' AND intent=''",
+        )
+        .get() as { failure_count: number };
+      expect(row.failure_count).toBe(0);
+    });
+  });
 });
 
 // =====================================================================
