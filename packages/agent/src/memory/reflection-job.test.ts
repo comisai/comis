@@ -162,6 +162,24 @@ describe("classifyReflectOutcome (why a reflection run admitted nothing)", () =>
   it("rejected_validation when corroborated + non-empty but nothing admitted", () => {
     expect(classifyReflectOutcome(base)).toBe("rejected_validation");
   });
+
+  // Phase 226 SIMPLIFY-04 (D5 salvage + the 225 WR-01 gap): the 2 new arms. Counts-only.
+  it("untrusted_origin when SELECT kept nothing AND some success was dropped for untrusted origin", () => {
+    // selected:0 with untrustedDrops>0 is the SPECIFIC "all successes were untrusted-origin"
+    // reason — it OUT-RANKS the generic no_successes (a more diagnosable verdict).
+    expect(classifyReflectOutcome({ ...base, selected: 0, untrustedDrops: 2 })).toBe("untrusted_origin");
+  });
+  it("no_successes still wins over untrusted_origin when there were NO untrusted drops (untrustedDrops:0)", () => {
+    expect(classifyReflectOutcome({ ...base, selected: 0, untrustedDrops: 0 })).toBe("no_successes");
+  });
+  it("rejected_name_length when corroborated + non-empty but a name-length over-cap rejection occurred", () => {
+    // The 225 WR-01 gap: a name-length rejection is now reported as ITS OWN reason instead of
+    // being mis-attributed to rejected_validation (a poison verdict).
+    expect(classifyReflectOutcome({ ...base, nameLengthRejections: 1 })).toBe("rejected_name_length");
+  });
+  it("rejected_validation still wins when there were NO name-length rejections (the default poison verdict)", () => {
+    expect(classifyReflectOutcome({ ...base, nameLengthRejections: 0 })).toBe("rejected_validation");
+  });
 });
 
 // ---------------------------------------------------------------------------
