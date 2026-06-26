@@ -239,10 +239,16 @@ describe("reflection learning path has NO learned-code execution surface (SKILL-
     ).toBeGreaterThan(0);
     const offenders: string[] = [];
     for (const f of tsFiles) {
-      const code = stripNonCode(readFileSync(join(dir, f), "utf8"));
-      // Match a from-clause to @comis/skills (the import specifier is stripped of
-      // its quotes by stripNonCode, so match the bare token after `from`).
-      if (/\bfrom\s+@comis\/skills\b/.test(code) || /\bimport\s+@comis\/skills\b/.test(code)) {
+      // WR-02: scan the COMMENT-ONLY-stripped source (KEEP string literals), mirroring
+      // the DDL scan above. `stripNonCode` deletes string literals — and the import
+      // specifier `"@comis/skills"` IS a string literal, so it stripped the very token
+      // these regexes match (`import … from  ;`) → the assertion was VACUOUS (it passed
+      // even on a real violation). Comments are still stripped so a `// no @comis/skills
+      // here` note cannot self-trip the gate.
+      const code = stripCommentsOnly(readFileSync(join(dir, f), "utf8"));
+      // Match the quoted import specifier in either form: a `from "@comis/skills"`
+      // clause OR a bare side-effect `import "@comis/skills"`.
+      if (/from\s+["']@comis\/skills["']/.test(code) || /import\s+["']@comis\/skills["']/.test(code)) {
         offenders.push(`${AGENT_MEMORY_DIR}/${f}`);
       }
     }
