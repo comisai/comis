@@ -7,9 +7,12 @@
  *
  *  1. **SELECT** (fail-closed, REFLECT-01 / INV-5): for each source,
  *     `OutcomeSignalPort.resolve`; keep ONLY `outcome === "success" && confidence
- *     >= minConfidence` AND `source.trustedOrigin` (INV-5/D-04 — an untrusted-origin
- *     success NEVER seeds a doc; the daemon derives trust, Research A2). An
- *     unresolved outcome is fail-closed `continue`.
+ *     >= minConfidence` AND BOTH anti-poison axes (FOLD-04): `source.trustedOrigin`
+ *     (axis 1 — daemon-derived SESSION origin, INV-5/D-04) AND
+ *     `!source.sourceTrustExternal` (axis 2 — the per-MEMORY source-trust belt; a
+ *     planted `external` memory riding a trusted session seeds nothing, Pitfall 2).
+ *     An untrusted-origin OR external-trust source NEVER seeds a doc. An unresolved
+ *     outcome is fail-closed `continue`.
  *  2. **GROUP** (replaces `clusterSuccesses`, REFLECT-02): `Map<topicKey,
  *     members[]>` via `normalizeOpeningRequest(source.signature)` — a deterministic,
  *     keyless, content-light token-SET hash (NO embeddings). An empty topicKey
@@ -103,8 +106,23 @@ export interface ReflectionSourceTrajectory {
   text: string;
   /** The envelope-stripped user-role text → `normalizeOpeningRequest` (the topicKey). */
   signature: string;
-  /** INV-5/D-04: false ⇒ this success NEVER seeds a doc (daemon-derived trust). */
+  /**
+   * FOLD-04 ANTI-POISON AXIS 1 (the 223 session-origin belt). INV-5/D-04: false ⇒
+   * this success NEVER seeds a doc (daemon-derived SESSION/sender origin trust). A
+   * per-TRAJECTORY boolean — NOT a per-memory trust level.
+   */
   trustedOrigin: boolean;
+  /**
+   * FOLD-04 ANTI-POISON AXIS 2 (Phase 225, the per-MEMORY source-trust belt —
+   * GAP-3, the OLD user-rep layer-1 firewall, memory-user-representation-job.ts:322
+   * `s.trustLevel !== "external"`). true ⇒ this source carries an `external`-trust
+   * memory and NEVER seeds a doc, even riding a `trustedOrigin:true` session
+   * (Pitfall 2: a planted external memory can ride a trusted session — the two axes
+   * are DISTINCT and must BOTH pass). The daemon (Plan 04) sets it from the
+   * per-memory `trustLevel === "external"`; for kind:skill the daemon sets it false
+   * (skill sources are outcome trajectories, not source memories).
+   */
+  sourceTrustExternal: boolean;
 }
 
 /** The config slice the job reads (a structural subset; Phase 226 collapses to learning.reflect). */
@@ -129,6 +147,22 @@ export interface RunReflectionDeps {
   tenantId: string;
   /** The (tenant, agent) isolation boundary every read/write rebinds to. */
   scope: LearningScope;
+  /**
+   * The doc family this run reflects (Phase 225 FOLD — the I7 kind-parameter).
+   * Threaded onto the admitted doc's `kind` and into the doc-name prefix
+   * (`<kind>-<topicKey>`) so the engine is ONE engine across skill/profile/topic.
+   * Omitted ⇒ `"skill"` (a skill run is byte-identical to the 223 behavior).
+   */
+  kind?: "skill" | "profile" | "topic";
+  /**
+   * The per-kind GROUP key (Phase 225 FOLD). Maps a source to its corroboration
+   * group: kind:skill keys on the normalized opening-request signature (the
+   * default), kind:profile groups by user (one doc per user), kind:topic groups
+   * its surprisal/observation clusters. Omitted ⇒ `normalizeOpeningRequest(
+   * t.signature)` (byte-identical for kind:skill). An empty key (`""`) is
+   * ungroupable and skipped (never corroborates — a singleton).
+   */
+  groupKey?: (t: ReflectionSourceTrajectory) => string;
   config: RunReflectionConfig;
   /** The LCD-merged source history the daemon injects (with the daemon-derived trustedOrigin). */
   sourceTrajectories: ReflectionSourceTrajectory[];
@@ -236,11 +270,20 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
  * DIFFERENT topic_key, two rows coexisting under the `(tenant, agent, kind,
  * topic_key, name)` UNIQUE constraint, and a name-keyed promote/demote then
  * cross-wired BOTH. The full topicKey makes `(tenant, agent, kind, name)` unique,
- * so the name-keyed lifecycle is unambiguous. `skill-` + 64 hex = 70 chars, well
- * under `MAX_DOC_NAME_LENGTH` (120).
+ * so the name-keyed lifecycle is unambiguous.
+ *
+ * Phase 225 FOLD: the prefix is the KIND (`<kind>-<topicKey>`) — `profile-`/
+ * `topic-` keep `(tenant, agent, kind, name)` unique ACROSS kinds (a profile and a
+ * skill that happen to share a topicKey get distinct names). `profile-`/`topic-` +
+ * 64 hex = 72/70 chars, well under `MAX_DOC_NAME_LENGTH` (120).
  */
-function docNameForTopic(topicKey: string): string {
-  return `skill-${topicKey}`;
+function docNameForTopic(kind: "skill" | "profile" | "topic", topicKey: string): string {
+  return `${kind}-${topicKey}`;
+}
+
+/** The default GROUP key (kind:skill) — the normalized opening-request signature. */
+function defaultGroupKey(t: ReflectionSourceTrajectory): string {
+  return normalizeOpeningRequest(t.signature);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +299,8 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // `reflectionAdapter` + `mentalModelStore` are destructured (and used) inside the
   // per-topic `reflectTopic` helper off the same `deps`, not in this function body.
   const { agentId, scope, config, sourceTrajectories, outcomeSignal, clock, logger } = deps;
+  // The per-kind group function (Phase 225 FOLD) — defaults to the skill behavior.
+  const groupKey = deps.groupKey ?? defaultGroupKey;
 
   const startMs = clock.now();
   const maxDocsPerRun = config.maxDocsPerRun ?? DEFAULT_MAX_DOCS_PER_RUN;
@@ -263,9 +308,9 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   // 1. SELECT (fail-closed): keep only trusted-origin `success` >= minConfidence.
   const selected: ReflectionSourceTrajectory[] = [];
   for (const t of sourceTrajectories) {
-    // INV-5/D-04: an untrusted-origin success NEVER seeds a doc. Filter FIRST (cheap,
-    // before the outcome resolve) — a planted/untrusted trajectory cannot even reach
-    // the corroboration gate.
+    // FOLD-04 AXIS 1 (INV-5/D-04 — the 223 session-origin belt): an untrusted-origin
+    // success NEVER seeds a doc. Filter FIRST (cheap, before the outcome resolve) — a
+    // planted/untrusted trajectory cannot even reach the corroboration gate.
     if (!t.trustedOrigin) {
       logger.debug(
         {
@@ -273,9 +318,29 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
           step: "select" as const,
           trajectoryId: t.trajectoryId,
           errorKind: "precondition" as const,
-          hint: "untrusted-origin success — never seeds a doc (INV-5/D-04), skipped",
+          hint: "untrusted-origin success — never seeds a doc (INV-5/D-04 axis 1), skipped",
         },
         "reflection: untrusted-origin trajectory skipped",
+      );
+      continue;
+    }
+    // FOLD-04 AXIS 2 (Phase 225 GAP-3 — the per-MEMORY source-trust belt, the OLD
+    // user-rep layer-1 firewall). A source carrying an `external`-trust memory NEVER
+    // seeds a doc, even riding a `trustedOrigin:true` session (Pitfall 2: a planted
+    // external memory can ride a trusted session — the two axes are DISTINCT and must
+    // BOTH pass). The daemon (Plan 04) sets `sourceTrustExternal` from the per-memory
+    // `trustLevel === "external"`; for kind:skill it is always false. SECOND fail-closed
+    // exclude AFTER axis 1 so the two compose.
+    if (t.sourceTrustExternal) {
+      logger.debug(
+        {
+          agentId,
+          step: "select" as const,
+          trajectoryId: t.trajectoryId,
+          errorKind: "precondition" as const,
+          hint: "external-trust source — excluded from doc seeding (FOLD-04 axis 2 / INV-5), skipped",
+        },
+        "reflection: external-trust source skipped",
       );
       continue;
     }
@@ -311,10 +376,11 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     return ok({ admissionOutcome: "no_successes", selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0 });
   }
 
-  // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the deterministic key.
+  // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
+  //    group function (Phase 225 FOLD — defaults to the skill normalizeOpeningRequest).
   const groups = new Map<string, ReflectionSourceTrajectory[]>();
   for (const t of selected) {
-    const key = normalizeOpeningRequest(t.signature);
+    const key = groupKey(t);
     if (key === "") continue; // ungroupable signature — never corroborates (a singleton)
     const members = groups.get(key);
     if (members) members.push(t);
@@ -383,8 +449,10 @@ interface ReflectTopicArgs {
 async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   const { deps, topicKey, members } = args;
   const { agentId, scope, reflectionAdapter, mentalModelStore, clock, logger } = deps;
+  // The doc family (Phase 225 FOLD) — defaults to skill (a skill run is unchanged).
+  const kind = deps.kind ?? "skill";
 
-  const docName = docNameForTopic(topicKey);
+  const docName = docNameForTopic(kind, topicKey);
 
   // 4a. Read the prior doc's structured AST (absent ⇒ a NEW doc — synthesize fresh, A6).
   const priorRes = await fromPromise(mentalModelStore.get(docName, scope));
@@ -468,7 +536,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         description,
         body,
         structuredBody: nextBody,
-        kind: "skill",
+        kind, // Phase 225 FOLD — the threaded doc family (skill default)
         topicKey,
         mutating: false, // advisory doc — never state-mutating (INV-3); read-only auto-surfaces
         proofCount: LOW_PROOF_COUNT, // INV-2 anti-domination cap, regardless of cardinality

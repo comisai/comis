@@ -31,7 +31,7 @@
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
-import type { DocSection } from "@comis/core";
+import type { DocSection, ExternalContentSource } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { REFLECT_PROMPT, parseReflectionResult, type ReflectionResult } from "./reflection-prompt.js";
@@ -74,6 +74,18 @@ export interface LlmReflectionAdapterDeps {
   customModel?: CustomCompletionsModelSpec;
   /** Wall-clock reads for message timestamps — NEVER a wall-clock global. */
   clock: { now: () => number };
+  /**
+   * The per-kind reflect system prompt (Phase 225 FOLD). Omitted ⇒ the skill
+   * `REFLECT_PROMPT` (a skill adapter stays byte-identical). Plans 02/03 pass
+   * `PROFILE_REFLECT_PROMPT` / `TOPIC_REFLECT_PROMPT`.
+   */
+  systemPrompt?: string;
+  /**
+   * The per-kind `wrapExternalContent` source label (Phase 225 FOLD) — the
+   * UNTRUSTED-input boundary the LLM sees. Omitted ⇒ `"learned_skill_reflection"`.
+   * Plans 02/03 pass `"learned_profile_reflection"` / `"learned_topic_reflection"`.
+   */
+  source?: ExternalContentSource;
   /** Structural logger (counts/ids/step only — never doc bodies). */
   logger: ReflectionAdapterLogger;
 }
@@ -134,6 +146,10 @@ function renderCurrentDoc(sections: DocSection[]): string {
  */
 export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): ReflectionAdapter {
   const { provider, modelId, apiKey, customModel, clock, logger } = deps;
+  // Per-kind prompt + source label (Phase 225 FOLD) — default to the skill values
+  // so an existing skill adapter construction is byte-identical.
+  const systemPrompt = deps.systemPrompt ?? REFLECT_PROMPT;
+  const source: ExternalContentSource = deps.source ?? "learned_skill_reflection";
 
   async function reflect(input: ReflectInput): Promise<Result<ReflectionResult, Error>> {
     const { trajectoryText, currentSections } = input;
@@ -141,8 +157,9 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     // SECURITY: wrap the UNTRUSTED trajectory BEFORE the LLM — the
     // injection-defense keystone (INV-5). The delimited + labeled block is the
     // boundary an embedded injection cannot cross. The doc's CURRENT sections are
-    // a TRUSTED preamble OUTSIDE the wrapped block.
-    const wrapped = wrapExternalContent(trajectoryText, { source: "learned_skill_reflection" });
+    // a TRUSTED preamble OUTSIDE the wrapped block. The per-kind source label only
+    // varies the boundary's label (the 223 `learned_skill_reflection` precedent).
+    const wrapped = wrapExternalContent(trajectoryText, { source });
     const userContent = `${renderCurrentDoc(currentSections)}\n\nSUCCESSFUL trajectories to distil:\n${wrapped}`;
 
     let model;
@@ -167,7 +184,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
       completeSimple(
         model,
         {
-          systemPrompt: REFLECT_PROMPT,
+          systemPrompt,
           messages: [{ role: "user" as const, content: userContent, timestamp: clock.now() }],
         },
         {

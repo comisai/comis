@@ -114,6 +114,10 @@ function makeDeps(
     agentId: "a1",
     tenantId: "t1",
     scope: SCOPE,
+    // Phase 225 FOLD seams — forwarded only when a test supplies them, so a skill
+    // run (the common case) stays at the engine's skill defaults.
+    ...(over.kind !== undefined ? { kind: over.kind } : {}),
+    ...(over.groupKey !== undefined ? { groupKey: over.groupKey } : {}),
     config,
     sourceTrajectories: trajectories,
     reflectionAdapter: { reflect },
