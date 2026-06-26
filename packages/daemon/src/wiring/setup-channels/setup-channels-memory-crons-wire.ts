@@ -37,8 +37,8 @@ import {
   createUsefulnessJudgeSeam,
   createReasoningSeam,
   runMemoryTripleExtraction,
-  runSkillSynthesis,
-  createLlmSkillSynthesisAdapter,
+  runReflection,
+  createLlmReflectionAdapter,
   type TripleCandidate,
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
@@ -60,7 +60,7 @@ export async function handleWireMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore, skillSynthesis } = ctx;
+  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore, reflection } = ctx;
 
   // -- Usefulness-judge sentinel intercept (WIRE-02) --
   // Mirrors the __MEMORY_REASONING__ block: opt-in cost gate + cheap "cron" model/key,
@@ -311,22 +311,24 @@ export async function handleWireMemoryCronSentinel(
     return true;
   }
 
-  // -- Procedural skill-synthesis sentinel intercept (SKILL-08/09) --
-  // The COMPOSITION ROOT for the shadow skill loop: this is where the @comis/agent job
-  // (PORT TYPES only) meets the @comis/memory learned-skill store + the @comis/skills
-  // validation adapter (both assembled daemon-side in credentials.ts, injected via the
-  // `skillSynthesis` bundle — the agent↛memory/skills closed-graph cut). Re-checks
-  // learningSkills.enabled (defence-in-depth — the scheduler already gates it; default
-  // OFF → clean ok no-op, ZERO behavior change). Reads the LCD-merged source (NOT
-  // sessionStore.listDetailed — DAG-empty), constructs the capability-routed synthesis
-  // adapter on the skillSynthesis MID tier, runs runSkillSynthesis, and emits the
-  // counts/coverage learning:skill_* events DAEMON-SIDE (the bridge entry lands with the
-  // emit, so the agent-side trajectory gate is not triggered). Non-fatal + counts-only (§2.7).
-  if (resultText === "__SKILL_SYNTHESIS__") {
+  // -- Reflection sentinel intercept (v2.31 Reflection, Phase 223, REFLECT-01/02) --
+  // The COMPOSITION ROOT for the reflection loop — the reflect-engine replacement for the
+  // dead procedural-synthesis clustering handler: this is where the @comis/agent reflection
+  // job (PORT TYPES only) meets the @comis/memory mental-model store + the trusted-origin
+  // LCD source (assembled daemon-side in credentials.ts, injected via the `reflection`
+  // bundle — the agent↛memory closed-graph cut). Re-checks learningSkills.enabled
+  // (defence-in-depth — the scheduler already gates it; default OFF → clean ok no-op, ZERO
+  // behavior change). Reads the LCD-merged source (NOT sessionStore.listDetailed — DAG-empty),
+  // builds the cheap-model reflect adapter (wraps the UNTRUSTED transcript, INV-5) on the MID
+  // tier, runs runReflection, and RE-EMITS the counts-only learning:skill_* events DAEMON-SIDE
+  // (the NAMES are kept so the A→B ground-truth read + `comis explain` still work; the reflect:*
+  // rename is Phase 226). The bridge entry lands with the emit (no agent-side gate trip).
+  // Non-fatal + counts-only (§2.7).
+  if (resultText === "__REFLECT__") {
     const { agentId } = payload;
     if (!agentId) {
-      logger.warn({ hint: "Skill synthesis job fired without agentId", errorKind: "config" as const }, "Skipping skill synthesis -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for skill synthesis" });
+      logger.warn({ hint: "Reflection job fired without agentId", errorKind: "config" as const }, "Skipping reflection -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for reflection" });
       return true;
     }
 
@@ -334,22 +336,24 @@ export async function handleWireMemoryCronSentinel(
     const cfg = agentConfig?.learningSkills;
     if (!cfg?.enabled) {
       // The opt-in gate (defence-in-depth re-check): a disabled (or default-config) agent does
-      // NOTHING — short-circuit ok so the scheduler records a clean run. Byte-identical (shadow OFF).
-      logger.debug({ agentId }, "Skill synthesis disabled for agent, skipping");
+      // NOTHING — short-circuit ok so the scheduler records a clean run. Byte-identical (OFF).
+      logger.debug({ agentId }, "Reflection disabled for agent, skipping");
       payload.onComplete?.({ status: "ok" });
       return true;
     }
 
     // The closed-graph injectables MUST be present (assembled daemon-side). Absent => cannot run —
     // surface a clean error rather than silently no-op (the field-plumbing lesson).
-    if (!skillSynthesis) {
-      logger.warn({ agentId, hint: "skillSynthesis bundle not injected -- cannot run procedural synthesis", errorKind: "config" as const }, "Skipping skill synthesis -- store/validator/source surface not wired");
-      payload.onComplete?.({ status: "error", error: "skill synthesis surface not wired" });
+    if (!reflection) {
+      logger.warn({ agentId, hint: "reflection bundle not injected -- cannot run reflection", errorKind: "config" as const }, "Skipping reflection -- store/source surface not wired");
+      payload.onComplete?.({ status: "error", error: "reflection surface not wired" });
       return true;
     }
 
-    // Resolve the capability-routed synthesis model (the skillSynthesis MID tier — a synthesis op,
-    // not a fast classify) + API key by NAME (Pino auto-redacts). NOT the agent's primary.
+    // Resolve the cheap reflect model (the MID tier — a generalization op, not a fast classify) +
+    // API key by NAME (Pino auto-redacts). NOT the agent's primary. The "skillSynthesis"
+    // operationType STRING is REUSED (the MID-tier routing the dead synthesis used); the
+    // reflect:* operationType rename is Phase 226 — do not invent a new tier here.
     const resolved = resolveOperationModel({
       operationType: "skillSynthesis",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -360,83 +364,72 @@ export async function handleWireMemoryCronSentinel(
     const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
     const apiKey = cred.apiKey;
     if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "skill synthesis"), errorKind: "config" as const }, "Skipping skill synthesis -- no API key");
+      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "reflection"), errorKind: "config" as const }, "Skipping reflection -- no API key");
       payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
       return true;
     }
 
-    const skillTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const scope = { tenantId: skillTenantId, agentId };
-    const skillLogger = logger.child({ agentId, submodule: "skill-synthesis" });
-    const skillStartMs = clock.now();
+    const reflectTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const scope = { tenantId: reflectTenantId, agentId };
+    const reflectLogger = logger.child({ agentId, submodule: "reflection" });
+    const reflectStartMs = clock.now();
 
-    // CLOSED-GRAPH CUT: the @comis/agent synthesis adapter (wraps the UNTRUSTED trajectory) is built
-    // HERE on the resolved model; the @comis/memory store + @comis/skills validation adapter + the
-    // LCD-merged source come in via the daemon-assembled bundle. The job consumes PORT TYPES only.
-    const synthesisAdapter = createLlmSkillSynthesisAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: skillLogger, ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId) });
-    const validationAdapter = await skillSynthesis.buildValidationAdapter(agentId);
-    const sourceTrajectories = await skillSynthesis.buildSourceTrajectories(agentId, skillTenantId);
+    // CLOSED-GRAPH CUT: the @comis/agent reflect adapter (wraps the UNTRUSTED transcript, INV-5)
+    // is built HERE on the resolved model; the @comis/memory store + the trusted-origin LCD source
+    // come in via the daemon-assembled bundle. The job consumes PORT TYPES only.
+    const reflectionAdapter = createLlmReflectionAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: reflectLogger, ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId) });
+    const sourceTrajectories = await reflection.buildSourceTrajectories(agentId, reflectTenantId);
 
-    const r = await runSkillSynthesis({
+    const r = await runReflection({
       agentId,
-      tenantId: skillTenantId,
+      tenantId: reflectTenantId,
       scope,
       config: {
         enabled: cfg.enabled,
-        autoAdmitReadOnly: cfg.autoAdmitReadOnly,
         minConfidence: cfg.minConfidence,
-        requireForMutating: cfg.approval?.requireForMutating ?? true,
+        // The per-run topic ceiling (the DoS bound — one LLM call each). No config key
+        // (learningSkills has none); 10 mirrors the job's DEFAULT_MAX_DOCS_PER_RUN.
+        maxDocsPerRun: 10,
       },
       sourceTrajectories,
-      synthesisAdapter,
-      outcomeSignal: skillSynthesis.outcomeSignal,
-      validationAdapter,
-      learnedSkillStore: skillSynthesis.learnedSkillStore,
-      approvalGate: skillSynthesis.approvalGate,
+      reflectionAdapter,
+      outcomeSignal: reflection.outcomeSignal,
+      mentalModelStore: reflection.learnedSkillStore,
       clock,
-      logger: skillLogger,
+      logger: reflectLogger,
       eventBus: container.eventBus,
     });
 
     if (r.ok) {
-      // OBS-01/SKILL-09: an INFO completion line (the real counts) + the DAEMON-SIDE telemetry emit.
-      // Counts/coverage ONLY — NEVER a procedure body / script / finding (§2.7 / SEC-01). With the
-      // disabled default this branch is unreachable (the no-op short-circuits above).
+      // OBS-01: an INFO completion line (the real counts) + the DAEMON-SIDE telemetry emit. Counts
+      // ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default this branch is
+      // unreachable (the no-op short-circuits above). The learning:skill_* NAMES are KEPT (Q2 —
+      // minimize blast radius; the reflect:* rename is Phase 226).
       const v = r.value;
-      skillLogger.info({ agentId, synthesized: v.synthesized, admitted: v.admitted, validated: v.validated, approvalRequested: v.approvalRequested, abstained: v.abstained, durationMs: clock.now() - skillStartMs }, "Skill synthesis complete");
-      // WR-02: the `learning:skill_synthesized.count` contract is "how many were
-      // ADMITTED this run" (events-learning.ts) — emit v.admitted, NOT v.synthesized
-      // (synthesized >= admitted; a synthesized candidate may fail validation/admission).
+      reflectLogger.info({ agentId, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete");
+      // The `learning:skill_synthesized.count` contract is "how many were ADMITTED this run"
+      // (events-learning.ts) — emit v.admitted.
       container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.admitted, timestamp: clock.now() });
-      // OBS (hermes-usecases 2026-06-25): the whole synthesis FUNNEL alongside the
-      // admitted-count event, so `comis explain` answers "why was 0 admitted" from the
-      // trajectory (maxClusterCardinality:1 = single uncorroborated instance → not
-      // admissible) instead of a DEBUG-log grep. Counts only.
+      // The whole reflection FUNNEL alongside the admitted-count event, so `comis explain` answers
+      // "why was 0 admitted" from the trajectory (maxClusterCardinality:1 = single uncorroborated
+      // topic → not admissible) instead of a DEBUG-log grep. Counts only. Mapped from the reflect
+      // result: synthesized = selected (trusted-origin successes entering reflection), validated =
+      // admitted (the count that cleared the static validateLearnedDocBody guard + admit),
+      // maxClusterCardinality = maxTopicCardinality (the distinct (session,sender) corroboration
+      // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5).
       container.eventBus.emit("learning:skill_synthesis_funnel", {
         agentId,
-        synthesized: v.synthesized,
-        validated: v.validated,
+        synthesized: v.selected,
+        validated: v.admitted,
         admitted: v.admitted,
-        maxClusterCardinality: v.maxClusterCardinality,
-        // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel.
+        maxClusterCardinality: v.maxTopicCardinality,
+        // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
+        // enum: no_successes / uncorroborated / empty_reflection / rejected_validation / admitted).
         admissionOutcome: v.admissionOutcome,
         timestamp: clock.now(),
       });
-      // WR-01: emit one learning:skill_validated per validated candidate (booleans +
-      // coverage ONLY) so the learned_skill_failing validation-failure obs path is
-      // reachable (it was consumed by the verdict but never emitted). DAEMON-SIDE,
-      // plain emit (the trajectory-bridge entry lands with the emit).
-      for (const verdict of v.validations) {
-        container.eventBus.emit("learning:skill_validated", {
-          agentId,
-          staticOk: verdict.staticOk,
-          dynamicOk: verdict.dynamicOk,
-          coverage: verdict.coverage,
-          timestamp: clock.now(),
-        });
-      }
     } else {
-      skillLogger.error({ agentId, err: r.error, hint: "Skill synthesis failed -- will retry next cycle", errorKind: "internal" as const }, "Skill synthesis error");
+      reflectLogger.error({ agentId, err: r.error, hint: "Reflection failed -- will retry next cycle", errorKind: "internal" as const }, "Reflection error");
     }
     payload.onComplete?.({ status: r.ok ? "ok" : "error", error: r.ok ? undefined : r.error?.message });
     return true;

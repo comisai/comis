@@ -519,12 +519,8 @@ function buildChannelManagerDeps(deps: {
     // tripleStore + userRepresentationStore + relationshipStore +
     // tunedAlphaStore/usefulnessStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
     // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ / __MEMORY_LIFECYCLE__ sentinels (the last two are KEYLESS: the bandit over the FEED signal + the DORMANT lifecycle sweep).
-    // outcomeStore + learnedSkillStore ride the SAME chain → the __SKILL_SYNTHESIS__ sentinel (SKILL-08/09): the daemon assembles the closed-graph skillSynthesis bundle from them + the tool list/policy + the LCD source inside registerCronEventListeners.
+    // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel (v2.31 Reflection): the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NO LONGER threaded here — the reflection job groups by topicKey, no clustering embeddings; the dead procedural-synthesis embedding wiring was deleted in Phase 223 Plan 05.)
     tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, outcomeStore, learnedSkillStore, memoryApi,
-    // RC-1 (SYNTH-EMBED-DEAD): the embedder rides the SAME cron-deps chain as outcomeStore/
-    // learnedSkillStore → the __SKILL_SYNTHESIS__ sentinel attaches clustering embeddings to the
-    // source trajectories (without it every trajectory is a singleton → admit:0 forever).
-    embeddingPort: cachedPort,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,

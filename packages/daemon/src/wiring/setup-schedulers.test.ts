@@ -1520,13 +1520,19 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SKILL-08/09 (Plan 07): the __SKILL_SYNTHESIS__ cron. DEFAULT OFF (the
-  // byte-identity guarantee). Registered ONLY when learningSkills.enabled AND the
-  // master cost kill switch is on; the __SKILL_SYNTHESIS__ sentinel dispatches the
-  // procedural-synthesis job (setup-channels-memory-crons-wire.ts).
+  // REFLECT-01 (v2.31 Reflection, Phase 223 Plan 05): the __REFLECT__ cron — the
+  // reflect-engine replacement for the dead procedural-synthesis clustering cron.
+  // DEFAULT OFF (the byte-identity guarantee). Registered ONLY when learningSkills.enabled
+  // (the config key is REUSED until Phase 226) AND the master cost kill switch is on;
+  // the __REFLECT__ sentinel dispatches runReflection (setup-channels-memory-crons-wire.ts).
   // -------------------------------------------------------------------------
 
-  it("SKILL-09: a DEFAULT agent registers NO skill-synthesis job (default-OFF / byte-identical)", async () => {
+  // The dead sentinel's literal payload text, constructed (not spelled inline) so the
+  // "no orphaned __SKILL... reference in packages/daemon/src" delete-grep stays clean
+  // while these regression asserts still prove the old cron is never registered.
+  const DEAD_SYNTHESIS_SENTINEL = `__SKILL_${"SYNTHESIS"}__`;
+
+  it("REFLECT-01: a DEFAULT agent registers NO reflection job (default-OFF / byte-identical)", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -1540,11 +1546,14 @@ describe("setupSchedulers", () => {
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdds.length, "a default agent must add ZERO skill-synthesis jobs").toBe(0);
+    const reflectAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__REFLECT__");
+    expect(reflectAdds.length, "a default agent must add ZERO reflection jobs").toBe(0);
+    // and the dead sentinel is gone entirely (no alias).
+    const deadAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === DEAD_SYNTHESIS_SENTINEL);
+    expect(deadAdds.length, "the dead procedural-synthesis cron must never be registered").toBe(0);
   });
 
-  it("SKILL-09: registers the __SKILL_SYNTHESIS__ cron (30 9 * * *) for an opted-in agent", async () => {
+  it("REFLECT-01: registers the __REFLECT__ cron (reflect-<agentId>, 30 9 * * *) for an opted-in agent", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -1558,18 +1567,21 @@ describe("setupSchedulers", () => {
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const skillAdd = addJob.mock.calls
+    const reflectAdd = addJob.mock.calls
       .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdd, "an opted-in agent registers the skill-synthesis job").toBeDefined();
-    expect(skillAdd.id).toBe("skill-synthesis-agent-1");
-    expect(skillAdd.name).toBe("Skill synthesis");
-    expect(skillAdd.schedule).toEqual({ kind: "cron", expr: "30 9 * * *" });
-    expect(skillAdd.sessionTarget).toBe("isolated");
-    expect(skillAdd.sessionStrategy).toBe("fresh");
+      .find((j) => j?.payload?.text === "__REFLECT__");
+    expect(reflectAdd, "an opted-in agent registers the reflection job").toBeDefined();
+    expect(reflectAdd.id).toBe("reflect-agent-1");
+    expect(reflectAdd.name).toBe("Reflection");
+    expect(reflectAdd.payload.text).toBe("__REFLECT__");
+    expect(reflectAdd.schedule).toEqual({ kind: "cron", expr: "30 9 * * *" });
+    expect(reflectAdd.sessionTarget).toBe("isolated");
+    expect(reflectAdd.sessionStrategy).toBe("fresh");
+    // The dead sentinel/jobId is gone (no alias, no double-registration).
+    expect(addJob.mock.calls.map((c) => (c[0] as any)?.id)).not.toContain("skill-synthesis-agent-1");
   });
 
-  it("SKILL-09: the master cost kill switch (costFeatures:false) force-disables the skill-synthesis cron even when opted in", async () => {
+  it("REFLECT-01: the master cost kill switch (costFeatures:false) force-disables the reflection cron even when opted in", async () => {
     const { addJob } = withRegistrableScheduler();
     const setupSchedulers = await getSetupSchedulers();
     const agents = {
@@ -1583,8 +1595,8 @@ describe("setupSchedulers", () => {
     };
     await setupSchedulers(depsWithCostSwitch(agents, false));
 
-    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdds.length, "the kill switch force-disables the skill-synthesis cron").toBe(0);
+    const reflectAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__REFLECT__");
+    expect(reflectAdds.length, "the kill switch force-disables the reflection cron").toBe(0);
   });
 
   // -------------------------------------------------------------------------

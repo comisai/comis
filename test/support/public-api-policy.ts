@@ -524,28 +524,36 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
-      // Verified Learning WS2 (P2 Skills, Phase 201). The synthesis adapter
-      // (createLlmSkillSynthesisAdapter), the JOB (runSkillSynthesis) + its source
-      // type (SynthesisSourceTrajectory), and the approval-gate structural subset
-      // (SkillApprovalGate) are now CONSUMED by the daemon Plan 07 wiring
-      // (setup-channels-memory-crons-wire.ts / setup-channels-skill-synthesis-deps.ts
-      // / setup-channels-memory-crons-types.ts) — they SHRANK out of this allowlist
-      // (the shrink-only ratchet). Only the deps/result SHAPE types stay
-      // ahead-of-consumer (referenced via Parameters<>/ReturnType<>, not name-imported).
+      // Verified Learning WS2 (P2 Skills, Phase 201) — DEAD as of Phase 223 Plan 05.
+      // The synthesis adapter (createLlmSkillSynthesisAdapter), the JOB
+      // (runSkillSynthesis), its source type (SynthesisSourceTrajectory), and the
+      // approval-gate subset (SkillApprovalGate) were CONSUMED by the synthesis cron
+      // wiring — but Plan 05 swapped that wiring to the reflection engine
+      // (setup-channels-memory-crons-wire.ts now imports runReflection /
+      // createLlmReflectionAdapter, and setup-channels-skill-synthesis-deps.ts no
+      // longer imports the sandbox adapter or SkillApprovalGate). So these synthesis
+      // exports lost their last cross-package consumer and are interface-first orphans
+      // again — re-listed here (the shrink-only ratchet runs BOTH ways). Plan 06
+      // DELETES the synthesis job/adapter/prompt/source + these entries. The deps/result
+      // SHAPE types were already ahead-of-consumer (referenced via Parameters<>).
+      "createLlmSkillSynthesisAdapter",
+      "runSkillSynthesis",
+      "SynthesisSourceTrajectory",
+      "SkillApprovalGate",
       "LlmSkillSynthesisAdapterDeps",
       "SkillSynthesisJobDeps",
       "SkillSynthesisJobResult",
       // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06) — the
       // reflection JOB (runReflection) + classifier + the cheap-model reflect
       // adapter (createLlmReflectionAdapter) + prompt/parser, surfaced on the
-      // @comis/agent barrel ahead of their cross-package consumer (the daemon
-      // __REFLECT__ wiring lands in Plan 05; the LLM-mock A→B harness in Plan 08).
-      // Interface-first orphans (the SkillSynthesis precedent above) — these SHRINK
-      // out of this allowlist as Plan 05 name-imports them cross-package (the
-      // shrink-only ratchet, AGENTS.md §2.8). They ship ALONGSIDE the synthesis
-      // entries; Plan 06 deletes the synthesis half.
-      "createLlmReflectionAdapter",
-      "runReflection",
+      // @comis/agent barrel. Plan 05 (the daemon __REFLECT__ wiring) now name-imports
+      // `runReflection` + `createLlmReflectionAdapter` (value) in
+      // setup-channels-memory-crons-wire.ts and `ReflectionSourceTrajectory` (type) in
+      // setup-channels-skill-synthesis-deps.ts / setup-channels-memory-crons-types.ts —
+      // so those THREE SHRANK out of this allowlist (the shrink-only ratchet,
+      // AGENTS.md §2.8). The rest stay ahead-of-consumer (the LLM-mock A→B harness in
+      // Plan 08 consumes ReflectionResult/the deps types). They ship ALONGSIDE the
+      // synthesis entries; Plan 06 deletes the synthesis half.
       "classifyReflectOutcome",
       "REFLECT_PROMPT",
       "parseReflectionResult",
@@ -556,7 +564,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RunReflectionDeps",
       "RunReflectionResult",
       "RunReflectionConfig",
-      "ReflectionSourceTrajectory",
       "ReflectAdmissionOutcome",
       // Sandbox-posture primitive (SANDBOX-01/02, phase 172). resolvePostureFromSkills
       // SHRANK out of this baseline — Plan 02's daemon wiring
@@ -3309,18 +3316,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
-      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201 Plan 05/06). The
-      // SkillValidationPort adapter (STATIC half this plan; Plan 06 extends it
-      // with the DYNAMIC bwrap sandbox replay) + the canonical `mcp__`-aware
-      // mutating classifier + its deps type. The whole adapter lives in
-      // @comis/skills because applyToolPolicy + the bwrap sandbox provider are
-      // @comis/skills symbols (the synthesis job in @comis/agent consumes only the
-      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The FACTORY
-      // createSandboxSkillValidationAdapter is now CONSUMED by the daemon Plan 07
-      // wiring (setup-channels-skill-synthesis-deps.ts builds it with the agent's tool
-      // list + policy), so it SHRANK out here (the shrink-only ratchet). classifyMutating
-      // (the exported predicate, no name-import consumer yet) + SandboxSkillValidationAdapterDeps
-      // (the constructor-deps SHAPE, called inline) stay ahead-of-consumer.
+      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201) — DEAD as of Phase 223 Plan 05.
+      // The SkillValidationPort sandbox adapter + the canonical `mcp__`-aware mutating
+      // classifier + its deps type. The whole adapter lives in @comis/skills because
+      // applyToolPolicy + the bwrap sandbox provider are @comis/skills symbols. The FACTORY
+      // createSandboxSkillValidationAdapter WAS consumed by the synthesis cron wiring, but
+      // Plan 05 swapped the cron to the reflection engine — an advisory doc has NO executable
+      // surface, so the reflect path drops the sandbox validation adapter entirely (only the
+      // STATIC validateLearnedDocBody keystone remains, INV-3). With its last cross-package
+      // consumer gone, the factory is an interface-first orphan again — re-listed here (the
+      // shrink-only ratchet runs BOTH ways). Plan 06 DELETES the sandbox adapter + this entry.
+      // classifyMutating + SandboxSkillValidationAdapterDeps were already ahead-of-consumer.
+      "createSandboxSkillValidationAdapter",
       "classifyMutating",
       "SandboxSkillValidationAdapterDeps",
     ])],

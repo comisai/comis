@@ -14,11 +14,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, EmbeddingPort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution, SkillApprovalGate } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
@@ -26,7 +26,7 @@ import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
-import { buildSkillSynthesisCronDeps } from "./setup-channels-skill-synthesis-deps.js";
+import { buildReflectionCronDeps } from "./setup-channels-skill-synthesis-deps.js";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /** Closure-captured dependencies for the cron delivery listeners. */
@@ -110,10 +110,8 @@ export interface CronEventListenerDeps {
    *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
    *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
-  outcomeStore?: OutcomeSignalPort; // SKILL-08/09: the __SKILL_SYNTHESIS__ runSkillSynthesis fail-closed success gate (agent↛memory)
-  learnedSkillStore?: MentalModelStorePort; // SKILL-08/09: the __SKILL_SYNTHESIS__ admit target (agent↛memory; off-by-default)
-  embeddingPort?: EmbeddingPort; // RC-1: the embedder for clustering the __SKILL_SYNTHESIS__ source trajectories (cachedPort; off AppContainer)
-  approvalGate?: SkillApprovalGate; // SKILL-08/09: the mutating-admission approval gate
+  outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
+  learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
   /** Per-user representation read surface — the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
    *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
@@ -246,7 +244,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       memoryLifecycleStore: deps.memoryLifecycleStore,
       usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
-      skillSynthesis: buildSkillSynthesisCronDeps(deps), // SKILL-08/09 closed-graph bundle; undefined ⇒ off
+      reflection: buildReflectionCronDeps(deps), // v2.31 Reflection closed-graph bundle; undefined ⇒ off
       resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
     });
     if (handledMemoryCron) return;

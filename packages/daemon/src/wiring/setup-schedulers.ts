@@ -649,25 +649,27 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Procedural skill-synthesis cron job (SKILL-08/09, v2.26 Verified Learning WS2) --
+    // -- Reflection cron job (v2.31 Reflection, Phase 223, REFLECT-01) --
+    // The reflect-engine replacement for the dead procedural-synthesis clustering cron.
     // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
     // operator sets learningSkills.enabled AND the master cost kill switch is on; a default agent
     // registers NO job → byte-identical with the config absent. Default schedule 30 9 * * * runs
-    // AFTER the lifecycle sweep's 0 9 (so the outcome/skill-used signals it selects on have
-    // settled). Job options mirror the other memory crons 1:1 (isolated / next-heartbeat / no
-    // forward-to-main / fresh). The __SKILL_SYNTHESIS__ sentinel (setup-channels-memory-crons-wire.ts)
-    // re-checks the knob + injects the @comis/memory store + @comis/skills validation adapter. SHADOW:
-    // even when enabled the synthesized candidate is admitted but NOT surfaced (Phase 202 surfaces it).
+    // AFTER the lifecycle sweep's 0 9 (so the outcome signals it selects on have settled). Job
+    // options mirror the other memory crons 1:1 (isolated / next-heartbeat / no forward-to-main /
+    // fresh). The __REFLECT__ sentinel (setup-channels-memory-crons-wire.ts) re-checks the knob +
+    // injects the @comis/memory mental-model store + the trusted-origin source into runReflection,
+    // then re-emits the learning:skill_* counts. The learningSkills config key is REUSED (the
+    // reflect:* rename is Phase 226); a reflected candidate is admitted at state:candidate.
     const learningSkillsCfg = agentConfig.learningSkills;
     if (costFeaturesEnabled && learningSkillsCfg?.enabled) {
-      const skillSynthJobId = `skill-synthesis-${agentId}`;
-      if (!scheduler.getJobs().some((j) => j.id === skillSynthJobId)) {
+      const reflectJobId = `reflect-${agentId}`;
+      if (!scheduler.getJobs().some((j) => j.id === reflectJobId)) {
         await scheduler.addJob({
-          id: skillSynthJobId,
-          name: "Skill synthesis",
+          id: reflectJobId,
+          name: "Reflection",
           agentId,
           schedule: { kind: "cron", expr: "30 9 * * *" },
-          payload: { kind: "system_event", text: "__SKILL_SYNTHESIS__" },
+          payload: { kind: "system_event", text: "__REFLECT__" },
           sessionTarget: "isolated",
           wakeMode: "next-heartbeat",
           forwardToMain: false,
@@ -676,7 +678,7 @@ export async function setupSchedulers(deps: {
           enabled: true,
           createdAtMs: systemNowMs(),
         });
-        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered skill synthesis cron job");
+        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered reflection cron job");
       }
     }
   }
