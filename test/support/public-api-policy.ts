@@ -3304,19 +3304,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
-      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201) — DEAD as of Phase 223 Plan 05.
-      // The SkillValidationPort sandbox adapter + the canonical `mcp__`-aware mutating
-      // classifier + its deps type. The whole adapter lives in @comis/skills because
-      // applyToolPolicy + the bwrap sandbox provider are @comis/skills symbols. The FACTORY
-      // createSandboxSkillValidationAdapter WAS consumed by the synthesis cron wiring, but
-      // Plan 05 swapped the cron to the reflection engine — an advisory doc has NO executable
-      // surface, so the reflect path drops the sandbox validation adapter entirely (only the
-      // STATIC validateLearnedDocBody keystone remains, INV-3). With its last cross-package
-      // consumer gone, the factory is an interface-first orphan again — re-listed here (the
-      // shrink-only ratchet runs BOTH ways). Plan 06 DELETES the sandbox adapter + this entry.
-      // classifyMutating + SandboxSkillValidationAdapterDeps were already ahead-of-consumer.
-      "createSandboxSkillValidationAdapter",
-      "classifyMutating",
-      "SandboxSkillValidationAdapterDeps",
+      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
+      // The SkillValidationPort sandbox adapter (the bwrap dynamic-replay half + the
+      // now-redundant static scan, which moved to @comis/core validateLearnedDocBody in
+      // Plan 02) was the learned-code execution surface. An advisory doc has NO executable
+      // surface, so Plan 05 dropped the adapter from the reflect path and Plan 06 deleted
+      // sandbox-skill-validation-adapter.ts (the static guard validateLearnedDocBody is ALL
+      // that remains, INV-3). Its barrel re-exports are gone — no allowlist entry needed.
     ])],
   ]);
