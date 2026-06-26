@@ -194,12 +194,13 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:memory_demoted": "learning.memory_demoted",
   "learning:memory_evicted": "learning.memory_evicted",
 
-  // SKILL-09 (v2.26 Verified Learning WS2, Phase 201 Plan 07): the procedural-synthesis
-  // telemetry. Both DAEMON-emitted (the __SKILL_SYNTHESIS__ cron handler, NOT agent/
-  // orchestrator) after runSkillSynthesis → the arch emit-scanner does not require them;
-  // mapped here so OBS-02 `comis explain` can reconstruct a synthesis run. Content-free:
+  // SKILL-09 (v2.26 Verified Learning WS2, Phase 201 Plan 07): the learning-run
+  // telemetry. Both DAEMON-emitted (the reflection cron handler, NOT agent/
+  // orchestrator) after runReflection → the arch emit-scanner does not require them;
+  // mapped here so OBS-02 `comis explain` can reconstruct a reflection run. The
+  // `skill_*` event NAMES are kept (the `reflect:*` rename is Phase 226). Content-free:
   // counts (synthesized) + the static/dynamic verdict + the coverage closed-enum ONLY —
-  // NEVER a procedure body, a script, or a finding (SEC-01 §7).
+  // NEVER a doc body, a script, or a finding (SEC-01 §7).
   "learning:skill_synthesized": "learning.skill_synthesized",
   "learning:skill_synthesis_funnel": "learning.skill_synthesis_funnel",
   "learning:skill_validated": "learning.skill_validated",

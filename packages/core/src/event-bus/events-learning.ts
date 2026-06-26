@@ -45,13 +45,14 @@ export interface LearningEvents {
   };
 
   /**
-   * SKILL-09: a procedural-synthesis run admitted N candidate skills. Emitted
-   * DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the __SKILL_SYNTHESIS__ cron
-   * handler (setup-channels-memory-crons-wire.ts, Plan 07) AFTER `runSkillSynthesis`
+   * SKILL-09: a reflection run admitted N candidate skill docs. Emitted
+   * DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the reflection cron
+   * handler (setup-channels-memory-crons-wire.ts) AFTER `runReflection`
    * returns — the daemon emit (not the agent job) keeps the trajectory-bridge entry
-   * landing with the emit (no agent-side gate trip). COUNT ONLY — the synthesized
-   * procedure body/script content is a compile error here (the §2.7 / SEC-01
-   * firewall). Bridged (TRAJECTORY_BRIDGE_MAPPING) for `comis explain` / OBS-02.
+   * landing with the emit (no agent-side gate trip). The `skill_synthesized` event
+   * NAME is kept (the `reflect:*` rename is Phase 226). COUNT ONLY — the reflected
+   * doc body content is a compile error here (the §2.7 / SEC-01 firewall). Bridged
+   * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain` / OBS-02.
    */
   "learning:skill_synthesized": {
     agentId: string;
@@ -61,32 +62,35 @@ export interface LearningEvents {
   };
 
   /**
-   * OBS (hermes-usecases obs-loop 2026-06-25): the synthesis-run FUNNEL — counts
+   * OBS (hermes-usecases obs-loop 2026-06-25): the reflection-run FUNNEL — counts
    * ONLY, emitted DAEMON-SIDE alongside `learning:skill_synthesized` after
-   * `runSkillSynthesis` returns. Where `skill_synthesized.count` is only the
-   * ADMITTED tail, this carries the whole funnel so `comis explain` answers "why
-   * didn't a skill get learned" WITHOUT a DEBUG-log grep — the load-bearing field
-   * is `maxClusterCardinality` (a value of 1 = a single uncorroborated instance,
-   * so admission CORRECTLY refused; the same conservatism that defeats skill-
-   * poisoning). COUNT ONLY — a procedure body/script is a compile error here (the
-   * §2.7 / SEC-01 firewall). Bridged (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
+   * `runReflection` returns (the reflection cron wire maps the reflect result onto
+   * these fields). Where `skill_synthesized.count` is only the ADMITTED tail, this
+   * carries the whole funnel so `comis explain` answers "why didn't a skill get
+   * learned" WITHOUT a DEBUG-log grep — the load-bearing field is
+   * `maxClusterCardinality` (the distinct (session,sender) corroboration size; a
+   * value of 1 = a single uncorroborated instance, so admission CORRECTLY refused;
+   * the same conservatism that defeats skill-poisoning). The `skill_synthesis_funnel`
+   * event NAME is kept (the `reflect:*` rename is Phase 226). COUNT ONLY — a reflected
+   * doc body is a compile error here (the §2.7 / SEC-01 firewall). Bridged
+   * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
    */
   "learning:skill_synthesis_funnel": {
     agentId: string;
-    /** Candidate skills the LLM synthesized this run (count only). */
+    /** Trusted-origin success trajectories that entered reflection this run (count only; == reflect `selected`). */
     synthesized: number;
-    /** Synthesized candidates that cleared (or failed) validation (count only). */
+    /** Reflected docs that cleared the static validateLearnedDocBody guard + admit (count only). */
     validated: number;
-    /** Candidates admitted to the store (trust=learned) this run (count only). */
+    /** Docs admitted to the store (trust=learned) this run (count only). */
     admitted: number;
-    /** The largest corroborating trajectory cluster (1 = single instance → not admissible). */
+    /** The largest distinct (session,sender) corroboration size (1 = single instance → not admissible). */
     maxClusterCardinality: number;
     /**
      * RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free
-     * closed enum so `comis explain` answers "why was 0 admitted" from ONE field:
-     * `no_embeddings` (the SYNTH-EMBED-DEAD signature) / `uncorroborated` (cardinality<2) /
-     * `no_procedure_synthesized` / `mutating_deferred` / `validation_failed` / `admitted` /
-     * `no_successful_sources` / `abstained`.
+     * closed enum so `comis explain` answers "why was 0 admitted" from ONE field. The
+     * reflect verdict (classifyReflectOutcome): `no_successes` (no trusted-origin success
+     * cleared SELECT) / `uncorroborated` (cardinality<2) / `empty_reflection` /
+     * `rejected_validation` / `admitted`.
      */
     admissionOutcome: string;
     timestamp: number;
