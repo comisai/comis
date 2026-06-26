@@ -696,86 +696,9 @@ describe("setupSchedulers", () => {
     expect(socialAdd.payload).toEqual({ kind: "system_event", text: "__SOCIAL_MODELING__" });
   });
 
-  // -------------------------------------------------------------------------
-  // __USEFULNESS_JUDGE__ cron registration. OFF
-  // by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY
-  // when the operator sets memoryUsefulnessJudge.enabled; a default agent
-  // registers NO job → byte-identical with the config absent. Default 0 7 * * *
-  // runs AFTER social's 0 6. Mirrors the reasoning gate 1:1.
-  // -------------------------------------------------------------------------
-
-  it("registers NO __USEFULNESS_JUDGE__ cron for a default (judge-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryUsefulnessJudge undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__",
-    );
-    expect(judgeAdds.length).toBe(0);
-  });
-
-  it("registers the __USEFULNESS_JUDGE__ cron (default 0 7 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryUsefulnessJudge: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
-    expect(judgeAdd).toBeDefined();
-    expect(judgeAdd.id).toBe("memory-usefulness-judge-agent-1");
-    expect(judgeAdd.name).toBe("Memory usefulness judge");
-    // Default schedule runs AFTER social's 0 6 so the judge scores over a
-    // fully-settled night.
-    expect(judgeAdd.schedule).toEqual({ kind: "cron", expr: "0 7 * * *" });
-    expect(judgeAdd.sessionTarget).toBe("isolated");
-    expect(judgeAdd.sessionStrategy).toBe("fresh");
-    expect(judgeAdd.payload).toEqual({ kind: "system_event", text: "__USEFULNESS_JUDGE__" });
-  });
-
-  it("honors a custom usefulness-judge schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryUsefulnessJudge: { enabled: true, schedule: "30 8 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
-    expect(judgeAdd?.schedule).toEqual({ kind: "cron", expr: "30 8 * * 0" });
-  });
-
-  // (The __ONLINE_TUNING__ cron-registration tests were removed in Phase 224 — the UCB recall
+  // (The __USEFULNESS_JUDGE__ cron-registration tests were removed in Phase 226 SIMPLIFY-03 —
+  // the dormant usefulness-judge cron is DELETED; see the "DELETE (SIMPLIFY-03)" guards below.
+  // The __ONLINE_TUNING__ cron-registration tests were removed in Phase 224 — the UCB recall
   // bandit + its cron were deleted; recall scoring is the fixed config.rag.scoring alphas.)
 
   // -------------------------------------------------------------------------
@@ -882,7 +805,6 @@ describe("setupSchedulers", () => {
       memoryConsolidation: { enabled: true },
       memoryReasoning: { enabled: true },
       memoryUserRepresentation: { enabled: true },
-      memoryUsefulnessJudge: { enabled: true },
       memoryLifecycle: { enabled: true },
       socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
     };
@@ -895,13 +817,84 @@ describe("setupSchedulers", () => {
     return deps;
   }
 
+  // -------------------------------------------------------------------------
+  // Phase 226 SIMPLIFY-03 (D-03): the two DORMANT LLM crons are DELETED. The
+  // __USEFULNESS_JUDGE__ (a recordUsage-feeding seam) and __MEMORY_TRIPLE_EXTRACTION__
+  // (a no-op scaffold whose `extract` returns []) registrations are GONE — even when
+  // an operator attempts to opt a (legacy-shaped) agent in, NO job is registered. The
+  // surviving learning/memory crons are __MEMORY_REVIEW__ (accumulate-tier),
+  // __MEMORY_LIFECYCLE__ (keyless forget sweep), __REFLECT__ (the engine) — plus
+  // __SOCIAL_MODELING__ until Plan 04 deletes it.
+  // -------------------------------------------------------------------------
+
+  it("DELETE (SIMPLIFY-03): registers NO __USEFULNESS_JUDGE__ cron even when an agent attempts to opt in", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in — the registration block is gone, so it is inert.
+        memoryUsefulnessJudge: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdds.length, "the __USEFULNESS_JUDGE__ cron is deleted — it must never register").toBe(0);
+  });
+
+  it("DELETE (SIMPLIFY-03): registers NO __MEMORY_TRIPLE_EXTRACTION__ cron even when an agent attempts to opt in", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in — the registration block is gone, so it is inert.
+        memoryTripleExtraction: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
+    expect(tripleAdds.length, "the __MEMORY_TRIPLE_EXTRACTION__ cron is deleted — it must never register").toBe(0);
+  });
+
+  it("the surviving learning/memory crons (__MEMORY_REVIEW__ / __MEMORY_LIFECYCLE__ / __REFLECT__) still register for an opted-in agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReview: { enabled: true },
+        memoryLifecycle: { enabled: true },
+        learning: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    expect(added, "memory review survives").toContain("__MEMORY_REVIEW__");
+    expect(added, "memory lifecycle (keyless forget sweep) survives").toContain("__MEMORY_LIFECYCLE__");
+    expect(added, "reflection (the engine) survives").toContain("__REFLECT__");
+    expect(added, "the deleted usefulness judge must NOT appear").not.toContain("__USEFULNESS_JUDGE__");
+    expect(added, "the deleted triple-extraction must NOT appear").not.toContain("__MEMORY_TRIPLE_EXTRACTION__");
+  });
+
   // Phase 225 FOLD §3.2: __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
   // __USER_REPRESENTATION__ are NO LONGER registered (folded into __REFLECT__, Plan 04) —
-  // dropped from the kill-switch set. The cost crons still gated by the switch are the
-  // memory-review sweep + the usefulness judge.
+  // dropped from the kill-switch set. The cost cron still gated by the switch is the
+  // memory-review sweep (the usefulness judge was DELETED in Phase 226 SIMPLIFY-03).
   const COST_CRON_SENTINELS = [
     "__MEMORY_REVIEW__",
-    "__USEFULNESS_JUDGE__",
   ] as const;
 
   it("force-disables EVERY cost-bearing memory cron when memory.costFeatures.enabled is false (even per-agent-enabled)", async () => {
@@ -1254,70 +1247,9 @@ describe("setupSchedulers", () => {
     );
   });
 
-  // -------------------------------------------------------------------------
-  // WIRE-01: schedule runMemoryTripleExtraction behind a per-agent flag, DEFAULT
-  // OFF. The keystone — a default agent registers ZERO triple-extraction jobs
-  // (byte-identical with the config absent / zero added cost). Opt-in registers
-  // __MEMORY_TRIPLE_EXTRACTION__; the master cost kill switch force-disables it.
-  // -------------------------------------------------------------------------
-
-  it("WIRE-01: a DEFAULT agent registers NO memory-triple-extraction job (default-OFF / byte-identical)", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryTripleExtraction undefined => default OFF: NO job, zero cost.
-      },
-    };
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdds.length, "a default agent must add ZERO triple-extraction jobs").toBe(0);
-  });
-
-  it("WIRE-01: registers the __MEMORY_TRIPLE_EXTRACTION__ cron (default 0 6 * * *) for an opted-in agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryTripleExtraction: { enabled: true },
-      },
-    };
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tripleAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdd, "an opted-in agent registers the triple-extraction job").toBeDefined();
-    expect(tripleAdd.id).toBe("memory-triple-extraction-agent-1");
-    expect(tripleAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
-  });
-
-  it("WIRE-01: the master cost kill switch (costFeatures:false) force-disables the triple-extraction cron even when opted in", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const setupSchedulers = await getSetupSchedulers();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryTripleExtraction: { enabled: true },
-      },
-    };
-    await setupSchedulers(depsWithCostSwitch(agents, false));
-
-    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdds.length, "the kill switch force-disables the triple-extraction cron").toBe(0);
-  });
+  // (The __MEMORY_TRIPLE_EXTRACTION__ / WIRE-01 cron-registration tests were removed in
+  // Phase 226 SIMPLIFY-03 — the no-op scaffold cron is DELETED; see the "DELETE (SIMPLIFY-03)"
+  // guards above for the never-registers assertion.)
 
   // -------------------------------------------------------------------------
   // REFLECT-01 (v2.31 Reflection, Phase 223 Plan 05): the __REFLECT__ cron — the

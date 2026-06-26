@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavioral tests for the WS7-wired memory-cron sentinel handlers
- * (`__USEFULNESS_JUDGE__` WIRE-02 + `__MEMORY_TRIPLE_EXTRACTION__` WIRE-01),
- * exercising `handleWireMemoryCronSentinel` DIRECTLY (the neighbor-test invariant
- * — the file carries its own coverage). The end-to-end delegation from
- * `handleMemoryCronSentinel` is covered in setup-channels-memory-crons.test.ts.
+ * Behavioral tests for the WS7-wired memory-cron sentinel handlers, exercising
+ * `handleWireMemoryCronSentinel` DIRECTLY (the neighbor-test invariant — the file
+ * carries its own coverage). The end-to-end delegation from `handleMemoryCronSentinel`
+ * is covered in setup-channels-memory-crons.test.ts.
  *
- * createUsefulnessJudgeSeam / runMemoryTripleExtraction / createReasoningSeam are
- * mocked — no real LLM, no key.
+ * Phase 226 SIMPLIFY-03: the __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
+ * branches were DELETED (dormant crons) — the handler now serves only the KEYLESS
+ * __MEMORY_LIFECYCLE__ sweep + the __REFLECT__ engine. createLlmReflectionAdapter /
+ * runReflection are mocked — no real LLM, no key.
  *
  * @module
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockJudgeSeam = vi.hoisted(() => vi.fn(async () => ({ usedIds: [] as string[], ignoredIds: [] as string[] })));
-const mockCreateUsefulnessJudgeSeam = vi.hoisted(() => vi.fn(() => mockJudgeSeam));
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
-const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // REFLECT-01: the reflection job + adapter the __REFLECT__ handler injects/calls.
 const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1 } })));
@@ -27,9 +25,7 @@ const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: 
 vi.mock("@comis/agent", () => ({
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: vi.fn(() => "anthropic"),
-  createUsefulnessJudgeSeam: mockCreateUsefulnessJudgeSeam,
   createReasoningSeam: mockCreateReasoningSeam,
-  runMemoryTripleExtraction: mockRunMemoryTripleExtraction,
   runReflection: mockRunReflection,
   createLlmReflectionAdapter: mockCreateLlmReflectionAdapter,
   // Phase 225 FOLD: the per-kind reflect prompts the __REFLECT__ handler injects as the
@@ -57,7 +53,6 @@ function makeCtx(overrides: {
   agents?: Record<string, any>;
   apiKey?: string | undefined;
   inspectRows?: Array<{ id: string; content: string }>;
-  recordUsage?: ReturnType<typeof vi.fn>;
   reflection?: MemoryCronContext["reflection"];
 } = {}): MemoryCronContext {
   const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(() => logger) };
@@ -73,11 +68,6 @@ function makeCtx(overrides: {
     clock: { now: () => 1_000, nowDate: () => new Date(1_000) } as any,
     agents: overrides.agents ?? {},
     tenantId: "tenant-a",
-    tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
-    usefulnessStore: {
-      recordUsage: overrides.recordUsage ?? vi.fn(async () => ({ ok: true as const, value: undefined })),
-      readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })),
-    } as any,
     memoryApi: memoryApi as any,
     ...(overrides.reflection !== undefined ? { reflection: overrides.reflection } : {}),
   };
@@ -86,10 +76,7 @@ function makeCtx(overrides: {
 beforeEach(() => {
   vi.clearAllMocks();
   mockResolveOperationModel.mockReturnValue({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" } as any);
-  mockCreateUsefulnessJudgeSeam.mockReturnValue(mockJudgeSeam);
-  mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
   mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1 } });
   mockCreateLlmReflectionAdapter.mockReturnValue({ reflect: vi.fn() });
 });
@@ -118,103 +105,25 @@ describe("handleWireMemoryCronSentinel", () => {
     expect(handled).toBe(false);
   });
 
-  // ----- __USEFULNESS_JUDGE__ (WIRE-02) -----
-  it("__USEFULNESS_JUDGE__ writes the judge verdict through recordUsage scoped to (tenant, agent)", async () => {
-    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: ["m2"] });
-    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
-      apiKey: "k",
-      inspectRows: [{ id: "m1", content: "x" }, { id: "m2", content: "y" }],
-      recordUsage,
-    });
+  // ----- DELETE (Phase 226 SIMPLIFY-03): the two DORMANT crons are GONE -----
+  // The __USEFULNESS_JUDGE__ (a recordUsage-feeding seam) and __MEMORY_TRIPLE_EXTRACTION__
+  // (a no-op scaffold whose `extract` returned []) dispatch branches are DELETED. The handler
+  // no longer recognizes either sentinel → it returns false (the caller falls through to the
+  // normal delivery path, the T-226-08 benign no-op for any persisted stale job row). The
+  // FORGET-02 recordUsage reward write lives in setup-learning.ts (a separate seam) and is
+  // UNAFFECTED; the TripleStorePort graphSpread recall lane survives (the JOB went, not the port).
+  it("__USEFULNESS_JUDGE__ is deleted → returns false (falls through; no judge seam, no write)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } }, apiKey: "k" });
     const onComplete = vi.fn();
     const handled = await handleWireMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockCreateUsefulnessJudgeSeam).toHaveBeenCalledOnce();
-    expect(recordUsage).toHaveBeenCalledOnce();
-    const [used, ignored, scope] = recordUsage.mock.calls[0] as [string[], string[], Record<string, unknown>];
-    expect(used).toEqual(["m1"]);
-    expect(ignored).toEqual(["m2"]);
-    expect(scope).toMatchObject({ tenantId: "tenant-a", agentId: "agent-1" });
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+    expect(handled, "the deleted __USEFULNESS_JUDGE__ sentinel is no longer recognized").toBe(false);
   });
 
-  it("__USEFULNESS_JUDGE__ short-circuits ok + no write when disabled (defence-in-depth)", async () => {
-    const recordUsage = vi.fn();
-    const ctx = makeCtx({ agents: { "agent-1": {} }, recordUsage });
-    const onComplete = vi.fn();
-    await handleWireMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("__USEFULNESS_JUDGE__ errors (no write) when fired without an agentId", async () => {
-    const recordUsage = vi.fn();
-    const ctx = makeCtx({ recordUsage });
-    const onComplete = vi.fn();
-    await handleWireMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: undefined, onComplete }, ctx);
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for usefulness judge" });
-  });
-
-  it("__USEFULNESS_JUDGE__ reports a non-fatal error when recordUsage fails (no throw)", async () => {
-    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: [] });
-    const recordUsage = vi.fn(async () => ({ ok: false as const, error: new Error("boom") }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
-      apiKey: "k",
-      inspectRows: [{ id: "m1", content: "x" }],
-      recordUsage,
-    });
-    const onComplete = vi.fn();
-    const handled = await handleWireMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "boom" });
-  });
-
-  it("__USEFULNESS_JUDGE__ errors when an enabled agent has no API key", async () => {
-    const recordUsage = vi.fn();
-    const ctx = makeCtx({ agents: { "agent-1": { provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } }, apiKey: undefined, recordUsage });
-    const onComplete = vi.fn();
-    await handleWireMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-
-  // ----- __MEMORY_TRIPLE_EXTRACTION__ (WIRE-01) -----
-  it("__MEMORY_TRIPLE_EXTRACTION__ short-circuits ok + does NOT run the job when disabled (default-OFF re-check)", async () => {
-    const ctx = makeCtx({ agents: { "agent-1": {} } });
+  it("__MEMORY_TRIPLE_EXTRACTION__ is deleted → returns false (falls through; no job run)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { provider: "anthropic", memoryTripleExtraction: { enabled: true } } }, apiKey: "k" });
     const onComplete = vi.fn();
     const handled = await handleWireMemoryCronSentinel("__MEMORY_TRIPLE_EXTRACTION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunMemoryTripleExtraction).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("__MEMORY_TRIPLE_EXTRACTION__ runs runMemoryTripleExtraction with the injected tripleStore when enabled", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { provider: "anthropic", memoryTripleExtraction: { enabled: true, maxCandidatesPerRun: 50 } } },
-      apiKey: "k",
-      inspectRows: [{ id: "m1", content: "alice knows bob" }],
-    });
-    const onComplete = vi.fn();
-    const handled = await handleWireMemoryCronSentinel("__MEMORY_TRIPLE_EXTRACTION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunMemoryTripleExtraction).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryTripleExtraction.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.tripleStore).toBe(ctx.tripleStore);
-    expect(arg.config).toMatchObject({ enabled: true, maxCandidatesPerRun: 50 });
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("__MEMORY_TRIPLE_EXTRACTION__ errors (no run) when fired without an agentId", async () => {
-    const ctx = makeCtx();
-    const onComplete = vi.fn();
-    await handleWireMemoryCronSentinel("__MEMORY_TRIPLE_EXTRACTION__", { agentId: undefined, onComplete }, ctx);
-    expect(mockRunMemoryTripleExtraction).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for triple extraction" });
+    expect(handled, "the deleted __MEMORY_TRIPLE_EXTRACTION__ sentinel is no longer recognized").toBe(false);
   });
 
   // -------------------------------------------------------------------------

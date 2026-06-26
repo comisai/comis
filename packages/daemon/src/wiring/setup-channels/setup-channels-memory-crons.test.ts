@@ -28,12 +28,6 @@ const mockCreateUserRepresentationSeam = vi.hoisted(() => vi.fn(() => mockUserRe
 const mockRunRelationshipBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
 const mockRelationshipSeam = vi.hoisted(() => vi.fn(async () => []));
 const mockCreateRelationshipSeam = vi.hoisted(() => vi.fn(() => mockRelationshipSeam));
-// WIRE-02: the __USEFULNESS_JUDGE__ seam. `judge({ candidateIds, answer })` returns a
-// partition; the handler writes that through usefulnessStore.recordUsage. Default verdict
-// is empty (overridden per-test) so the no-op floor is also exercisable.
-const mockJudgeSeam = vi.hoisted(() => vi.fn(async () => ({ usedIds: [] as string[], ignoredIds: [] as string[] })));
-const mockCreateUsefulnessJudgeSeam = vi.hoisted(() => vi.fn(() => mockJudgeSeam));
-const mockRunMemoryTripleExtraction = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   provider: "anthropic",
   modelId: "anthropic:claude-haiku",
@@ -67,8 +61,6 @@ vi.mock("@comis/agent", () => ({
   createUserRepresentationSeam: mockCreateUserRepresentationSeam,
   runRelationshipBuild: mockRunRelationshipBuild,
   createRelationshipSeam: mockCreateRelationshipSeam,
-  createUsefulnessJudgeSeam: mockCreateUsefulnessJudgeSeam,
-  runMemoryTripleExtraction: mockRunMemoryTripleExtraction,
 }));
 
 import { handleMemoryCronSentinel, type MemoryCronContext } from "./setup-channels-memory-crons.js";
@@ -81,9 +73,6 @@ function makeCtx(overrides: {
   /** The injected DORMANT lifecycle store (the __MEMORY_LIFECYCLE__ sentinel). When absent
    *  a default spy returning the all-0 dormant report is used so the on-path can assert it. */
   memoryLifecycleStore?: { runLifecycleSweep: ReturnType<typeof vi.fn> };
-  /** The usefulness store the __USEFULNESS_JUDGE__ sentinel WRITES through (recordUsage).
-   *  When absent a default spy returning ok is used so the write can be asserted (WIRE-02). */
-  usefulnessStore?: { recordUsage: ReturnType<typeof vi.fn>; readUsefulness: ReturnType<typeof vi.fn> };
 } = {}): MemoryCronContext {
   const logger = {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -111,17 +100,11 @@ function makeCtx(overrides: {
     agents: overrides.agents ?? {},
     tenantId: "tenant-a",
     consolidationStore: { listObservations: vi.fn() } as any,
-    tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
     memoryApi: memoryApi as any,
     memoryLifecycleStore: (overrides.memoryLifecycleStore ?? {
       // The DORMANT default: scanned some rows, mutated NONE (the scaffold).
       runLifecycleSweep: vi.fn(async () => ({ ok: true as const, value: { scanned: 3, promoted: 0, demoted: 0, evicted: 0 } })),
-    }) as any,
-    usefulnessStore: (overrides.usefulnessStore ?? {
-      // The WRITE surface the usefulness judge drives (WIRE-02).
-      recordUsage: vi.fn(async () => ({ ok: true as const, value: undefined })),
-      readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })),
     }) as any,
   };
 }
@@ -151,9 +134,6 @@ beforeEach(() => {
   mockCreateUserRepresentationSeam.mockReturnValue(mockUserReprSeam);
   mockRunRelationshipBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
   mockCreateRelationshipSeam.mockReturnValue(mockRelationshipSeam);
-  mockCreateUsefulnessJudgeSeam.mockReturnValue(mockJudgeSeam);
-  mockJudgeSeam.mockResolvedValue({ usedIds: [], ignoredIds: [] });
-  mockRunMemoryTripleExtraction.mockResolvedValue({ ok: true as const, value: { extracted: 0, written: 0, blocked: 0, downgraded: 0, skippedOverCap: 0 } });
 });
 
 describe("handleMemoryCronSentinel", () => {
@@ -435,87 +415,24 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WIRE-02 (the WS7 first-RED): the __USEFULNESS_JUDGE__ cron was registered at
-  // setup-schedulers.ts:489 but had NO dispatch handler — it fired nightly as a
-  // NO-OP. These pin that the handler now constructs the seam and WRITES through
-  // usefulnessStore.recordUsage (the dormant seam is live), with the same opt-in /
-  // no-agentId / non-fatal posture as the sibling sentinels.
+  // DELETE (Phase 226 SIMPLIFY-03): the __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__
+  // dormant crons are GONE. handleMemoryCronSentinel delegates to the wire file at its
+  // fall-through, and neither sentinel is recognized anymore → the whole chain returns false
+  // (the caller delivers the system_event normally — the T-226-08 benign no-op for a persisted
+  // stale job row). The FORGET-02 recordUsage reward write (setup-learning.ts) is a SEPARATE
+  // seam and is untouched; the TripleStorePort graphSpread recall lane survives (the JOB went).
   // -------------------------------------------------------------------------
-  it("the __USEFULNESS_JUDGE__ handler writes through recordUsage (no longer a nightly no-op)", async () => {
-    // This is the first-RED: on pre-patch HEAD there is no __USEFULNESS_JUDGE__ block, so
-    // the sentinel falls through unhandled (returns false) and recordUsage is NEVER called.
-    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: ["m2"] });
-    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
-      apiKey: "test-key",
-      inspectRows: [{ id: "m1", userId: "u", content: "x", trustLevel: "learned" }, { id: "m2", userId: "u", content: "y", trustLevel: "learned" }],
-      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
-    });
+  it("the deleted __USEFULNESS_JUDGE__ sentinel is unhandled → returns false (falls through)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1", provider: "anthropic" } }, apiKey: "test-key" });
     const onComplete = vi.fn();
     const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockCreateUsefulnessJudgeSeam).toHaveBeenCalledOnce();
-    expect(recordUsage).toHaveBeenCalledOnce();
-    // The verdict partition is written through to the store, scoped to (tenant, agent).
-    const [usedIds, ignoredIds, scope] = recordUsage.mock.calls[0] as [string[], string[], Record<string, unknown>];
-    expect(usedIds).toEqual(["m1"]);
-    expect(ignoredIds).toEqual(["m2"]);
-    expect(scope).toMatchObject({ tenantId: "tenant-a", agentId: "agent-1" });
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+    expect(handled, "the deleted usefulness-judge sentinel must no longer be handled").toBe(false);
   });
 
-  it("short-circuits the usefulness judge ok and never writes when the agent has it disabled (defence-in-depth re-check)", async () => {
-    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1" } },
-      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
-    });
+  it("the deleted __MEMORY_TRIPLE_EXTRACTION__ sentinel is unhandled → returns false (falls through)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1", provider: "anthropic" } }, apiKey: "test-key" });
     const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("warns + errors when the usefulness-judge sentinel fires without an agentId (no write)", async () => {
-    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const ctx = makeCtx({ usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) } });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: undefined, onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for usefulness judge" });
-  });
-
-  it("reports a non-fatal error (onComplete error) when recordUsage fails — never throws out of the dispatcher", async () => {
-    mockJudgeSeam.mockResolvedValue({ usedIds: ["m1"], ignoredIds: [] });
-    const recordUsage = vi.fn(async () => ({ ok: false as const, error: new Error("record boom") }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
-      apiKey: "test-key",
-      inspectRows: [{ id: "m1", userId: "u", content: "x", trustLevel: "learned" }],
-      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(recordUsage).toHaveBeenCalledOnce();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "record boom" });
-  });
-
-  it("skips the usefulness judge with an error when an enabled agent has no API key (no key value used)", async () => {
-    const recordUsage = vi.fn(async () => ({ ok: true as const, value: undefined }));
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUsefulnessJudge: { enabled: true } } },
-      apiKey: undefined,
-      usefulnessStore: { recordUsage, readUsefulness: vi.fn(async () => ({ ok: true as const, value: new Map() })) },
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__USEFULNESS_JUDGE__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
-    expect(recordUsage).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
+    const handled = await handleMemoryCronSentinel("__MEMORY_TRIPLE_EXTRACTION__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled, "the deleted triple-extraction sentinel must no longer be handled").toBe(false);
   });
 });
