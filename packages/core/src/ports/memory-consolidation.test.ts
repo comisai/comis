@@ -10,19 +10,8 @@ import { ok, type Result } from "@comis/shared";
 // resolves to an empty namespace; the types are pulled via the `import type`
 // below. A bare `import type` would be stripped by the transform and never
 // resolve, hiding RED if the symbols were missing.
-//
-// Because this port is type-only, the type-level assertions below erase at
-// runtime (vitest does not type-check). The runtime RED proof for the
-// `foldIntoExisting` / `ConsolidationFoldPlan` ADDITIONS is therefore the
-// source-grep guard in the first test: it FAILS on pre-patch
-// `memory-consolidation.ts` (the method/type do not exist yet) and asserts the
-// type-only port stays type-only (no zod, no @comis/memory import).
 import "./memory-consolidation.js";
-import type {
-  MemoryConsolidationStore,
-  ConsolidationCandidate,
-  ConsolidationFoldPlan,
-} from "./memory-consolidation.js";
+import type { MemoryConsolidationStore } from "./memory-consolidation.js";
 import type { MemoryEntry } from "../domain/memory-entry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +24,7 @@ function makeObservation(): MemoryEntry {
     tenantId: "tenant_a",
     agentId: "agent_a",
     userId: "user_a",
-    content: "the grown observation",
+    content: "an observation",
     trustLevel: "learned",
     source: { who: "agent", channel: "test" },
     tags: [],
@@ -51,183 +40,107 @@ function makeObservation(): MemoryEntry {
 }
 
 /**
- * The proof-accrual `foldIntoExisting` write on
- * `MemoryConsolidationStore` + its `ConsolidationFoldPlan` input.
+ * Phase 226 (SIMPLIFY-02) — `MemoryConsolidationStore` is TRIMMED to its LIVE
+ * read/maintenance surface, NOT deleted.
  *
- * Type-only assertions: an implementer must expose `foldIntoExisting(plan:
- * ConsolidationFoldPlan)` returning `Promise<Result<MemoryEntry, Error>>` — the
- * EXTENSION of the earlier create-only port (it does NOT replace the existing
- * three methods). The port stays type-only (mirrors the entity-store port):
- * neither a zod dependency nor a runtime import of @comis/memory.
+ * The consolidation CRON (the writer) was retired in phase 225, so its writer
+ * methods — `listConsolidationCandidates`, `applyConsolidation`,
+ * `foldIntoExisting`, `knnDistances` (the surprisal-gate read), `markReasoned`
+ * (the deductive-only drain) — plus the candidate/plan input types
+ * (`ConsolidationCandidate`, `ConsolidationPlan`, `ConsolidationFoldPlan`) are
+ * DEAD (grep-proven: 0 live, non-test callers). They are cut.
+ *
+ * KEPT (each has a live, NON-cron consumer that must keep working):
+ *   - `listObservations`           — the `comis memory` observation listing CLI
+ *                                    (daemon `memory.observations` handler).
+ *   - `unlinkDeletedSources`       — DIST-05 deletion reconciliation
+ *   - `purgeConsolidatedDerivedFrom` (`session.reset_conversation --memory`).
+ *
+ * The port stays type-only (mirrors the entity-store port): no zod, no
+ * @comis/memory runtime import (the load-bearing agent↛memory build cut).
  */
-describe("MemoryConsolidationStore.foldIntoExisting — proof accrual", () => {
-  it("declares foldIntoExisting + ConsolidationFoldPlan and stays a type-only port (no zod, no @comis/memory)", () => {
-    // Runtime RED proof: fails on pre-patch source where the method/type are absent.
-    expect(portSrc, "ConsolidationFoldPlan type must be declared").toMatch(
-      /export\s+interface\s+ConsolidationFoldPlan\b/,
+describe("MemoryConsolidationStore — trimmed to the live read/maintenance surface (SIMPLIFY-02)", () => {
+  it("KEEPS listObservations + the DIST-05 unlink/purge maintenance methods", () => {
+    expect(portSrc, "listObservations (the comis-memory CLI read) must stay on the port").toMatch(
+      /\blistObservations\s*\(/,
     );
-    expect(portSrc, "foldIntoExisting method must be on the port").toMatch(
+    expect(portSrc, "unlinkDeletedSources (DIST-05) must stay on the port").toMatch(
+      /\bunlinkDeletedSources\s*\(/,
+    );
+    expect(portSrc, "purgeConsolidatedDerivedFrom (DIST-05) must stay on the port").toMatch(
+      /\bpurgeConsolidatedDerivedFrom\s*\(/,
+    );
+  });
+
+  it("CUTS the dead consolidation-cron writer methods (writer retired in phase 225)", () => {
+    // Runtime RED proof: these FAIL on the pre-trim source (the methods still
+    // exist there). After the trim each must be GONE from the port interface.
+    expect(portSrc, "listConsolidationCandidates must be cut (dead writer surface)").not.toMatch(
+      /\blistConsolidationCandidates\s*\(/,
+    );
+    expect(portSrc, "applyConsolidation must be cut (dead writer surface)").not.toMatch(
+      /\bapplyConsolidation\s*\(/,
+    );
+    expect(portSrc, "foldIntoExisting must be cut (dead writer surface)").not.toMatch(
       /\bfoldIntoExisting\s*\(/,
     );
-    // The stale "create-only, no fold method — deferred" class-doc
-    // sentence must be gone now that the 4th method exists.
-    expect(portSrc, "the stale 'is deferred' class-doc sentence must be removed").not.toMatch(
-      /is deferred/,
-    );
-    // The port must stay type-only (mirrors reranker.ts / memory-entity-store.ts)
-    // — neither a zod dependency nor a runtime import of @comis/memory (that
-    // would invert the dependency direction + break the agent↛memory build cut).
-    expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
-    expect(portSrc, "no @comis/memory import in core port").not.toMatch(
-      /^\s*import\b[^\n]*@comis\/memory/m,
-    );
-  });
-
-  it("accepts a structurally-valid implementation exposing all four methods incl. foldIntoExisting", async () => {
-    const grown = makeObservation();
-    const stub: MemoryConsolidationStore = {
-      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
-        ok([]),
-      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
-      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      foldIntoExisting: async (
-        _plan: ConsolidationFoldPlan,
-      ): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
-    };
-
-    const plan: ConsolidationFoldPlan = {
-      targetObservationId: grown.id,
-      newSourceIds: ["44444444-4444-4444-8444-444444444444"],
-      trustLevel: "learned",
-      confidence: 1,
-      occurredAt: 9_000,
-      tenantId: "tenant_a",
-      now: 5_000,
-    };
-    const res = await stub.foldIntoExisting(plan);
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.value.proofCount).toBe(3);
-      expect(res.value.sourceIds).toHaveLength(2);
-    }
-  });
-
-  it("checks foldIntoExisting is typed as (ConsolidationFoldPlan) => Promise<Result<MemoryEntry, Error>>", () => {
-    const grown = makeObservation();
-    const stub: MemoryConsolidationStore = {
-      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
-        ok([]),
-      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
-      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
-    };
-    expectTypeOf(stub.foldIntoExisting).parameters.toEqualTypeOf<[ConsolidationFoldPlan]>();
-    expectTypeOf(stub.foldIntoExisting).returns.toEqualTypeOf<Promise<Result<MemoryEntry, Error>>>();
-  });
-
-  it("ConsolidationFoldPlan carries the fold contract fields (target id, new sources, trust ceiling, refresh, scope, clock)", () => {
-    const plan: ConsolidationFoldPlan = {
-      targetObservationId: "55555555-5555-4555-8555-555555555555",
-      newSourceIds: ["66666666-6666-4666-8666-666666666666"],
-      trustLevel: "learned",
-      confidence: 1,
-      occurredAt: 9_000,
-      tenantId: "tenant_a",
-      now: 5_000,
-    };
-    expectTypeOf(plan.targetObservationId).toEqualTypeOf<string>();
-    expectTypeOf(plan.newSourceIds).toEqualTypeOf<string[]>();
-    expectTypeOf(plan.trustLevel).toEqualTypeOf<MemoryEntry["trustLevel"]>();
-    expectTypeOf(plan.confidence).toEqualTypeOf<number>();
-    expectTypeOf(plan.occurredAt).toEqualTypeOf<number>();
-    expectTypeOf(plan.tenantId).toEqualTypeOf<string>();
-    expectTypeOf(plan.now).toEqualTypeOf<number>();
-    // `content` is optional (omit to keep existing content — no FTS churn).
-    expectTypeOf(plan.content).toEqualTypeOf<string | undefined>();
-    expect(plan.newSourceIds).toHaveLength(1);
-  });
-});
-
-/**
- * The surprisal-gate engine: a corpus-wide k-NN cosine
- * DISTANCES read on `MemoryConsolidationStore`. The agent cannot run SQL, so the
- * read crosses the agent↛memory cut as a port TYPE method (implemented in the
- * adapter). The method is (tenantId, agentId)-scoped and returns
- * the distances sorted ascending, or `ok([])` when sqlite-vec is unavailable
- * (graceful degrade).
- *
- * Type-only assertions: an implementer MUST expose `knnDistances(embedding,
- * k, agentId, tenantId)` returning `Promise<Result<number[], Error>>`. The port
- * stays type-only — no zod, no @comis/memory runtime import (the CUT INVARIANT).
- */
-describe("MemoryConsolidationStore.knnDistances — surprisal k-NN read", () => {
-  it("declares knnDistances on the port and stays type-only (no zod, no @comis/memory)", () => {
-    // Runtime RED proof: fails on pre-patch source where the method is absent.
-    expect(portSrc, "knnDistances method must be on the port").toMatch(
+    expect(portSrc, "knnDistances must be cut (dead surprisal-gate read)").not.toMatch(
       /\bknnDistances\s*\(/,
     );
-    // The port must stay type-only — neither a zod dependency nor a runtime
-    // import of @comis/memory (that would break the agent↛memory build cut).
+    expect(portSrc, "markReasoned must be cut (dead deductive-only drain)").not.toMatch(
+      /\bmarkReasoned\s*\(/,
+    );
+  });
+
+  it("CUTS the orphaned candidate/plan input types", () => {
+    expect(portSrc, "ConsolidationCandidate type must be cut").not.toMatch(
+      /\binterface\s+ConsolidationCandidate\b/,
+    );
+    expect(portSrc, "ConsolidationPlan type must be cut").not.toMatch(
+      /\binterface\s+ConsolidationPlan\b/,
+    );
+    expect(portSrc, "ConsolidationFoldPlan type must be cut").not.toMatch(
+      /\binterface\s+ConsolidationFoldPlan\b/,
+    );
+  });
+
+  it("stays a type-only port (no zod, no @comis/memory import)", () => {
     expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
     expect(portSrc, "no @comis/memory import in core port").not.toMatch(
       /^\s*import\b[^\n]*@comis\/memory/m,
     );
   });
 
-  it("accepts a structurally-valid implementation exposing knnDistances returning sorted distances", async () => {
-    const grown = makeObservation();
+  it("accepts a structurally-valid implementation exposing ONLY the trimmed surface", async () => {
+    const obs = makeObservation();
     const stub: MemoryConsolidationStore = {
-      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
-        ok([]),
-      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
-      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      knnDistances: async (
-        _embedding: number[],
-        _k: number,
-        _agentId: string,
-        _tenantId: string,
-      ): Promise<Result<number[], Error>> => ok([0.1, 0.3, 0.42]),
+      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([obs]),
+      unlinkDeletedSources: async (): Promise<Result<number, Error>> => ok(0),
+      purgeConsolidatedDerivedFrom: async (): Promise<Result<number, Error>> => ok(0),
     };
-    const res = await stub.knnDistances([0.1, 0.2, 0.3], 3, "agent_a", "tenant_a");
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.value).toEqual([0.1, 0.3, 0.42]);
-    }
+
+    const obsRes = await stub.listObservations("agent_a", "tenant_a", 50);
+    expect(obsRes.ok).toBe(true);
+    if (obsRes.ok) expect(obsRes.value[0]?.proofCount).toBe(3);
+
+    const unlink = await stub.unlinkDeletedSources("sess-1", "tenant_a", "agent_a");
+    expect(unlink.ok).toBe(true);
+    const purge = await stub.purgeConsolidatedDerivedFrom("sess-1", "tenant_a", "agent_a", ["m1"]);
+    expect(purge.ok).toBe(true);
   });
 
-  it("returns ok([]) when sqlite-vec is unavailable (graceful degrade)", async () => {
-    const grown = makeObservation();
+  it("types listObservations as (agentId, tenantId, limit) => Promise<Result<MemoryEntry[], Error>>", () => {
+    const obs = makeObservation();
     const stub: MemoryConsolidationStore = {
-      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
-        ok([]),
-      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
-      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
+      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([obs]),
+      unlinkDeletedSources: async (): Promise<Result<number, Error>> => ok(0),
+      purgeConsolidatedDerivedFrom: async (): Promise<Result<number, Error>> => ok(0),
     };
-    const res = await stub.knnDistances([0.1, 0.2], 5, "agent_a", "tenant_a");
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.value).toEqual([]);
-    }
-  });
-
-  it("checks knnDistances is typed as (number[], number, string, string) => Promise<Result<number[], Error>>", () => {
-    const grown = makeObservation();
-    const stub: MemoryConsolidationStore = {
-      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
-        ok([]),
-      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
-      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
-      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
-    };
-    expectTypeOf(stub.knnDistances).parameters.toEqualTypeOf<
-      [number[], number, string, string]
+    expectTypeOf(stub.listObservations).parameters.toEqualTypeOf<[string, string, number]>();
+    expectTypeOf(stub.listObservations).returns.toEqualTypeOf<Promise<Result<MemoryEntry[], Error>>>();
+    expectTypeOf(stub.unlinkDeletedSources).parameters.toEqualTypeOf<[string, string, string]>();
+    expectTypeOf(stub.purgeConsolidatedDerivedFrom).parameters.toEqualTypeOf<
+      [string, string, string, string[]]
     >();
-    expectTypeOf(stub.knnDistances).returns.toEqualTypeOf<Promise<Result<number[], Error>>>();
   });
 });
