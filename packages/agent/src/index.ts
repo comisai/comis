@@ -518,11 +518,6 @@ export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 export { createMemoryRecall } from "./rag/memory-recall.js";
 export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
-// Deterministic apply overlay — also consumed by the daemon's dialectic recall
-// (setup-dialectic.ts) so `memory.ask` applies the SAME tuned-alpha overlay (with the SAME
-// config-sourced trust-freeze, belt #2) as the main prompt-assembly recall path. The single
-// source of truth for the overlay — never re-implemented at the second consumer.
-export { buildScoringAlphas } from "./rag/scoring-overlay.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
 export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";

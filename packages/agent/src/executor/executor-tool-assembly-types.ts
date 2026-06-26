@@ -78,13 +78,6 @@ export interface ToolAssemblyDeps {
    *  agent recall even when the store is wired in the daemon and `rag.pinned.enabled`
    *  is true (the R6 blocker). TYPE-only from @comis/core (the agent↛memory build cut). */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  /** Optional learned-alpha store, threaded into prompt-assembly's deterministic
-   *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
-   *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
-   *  recall). A missing forward of the daemon construction + the createPiExecutor forward leaves
-   *  the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
-   *  @comis/core (the agent↛memory build cut). */
-  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Optional per-user representation store, threaded into prompt-assembly's LLM-free
    *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
    *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core

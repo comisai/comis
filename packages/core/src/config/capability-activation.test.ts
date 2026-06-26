@@ -25,13 +25,13 @@ import { PerAgentConfigSchema } from "./schema-agent/index.js";
 // ---------------------------------------------------------------------------
 
 describe("capability registry", () => {
-  it("enumerates each capability with a config path whose as-shipped value matches its posture (8 ON via opt-out, SOCIAL OFF)", () => {
+  it("enumerates each capability with a config path whose as-shipped value matches its posture (7 ON via opt-out, SOCIAL OFF)", () => {
     const cfg = PerAgentConfigSchema.parse({});
     // Each registered capability must name a real config path; we read it off a
     // parsed PerAgentConfig to prove the path is live (not a typo'd dead string).
     // The as-shipped value must match the v1 opt-out posture: opt-out members ON
-    // (true), SOCIAL OFF (absent ⇒ undefined).
-    expect(V2_9_CAPABILITIES.length).toBeGreaterThanOrEqual(9);
+    // (true), SOCIAL OFF (absent ⇒ undefined). (learnRank was deleted in Phase 224.)
+    expect(V2_9_CAPABILITIES.length).toBeGreaterThanOrEqual(8);
     for (const cap of V2_9_CAPABILITIES) {
       const value = readPath(cfg as unknown as Record<string, unknown>, cap.configPath);
       const shippedOn = value === true;
@@ -43,9 +43,9 @@ describe("capability registry", () => {
     }
   });
 
-  it("the opt-out set is exactly the eight non-privacy capabilities (SOCIAL deliberately absent)", () => {
+  it("the opt-out set is exactly the seven non-privacy capabilities (SOCIAL deliberately absent; learnRank deleted in 224)", () => {
     expect([...V1_OPT_OUT_CAPABILITIES].sort()).toEqual(
-      ["dialectic", "feed", "forget", "kg", "learnIq", "learnRank", "reason", "user"].sort(),
+      ["dialectic", "feed", "forget", "kg", "learnIq", "reason", "user"].sort(),
     );
     expect(V1_OPT_OUT_CAPABILITIES.has("social")).toBe(false);
   });
@@ -177,7 +177,7 @@ describe("framework/schema parity (v1 opt-out posture)", () => {
     }
   });
 
-  it("a bare PerAgentConfig has the eight opt-out capabilities ON and SOCIAL OFF", () => {
+  it("a bare PerAgentConfig has the seven opt-out capabilities ON and SOCIAL OFF", () => {
     const cfg = PerAgentConfigSchema.parse({});
     // Cost-bearing subtrees are now defaulted ON (no longer `.optional()`).
     expect(cfg.memoryUserRepresentation?.enabled).toBe(true);
@@ -185,9 +185,8 @@ describe("framework/schema parity (v1 opt-out posture)", () => {
     expect(cfg.memoryReasoning?.enabled).toBe(true);
     // SOCIAL stays OFF — its subtree is still `.optional()` (privacy/consent gate).
     expect(cfg.socialModeling).toBeUndefined();
-    // rag.* $0 capabilities default ON.
+    // rag.* $0 capabilities default ON. (rag.onlineTuning was DELETED in Phase 224 — the bandit.)
     expect(cfg.rag.feedback.enabled).toBe(true);
-    expect(cfg.rag.onlineTuning.enabled).toBe(true);
     expect(cfg.rag.queryUnderstanding.intentReweight).toBe(true);
     expect(cfg.rag.lanes.graphSpread.enabled).toBe(true);
     expect(cfg.rag.forget.enabled).toBe(true);

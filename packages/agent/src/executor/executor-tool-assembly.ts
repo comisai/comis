@@ -318,15 +318,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // <channel_relationships> block never renders even with the store wired in the daemon).
       // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
       relationshipStore: deps.relationshipStore,
-      // Forward the learned-alpha store the SAME way as usefulnessStore — a
-      // missing forward here is a silent no-op (buildScoringAlphas never reads the tuned vector
-      // even with the store wired through the daemon → BootContext → createPiExecutor chain AND
-      // rag.onlineTuning.enabled). prompt-assembly's gated read `if (onlineTuningEnabled &&
-      // deps.tunedAlphaStore)` (the deterministic apply overlay) consumes it. This is the final hop in the
-      // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. Default-OFF byte-identity is
-      // preserved: when the store is absent/undefined (off) the static config.rag.scoring alphas
-      // pass unchanged, and the trust-freeze belts hold (trustAlpha is sourced only from config).
-      tunedAlphaStore: deps.tunedAlphaStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

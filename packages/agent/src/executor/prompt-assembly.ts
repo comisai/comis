@@ -71,8 +71,6 @@ import {
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
-import { buildScoringAlphas } from "../rag/scoring-overlay.js";
-import { classifyIntent } from "../rag/query-understanding.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildUserRepresentationBlock } from "./user-representation-block.js";
 import { buildRelationshipBlock } from "./relationship-block.js";
@@ -455,14 +453,6 @@ export interface PromptAssemblyParams {
      *  read, recall order unchanged. Passed from PiExecutorDeps → PromptAssemblyParams.deps
      *  → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
     provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-    /** Optional learned-alpha store for the deterministic apply overlay
-     *  (default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
-     *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
-     *  config.rag.scoring alphas pass unchanged (byte-identical recall, the cost gate).
-     *  The read is a pure deterministic store.read scoped to (tenantId, agentId) — NO
-     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
-     *  TYPE-only (the agent↛memory build cut). */
-    tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
     /** Optional per-user profile store for the LLM-free standing-block injection
      *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
      *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
@@ -1070,34 +1060,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
-      // The deterministic apply overlay. Read the learned alpha vector
-      // GATED on config.rag.onlineTuning.enabled AND a present store dep, then overlay
-      // the four non-trust alphas via buildScoringAlphas (trust STILL from config.rag.scoring
-      // — belt #2). The `onlineTuning` field is added to the schema later, so it is read
-      // through a structural widening that compiles against today's strict RagConfig (the
-      // same posture as `feedback` above). Default-OFF byte-identity: with the
-      // knob off OR no store dep OR no learned row, `tunedVector` stays undefined → the
-      // store is NEVER read and buildScoringAlphas returns config.rag.scoring unchanged. The
-      // read is PURE + non-fatal: a read failure → undefined → byte-identical fallback. NO
-      // model call crosses onto the recall hot path (the milestone's #1 constraint).
-      let tunedVector: import("@comis/core").TunedAlphaVector | undefined;
-      const onlineTuningEnabled =
-        (config.rag as typeof config.rag & { onlineTuning?: { enabled: boolean } }).onlineTuning
-          ?.enabled === true;
-      if (onlineTuningEnabled && deps.tunedAlphaStore) {
-        // RANK-02: read the PER-INTENT tuned vector for THIS turn's query intent. The
-        // deterministic, LLM-free classifyIntent (same `msg.text` that feeds the recall
-        // below) keeps the recall hot path deterministic; the adapter resolves the global
-        // '' bucket when no per-intent row exists. intent is an ADDITIONAL key, never a
-        // relaxation of the (tenant, agent) isolation scope (belt #2 still sources trust
-        // from config at the overlay).
-        const tr = await deps.tunedAlphaStore.read({
-          tenantId: deps.tenantId ?? sessionKey.tenantId,
-          agentId: agentId ?? config.name,
-          intent: classifyIntent(msg.text),
-        });
-        if (tr.ok) tunedVector = tr.value;
-      }
+      // Recall scoring is the FIXED config.rag.scoring alphas (Phase 224, RECALL-02/03):
+      // the UCB online-tuning bandit + its per-intent tuned-alpha overlay are deleted, so
+      // there is no learned-weight read on the recall hot path — ranking is fused RRF + the
+      // cross-encoder reranker over the config-sourced alphas only. Deterministic + LLM-free.
       const recall = createMemoryRecall(
         {
           memoryPort: deps.memoryPort,
@@ -1132,11 +1098,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          // The deterministic apply overlay (PURE — no clock, no LLM, no
-          // randomness). tunedVector present (tuning ON + a learned row) → the four
-          // non-trust alphas come from it, trustAlpha STILL from config (belt #2).
-          // tunedVector undefined (default-OFF) → config.rag.scoring unchanged.
-          scoring: buildScoringAlphas(config.rag.scoring, tunedVector),
+          // Fixed config-sourced scoring alphas — no learned overlay (Phase 224, RECALL-02/03).
+          scoring: config.rag.scoring,
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
           // MMR diversity re-rank + query understanding. Both are
