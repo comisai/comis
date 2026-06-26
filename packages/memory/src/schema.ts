@@ -17,7 +17,6 @@ import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
-import { ensureTunedAlphaIntent } from "./schema-tuned-alpha.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
@@ -584,7 +583,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUserRepresentationTable(db); // per-user representation
   ensureUserRepresentationBitemporalColumns(db); // v2.26 WS5 REVISE-02 — bi-temporal columns + current-truth index (forward-only)
   ensureRelationshipTable(db); // directional relationships
-  ensureTunedAlphaIntent(db); // tuned ranking alphas — per-intent 3-col PK + bandit posterior (v2.26 WS3, RANK-05); rebuilds a legacy 2-col-PK table
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)

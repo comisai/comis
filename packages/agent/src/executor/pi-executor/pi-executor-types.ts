@@ -25,7 +25,6 @@ import type {
   MemoryUsefulnessStore,
   MemoryPinnedStore,
   LcdProvenanceReadStore,
-  TunedAlphaStore,
   UserRepresentationStore,
   RelationshipStore,
   RerankerPort,
@@ -169,12 +168,6 @@ export interface PiExecutorDeps {
    *  absent OR no lcd_distilled result -> no read, recall order unchanged. TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   provenanceStore?: LcdProvenanceReadStore;
-  /** Optional learned-alpha store. Built in the daemon on the shared memory db handle;
-   *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
-   *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass
-   *  unchanged (byte-identical recall). TYPE-only from @comis/core — the agent never imports the
-   *  memory package (the agent↛memory cut). */
-  tunedAlphaStore?: TunedAlphaStore;
   /** Optional per-user representation store. Built in the daemon on the shared memory db
    *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
    *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only

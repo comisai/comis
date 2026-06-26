@@ -183,16 +183,6 @@ export type { OutcomeStoreDeps } from "./sqlite-outcome-store.js";
 export { createSqliteMentalModelStore } from "./sqlite-mental-model-store.js";
 export type { MentalModelStoreDeps } from "./sqlite-mental-model-store.js";
 
-// Tuned-alpha store (sole TunedAlphaStore impl).
-// Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
-// read (undefined when absent → the apply-site default-OFF no-op). The daemon
-// (composition root) constructs it on the memory adapter's db handle; the
-// TunedAlphaStore port TYPE lives in @comis/core (the agent↛memory cut — the
-// offline bandit job + the recall apply overlay consume the type only). The table
-// has NO trust-weight column (the structural trust-freeze belt #3).
-export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
-export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
-
 // Memory-lifecycle sweep store (sole MemoryLifecyclePort impl).
 // Owns the (tenant, agent)-scoped candidate scan over the `memories`
 // table + its additive NON-DESTRUCTIVE marker columns (lifecycle_demoted_at /

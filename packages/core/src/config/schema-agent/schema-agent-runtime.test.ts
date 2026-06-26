@@ -117,7 +117,8 @@ describe("top-level verbosity stays unchanged alongside activity.verbosity (no-B
 
 // ---------------------------------------------------------------------------
 // The SCAFFOLD-DORMANT memory-lifecycle cron knob wired
-// onto the per-agent RUNTIME config (alongside memoryOnlineTuning). `.optional()`
+// onto the per-agent RUNTIME config (the memoryOnlineTuning bandit sibling was
+// deleted in Phase 224). `.optional()`
 // so a default agent registers NO lifecycle block (byte-identical) — the cron is
 // default-OFF and even when enabled the dormant adapter evicts nothing.
 // These cases fail on the pre-patch schema (no `memoryLifecycle` field) — RED.

@@ -234,13 +234,6 @@ export const RelationshipRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// The `tuned_alpha` read-projection schema is co-located in
-// `tuned-alpha-row-schema.ts` (this file is at the 800-line cap; the
-// outcome-event-row-schema.ts precedent) and re-exported here so existing
-// importers keep their import site (the scoped read projects the 4 alphas +
-// updated_at only — belt #3).
-export { TunedAlphaRowSchema } from "./tuned-alpha-row-schema.js";
-
 /**
  * Schema for the graph-spread recursive-CTE node projection. The
  * bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object edges

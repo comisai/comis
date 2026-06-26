@@ -78,10 +78,6 @@ export type { LearningSkillsConfig } from "./schema-learning-skills.js";
 export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
 export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";
 
-// Offline tuned-alpha bandit schema (default-ON, gated by the master cost switch; KEYLESS cron)
-export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
-export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
-
 // SCAFFOLD-DORMANT memory-lifecycle sweep schema (default-OFF, KEYLESS cron)
 export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
 export type { MemoryLifecycleConfig } from "./schema-memory-lifecycle.js";

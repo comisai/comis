@@ -43,11 +43,6 @@ export type {
   ReviseOutcome,
 } from "./user-representation-store.js";
 export type {
-  TunedAlphaStore,
-  TunedAlphaScope,
-  TunedAlphaVector,
-} from "./tuned-alpha-store.js";
-export type {
   MemoryLifecyclePort,
   MemoryLifecycleScope,
   MemoryTier,

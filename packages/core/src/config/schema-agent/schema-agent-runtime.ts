@@ -33,7 +33,6 @@ import { LearningTuningConfigSchema } from "../schema-learning-tuning.js";
 import { LearningForgettingConfigSchema } from "../schema-learning-forgetting.js";
 import { LearningSkillsConfigSchema } from "../schema-learning-skills.js";
 import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
-import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
@@ -460,10 +459,6 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  so `.parse({})` yields an active block; the master cost switch force-disables it at
    *  the registration site. */
   memoryTripleExtraction: MemoryTripleExtractionConfigSchema.default(() => MemoryTripleExtractionConfigSchema.parse({})),
-  /** Offline tuned-alpha bandit cron (an OFFLINE, DETERMINISTIC, KEYLESS
-   *  cron, never the recall path). Opt-out posture: default-ON; in the operator-facing
-   *  cost-feature set, so gated by the kill switch at its registration site. */
-  memoryOnlineTuning: MemoryOnlineTuningConfigSchema.default(() => MemoryOnlineTuningConfigSchema.parse({})),
   /** SCAFFOLD-DORMANT memory-lifecycle sweep cron. Opt-OUT posture: default-ON for consistency
    *  (a KEYLESS cron) — but it still evicts/demotes NOTHING until the deferred live eviction
    *  policy lands, so default-on is a forward-consistent no-op today. */

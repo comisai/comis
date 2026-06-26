@@ -561,9 +561,11 @@ describe("assembleExecutionPrompt", () => {
     };
 
     /** A learned-vector store spy: counts reads + returns a vector whose alphas DIFFER
-     *  from config — so a surviving overlay would visibly rewrite scoring (the RED signal). */
+     *  from config — so a surviving overlay would visibly rewrite scoring (the RED signal).
+     *  Typed structurally: the TunedAlphaStore port was DELETED in Phase 224, so this is a
+     *  legacy-shape stub fed through `deps as any` to prove the read path is gone. */
     function makeLearnedStore(): {
-      store: import("@comis/core").TunedAlphaStore;
+      store: { upsert: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn> };
       reads: () => number;
     } {
       let readCalls = 0;
@@ -581,7 +583,7 @@ describe("assembleExecutionPrompt", () => {
             },
           };
         }),
-      } as unknown as import("@comis/core").TunedAlphaStore;
+      };
       return { store, reads: () => readCalls };
     }
 

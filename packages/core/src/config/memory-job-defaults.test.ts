@@ -33,21 +33,20 @@ import { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.j
 import { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
 import { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
-import { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
 import { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 import { MemoryConfigSchema } from "./schema-memory.js";
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("memory-job config defaults match documented intent (anti-drift, WIRE-03)", () => {
-  // The SIX cost-job schemas default ON (opt-out) — the master switch is the gate,
+  // The FIVE cost-job schemas default ON (opt-out) — the master switch is the gate,
   // NOT the per-feature flag. A header claiming "OFF by default" is the lie this pins.
+  // (MemoryOnlineTuningConfigSchema — the bandit cron — was DELETED in Phase 224.)
   const costJobSchemas = [
     ["MemoryReviewConfigSchema", MemoryReviewConfigSchema],
     ["MemoryConsolidationConfigSchema", MemoryConsolidationConfigSchema],
     ["MemoryReasoningConfigSchema", MemoryReasoningConfigSchema],
     ["MemoryUserRepresentationConfigSchema", MemoryUserRepresentationConfigSchema],
     ["MemoryUsefulnessJudgeConfigSchema", MemoryUsefulnessJudgeConfigSchema],
-    ["MemoryOnlineTuningConfigSchema", MemoryOnlineTuningConfigSchema],
   ] as const;
 
   for (const [name, schema] of costJobSchemas) {

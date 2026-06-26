@@ -1,58 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-// Value imports so the RED state is reproducible from this test commit alone:
-// vitest must RESOLVE both modules at runtime. `schema-learning-tuning.js` does
-// not exist on the pre-patch code → the import throws and the suite is RED.
 import { LearningTuningConfigSchema } from "./schema-learning-tuning.js";
 import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 
 /**
- * The per-agent `learningTuning` config (RANK-07).
+ * The per-agent `learningTuning` config — Phase 224 (v2.31).
  *
- * The on/off switch + tunables every later Phase-200 plan reads (the daemon
- * reward seam, the bandit job, the per-intent recall apply). Now defaults ON
- * (`enabled:true`, opt-out) so tuning works out of the box; the master kill
- * switch `memory.costFeatures.enabled` (default true) is the real gate. The
- * schema is `z.strictObject` (unknown keys rejected, SEC-01 — a smuggled
- * `trustAlpha`/trust knob is refused at parse) with `.default()` on every field.
- * It attaches to `PerAgentConfigSchema`.
+ * The UCB recall bandit was DELETED, taking the `learner` / `perIntent` / `exploration`
+ * sub-fields with it. This block now carries ONLY `enabled` — the gate on the daemon's
+ * outcome-rewarded usefulness-feedback write (RANK-01, `usefulnessStore.recordUsage` /
+ * `recordFailure`), which is the FORGET-02 `failure_count` source and an explicit KEEPER.
+ * Still defaults ON (`enabled:true`, opt-out); the master kill switch
+ * `memory.costFeatures.enabled` (default true) is the real gate. The schema is
+ * `z.strictObject` (unknown keys rejected, SEC-01) and attaches to `PerAgentConfigSchema`.
  */
-describe("LearningTuningConfigSchema — per-agent bandit/per-intent tuning config (default ON, opt-out)", () => {
-  it("parse({}) yields the documented default-ON block (enabled:true, bandit, perIntent, exploration:0.1)", () => {
-    expect(LearningTuningConfigSchema.parse({})).toEqual({
-      enabled: true,
-      learner: "bandit",
-      perIntent: true,
-      exploration: 0.1,
-    });
+describe("LearningTuningConfigSchema — the reward-write gate (bandit sub-fields deleted in 224)", () => {
+  it("parse({}) yields ONLY the default-ON enabled flag (the bandit sub-fields are gone)", () => {
+    expect(LearningTuningConfigSchema.parse({})).toEqual({ enabled: true });
   });
 
-  it("is strict — a smuggled trustAlpha key throws (SEC-01: a trust weight can never enter the bandit via config)", () => {
-    // T-200-01: z.strictObject (NOT z.object) rejects a smuggled trust knob at parse.
+  it("the deleted bandit sub-fields are now REJECTED (strictObject — learner/perIntent/exploration no longer exist)", () => {
+    // Phase 224: these were the bandit knobs; deleting them must make them unknown keys.
+    expect(LearningTuningConfigSchema.safeParse({ learner: "bandit" }).success).toBe(false);
+    expect(LearningTuningConfigSchema.safeParse({ perIntent: true }).success).toBe(false);
+    expect(LearningTuningConfigSchema.safeParse({ exploration: 0.1 }).success).toBe(false);
+  });
+
+  it("is strict — a smuggled trustAlpha/step key throws (SEC-01: a trust weight can never enter via config)", () => {
     expect(() => LearningTuningConfigSchema.parse({ trustAlpha: 0.9 })).toThrow();
-    // No tunable STEP knob either (anti-pattern: a tunable step could overturn trust-first).
     expect(() => LearningTuningConfigSchema.parse({ step: 0.1 })).toThrow();
     expect(LearningTuningConfigSchema.safeParse({ bogusKey: 1 }).success).toBe(false);
   });
 
-  it("learner enum accepts bandit/nudge only ('thompson' is rejected)", () => {
-    expect(LearningTuningConfigSchema.parse({ learner: "nudge" }).learner).toBe("nudge");
-    expect(LearningTuningConfigSchema.parse({ learner: "bandit" }).learner).toBe("bandit");
-    expect(() => LearningTuningConfigSchema.parse({ learner: "thompson" })).toThrow();
+  it("enabled can be opted OFF explicitly (the per-agent override)", () => {
+    expect(LearningTuningConfigSchema.parse({ enabled: false })).toEqual({ enabled: false });
   });
 
-  it("exploration is bounded to [0,1]", () => {
-    expect(() => LearningTuningConfigSchema.parse({ exploration: 1.5 })).toThrow();
-    expect(() => LearningTuningConfigSchema.parse({ exploration: -0.1 })).toThrow();
-    expect(LearningTuningConfigSchema.parse({ exploration: 0 }).exploration).toBe(0);
-    expect(LearningTuningConfigSchema.parse({ exploration: 1 }).exploration).toBe(1);
-  });
-
-  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningTuning.enabled === true", () => {
+  it("attaches to PerAgentConfigSchema — a parsed agent config exposes learningTuning.enabled === true (and nothing else)", () => {
     const agent = PerAgentConfigSchema.parse({});
-    expect(agent.learningTuning.enabled).toBe(true);
-    expect(agent.learningTuning.learner).toBe("bandit");
-    expect(agent.learningTuning.perIntent).toBe(true);
-    expect(agent.learningTuning.exploration).toBe(0.1);
+    expect(agent.learningTuning).toEqual({ enabled: true });
   });
 });
