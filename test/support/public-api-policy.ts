@@ -1262,33 +1262,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutcomeObservation",
       "ResolvedOutcome",
       "OutcomePruneResult",
-      // Verified Learning procedural-learning ports (v2.26 Phase 201 Plan 01, Wave 1)
-      // — the three greenfield type-only ports (SkillSynthesisPort,
-      // SkillValidationPort, MentalModelStorePort) + their DTOs, surfaced on the
-      // public @comis/core barrel (exports/ports.ts) so the LATER-wave plans can
-      // import them BY TYPE. This is interface-first Wave 1 (the OutcomeSignalPort /
-      // TunedAlphaStore precedent directly above): the contracts land FIRST, the
-      // cross-package consumers land in later waves —
-      //   - Plan 04 (@comis/agent skill-synthesis-job) consumes SkillSynthesisPort
-      //     + SynthesisInput + CandidateSkill,
-      //   - Plans 05/06 (@comis/skills sandbox-validation adapter) consume
-      //     SkillValidationPort + SkillValidationResult + SkillValidationFinding +
-      //     ReplayContext,
-      //   - Plan 04/07 (@comis/memory store + @comis/daemon wiring) consume
-      //     MentalModelStorePort + MentalModel + AdmitMentalModelInput (the v2.31
-      //     Mental Model doc store — generalized from the LearnedSkill* names).
-      // Defining the contracts in @comis/core first is the closed-graph SEC-01 cut
-      // (agent↛memory / agent↛skills) — the synthesis job imports PORT TYPES only.
-      // Each SHRINKS out of this baseline when its real cross-package NAME-import
-      // consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never under-listed,
-      // closed by deletion).
-      "SkillSynthesisPort",
-      "SynthesisInput",
-      "CandidateSkill",
-      "SkillValidationPort",
-      "SkillValidationResult",
-      "SkillValidationFinding",
-      "ReplayContext",
+      // Mental Model doc store port (v2.31 Phase 223) — the type-only
+      // MentalModelStorePort + its DTOs (MentalModel, AdmitMentalModelInput),
+      // surfaced on the public @comis/core barrel (exports/ports.ts) so @comis/memory
+      // (the sqlite-mental-model-store adapter) + @comis/daemon (the reflection
+      // wiring) import them BY TYPE — the closed-graph SEC-01 cut (agent↛memory).
+      // The v2.26 SkillSynthesisPort / SynthesisInput / CandidateSkill +
+      // SkillValidationPort / SkillValidationResult / SkillValidationFinding /
+      // ReplayContext entries were DELETED in Phase 223 Plan 07 with the orphaned
+      // skill-synthesis-port.ts / skill-validation-port.ts files — the embedding-
+      // clustering synthesis pipeline + the dynamic sandbox they typed are gone
+      // (Plans 04-06), leaving zero consumers (the reflection engine replaced them).
+      // Each entry below SHRINKS out of this baseline when its real cross-package
+      // NAME-import consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never
+      // under-listed, closed by deletion).
       "MentalModelStorePort",
       "MentalModel",
       "AdmitMentalModelInput",
@@ -1300,7 +1287,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // can import them: Plan 04 (@comis/agent reflection-job + reflection-prompt
       // parser) applies the LLM's delta-ops against the prior doc's AST. Until that
       // plan lands, the only callers are this port's own pure tests (intra-core,
-      // excluded from the consumer scan) — interface-first, the SkillSynthesisPort
+      // excluded from the consumer scan) — interface-first, the MentalModelStorePort
       // precedent directly above. Each SHRINKS out when Plan 04's name-import lands
       // (the shrink-only ratchet, AGENTS.md §2.8). StructuredBody is ALSO consumed
       // intra-core by learned-skill-store.ts (MentalModel.structuredBody), so it

@@ -73,17 +73,6 @@ export type {
   OutcomePruneResult,
 } from "./outcome-signal-port.js";
 export type {
-  SkillSynthesisPort,
-  SynthesisInput,
-  CandidateSkill,
-} from "./skill-synthesis-port.js";
-export type {
-  SkillValidationPort,
-  SkillValidationResult,
-  SkillValidationFinding,
-  ReplayContext,
-} from "./skill-validation-port.js";
-export type {
   MentalModelStorePort,
   MentalModel,
   AdmitMentalModelInput,
