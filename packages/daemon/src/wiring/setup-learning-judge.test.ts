@@ -235,4 +235,40 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     );
     expect(built.readTurnTranscript!({ tenantId: TENANT, agentId: "a1", sessionId: "sess-1", trajectoryId: TRACE })).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // H-1 (Phase 226): the master-kill-switch rename `memory.costFeatures.enabled`
+  // → `memory.enabled` MUST NOT silently invert the gate. The reader here once
+  // declared a LOOSE local type `memory?: { costFeatures?: { enabled?: boolean } }`
+  // and gated on `memory?.costFeatures?.enabled !== false`. After the schema
+  // collapse deletes `costFeatures`, a config carrying ONLY `memory.enabled:false`
+  // (the NEW shape) would read `undefined !== false === true` → FORCE-ENABLED (the
+  // kill-switch inverts), and tsc does NOT catch it (the loose optional type
+  // tolerates the missing key). This test pins the CORRECT post-rename behavior
+  // (force-DISABLE on memory.enabled:false) — it fails RED against the pre-rename
+  // loose reader. The fix re-points the local slice to the real MemoryConfig type
+  // (tsc then enforces the rename) AND this explicit guard is the belt.
+  // -------------------------------------------------------------------------
+  it("H-1: memory.enabled:false (the renamed master kill-switch) force-DISABLES the judge for every agent", () => {
+    const built = buildOutcomeJudgeWiring(
+      // The NEW shape: memory.enabled is the master gate; NO costFeatures key exists.
+      {
+        config: {
+          agents: { a1: { learningOutcome: { enabled: true, judge: { enabled: true } } } },
+          memory: { enabled: false },
+          providers: { entries: {} },
+        },
+        secretManager: { get: (): string | undefined => undefined },
+      } as never,
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+    );
+    // The master kill-switch is OFF → the judge gate must be closed for every agent.
+    // (Pre-rename: reads costFeatures (absent) → undefined !== false === true → force-ENABLED → RED.)
+    expect(built.learningOutcomeJudgeEnabled("a1")).toBe(false);
+    // And byte-identity: no seam/reader is constructed when the master switch is off.
+    expect(built.outcomeJudge).toBeUndefined();
+    expect(built.readTurnTranscript).toBeUndefined();
+  });
 });
