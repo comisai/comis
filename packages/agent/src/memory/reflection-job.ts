@@ -202,12 +202,23 @@ export interface RunReflectionDeps {
  *                            REFLECT-05 guard skipped the admit; the prior doc survives).
  * - `rejected_validation`  — a reflected body failed `validateLearnedDocBody`
  *                            (a poison/secret body rejected before durable storage).
+ * - `rejected_name_length` — a reflected doc's NAME exceeded `MAX_DOC_NAME_LENGTH`
+ *                            (the 225 WR-01 gap: previously mis-reported as
+ *                            `rejected_validation`). Reported as its own reason so an
+ *                            operator distinguishes a name-length over-cap from a poison
+ *                            verdict (counts-only — never the offending name).
+ * - `untrusted_origin`     — every selected success was dropped at SELECT for an
+ *                            untrusted origin / external-trust source (D5 salvage): the
+ *                            specific "nothing trusted survived" reason, out-ranking the
+ *                            generic `no_successes`.
  * - `admitted`             — ≥1 doc admitted.
  */
 export type ReflectAdmissionOutcome =
   | "admitted"
   | "uncorroborated"
   | "rejected_validation"
+  | "rejected_name_length"
+  | "untrusted_origin"
   | "empty_reflection"
   | "no_successes";
 
@@ -223,6 +234,18 @@ export interface RunReflectionResult {
   maxTopicCardinality: number;
   /** How many corroborated topics were SKIPPED (empty reflection or rejected validation). */
   skipped: number;
+  /**
+   * Phase 226 (D5 salvage): how many `success` sources were dropped at SELECT for an
+   * untrusted origin (FOLD-04 axis 1) or external-trust source (axis 2). Counts only.
+   * Lets the daemon emit `untrusted_origin` when this is the acute reason nothing seeded.
+   */
+  untrustedDrops: number;
+  /**
+   * Phase 226 (the 225 WR-01 gap): how many corroborated topics had their reflected doc
+   * rejected for a NAME-length over-cap (distinct from a poison `rejected_validation`).
+   * Counts only — never the offending name.
+   */
+  nameLengthRejections: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,11 +272,21 @@ export function classifyReflectOutcome(f: {
   maxTopicCardinality: number;
   admitted: number;
   emptyReflections: number;
+  /** Phase 226: success sources dropped at SELECT for untrusted origin / external-trust. */
+  untrustedDrops?: number;
+  /** Phase 226: corroborated topics rejected for a doc-name over-cap (the 225 WR-01 gap). */
+  nameLengthRejections?: number;
 }): ReflectAdmissionOutcome {
   if (f.admitted > 0) return "admitted";
+  // D5 salvage: when SELECT kept NOTHING but some success was dropped for an untrusted
+  // origin / external-trust source, that is the SPECIFIC reason — out-rank no_successes.
+  if (f.selected === 0 && (f.untrustedDrops ?? 0) > 0) return "untrusted_origin";
   if (f.selected === 0) return "no_successes";
   if (f.maxTopicCardinality < 2) return "uncorroborated";
   if (f.emptyReflections > 0) return "empty_reflection";
+  // The 225 WR-01 gap: a name-length over-cap rejection is reported as ITS OWN reason
+  // rather than mis-attributed to the poison verdict below.
+  if ((f.nameLengthRejections ?? 0) > 0) return "rejected_name_length";
   return "rejected_validation";
 }
 
@@ -336,11 +369,16 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   // 1. SELECT (fail-closed): keep only trusted-origin `success` >= minConfidence.
   const selected: ReflectionSourceTrajectory[] = [];
+  // Phase 226 (D5 salvage): count the successes dropped at SELECT for an untrusted origin
+  // (axis 1) / external-trust source (axis 2). Counts only — feeds the `untrusted_origin`
+  // verdict when this is the acute reason nothing seeded.
+  let untrustedDrops = 0;
   for (const t of sourceTrajectories) {
     // FOLD-04 AXIS 1 (INV-5/D-04 — the 223 session-origin belt): an untrusted-origin
     // success NEVER seeds a doc. Filter FIRST (cheap, before the outcome resolve) — a
     // planted/untrusted trajectory cannot even reach the corroboration gate.
     if (!t.trustedOrigin) {
+      untrustedDrops += 1;
       logger.debug(
         {
           agentId,
@@ -361,6 +399,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // `trustLevel === "external"`; for kind:skill it is always false. SECOND fail-closed
     // exclude AFTER axis 1 so the two compose.
     if (t.sourceTrustExternal) {
+      untrustedDrops += 1;
       logger.debug(
         {
           agentId,
@@ -401,8 +440,11 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   );
 
   if (selected.length === 0) {
-    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0 });
-    return ok({ admissionOutcome: "no_successes", selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0 });
+    // D5 salvage: when nothing survived SELECT, the acute reason is `untrusted_origin` if
+    // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
+    const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
+    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, untrustedDrops, nameLengthRejections: 0 });
   }
 
   // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
@@ -420,6 +462,8 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let admitted = 0;
   let skipped = 0;
   let emptyReflections = 0;
+  // Phase 226 (the 225 WR-01 gap): corroborated topics whose reflected doc NAME was over-cap.
+  let nameLengthRejections = 0;
   let maxTopicCardinality = 0;
   let reflectedTopics = 0;
 
@@ -445,24 +489,29 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
       skipped += 1;
     } else if (r === "rejected") {
       skipped += 1;
+    } else if (r === "rejected_name_length") {
+      // A name-length over-cap rejection is a SKIP (no admit) AND a counted reason so the
+      // funnel verdict can report `rejected_name_length` instead of the poison verdict.
+      nameLengthRejections += 1;
+      skipped += 1;
     } else if (r === "admitted") {
       admitted += 1;
     }
     // "skipped" (a per-topic reflect/admit fault) increments neither admit nor empty.
   }
 
-  const admissionOutcome = classifyReflectOutcome({ selected: selected.length, maxTopicCardinality, admitted, emptyReflections });
+  const admissionOutcome = classifyReflectOutcome({ selected: selected.length, maxTopicCardinality, admitted, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections });
+  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, untrustedDrops, nameLengthRejections });
 }
 
 // ---------------------------------------------------------------------------
 // Per-topic reflect + guard + admit
 // ---------------------------------------------------------------------------
 
-type TopicOutcome = "admitted" | "empty" | "rejected" | "skipped";
+type TopicOutcome = "admitted" | "empty" | "rejected" | "rejected_name_length" | "skipped";
 
 interface ReflectTopicArgs {
   deps: RunReflectionDeps;
@@ -540,6 +589,14 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   //     advisory doc receives (INV-3) — a CRITICAL poison/secret in name/body/desc rejects.
   const validation = validateLearnedDocBody({ name: docName, body, description });
   if (!validation.ok) {
+    // Phase 226 (the 225 WR-01 gap): distinguish a NAME-length over-cap rejection from a
+    // poison/secret rejection so the funnel verdict reports the SPECIFIC reason instead of
+    // mis-attributing it to `rejected_validation`. (docNameForTopic hashes an over-cap name,
+    // so in the normal flow this never fires — but if a name-length finding ever occurs the
+    // enum can now express it.) Content-free: the field NAME + pattern LABELS only.
+    const nameLengthRejected = validation.findings.some(
+      (f) => f.field === "name" && f.patterns.includes("name-too-long"),
+    );
     logger.warn(
       {
         agentId,
@@ -548,11 +605,13 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         topicKey,
         // Content-free: the rejected field names + pattern LABELS only (never the body).
         rejectedFields: validation.findings.map((f) => f.field),
-        hint: "reflected doc body failed the static poison/secret scan — NOT admitted",
+        hint: nameLengthRejected
+          ? "reflected doc NAME exceeded MAX_DOC_NAME_LENGTH — NOT admitted"
+          : "reflected doc body failed the static poison/secret scan — NOT admitted",
       },
       "reflection doc rejected by validateLearnedDocBody",
     );
-    return "rejected";
+    return nameLengthRejected ? "rejected_name_length" : "rejected";
   }
 
   // 5c. WRITE. A profile/topic CORRECTION of an EXISTING doc routes through
@@ -651,13 +710,23 @@ function deriveDescription(body: StructuredBody): string {
 function logRunComplete(
   deps: RunReflectionDeps,
   startMs: number,
-  counts: { selected: number; admitted: number; maxTopicCardinality: number; skipped: number; emptyReflections: number },
+  counts: {
+    selected: number;
+    admitted: number;
+    maxTopicCardinality: number;
+    skipped: number;
+    emptyReflections: number;
+    untrustedDrops: number;
+    nameLengthRejections: number;
+  },
 ): void {
   const admissionOutcome = classifyReflectOutcome({
     selected: counts.selected,
     maxTopicCardinality: counts.maxTopicCardinality,
     admitted: counts.admitted,
     emptyReflections: counts.emptyReflections,
+    untrustedDrops: counts.untrustedDrops,
+    nameLengthRejections: counts.nameLengthRejections,
   });
   deps.logger.info(
     {
