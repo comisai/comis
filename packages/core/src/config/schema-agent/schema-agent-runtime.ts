@@ -435,11 +435,13 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default-ON, so `.parse({})` produces an active block; the master cost switch
    *  (`memory.costFeatures.enabled`) force-disables it at the registration site. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
-  /** Tuned-alpha learner tuning (Verified Learning WS3 / ranking). Opt-OUT posture:
-   *  default-ON. The on/off switch + bandit/per-intent/exploration knobs the daemon
-   *  reward seam, the bandit cron, and the per-intent recall apply all gate on. Composes
-   *  WITH (does not replace) memoryOnlineTuning + rag.onlineTuning; the master cost switch
-   *  force-disables it at the registration site. */
+  /** Outcome-rewarded usefulness-feedback write gate (RANK-01). Opt-OUT posture:
+   *  default-ON; force-disabled by `memory.costFeatures.enabled: false`. Gates the
+   *  daemon reward seam's success→`recordUsage` / failure→`recordFailure` write to the
+   *  usefulness store — the FORGET-02 `failure_count` source the lifecycle sweep JOINs on.
+   *  (The UCB recall bandit — learner/perIntent/exploration, the memoryOnlineTuning cron,
+   *  the rag.onlineTuning apply — was DELETED in Phase 224; this block now carries ONLY
+   *  `enabled`. The now-narrow scope rename is deferred to Phase 226.) */
   learningTuning: LearningTuningConfigSchema.default(() => LearningTuningConfigSchema.parse({})),
   /** Soft-eviction policy (Verified Learning WS4 / forgetting). Opt-OUT posture: default-ON
    *  (safe now that outcome fusion uses recency — a recovered turn no longer wrongly decays the
