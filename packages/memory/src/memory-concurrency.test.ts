@@ -64,12 +64,20 @@ function cleanupDb(dbPath: string): void {
 /** Create a WAL-enabled MemoryConfig for a given dbPath. */
 function createWalConfig(dbPath: string): MemoryConfig {
   return {
+    enabled: true,
     dbPath,
     walMode: true,
-    embeddingModel: "test",
-    embeddingDimensions: 4,
+    // Phase 226: the recall keepers nest under memory.recall (design §5).
+    recall: {
+      embeddingModel: "test",
+      embeddingDimensions: 4,
+      rerankerModel: "hf:test/reranker.gguf",
+    },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
     retention: { maxAgeDays: 0 },
+    rerankerModelsDir: "models",
+    rerankerGpu: "false",
+    rerankerThreads: 4,
   };
 }
 
