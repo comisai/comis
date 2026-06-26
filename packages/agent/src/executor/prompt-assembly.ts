@@ -73,7 +73,6 @@ import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildProfileBlock } from "./user-representation-block.js";
-import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -464,13 +463,6 @@ export interface PromptAssemblyParams {
      *  doc is selected by `topicKey === sessionKey.userId`); NO model call crosses onto
      *  the recall hot path (the milestone's #1 constraint). */
     mentalModelStore?: import("@comis/core").MentalModelStorePort;
-    /** Optional channel-relationship store for the LLM-free directional standing-block
-     *  injection (read side; default-OFF, gated on the privacy-review sign-off).
-     *  Absent ⇒ no read, no push, byte-identical prompt (the cost gate). The agent
-     *  receives the port TYPE only — the agent↛memory build cut. The read is a
-     *  deterministic store.read scoped to channelId = sessionKey.channelId + a pure
-     *  formatter; NO model call crosses onto the recall hot path (the #1 constraint). */
-    relationshipStore?: import("@comis/core").RelationshipStore;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -1322,52 +1314,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  // CHANNEL-RELATIONSHIP STANDING BLOCK: the LLM-free channel-relationship block is a
-  // DURABLE standing block ("how participants in this channel relate"), the directional
-  // analog of the user-profile block above. It is injected on its OWN dual gate — the
-  // sign-off (`config.socialModeling.enabled && config.socialModeling.privacyReviewSignedOffBy`,
-  // the knob + a RECORDED privacy-review sign-off) AND the optional store dep —
-  // INDEPENDENT of whether RAG ran, whether recall hit, and independent of `rag.enabled`
-  // (the lesson from the user-profile block: a standing block must not be nested in the
-  // recall-hit branch).
-  //
-  // The sign-off gate is the headline read-side proof: the knob alone does NOT
-  // activate — a non-empty `privacyReviewSignedOffBy` is required. With the gate
-  // closed (off OR no sign-off) OR no store dep, read() is NEVER called and the prompt
-  // is byte-identical (the cost gate + the privacy gate). When open, a DETERMINISTIC
-  // store.read scoped to channelId = sessionKey.channelId (the read-side
-  // boundary — the per-channel privacy axis) + the pure buildRelationshipBlock
-  // formatter (NO model call — the recall hot path stays LLM-free). The formatter
-  // returns null on an empty channel ⇒ nothing pushed ⇒ byte-identity. Non-fatal: a
-  // read err is swallowed so the agent proceeds without the block. The relationship
-  // content was redaction-checked + validateMemoryWrite-clean + high-trust at WRITE
-  // time.
-  if (
-    config.socialModeling?.enabled && config.socialModeling?.privacyReviewSignedOffBy &&
-    deps.relationshipStore
-  ) {
-    try {
-      const rels = await deps.relationshipStore.read({
-        tenantId: deps.tenantId ?? sessionKey.tenantId,
-        agentId: agentId ?? config.name,
-        channelId: sessionKey.channelId,
-      });
-      if (rels.ok && rels.value.length > 0) {
-        const relBlock = buildRelationshipBlock(rels.value);
-        if (relBlock) memorySections.push(relBlock);
-      }
-    } catch (relErr) {
-      logger.debug(
-        {
-          agentId,
-          err: relErr,
-          hint: "channel-relationship read failed; proceeding without the standing block",
-          errorKind: "dependency" as const,
-        },
-        "Channel-relationship standing-block read failed (non-fatal)",
-      );
-    }
-  }
+  // (The CHANNEL-RELATIONSHIP STANDING BLOCK — the LLM-free directional `<channel_relationships>`
+  //  injection, gated on `config.socialModeling.enabled && privacyReviewSignedOffBy` + the store dep —
+  //  was DELETED in Phase 226-04 with the rest of the social-modeling subsystem (the RelationshipStore
+  //  port + adapter, the `relationship` table, the offline directional-edge builder). Deleting the
+  //  injection removes a prompt-injected relationship-model surface; no dormant seam left (I1).)
 
   // 4. Build runtime info
   const runtimeInfo: RuntimeInfo = {

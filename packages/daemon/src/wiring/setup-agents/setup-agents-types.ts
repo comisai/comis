@@ -146,13 +146,8 @@ export interface SingleAgentDeps {
    *  hit 3×). Byte-identical no-op when absent OR when no lcd_distilled result is
    *  present. The core LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
   provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-  /** Directional relationship store. Threaded into each per-agent
-   *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>`
-   *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port TYPE
-   *  (agent↛memory cut). Dormant until the offline builder writes rows AND the operator enables the
-   *  dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
-   *  no read, no push, byte-identical prompt. */
-  relationshipStore?: import("@comis/core").RelationshipStore;
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
    *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
    *  (append-after-platform, materialized read-only). The segregated `MentalModelStorePort`

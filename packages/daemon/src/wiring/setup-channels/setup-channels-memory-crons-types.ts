@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, RelationshipStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
@@ -87,8 +87,8 @@ export interface MemoryCronContext {
   // (The cron-context `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
   //  deleted triple-extraction dispatch branch. The graphSpread recall lane consumes tripleStore
   //  via the SEPARATE setupAgents deps chain, NOT this cron context; the port + lane survive.)
-  /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
-  relationshipStore?: RelationshipStore;
+  // (The cron-context `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
+  //  upsert — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
   // (The cron-context `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
   //  the deleted usefulness-judge dispatch branch. The FORGET-02 recordUsage reward write uses
   //  the setup-learning.ts deps, NOT this cron context; that store survives.)
@@ -96,9 +96,10 @@ export interface MemoryCronContext {
    *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
    *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** The `inspect` read surface the __SOCIAL_MODELING__ sentinel (grouped by channelId)
-   *  scopes its per-(tenant, agent, channel) high-trust source reads over. (The
-   *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ readers were deleted in Phase 226-03.) */
+  /** The `inspect` high-trust source read surface — the surviving __REFLECT__ sentinel scopes
+   *  its per-(tenant, agent) profile/topic source reads over it (the Phase 225 FOLD path). (The
+   *  __SOCIAL_MODELING__ reader was deleted in Phase 226-04; the __USEFULNESS_JUDGE__ +
+   *  __MEMORY_TRIPLE_EXTRACTION__ readers in Phase 226-03 — all with their subsystems.) */
   memoryApi?: MemoryApi;
   /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,
    *  REFLECT-01/02). Assembled daemon-side; the handler injects the mental-model store + the

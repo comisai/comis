@@ -32,7 +32,6 @@ import {
   createSqliteMemoryCausalStore,
   createSqliteTripleStore,
   createSqliteMemoryEmbeddingStore,
-  createSqliteRelationshipStore,
   createSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore, createSqliteMentalModelStore,
   type MemoryApi,
@@ -142,20 +141,9 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
-  /** Directional relationship store. The SOLE adapter for the
-   *  segregated `RelationshipStore` port (the `(tenant, agent, channel)`-scoped upsert/read over the
-   *  additive `relationship` table of directional `(subjectUserId, aboutUserId)` edges) — built
-   *  UNCONDITIONALLY on the SAME shared `db` handle the memory adapter owns (so the
-   *  `source_memory_id` ON DELETE CASCADE + the channel-scoped isolation stay consistent with the
-   *  memory rows the edges are distilled from — a read on a DIFFERENT handle would silently return
-   *  empty). No model/IO cost, so it is always present; the LLM-free
-   *  `<channel_relationships>` injection stays dormant until the offline builder writes rows AND an
-   *  operator both enables `agents.<id>.socialModeling.enabled` AND records a privacy-review sign-off
-   *  (`privacyReviewSignedOffBy`) — the dual gate. Threaded into the recall read path
-   *  (setup-agents-*) as the port TYPE only AND into the offline-builder `__SOCIAL_MODELING__` cron —
-   *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
-   *  consumers are joined (the agent↛memory cut). */
-  relationshipStore: import("@comis/core").RelationshipStore;
+  // (The directional relationship store was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the RelationshipStore port + sqlite adapter, the `relationship`
+  //  table, the offline directional-edge builder, the prompt injection are all gone.)
   /** Consolidation store. SOLE `MemoryConsolidationStore` adapter; built unconditionally on
    *  the shared `db` (no model/IO cost). Cron dormant until `memoryConsolidation.enabled`
    *  (default OFF). Construction-site comment has the full rationale; the agent gets the port TYPE only. */
@@ -512,17 +500,10 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
-  // 6.5.2b''''''. Directional relationship store. Built on the
-  // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the
-  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, channel)` channel-scoped isolation
-  // must stay consistent with the memory rows the directional edges are distilled from; a read on a
-  // DIFFERENT handle would silently return empty (the same hazard as the embedding / user-representation
-  // stores above). Always constructed (no model/IO cost); the LLM-free `<channel_relationships>`
-  // injection stays dormant until the offline builder writes rows AND the operator enables the
-  // dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
-  // root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded into the recall
-  // read path (setup-agents-*) AND the `__SOCIAL_MODELING__` offline-builder cron (setup-channels).
-  const relationshipStore = createSqliteRelationshipStore({ db, logger: memoryLogger });
+  // (6.5.2b''''''. The directional relationship store construction was DELETED in Phase 226-04
+  //  with the rest of the social-modeling subsystem — the createSqliteRelationshipStore adapter,
+  //  the `relationship` table, the offline `__SOCIAL_MODELING__` builder cron, the prompt injection
+  //  are all gone. No alias, I1.)
 
   // 6.5.2c. Consolidation store. Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
@@ -742,7 +723,6 @@ export async function setupMemory(deps: {
     causalStore,
     tripleStore,
     embeddingStore,
-    relationshipStore,
     consolidationStore,
     usefulnessStore,
     outcomeStore,

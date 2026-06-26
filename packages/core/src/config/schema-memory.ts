@@ -51,8 +51,8 @@ export const MemoryConfigSchema = z.strictObject({
      * the operator's single escape hatch from any LLM/API spend the memory stack would
      * otherwise incur. Default `true` (opt-out): the gate is ON but gates nothing until a
      * per-agent feature is itself enabled. NOT in scope: the $0 on-device recall features
-     * (memory.recall / rerank / lanes / forget / mmr) and `socialModeling` (its own
-     * privacy gate).
+     * (memory.recall / rerank / lanes / forget / mmr). (The `socialModeling` cost+privacy
+     * feature was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
      */
     enabled: z.boolean().default(true),
     /** Path to the SQLite database file (resolved relative to dataDir if not absolute) */

@@ -425,7 +425,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, relationshipStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
@@ -517,15 +517,16 @@ function buildChannelManagerDeps(deps: {
     // __MEMORY_CONSOLIDATION__ cron were deleted); the consolidationStore port + its
     // memories table are retired in Phase 226. Still threaded (its writer is gone, no live consumer).
     consolidationStore,
-    // relationshipStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the
-    // __SOCIAL_MODELING__ / __MEMORY_LIFECYCLE__ sentinels (the last is KEYLESS: the DORMANT
-    // lifecycle sweep). (The __MEMORY_TRIPLE_EXTRACTION__ + __USEFULNESS_JUDGE__ sentinels were
-    // deleted in Phase 226 SIMPLIFY-03 — neither tripleStore nor usefulnessStore rides the cron
-    // chain anymore: tripleStore feeds ONLY the graphSpread recall lane via setupAgents (below),
-    // the FORGET-02 recordUsage write is in setup-learning.ts. The __MEMORY_REASONING__ /
-    // __USER_REPRESENTATION__ sentinels + the __ONLINE_TUNING__ bandit were deleted in Phase 225 / 224.)
+    // memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_LIFECYCLE__
+    // sentinel (KEYLESS: the DORMANT lifecycle sweep). (The __SOCIAL_MODELING__ sentinel + its
+    // relationshipStore were DELETED in Phase 226-04 with the rest of the social-modeling subsystem.
+    // The __MEMORY_TRIPLE_EXTRACTION__ + __USEFULNESS_JUDGE__ sentinels were deleted in Phase 226
+    // SIMPLIFY-03 — neither tripleStore nor usefulnessStore rides the cron chain anymore: tripleStore
+    // feeds ONLY the graphSpread recall lane via setupAgents (below), the FORGET-02 recordUsage write
+    // is in setup-learning.ts. The __MEMORY_REASONING__ / __USER_REPRESENTATION__ sentinels + the
+    // __ONLINE_TUNING__ bandit were deleted in Phase 225 / 224.)
     // outcomeStore + learnedSkillStore ride the SAME chain → the __REFLECT__ sentinel (v2.31 Reflection): the daemon assembles the closed-graph reflection bundle from them + the trusted-origin LCD source inside registerCronEventListeners. (The embedder is NO LONGER threaded here — the reflection job groups by topicKey, no clustering embeddings; the dead procedural-synthesis embedding wiring was deleted in Phase 223 Plan 05.)
-    relationshipStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
+    memoryLifecycleStore, outcomeStore, learnedSkillStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1429,7 +1430,7 @@ async function bootFoundation(
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, relationshipStore, outcomeStore, learnedSkillStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outcomeStore, learnedSkillStore, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock, timers, learnedSkillSurfaceRegistry });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1597,7 +1598,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, relationshipStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1661,7 +1662,7 @@ async function bootAgents(
     spendAccumulator, temporalStore, // spendAccumulator = Phase 177 dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
     causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
-    embeddingStore, usefulnessStore, relationshipStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut). (The LLM-free <user_profile> read is now the kind:"profile" mentalModelStore.list path — FOLD-01, Phase 225 — NOT a separate userRepresentationStore. The buildScoringAlphas tuned-vector read was deleted in Phase 224 — recall scoring is the fixed config alphas.)
+    embeddingStore, usefulnessStore, // the MMR re-rank's scoped embedding read + recall usefulness read -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut). (The directional relationshipStore + the LLM-free <channel_relationships> standing-block read were DELETED in Phase 226-04 with the rest of the social-modeling subsystem. The LLM-free <user_profile> read is now the kind:"profile" mentalModelStore.list path — FOLD-01, Phase 225 — NOT a separate userRepresentationStore. The buildScoringAlphas tuned-vector read was deleted in Phase 224 — recall scoring is the fixed config alphas.)
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter, learnedSkillStore, learnedSkillSurfaceRegistry, // learnedSkillStore (v2.26 SURFACE-01/03) -> setupAgents -> getPromptSkillsXml; learnedSkillSurfaceRegistry (WR-01) -> setupAgents register + the promote/demote re-refresh
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
@@ -1809,7 +1810,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts, oauthManagers, authStorages, // oauthManagers (184): DEFAULT agent's → buildImageGenBundle (CDX-01); authStorages (FLAG-3): dialectic OAuth resolver
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, relationshipStore, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, lcdStore, provenanceStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, pinnedStore: memoryAdapter, learnedSkillStore, learnedSkillSurfaceRegistry, summarizerSpendBreaker, spendAccumulator,
     boundedAutonomyBudget: boundedAutonomyBudgetHolder, resolveRootRunId, // Phase 213-08: per-root budget holder + rootRunId resolver → each bridge
     outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe

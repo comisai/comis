@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
@@ -75,13 +75,8 @@ export interface CronEventListenerDeps {
   // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
   //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
   //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
-  /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
-   *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
-   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op. Absent => the relationship sentinel cannot run, but the cron is off-by-default
-   *  AND sign-off-gated so a default-config agent never reaches it. */
-  relationshipStore?: RelationshipStore;
+  // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
+  //  upsert write path — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
   /** Memory-lifecycle sweep store — the KEYLESS
    *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
@@ -94,10 +89,11 @@ export interface CronEventListenerDeps {
   //  setup-learning.ts deps, not this cron chain; that store is untouched.)
   outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
   learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
-  /** Per-user representation read surface — the __USER_REPRESENTATION__
-   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
-   *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
-   *  surface backs the __SOCIAL_MODELING__ sentinel (grouped by resolved channelId). */
+  /** High-trust source read surface (`inspect`) — the surviving __REFLECT__ sentinel scopes
+   *  its per-(tenant, agent) profile/topic source read over it (the Phase 225 FOLD path).
+   *  Built in setup-memory; daemon-side (the agent imports no memory package). (The
+   *  __USER_REPRESENTATION__ + __SOCIAL_MODELING__ readers that also used this surface were
+   *  deleted in Phase 225-05 / 226-04 with their subsystems.) */
   memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
@@ -219,7 +215,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       agents,
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
-      relationshipStore: deps.relationshipStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
       memoryApi: deps.memoryApi,
       reflection: buildReflectionCronDeps(deps), // v2.31 Reflection closed-graph bundle; undefined ⇒ off

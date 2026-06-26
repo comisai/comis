@@ -21,9 +21,9 @@
  * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224;
  * memoryConsolidation / memoryReasoning / memoryUserRepresentation were deleted in
  * Phase 225-05 — their work folded into the one learningSkills-gated reflection cron.)
- * The $0 keyless memoryLifecycle sweep and the privacy-gated
- * socialModeling cron are NOT cost features here (lifecycle is keyless; social
- * has its own privacy gate), so neither triggers the notice.
+ * The $0 keyless memoryLifecycle sweep is NOT a cost feature here (lifecycle is
+ * keyless), so it does not trigger the notice. (The privacy-gated socialModeling
+ * cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
  *
  * @module
  */

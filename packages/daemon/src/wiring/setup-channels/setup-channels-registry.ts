@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -209,13 +209,8 @@ export interface ChannelsDeps {
   // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
   //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
   //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
-  /** Directional relationship store — forwarded to the cron path
-   *  so the opt-in + sign-off-gated __SOCIAL_MODELING__ sentinel runs runRelationshipBuild's offline
-   *  per-channel directional-edge upsert write. Built in setup-memory on the shared db handle; injected
-   *  as the port TYPE (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a
-   *  missing thread silently disables the offline-builder write path. Absent => the
-   *  relationship sentinel cannot run (the cron is off-by-default + sign-off-gated anyway). */
-  relationshipStore?: RelationshipStore;
+  // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
+  //  upsert write path — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
   /** Memory-lifecycle sweep store — forwarded to the cron path so
    *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
@@ -406,7 +401,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     entityStore: deps.entityStore,
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
-    relationshipStore: deps.relationshipStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
     // v2.31 Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
     // the __REFLECT__ sentinel assembles the closed-graph reflection bundle (no embedder — the

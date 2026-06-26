@@ -314,10 +314,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // missing forward here is a silent no-op (the profile block never renders even with the store
       // wired daemon-side — the documented field-plumbing drop, Pitfall 1).
       mentalModelStore: deps.mentalModelStore,
-      // Forward the directional relationship store the SAME way — a missing forward here is a silent
-      // no-op (the <channel_relationships> block never renders even with the store wired in the
-      // daemon). prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
-      relationshipStore: deps.relationshipStore,
+      // (The directional relationshipStore forward was DELETED in Phase 226-04 with the rest of
+      //  the social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

@@ -86,12 +86,8 @@ export interface ToolAssemblyDeps {
    *  cut). A missing forward here leaves the profile injection a silent no-op even when the store
    *  is wired in the daemon (the documented latent field-plumbing drop — Pitfall 1). */
   mentalModelStore?: import("@comis/core").MentalModelStorePort;
-  /** Optional directional relationship store. Forwarded into
-   *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
-   *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical
-   *  prompt. TYPE-only from @comis/core (the agent↛memory build cut). A missing forward here leaves the
-   *  relationship injection a silent no-op even when the store is wired in the daemon (Pitfall 6). */
-  relationshipStore?: import("@comis/core").RelationshipStore;
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;

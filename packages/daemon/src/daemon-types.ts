@@ -432,13 +432,8 @@ export interface BootContext {
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
-  /** Directional relationship store — threaded into setupAgents
-   *  (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>` standing-block
-   *  injection) AND the offline-builder cron (setup-channels -> the __SOCIAL_MODELING__ sentinel). Built
-   *  in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
-   *  offline builder writes rows AND the operator enables the social-modeling dual gate (default-OFF +
-   *  sign-off-gated). */
-  relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — setupMemory no longer returns it; the cron + injection it fed are gone.)
   /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
    *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
    *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
