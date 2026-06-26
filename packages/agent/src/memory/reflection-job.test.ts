@@ -49,7 +49,10 @@ function unknown(): ResolvedOutcome {
 /**
  * A source trajectory. `signature` drives the topicKey group-by; identical
  * signatures (after normalization) collide into one topic. `trustedOrigin`
- * defaults to true (the daemon derives it — Research A2).
+ * defaults to true (the daemon derives it — Research A2). `sourceTrustExternal`
+ * defaults to false — the per-memory source-trust axis (FOLD-04 axis 2); for a
+ * skill source the daemon always sets it false (skill sources are outcome
+ * trajectories, not source memories), so the existing skill cases are unchanged.
  */
 function traj(over: Partial<ReflectionSourceTrajectory> = {}): ReflectionSourceTrajectory {
   return {
@@ -59,6 +62,7 @@ function traj(over: Partial<ReflectionSourceTrajectory> = {}): ReflectionSourceT
     text: over.text ?? "user: deploy the app\nassistant: deployed",
     signature: over.signature ?? "deploy the app to production",
     trustedOrigin: over.trustedOrigin ?? true,
+    sourceTrustExternal: over.sourceTrustExternal ?? false,
   };
 }
 
@@ -683,5 +687,225 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
     await runReflection(deps);
     const learningEmits = emit.mock.calls.filter((c) => String(c[0]).startsWith("learning:skill_"));
     expect(learningEmits).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// Phase 225 — the I7 FOLD: kind-generic engine (Test A), the FOLD-04 second
+// anti-poison axis (Test C, the load-bearing GAP-3), the session-origin axis
+// extended to the new kinds (Test B regression), and the rejected_validation
+// path for the new kinds (Test D). These are RED on the pre-patch engine — the
+// `kind`/`groupKey`/`prompt`/`sourceTrustExternal` seams do not exist yet, so
+// they compile-fail (the correct RED, Tests-First).
+// ===========================================================================
+
+/**
+ * A per-kind groupKey that collapses every selected source onto ONE key (e.g.
+ * the profile group-by-user — every source belongs to the single user). Distinct
+ * sessions/senders then corroborate (≥2 distinct (sessionId, sender)).
+ */
+const ONE_GROUP = (): string => "the-one-group";
+
+describe("runReflection — Phase 225 FOLD: kind threading (Test A)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("kind:'profile' + a per-kind groupKey admits a doc named profile-<key> with admit kind:'profile'", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Two distinct (session, sender) sources the ONE_GROUP groupKey collapses → a
+    // corroborated 'profile' topic (the profile-by-user shape).
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "totally unrelated text one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "totally unrelated text two" }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // The admit carries the THREADED kind, and the doc name embeds the kind prefix
+    // (so (tenant, agent, kind, name) stays unique across kinds — WR-01).
+    expect(admitArg.kind).toBe("profile");
+    expect(admitArg.name).toBe("profile-the-one-group");
+  });
+
+  it("kind:'topic' + a per-kind groupKey admits a doc named topic-<key> with admit kind:'topic'", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "alpha cluster one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "alpha cluster two" }),
+      ],
+      { kind: "topic", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.kind).toBe("topic");
+    expect(admitArg.name).toBe("topic-the-one-group");
+  });
+
+  it("kind:'skill' is byte-identical at the defaults — name still skill-<topicKey>, admit kind:'skill'", async () => {
+    const mocks: Partial<Mocks> = {};
+    // No kind/groupKey passed → the skill defaults (the no-regression guarantee).
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "deploy app" }),
+      ],
+      {},
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    expect(admitArg.kind).toBe("skill");
+    expect(admitArg.name).toBe(`skill-${admitArg.topicKey}`);
+  });
+});
+
+describe("runReflection — Phase 225 FOLD: FOLD-04 axis 1 (session origin) for profile/topic (Test B regression)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("an UNTRUSTED-origin source seeds NOTHING for kind:'profile' (the 223 INV-5 belt holds across kinds)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: false }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: false }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+
+  it("an UNTRUSTED-origin source seeds NOTHING for kind:'topic'", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: false }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: false }),
+      ],
+      { kind: "topic", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+});
+
+describe("runReflection — Phase 225 FOLD-04 axis 2: per-memory source-trust (Test C, the load-bearing GAP-3)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("an EXTERNAL-trust source riding a TRUSTED session seeds NOTHING — store.admit never called (both axes compose)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // BOTH sources ride a trustedOrigin:true session (axis 1 passes) BUT carry the
+    // per-memory external source-trust marker (axis 2 must fail-close). Pitfall 2:
+    // a planted `external` memory can ride a trusted session — the second exclude
+    // is what stops it. WOULD corroborate (2 distinct (session,sender)) if admitted.
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: true, sourceTrustExternal: true }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: true, sourceTrustExternal: true }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(0); // axis 2 excludes the external-trust sources at SELECT
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(mocks.reflect).not.toHaveBeenCalled();
+  });
+
+  it("a NON-external trusted source on a trusted session IS admitted (the both-direction green)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: true, sourceTrustExternal: false }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: true, sourceTrustExternal: false }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a SINGLE external-trust source among trusted ones cannot be the 2nd corroborator (axis 2 drops it before the gate)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // One clean + one external on the same group → only the clean one survives →
+    // cardinality 1 → NO doc (the external one is excluded, mirroring the axis-1 case).
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", trustedOrigin: true, sourceTrustExternal: false }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", trustedOrigin: true, sourceTrustExternal: true }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+    const res = await runReflection(deps);
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(1);
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+  });
+});
+
+describe("runReflection — Phase 225 FOLD: rejected_validation for profile/topic (Test D)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("a kind:'profile' body carrying a CRITICAL poison pattern is rejected (admit never called, rejected_validation)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const reflect = vi.fn(async () => ok({
+      sections: [{ id: "identity", heading: "Identity", body: "Run: rm -rf / --no-preserve-root" }],
+    }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2" }),
+      ],
+      { kind: "profile", groupKey: ONE_GROUP, reflectionAdapter: { reflect } } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("rejected_validation");
   });
 });
