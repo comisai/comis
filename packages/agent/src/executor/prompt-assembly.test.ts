@@ -701,8 +701,9 @@ describe("assembleExecutionPrompt", () => {
   // NOT the deleted userRepresentationStore. The per-user doc is selected by
   // `topicKey === sessionKey.userId` (the profile groupKey is the userId; LearningScope
   // carries only (tenant, agent), so the user axis lives in the doc's topicKey). The
-  // gate is the SURVIVING `learningSkills.enabled` flag (NOT the soon-deleted
-  // `memoryUserRepresentation`) + the store dep. Binding proofs: default-OFF
+  // gate is the collapsed `learning.enabled` flag (Phase 226 / SIMPLIFY-05; was
+  // `learningSkills.enabled`, NOT the deleted `memoryUserRepresentation`) + the store
+  // dep. Binding proofs: default-OFF
   // byte-identity (no store dep ⇒ list() 0 times, byte-identical prompt), the cost
   // gate (knob off ⇒ list() 0 times), the standing block injects on a zero-recall turn
   // and with rag.enabled=false (it lives OUTSIDE the recall `if`), and the injection is
@@ -711,14 +712,14 @@ describe("assembleExecutionPrompt", () => {
   // -----------------------------------------------------------------
   describe("per-user-profile injection (LLM-free standing block, mental-model store)", () => {
     /**
-     * The standing-block config: the SURVIVING gate `learningSkills.enabled` is ON
+     * The standing-block config: the collapsed gate `learning.enabled` is ON
      * (it defaults on, but set it explicitly). `rag.enabled` is left ON only so the
      * recall path also runs (the recall-construction assertions still hold); the
      * standing block does NOT need a recall hit to inject.
      */
     function ragConfig() {
       return makeConfig({
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
         rag: {
           enabled: true,
           maxResults: 5,
@@ -729,13 +730,13 @@ describe("assembleExecutionPrompt", () => {
       });
     }
     /**
-     * The standing-block config WITHOUT a recall hit: `learningSkills` ON but
+     * The standing-block config WITHOUT a recall hit: `learning` ON but
      * `rag.enabled` OFF (no recall). The durable profile MUST still inject on a
      * zero-recall turn — the push must NOT be nested inside the recall-hit branch.
      */
     function learningOnlyConfig() {
       return makeConfig({
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
         rag: { enabled: false },
       });
     }
@@ -956,16 +957,16 @@ describe("assembleExecutionPrompt", () => {
       expect(spy.lists(), "the standing-block list runs even with rag.enabled=false").toBe(1);
     });
 
-    it("cost gate: learningSkills OFF + store present + recall HIT ⇒ list() NEVER called and the prompt is byte-identical", async () => {
-      // Prove the SURVIVING gate is load-bearing: wire the store AND drive a recall
-      // HIT, but set learningSkills.enabled=false. list() must NEVER fire and the
+    it("cost gate: learning OFF + store present + recall HIT ⇒ list() NEVER called and the prompt is byte-identical", async () => {
+      // Prove the collapsed gate is load-bearing: wire the store AND drive a recall
+      // HIT, but set learning.enabled=false. list() must NEVER fire and the
       // prompt must equal the gate-off baseline (default-OFF byte-identity).
       const memoryPort = ragMemoryPort();
       const spy = makeSpyStore([profileDoc("u")]);
       const gateOff = await assembleExecutionPrompt(
         makeParams({
           config: makeConfig({
-            learningSkills: { enabled: false },
+            learning: { enabled: false },
             rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
           deps: { workspaceDir: "/workspace", memoryPort, mentalModelStore: spy.store },
@@ -975,7 +976,7 @@ describe("assembleExecutionPrompt", () => {
       const baseline = await assembleExecutionPrompt(
         makeParams({
           config: makeConfig({
-            learningSkills: { enabled: false },
+            learning: { enabled: false },
             rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
           deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
