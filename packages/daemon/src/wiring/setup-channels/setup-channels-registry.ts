@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -227,11 +227,9 @@ export interface ChannelsDeps {
    *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
    *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness store — forwarded to the cron path so the __USEFULNESS_JUDGE__
-   *  sentinel records its verdict through it (`recordUsage`). Built in setup-memory on the shared
-   *  db handle; injected as the port TYPE (agent↛memory cut). (The __ONLINE_TUNING__ bandit FEED
-   *  read was deleted in Phase 224.) */
-  usefulnessStore?: MemoryUsefulnessStore;
+  // (The cron-path `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
+  //  the deleted usefulness-judge sentinel. The FORGET-02 recordUsage reward write rides
+  //  setup-learning.ts, not this cron forward; the store survives.)
   /** Outcome-signal store (WS1) — forwarded to the __REFLECT__ cron path (runReflection
    *  fail-closed success gate). Built in setup-memory; port TYPE only (agent↛memory cut). */
   outcomeStore?: OutcomeSignalPort;
@@ -416,7 +414,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     tripleStore: deps.tripleStore,
     relationshipStore: deps.relationshipStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
-    usefulnessStore: deps.usefulnessStore,
     // v2.31 Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
     // the __REFLECT__ sentinel assembles the closed-graph reflection bundle (no embedder — the
     // reflection job groups by topicKey, not clustering embeddings).

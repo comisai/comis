@@ -422,38 +422,11 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Usefulness-judge cron job --
-    // OPT-IN, OFF by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY when the
-    // operator sets memoryUsefulnessJudge.enabled; a default agent registers NO job → byte-identical
-    // with the config absent. Default schedule 0 7 * * * runs AFTER social's 0 6 so the judge scores
-    // recalled-memory usefulness over a fully-settled night. Job options mirror the reasoning/userrep
-    // job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session). The __USEFULNESS_JUDGE__
-    // sentinel's full dispatch (the seam → recordUsage write) is a later costed enablement; this
-    // registration is the default-OFF scaffold (the citation-marker core is keyless).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryUsefulnessJudgeConfig = agentConfig.memoryUsefulnessJudge;
-    if (costFeaturesEnabled && memoryUsefulnessJudgeConfig?.enabled) {
-      const memUsefulnessJudgeJobId = `memory-usefulness-judge-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memUsefulnessJudgeJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memUsefulnessJudgeJobId,
-          name: "Memory usefulness judge",
-          agentId,
-          schedule: { kind: "cron", expr: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" },
-          payload: { kind: "system_event", text: "__USEFULNESS_JUDGE__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" }, "Registered memory usefulness judge cron job");
-      }
-    }
+    // (The usefulness-judge cron — __USEFULNESS_JUDGE__, gated by memoryUsefulnessJudge.enabled
+    // — was DELETED in Phase 226 SIMPLIFY-03 (D-03). It was a dormant cost-gated cheap-model
+    // seam that fed recordUsage; the FORGET-02 reward write lives in setup-learning.ts and is
+    // unaffected. The per-agent memoryUsefulnessJudge config key is gone — a config carrying it
+    // is now rejected at parse, the D-01a operator-update path.)
 
     // (The online-tuning bandit cron — __ONLINE_TUNING__, gated by memoryOnlineTuning.enabled
     // — was DELETED in Phase 224. The UCB recall bandit is gone; recall scoring is the fixed

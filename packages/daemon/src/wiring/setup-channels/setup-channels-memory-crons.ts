@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The memory-cron sentinel handlers — extracted from setup-channels-credentials.ts
- * to keep that leaf under the 600L setup-channels cap. The LLM-backed sentinels
- * (__MEMORY_CONSOLIDATION__, __MEMORY_REASONING__, __USER_REPRESENTATION__,
- * __SOCIAL_MODELING__) resolve a cheap "cron" model + an API key (by NAME, never logged);
- * (the KEYLESS __ONLINE_TUNING__ bandit sentinel was deleted in Phase 224). The sibling-hosted sentinels
- * (__USEFULNESS_JUDGE__, __MEMORY_TRIPLE_EXTRACTION__ WS7 + the KEYLESS __MEMORY_LIFECYCLE__
- * FORGET-01/06 sweep) live in setup-channels-memory-crons-wire.ts (the 600L dir cap); the
+ * to keep that leaf under the 600L setup-channels cap. The LLM-backed __SOCIAL_MODELING__
+ * sentinel resolves a cheap "cron" model + an API key (by NAME, never logged). (The
+ * __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ / __USER_REPRESENTATION__ sentinels were
+ * deleted in Phase 225-05, the KEYLESS __ONLINE_TUNING__ bandit in Phase 224, and the
+ * __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ dormant crons in Phase 226-03.) The
+ * sibling-hosted survivors (the KEYLESS __MEMORY_LIFECYCLE__ FORGET-01/06 sweep + the
+ * __REFLECT__ engine) live in setup-channels-memory-crons-wire.ts (the 600L dir cap); the
  * fall-through delegates there.
  *
  * All mirror the review branch: the cron registers ONLY for an operator-enabled agent

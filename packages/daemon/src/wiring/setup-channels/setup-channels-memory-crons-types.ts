@@ -3,15 +3,15 @@
  * Shared types for the memory-cron sentinel handlers.
  *
  * Extracted into a types-only leaf so both setup-channels-memory-crons.ts (the
- * LLM/keyless sentinels) and setup-channels-memory-crons-wire.ts (the WS7-wired
- * __USEFULNESS_JUDGE__ / __MEMORY_TRIPLE_EXTRACTION__ sentinels) can import the
- * context shape WITHOUT a runtime cycle between those two files (the main file
- * delegates its fall-through to the wire file).
+ * LLM/keyless sentinels) and setup-channels-memory-crons-wire.ts (the KEYLESS
+ * __MEMORY_LIFECYCLE__ sweep + the __REFLECT__ engine) can import the context shape
+ * WITHOUT a runtime cycle between those two files (the main file delegates its
+ * fall-through to the wire file).
  *
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
@@ -88,17 +88,16 @@ export interface MemoryCronContext {
   tripleStore?: TripleStorePort;
   /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
   relationshipStore?: RelationshipStore;
-  /** The per-memory usefulness store: the WRITE surface (`recordUsage`) the
-   *  __USEFULNESS_JUDGE__ sentinel records its verdict through. (The __ONLINE_TUNING__
-   *  bandit read was deleted in Phase 224 — the recall bandit is gone.) */
-  usefulnessStore?: MemoryUsefulnessStore;
+  // (The cron-context `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
+  //  the deleted usefulness-judge dispatch branch. The FORGET-02 recordUsage reward write uses
+  //  the setup-learning.ts deps, NOT this cron context; that store survives.)
   /** The DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
    *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
    *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** The `inspect` read surface the __USER_REPRESENTATION__ / __SOCIAL_MODELING__
-   *  (grouped by channelId) / __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
-   *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
+  /** The `inspect` read surface the __SOCIAL_MODELING__ sentinel (grouped by channelId)
+   *  scopes its per-(tenant, agent, channel) high-trust source reads over. (The
+   *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ readers were deleted in Phase 226-03.) */
   memoryApi?: MemoryApi;
   /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,
    *  REFLECT-01/02). Assembled daemon-side; the handler injects the mental-model store + the

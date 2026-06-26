@@ -24,7 +24,6 @@ import { BackgroundTasksConfigSchema } from "../schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "../schema-memory-review.js";
 import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
-import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
@@ -414,9 +413,9 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   /** memory_ask grounded-Q&A tool config — the ONE allowed query-time LLM surface.
    *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),
-  /** Offline usefulness-judge configuration (an OFFLINE cron, never the
-   *  recall path). Opt-out posture: default-ON; a COST feature gated by the kill switch. */
-  memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
+  // (The `memoryUsefulnessJudge` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+  //  usefulness-judge cron is gone. z.strictObject now rejects a config carrying it, the
+  //  D-01a operator-update path. The FORGET-02 recordUsage reward write stays in setup-learning.ts.)
   /** Outcome-signal (Verified Learning WS1) configuration. Opt-OUT posture:
    *  default-ON, so `.parse({})` produces an active block; the master cost switch
    *  (`memory.enabled`) force-disables it at the registration site. */

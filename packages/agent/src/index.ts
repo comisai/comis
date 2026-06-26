@@ -208,15 +208,10 @@ export type {
   TripleCandidate,
 } from "./memory/memory-triple-extraction-job.js";
 
-// Offline usefulness-judge seam (the OPTIONAL second usefulness signal alongside the
-// keyless citation-marker attribution). The factory the daemon __USEFULNESS_JUDGE__
-// sentinel calls to BUILD judge({ candidateIds, answer }) from a cheap resolved model
-// (the daemon injects it), keeping USEFULNESS_JUDGE_PROMPT + its lenient/total parser
-// agent-internal (mirrors createUserRepresentationSeam). The verdict partition is written
-// through usefulnessStore.recordUsage by the sentinel (WIRE-02). Only the factory is
-// exported — its Deps/Input/Verdict shapes are inferred at the daemon call site (no
-// unconsumed type surface on the public barrel).
-export { createUsefulnessJudgeSeam } from "./memory/memory-usefulness-judge-seam.js";
+// (The offline usefulness-judge seam — createUsefulnessJudgeSeam — was DELETED in Phase 226
+// SIMPLIFY-03 alongside its dormant __USEFULNESS_JUDGE__ cron. The keyless citation-marker
+// attribution stays the usefulness signal; the FORGET-02 recordUsage reward write lives in
+// the daemon's setup-learning.ts (a separate seam), not this factory.)
 
 // Query-time dialectic synthesis seam (the ONE allowed query-time LLM
 // surface). The factory the daemon `memory.ask` handler calls to BUILD the

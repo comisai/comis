@@ -13,9 +13,9 @@
  * precedence — this seam can never overturn a deterministic result.
  *
  * Built but DORMANT: the judge ships `enabled:false` by default (design D6), so
- * the daemon never constructs or calls it unless an operator opts in. Mirrors the
- * entire posture of {@link createUsefulnessJudgeSeam} (bounded, non-fatal,
- * lenient-parsing) and adds the OUTCOME-04 triple-bound for its UNTRUSTED input.
+ * the daemon never constructs or calls it unless an operator opts in. Follows the
+ * standard offline cron-seam posture (bounded, non-fatal, lenient-parsing) and adds
+ * the OUTCOME-04 triple-bound for its UNTRUSTED input.
  *
  * Security posture (OUTCOME-04 / SEC-01 / §9 triple-bound — the trajectory the
  * judge scores is UNTRUSTED, and the model's self-reported `confidence` is

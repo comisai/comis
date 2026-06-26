@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
@@ -90,11 +90,9 @@ export interface CronEventListenerDeps {
    *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
    *  cron is off-by-default so a default-config agent never reaches it. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness store — the __USEFULNESS_JUDGE__ sentinel records its
-   *  verdict through it (`recordUsage`). Built in setup-memory on the shared db handle;
-   *  injected as the port TYPE (agent↛memory cut). (The __ONLINE_TUNING__ bandit FEED read
-   *  was deleted in Phase 224.) */
-  usefulnessStore?: MemoryUsefulnessStore;
+  // (The cron-path `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
+  //  the deleted usefulness-judge sentinel. The FORGET-02 recordUsage reward write rides the
+  //  setup-learning.ts deps, not this cron chain; that store is untouched.)
   outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
   learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
   /** Per-user representation read surface — the __USER_REPRESENTATION__
@@ -225,7 +223,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tripleStore: deps.tripleStore,
       relationshipStore: deps.relationshipStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
-      usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
       reflection: buildReflectionCronDeps(deps), // v2.31 Reflection closed-graph bundle; undefined ⇒ off
       resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs

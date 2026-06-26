@@ -1,28 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WS7 "dormant wiring" memory-cron sentinel handlers (v2.26 Verified Learning).
+ * Sibling-hosted memory-cron sentinel handlers.
  *
  * Split out of setup-channels-memory-crons.ts (which is at the 600L setup-channels
- * cap) so the two newly-wired sentinels live in their own leaf. The original
+ * cap) so these sentinels live in their own leaf. The original
  * `handleMemoryCronSentinel` delegates here at its fall-through, so the caller +
  * the existing test entry point are unchanged.
  *
  * Sentinels handled here:
- * - __USEFULNESS_JUDGE__ (WIRE-02): registered at setup-schedulers.ts:489 but had NO
- *   dispatch handler — it fired nightly as a NO-OP. Now it builds the cheap-model
- *   usefulness-judge seam and WRITES the verdict partition through
- *   usefulnessStore.recordUsage (the dormant seam goes live). Mirrors the
- *   __MEMORY_REASONING__ block 1:1 (agentId guard → cfg.enabled re-check → resolve a
- *   cheap "cron" model + key by NAME → build the seam → write → onComplete).
  * - __MEMORY_LIFECYCLE__ (FORGET-01/06, Phase 200 Plan 06): the KEYLESS soft-eviction sweep.
- *   Threads THIS agent's learningForgetting eviction policy onto the per-call sweep scope
- *   (the shared store is constructed once; the behavior is per-agent) and emits the
+ *   Threads THIS agent's collapsed `learning.forget` eviction policy onto the per-call sweep
+ *   scope (the shared store is constructed once; the behavior is per-agent) and emits the
  *   daemon-side learning:memory_demoted/evicted counts (the store has no bus). OFF by
  *   default → DORMANT (byte-identical). Moved here for the 600L setup-channels dir cap.
- * - __MEMORY_TRIPLE_EXTRACTION__ (WIRE-01): dispatches the exported-but-never-scheduled
- *   runMemoryTripleExtraction behind the per-agent default-OFF flag.
+ * - __REFLECT__ (v2.31 Reflection, Phase 223): the composition root for the reflection loop
+ *   — injects the @comis/memory mental-model store + the trusted-origin LCD source into
+ *   runReflection and re-emits the counts-only learning:skill_* funnel daemon-side.
  *
- * All re-check cfg.enabled (defence-in-depth — the scheduler already gates, a stale
+ * (The __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ dormant crons were DELETED in
+ * Phase 226-03 — their dispatch branches are gone; an unrecognized sentinel returns false.)
+ *
+ * Both re-check cfg.enabled (defence-in-depth — the scheduler already gates, a stale
  * persisted job must not run for a now-disabled agent), inject the segregated store(s)
  * as port TYPES only (the agent↛memory cut), and are NON-FATAL + counts/ids-only (§2.7).
  *
@@ -30,11 +28,9 @@
  */
 
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
-import { buildCustomJudgeModelSpec } from "../setup-learning-judge.js";
 import {
   resolveOperationModel,
   resolveProviderFamily,
-  createUsefulnessJudgeSeam,
   runMemoryTripleExtraction,
   runReflection,
   createLlmReflectionAdapter,
@@ -47,115 +43,26 @@ import {
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
 
-/** The cheap-model output bound for the offline usefulness-judge call (cost axis). */
-const USEFULNESS_JUDGE_MAX_OUTPUT_TOKENS = 1024;
-
 /**
- * Handle the sibling-hosted memory-cron sentinels (`__USEFULNESS_JUDGE__` /
- * `__MEMORY_LIFECYCLE__` / `__MEMORY_TRIPLE_EXTRACTION__`). Returns `true` when the sentinel
- * was recognized + handled (the caller then returns), `false` when it is neither (the
- * original handler falls through to the normal delivery path).
+ * Handle the sibling-hosted memory-cron sentinels (the KEYLESS `__MEMORY_LIFECYCLE__`
+ * forget sweep + the `__REFLECT__` engine). Returns `true` when the sentinel was
+ * recognized + handled (the caller then returns), `false` when it is neither (the
+ * original handler falls through to the normal delivery path — see the deletion note below).
  */
 export async function handleWireMemoryCronSentinel(
   resultText: string | undefined,
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, tripleStore, usefulnessStore, memoryApi, memoryLifecycleStore, reflection } = ctx;
+  const { container, logger, clock, agents, tenantId, tripleStore, memoryApi, memoryLifecycleStore, reflection } = ctx;
 
-  // -- Usefulness-judge sentinel intercept (WIRE-02) --
-  // Mirrors the __MEMORY_REASONING__ block: opt-in cost gate + cheap "cron" model/key,
-  // then build the OFFLINE judge seam and WRITE its verdict through recordUsage. The
-  // judge scores the recalled-memory candidate ids the agent had this cycle; the seam's
-  // lenient parser + candidate allowlist bound the (untrusted) verdict. The per-turn
-  // answer transcript is not threaded in this scaffold — a future plan supplies it; the
-  // wire (seam → recordUsage) is what WIRE-02 makes live (it was a no-op before).
-  if (resultText === "__USEFULNESS_JUDGE__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Usefulness judge job fired without agentId", errorKind: "config" as const }, "Skipping usefulness judge -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for usefulness judge" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const cfg = agentConfig?.memoryUsefulnessJudge;
-    if (!cfg?.enabled) {
-      // The opt-in cost gate (defence-in-depth re-check): a disabled agent does NO LLM work.
-      logger.debug({ agentId }, "Usefulness judge disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // The write surface MUST be present (injected from setup-memory). Absent => cannot
-    // record the verdict — surface a clean error rather than silently no-op.
-    if (!usefulnessStore) {
-      logger.warn({ agentId, hint: "usefulnessStore not injected -- cannot record the usefulness verdict", errorKind: "config" as const }, "Skipping usefulness judge -- usefulness store not wired");
-      payload.onComplete?.({ status: "error", error: "usefulness store not wired" });
-      return true;
-    }
-
-    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
-    const resolved = resolveOperationModel({
-      operationType: "cron",
-      agentProvider: agentConfig.provider ?? "anthropic",
-      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-      operationModels: agentConfig.operationModels ?? {},
-      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-    });
-    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
-    const apiKey = cred.apiKey;
-    if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "usefulness judge"), errorKind: "config" as const }, "Skipping usefulness judge -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
-      return true;
-    }
-
-    const startMs = clock.now();
-    const judgeTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const judgeLogger = logger.child({ agentId, submodule: "usefulness-judge" });
-
-    // The candidate ids the judge scores: the bounded recent recalled-memory set
-    // (mirror the __ONLINE_TUNING__ block's memoryApi.inspect read). ids only — no bodies.
-    const candidateIds = memoryApi
-      ? memoryApi.inspect({ tenantId: judgeTenantId, agentId, limit: cfg.maxSourceMemories ?? 200 }).map((r) => r.id)
-      : [];
-
-    // Build the OFFLINE seam (prompt + lenient/allowlist parser stay agent-internal) and
-    // run ONE verdict over the candidate ids. answer="" in this scaffold (no turn transcript
-    // threaded yet); the seam short-circuits an empty candidate set with no cost.
-    // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
-    // seam would skip; build a spec so usefulness judging runs locally too.
-    const usefulnessCustomModel = buildCustomJudgeModelSpec(
-      container.config.providers?.entries?.[resolved.provider],
-      resolved.provider,
-      resolved.modelId,
-    );
-    const judge = createUsefulnessJudgeSeam({
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-      apiKey,
-      maxOutputTokens: USEFULNESS_JUDGE_MAX_OUTPUT_TOKENS,
-      clock,
-      logger: judgeLogger,
-      agentId,
-      customModel: usefulnessCustomModel,
-    });
-    const verdict = await judge({ candidateIds, answer: "" });
-
-    // WRITE the partition through recordUsage, scoped to (tenant, agent). A failed write is
-    // non-fatal (WARN + onComplete error), never thrown out of the dispatcher.
-    judgeLogger.debug({ agentId, step: "usefulness-judge" as const, candidateCount: candidateIds.length, usedCount: verdict.usedIds.length, ignoredCount: verdict.ignoredIds.length }, "Usefulness judge verdict resolved");
-    const wrote = await usefulnessStore.recordUsage(verdict.usedIds, verdict.ignoredIds, { tenantId: judgeTenantId, agentId, now: clock.now() });
-    if (!wrote.ok) {
-      judgeLogger.warn({ agentId, err: wrote.error, hint: "usefulness verdict recordUsage failed -- will retry next cycle", errorKind: "dependency" as const }, "Usefulness judge recordUsage error");
-      payload.onComplete?.({ status: "error", error: wrote.error?.message });
-      return true;
-    }
-    judgeLogger.info({ agentId, usedCount: verdict.usedIds.length, ignoredCount: verdict.ignoredIds.length, durationMs: clock.now() - startMs }, "Usefulness judge complete");
-    payload.onComplete?.({ status: "ok", error: undefined });
-    return true;
-  }
+  // (The __USEFULNESS_JUDGE__ sentinel dispatch was DELETED in Phase 226 SIMPLIFY-03 (D-03).
+  // It built a cheap-model usefulness-judge seam and WROTE its verdict through
+  // usefulnessStore.recordUsage — a dormant cost-gated cron. The FORGET-02 reward write
+  // (success→recordUsage / failure→recordFailure) lives in setup-learning.ts (a separate
+  // reward seam) and is untouched; the MemoryUsefulnessStore + its sqlite adapter survive.
+  // An unrecognized sentinel falls through to `return false` below — the T-226-08 benign
+  // no-op for any persisted stale judge job row.)
 
   // -- Memory lifecycle sentinel intercept (FORGET-01/06) --
   // KEYLESS: no model/key/build seam. Re-checks memoryLifecycle.enabled (defence-in-depth, the

@@ -29,7 +29,6 @@
 
 import { describe, it, expect } from "vitest";
 import { MemoryReviewConfigSchema } from "./schema-memory-review.js";
-import { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 import { MemoryConfigSchema } from "./schema-memory.js";
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
@@ -38,10 +37,11 @@ describe("memory-job config defaults match documented intent (anti-drift, WIRE-0
   // The surviving cost-job schemas default ON (opt-out) — the master switch is the gate,
   // NOT the per-feature flag. A header claiming "OFF by default" is the lie this pins.
   // (MemoryOnlineTuningConfigSchema — the bandit cron — was DELETED in Phase 224; the
-  // consolidation / reasoning / user-representation schemas were DELETED in Phase 225-05.)
+  // consolidation / reasoning / user-representation schemas were DELETED in Phase 225-05;
+  // the usefulness-judge schema was DELETED in Phase 226-03. memory-review is the sole
+  // surviving cost cron.)
   const costJobSchemas = [
     ["MemoryReviewConfigSchema", MemoryReviewConfigSchema],
-    ["MemoryUsefulnessJudgeConfigSchema", MemoryUsefulnessJudgeConfigSchema],
   ] as const;
 
   for (const [name, schema] of costJobSchemas) {

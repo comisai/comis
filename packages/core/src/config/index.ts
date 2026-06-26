@@ -42,9 +42,8 @@ export type { MemoryReviewConfig } from "./schema-memory-review.js";
 export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
 export type { SocialModelingConfig } from "./schema-social-modeling.js";
 
-// Offline usefulness-judge schema (OPTIONAL; default-ON, gated by the master cost switch)
-export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
-export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
+// (The offline usefulness-judge schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+// usefulness-judge cron is gone; no re-export alias, I1.)
 
 // Outcome-signal (Verified Learning WS1) schema — per-agent, default-ON (opt-out)
 export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
