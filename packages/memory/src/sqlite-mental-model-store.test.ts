@@ -814,16 +814,16 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
 
   // SKILL-04 (the never-run A→B loop, live-2026-06-26): a REFLECTED skill doc is
   // admitted with a NON-EMPTY topicKey (the reflection engine names a doc
-  // `skill-<first16hex(topicKey)>` and admits it WITH that topicKey — REFLECT-06).
+  // `skill-<full-topicKey>` and admits it WITH that topicKey — WR-01 / REFLECT-06).
   // The reuse loop holds only the skill NAME (ATTR-01), so promoteByName /
   // demoteByName MUST resolve the row by `(tenant, agent, name)` — NOT by
   // re-deriving the id with a hardcoded `topicKey:''`. Pre-fix promoteByName
   // hashed `(tenant, agent, 'skill', '', name)`, which MISSES a row admitted with
   // a non-empty topicKey → `changed:false` and the row never promotes — so the
   // entire reflect→reuse→promote loop was silently dead on its real input (it only
-  // ever passed for hand-authored docs whose topicKey happened to be ''). The
-  // name is UNIQUE per (tenant, agent) (the same get() resolves by), so a
-  // name-keyed transition is the authoritative reconciliation.
+  // ever passed for hand-authored docs whose topicKey happened to be ''). The name
+  // embeds the FULL topicKey, so it is unique per (tenant, agent, kind) (the same
+  // get() resolves by), making a name-keyed transition the authoritative reconciliation.
   it("SKILL-04: promoteByName promotes a doc admitted with a NON-EMPTY topicKey (the reflection-engine shape)", async () => {
     // Admit exactly as the reflection job does: a non-empty topicKey + proofCount 1.
     const admitted = await store.admit(

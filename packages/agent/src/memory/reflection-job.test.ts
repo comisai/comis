@@ -608,6 +608,9 @@ describe("runReflection — validate-then-admit + idempotency (REFLECT-06)", () 
     expect(admitArg.mutating).toBe(false);
     expect(typeof admitArg.topicKey).toBe("string");
     expect(admitArg.topicKey.length).toBeGreaterThan(0);
+    // WR-01: the doc name embeds the FULL topicKey (name↔topicKey bijective) — no
+    // 16-char truncation, so two near-colliding topicKeys can never share a name.
+    expect(admitArg.name).toBe(`skill-${admitArg.topicKey}`);
     expect(admitArg.structuredBody.sections).toHaveLength(2);
     expect(admitArg.sourceTrajIds).toEqual(["a", "b"]);
     expect(admitArg.createdAt).toBe(NOW);

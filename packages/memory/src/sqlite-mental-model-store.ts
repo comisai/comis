@@ -247,8 +247,10 @@ export function createSqliteMentalModelStore(
   );
   // promoteByName keys on the NAME (not the re-derived id) — SKILL-04: a reflected
   // doc is admitted WITH a non-empty topicKey, so re-deriving the id with an assumed
-  // `topicKey:''` MISSES it. The name is UNIQUE per (tenant, agent) (the SAME key
-  // get() resolves by), so a name-keyed UPDATE finds the row regardless of topicKey.
+  // `topicKey:''` MISSES it. The reflection job names a doc `skill-<full-topicKey>`
+  // (WR-01 — the FULL topicKey, not a 16-char truncation), so the name EMBEDS the
+  // unique topic_key and is therefore unique per (tenant, agent, kind) — a name-keyed
+  // UPDATE resolves the SAME single row get() does, with no truncation-collision risk.
   // Identical proof-bar CASE to promoteStmt; only the WHERE key differs (name vs id).
   const promoteByNameStmt = db.prepare(
     "UPDATE mental_models SET proof_count = proof_count + 1, " +
@@ -458,9 +460,11 @@ export function createSqliteMentalModelStore(
       // reflected doc is admitted WITH a non-empty topicKey, so re-deriving the id
       // with a hardcoded `topicKey:''` (the prior behavior) MISSED any reflected doc
       // and `changed` was always false — the entire reflect→reuse→promote loop was
-      // silently dead on its real input. A skill name is UNIQUE per (tenant, agent),
-      // so a name-keyed UPDATE finds the row regardless of topicKey. Reports
-      // rows-changed so a 0-row write (an unknown/evicted name) stays detectable.
+      // silently dead on its real input. The reflection name embeds the FULL topicKey
+      // (`skill-<full-topicKey>`, WR-01), so the name is unique per (tenant, agent,
+      // kind) — a name-keyed UPDATE finds the SINGLE row get() resolves by (no 16-char
+      // truncation collision). Reports rows-changed so a 0-row write (an unknown/
+      // evicted name) stays detectable.
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
@@ -486,9 +490,10 @@ export function createSqliteMentalModelStore(
     async demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> {
       // Resolve the row by `(tenant, agent, name)` — the mirror of promoteByName's
       // SKILL-04 fix. Re-deriving the id with `topicKey:''` missed any reflected doc
-      // (non-empty topicKey); the name is UNIQUE per (tenant, agent). The WR-06
-      // terminal-state guard lives in the statement, so an unknown/evicted/stale name
-      // yields 0 rows → changed:false (never a phantom transition).
+      // (non-empty topicKey); the reflection name embeds the FULL topicKey
+      // (`skill-<full-topicKey>`, WR-01), so it is unique per (tenant, agent, kind).
+      // The WR-06 terminal-state guard lives in the statement, so an unknown/evicted/
+      // stale name yields 0 rows → changed:false (never a phantom transition).
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();

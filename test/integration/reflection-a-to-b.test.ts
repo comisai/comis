@@ -96,7 +96,7 @@ const MIN_CONFIDENCE = 0.5;
 const SIGNATURE_ALICE = "please deploy the staging service";
 const SIGNATURE_BOB = "deploy staging service"; // same {deploy, service, staging} token set, reordered + fewer fillers
 
-/** The deterministic doc NAME the reflection job admits a topic under: `skill-<first16hex>`. */
+/** The deterministic doc NAME the reflection job admits a topic under: `skill-<full-topicKey>`. */
 function docNameFor(signature: string): string {
   // Mirror reflection-job.ts `docNameForTopic(normalizeOpeningRequest(signature))`.
   const tokens = signature
@@ -106,7 +106,9 @@ function docNameFor(signature: string): string {
     .split(/\s+/)
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
   const topicKey = createHash("sha256").update([...new Set(tokens)].sort().join(" ")).digest("hex");
-  return `skill-${topicKey.slice(0, 16)}`;
+  // WR-01: the FULL topicKey (not a 16-char truncation) — name↔topicKey is bijective,
+  // so `(tenant, agent, name)` is unique (no 64-bit-truncation collision can coexist).
+  return `skill-${topicKey}`;
 }
 
 /** The exact STOPWORDS the topicKey normalizer strips (kept in sync with topic-key.ts). */

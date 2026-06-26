@@ -228,9 +228,19 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
  * re-run hit the SAME row (idempotent re-admit, REFLECT-06). Content-light — the
  * topicKey is already a sha256 hex of the normalized intent (INV-6), never the raw
  * transcript; the `skill-` prefix keeps the kebab-case lookup-name contract.
+ *
+ * WR-01: the name embeds the FULL topicKey (NOT a 16-char/64-bit truncation), so
+ * name↔topicKey is bijective. The store's name-keyed `get`/`promoteByName`/
+ * `demoteByName` resolve on name alone — a truncated name let two distinct
+ * topicKeys (colliding on their first 16 hex chars) produce the SAME name with
+ * DIFFERENT topic_key, two rows coexisting under the `(tenant, agent, kind,
+ * topic_key, name)` UNIQUE constraint, and a name-keyed promote/demote then
+ * cross-wired BOTH. The full topicKey makes `(tenant, agent, kind, name)` unique,
+ * so the name-keyed lifecycle is unambiguous. `skill-` + 64 hex = 70 chars, well
+ * under `MAX_DOC_NAME_LENGTH` (120).
  */
 function docNameForTopic(topicKey: string): string {
-  return `skill-${topicKey.slice(0, 16)}`;
+  return `skill-${topicKey}`;
 }
 
 // ---------------------------------------------------------------------------
