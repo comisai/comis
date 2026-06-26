@@ -110,7 +110,7 @@ function makeCtx(overrides: {
     clock: { now: () => 1_000, nowDate: () => new Date(1_000) } as any,
     agents: overrides.agents ?? {},
     tenantId: "tenant-a",
-    consolidationStore: { listConsolidationCandidates: vi.fn() } as any,
+    consolidationStore: { listObservations: vi.fn() } as any,
     tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
     memoryApi: memoryApi as any,

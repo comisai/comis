@@ -68,12 +68,7 @@ export type {
   StructuredBody,
   DeltaOp,
 } from "./reflection-port.js";
-export type {
-  MemoryConsolidationStore,
-  ConsolidationCandidate,
-  ConsolidationPlan,
-  ConsolidationFoldPlan,
-} from "./memory-consolidation.js";
+export type { MemoryConsolidationStore } from "./memory-consolidation.js";
 export type { SessionStorePort } from "./session-store.js";
 export type {
   SessionData,

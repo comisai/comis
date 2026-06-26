@@ -7,7 +7,6 @@ import { chmodSync, existsSync } from "node:fs";
 import { normalizeForSearch } from "@comis/core";
 import { isVecAvailable } from "./schema.js";
 import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
-import { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
 
 /** Default test config using in-memory SQLite. */
 const testConfig: MemoryConfig = {
@@ -1713,95 +1712,13 @@ describe("SqliteMemoryAdapter LTM trigram lane (I4 / twin / R4 / consolidation)"
     }
   });
 
-  // ── consolidation rewrite re-inserts the normalized twin ─────────
-
-  it("a REAL content rewrite via the consolidation store re-inserts a normalized twin row", async () => {
-    const db = adapter.getDb();
-    const store = createSqliteMemoryConsolidationStore({ db });
-
-    // Seed an OBSERVATION (proof_count IS NOT NULL) carrying Latin content, then
-    // fold in a Hebrew rewrite. After the rewrite the trigger deleted the old
-    // twin row; the TS re-insert must restore a twin row with the NEW normalized
-    // content (so HE_QUERY recalls it with embeddings disabled).
-    // store() writes the base row + its twin; promote it to an observation via a
-    // direct proof_count UPDATE (makeEntry does not carry observation fields).
-    // The UPDATE does NOT touch content, so the store-written twin survives.
-    const obsId = crypto.randomUUID();
-    await adapter.store(makeEntry({ id: obsId, content: "original english observation" }));
-    db.prepare("UPDATE memories SET proof_count = 1, source_ids = ? WHERE id = ?").run(
-      JSON.stringify(["s0"]),
-      obsId,
-    );
-
-    const fold = await store.foldIntoExisting({
-      targetObservationId: obsId,
-      newSourceIds: ["s1"],
-      trustLevel: "learned",
-      confidence: 1,
-      occurredAt: 2_000,
-      content: HE_STORED, // a REAL rewrite to Hebrew
-      tenantId: "default",
-      now: 3_000,
-    });
-    expect(fold.ok).toBe(true);
-
-    // The twin row exists again and holds the NEW normalized content.
-    const twin = db
-      .prepare(
-        "SELECT content FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)",
-      )
-      .get(obsId) as { content: string } | undefined;
-    expect(twin?.content).toBe(HE_FOLDED);
-
-    // And recall now bridges the morphology with embeddings disabled.
-    const r = await adapter.search(testSessionKey, HE_QUERY, { limit: 10 });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.map((m) => m.entry.id)).toContain(obsId);
-  });
-
-  it("a proof-only fold (COALESCE(NULL, content) no-op) leaves the existing twin row INTACT", async () => {
-    const db = adapter.getDb();
-    const store = createSqliteMemoryConsolidationStore({ db });
-
-    // Seed a Hebrew observation; store() wrote its normalized twin row. Promote
-    // it to an observation via a direct proof_count UPDATE (content untouched →
-    // the store-written twin survives; makeEntry carries no observation fields).
-    const obsId = crypto.randomUUID();
-    await adapter.store(makeEntry({ id: obsId, content: HE_STORED }));
-    db.prepare("UPDATE memories SET proof_count = 1, source_ids = ? WHERE id = ?").run(
-      JSON.stringify(["s0"]),
-      obsId,
-    );
-    expect(twinContentOf(obsId)).toBe(HE_FOLDED);
-
-    // A proof-only fold omits content → growObservation binds null →
-    // COALESCE(NULL, content) is a no-op → the WHEN-guarded trigger does NOT
-    // fire → the twin row must remain untouched (NOT de-indexed, NOT duplicated).
-    const fold = await store.foldIntoExisting({
-      targetObservationId: obsId,
-      newSourceIds: ["s1"],
-      trustLevel: "learned",
-      confidence: 1,
-      occurredAt: 2_000,
-      // content omitted — the proof-only fold
-      tenantId: "default",
-      now: 3_000,
-    });
-    expect(fold.ok).toBe(true);
-
-    // Exactly one twin row, still the original normalized content.
-    const rows = db
-      .prepare(
-        "SELECT content FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)",
-      )
-      .all(obsId) as Array<{ content: string }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.content).toBe(HE_FOLDED);
-    // Recall still works (the twin survived the proof-only fold).
-    const r = await adapter.search(testSessionKey, HE_QUERY, { limit: 10 });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.map((m) => m.entry.id)).toContain(obsId);
-  });
+  // NOTE (Phase 226, SIMPLIFY-02): the two "consolidation rewrite re-inserts the
+  // normalized twin" tests that exercised `MemoryConsolidationStore.foldIntoExisting`
+  // were removed — `foldIntoExisting` is a dead consolidation-cron writer method,
+  // cut when the port was trimmed to its live read/maintenance surface. The
+  // trigram-twin re-sync on a real content rewrite is still covered by the
+  // `supersede` path below (the same `growObservation`-style history-append +
+  // twin re-insert discipline).
 });
 
 // ── supersede — FORGET-04 non-destructive contradiction resolution ──────

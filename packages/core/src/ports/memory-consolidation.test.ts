@@ -129,7 +129,7 @@ describe("MemoryConsolidationStore — trimmed to the live read/maintenance surf
     expect(purge.ok).toBe(true);
   });
 
-  it("types listObservations as (agentId, tenantId, limit) => Promise<Result<MemoryEntry[], Error>>", () => {
+  it("exposes listObservations typed as (agentId, tenantId, limit) => Promise<Result<MemoryEntry[], Error>>", () => {
     const obs = makeObservation();
     const stub: MemoryConsolidationStore = {
       listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([obs]),

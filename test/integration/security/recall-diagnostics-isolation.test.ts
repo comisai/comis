@@ -190,8 +190,10 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
   }
 
   /** Mint an observation (proof_count IS NOT NULL) under a scope via the REAL
-   *  consolidation store's applyConsolidation (the same atomic path the job
-   *  uses) so listObservations surfaces it. */
+   *  store write path so `listObservations` surfaces it. (Phase 226 trimmed the
+   *  consolidation-cron `applyConsolidation` writer; an observation is identified
+   *  by `proof_count IS NOT NULL`, so a direct `store(...)` of an observation row
+   *  + a scoped source-mark is the equivalent seed.) */
   async function seedObservation(
     scope: { tenantId: string; agentId: string },
     sourceId: string,
@@ -207,13 +209,15 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
       confidence: 0.9,
       consolidatedAt: 1_700_000_100_000,
     });
-    const applied = await consolidationStore.applyConsolidation({
-      observation,
-      markConsolidated: [sourceId],
-      tenantId: scope.tenantId,
-      now: 1_700_000_100_000,
-    });
-    expect(applied.ok).toBe(true);
+    const stored = await adapter.store(observation);
+    expect(stored.ok).toBe(true);
+    // Mark the source consolidated_at (scoped) — the side effect the retired
+    // applyConsolidation used to perform, kept so the source leaves the raw pool.
+    db.prepare("UPDATE memories SET consolidated_at = ? WHERE id = ? AND tenant_id = ?").run(
+      1_700_000_100_000,
+      sourceId,
+      scope.tenantId,
+    );
     return observation.id;
   }
 

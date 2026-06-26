@@ -12,9 +12,9 @@
  *
  * ## The load-bearing security boundary
  *
- * UNLIKE the corpus-wide distances-only `knnDistances` (which reads the GLOBAL
- * `vec_memories` and returns non-identifying floats), `readEmbeddings` returns
- * raw VECTORS for a caller-supplied id set, so the read MUST be scope-isolated:
+ * Because `readEmbeddings` returns raw VECTORS for a caller-supplied id set (an
+ * identifying payload, not non-identifying distance scalars), the read MUST be
+ * scope-isolated:
  * an id belonging to (tenant A, agent Y) requested under (tenant A, agent X) is
  * ABSENT from the returned Map — even though the id was passed in. The scoped
  * LEFT JOIN (`m.tenant_id = ? AND m.agent_id = ?`) is the fix, RED-tested below.

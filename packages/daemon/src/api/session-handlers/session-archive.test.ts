@@ -99,15 +99,11 @@ function makeMemoryPort(deletedCount = 2, sessionIds: string[] = ["mem-this-1", 
   } as unknown as MemoryPort;
 }
 
-/** Minimal MemoryConsolidationStore stub for DIST-05 unlink/purge. */
+/** Minimal MemoryConsolidationStore stub for DIST-05 unlink/purge (the trimmed
+ *  live surface — Phase 226 cut the dead consolidation-cron writer methods). */
 function makeConsolidationStore(): MemoryConsolidationStore {
   return {
-    listConsolidationCandidates: vi.fn(),
     listObservations: vi.fn(),
-    applyConsolidation: vi.fn(),
-    foldIntoExisting: vi.fn(),
-    knnDistances: vi.fn(),
-    markReasoned: vi.fn(),
     unlinkDeletedSources: vi.fn().mockResolvedValue(ok(0)),
     purgeConsolidatedDerivedFrom: vi.fn().mockResolvedValue(ok(0)),
   } as unknown as MemoryConsolidationStore;

@@ -95,14 +95,14 @@ function makeEventBus() {
   };
 }
 
-/** A stub consolidation store — its methods must NEVER be reached on the
- *  short-circuit path (RED A); on the enabled path runMemoryConsolidation is
- *  mocked so these are not called by the daemon test directly either. */
+/** A stub consolidation store — the trimmed live surface (Phase 226 cut the
+ *  dead consolidation-cron writer methods). Its methods are not reached on the
+ *  short-circuit path. */
 function makeConsolidationStore() {
   return {
-    listConsolidationCandidates: vi.fn(async () => ({ ok: true as const, value: [] })),
     listObservations: vi.fn(async () => ({ ok: true as const, value: [] })),
-    applyConsolidation: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    unlinkDeletedSources: vi.fn(async () => ({ ok: true as const, value: 0 })),
+    purgeConsolidatedDerivedFrom: vi.fn(async () => ({ ok: true as const, value: 0 })),
   };
 }
 

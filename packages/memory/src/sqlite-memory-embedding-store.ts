@@ -14,10 +14,9 @@
  *
  * ## Scope is the load-bearing security boundary
  *
- * UNLIKE the corpus-wide distances-only `MemoryConsolidationStore.knnDistances`
- * (which reads the GLOBAL `vec_memories` vec0 table — no tenant/agent column —
- * and returns DISTANCES-only, non-identifying floats so no body can leak), this
- * read returns the raw VECTORS for a CALLER-SUPPLIED id set. A vector is an
+ * This read returns the raw VECTORS for a CALLER-SUPPLIED id set (not
+ * non-identifying distance scalars — so it cannot rely on the distances-only
+ * leak argument). A vector is an
  * identifying payload, so the read MUST be scope-isolated: it JOINs `memories`
  * and filters `m.tenant_id = ? AND m.agent_id = ?` (the `MemoryUsefulnessStore`
  * / `MemoryTemporalStore` isolation precedent). An id belonging to another
