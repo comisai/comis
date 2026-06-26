@@ -61,7 +61,7 @@ import type {
   LearningScope,
   StructuredBody,
 } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, validateMemoryWrite } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
@@ -122,6 +122,35 @@ function parseStructuredBody(raw: string | null): StructuredBody | undefined {
   }
 }
 
+/** One prior-body history entry (the FOLD-01 supersede trail). */
+type HistoryEntry = { previousContent: string; changedAt: number };
+
+// FOLD-01 (Phase 225): the canonical `mental_models.history` JSON shape — an
+// ordered (oldest-first) array of prior bodies, mirroring the 224
+// `SqliteMemoryAdapter` `SupersedeHistorySchema` byte-for-byte
+// ({ previousContent, changedAt }). A strictObject so a malformed/legacy column
+// degrades to "absent" (→ a fresh array in supersede / undefined in get) instead
+// of throwing — never blocking a correction (or a read) on a corrupt payload.
+const HistorySchema = z.array(
+  z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }),
+);
+
+/**
+ * Parse a nullable JSON-encoded `history` column into the typed prior-body array,
+ * or `undefined` when the column is NULL / corrupt (degrade-to-absent, mirrors
+ * `parseStructuredBody` / the 224 `parseHistoryColumn`). supersede() then starts a
+ * fresh array, so a damaged column self-heals on the next correction.
+ */
+function parseHistoryColumn(raw: string | null): HistoryEntry[] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = HistorySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Compute the deterministic row id from the UNIQUE
  * `(tenant, agent, kind, topic_key, name)` tuple. A stable sha256 hex of the
@@ -162,9 +191,11 @@ function rowToMentalModel(row: z.infer<typeof MentalModelRowSchema>): MentalMode
     sourceTrajIds: parseIdList(row.source_traj_ids),
     // The Reflection section-AST (REFLECT-04) — lenient parse so delta-ops read
     // the prior doc; undefined when the column is NULL or holds garbage (the
-    // doc is then treated as new — synthesize fresh, A6). `history` stays DB-only
-    // (Phase 224 supersession) — NOT surfaced here.
+    // doc is then treated as new — synthesize fresh, A6).
     structuredBody: parseStructuredBody(row.structured_body),
+    // The FOLD-01 supersede trail (Phase 225) — lenient parse; undefined when the
+    // column is NULL (never superseded) or corrupt (degrade-to-absent, T-223-09).
+    history: parseHistoryColumn(row.history),
     createdAt: row.created_at,
   };
 }
@@ -511,6 +542,108 @@ export function createSqliteMentalModelStore(
         logger?.warn(
           { step: "learned-skill-demote-by-name", err: error, errorKind: "internal" as const, hint: "learned-skill demoteByName failed" },
           "Learned-skill demoteByName failed",
+        );
+        return err(error);
+      }
+    },
+
+    async supersede(
+      input: { name: string; body: string; structuredBody?: StructuredBody },
+      scope: LearningScope,
+      now: number,
+    ): Promise<Result<"superseded" | "not-found", Error>> {
+      // FOLD-01 (Phase 225): a profile/topic CORRECTION → UPDATE body (+ structured_body
+      // when supplied) and APPEND the prior body to `history` ({previousContent,
+      // changedAt}); the row is UPDATEd, never DELETEd (deletion stays reserved for the
+      // evict() security path). Mirrors SqliteMemoryAdapter.supersede (224 FORGET-04).
+      const rejected = rejectUnresolvedScope(scope);
+      if (rejected) return rejected;
+      const startMs = systemNowMs();
+
+      // INV-5 redaction firewall on the untrusted correction, BEFORE the txn — a
+      // CRITICAL classification (dangerous command / secret egress) is REJECTED and
+      // never persisted. A `warn` is permitted: a learned doc's trust is the fixed
+      // 'learned' (the supersede never touches trust_level), so only `critical` blocks
+      // (mirror 224 sqlite-memory-adapter.ts:556 — a learned body already passed
+      // validateLearnedDocBody in the engine; this is the store-side belt).
+      const verdict = validateMemoryWrite(input.body);
+      if (verdict.severity === "critical") {
+        logger?.warn(
+          {
+            step: "mental-model-supersede",
+            errorKind: "validation" as const,
+            severity: verdict.severity,
+            criticalPatterns: verdict.criticalPatterns,
+            hint: "correction body failed validateMemoryWrite (redaction firewall) — supersession not applied",
+            durationMs: systemNowMs() - startMs,
+          },
+          "Mental-model supersede rejected (redaction firewall)",
+        );
+        return err(new Error("mental-model supersede: body failed redaction validation"));
+      }
+
+      try {
+        // Scoped statements — the (tenant, agent, name) filter is the SEC-01 isolation
+        // boundary; every value a bound `?` (NEVER concatenated). The doc is keyed by
+        // name within scope (the same key get() resolves by), `evicted_at IS NULL` so a
+        // correction never silently revives a soft-evicted doc.
+        const selectIncumbent = db.prepare(
+          `SELECT body, history FROM mental_models ` +
+            "WHERE tenant_id = ? AND agent_id = ? AND name = ? AND evicted_at IS NULL",
+        );
+        const updateBody = db.prepare(
+          "UPDATE mental_models SET body = ?, structured_body = ?, history = ?, updated_at = ? " +
+            "WHERE tenant_id = ? AND agent_id = ? AND name = ? AND evicted_at IS NULL",
+        );
+
+        // The revise unit — ONE synchronous transaction (mirror the 224 supersede).
+        // better-sqlite3 auto-ROLLBACKs on ANY throw, so SELECT-incumbent →
+        // history-append → UPDATE is atomic; a parse fault THROWS → ROLLBACK (caught
+        // below → err). The decided branch is returned for the metadata log.
+        const tx = db.transaction((): "superseded" | "not-found" => {
+          const row = selectIncumbent.get(scope.tenantId, scope.agentId, input.name) as
+            | { body: string; history: string | null }
+            | undefined;
+          // No incumbent under THIS scope (cross-scope correction the WHERE rejects, an
+          // unknown name, or a soft-evicted doc) → no-op. NO row written.
+          if (row === undefined) return "not-found";
+          // Append the prior body (oldest-first), then update. History is appended
+          // REGARDLESS of whether body changed — a correction is the durable signal
+          // (mirror 224). The mental_models_au/_tri_au WHEN-guarded triggers re-sync the
+          // FTS/trigram twins on the body UPDATE (schema-mental-models.ts:226,252) — no
+          // NEW trigger work.
+          const prior: HistoryEntry[] = [
+            ...(parseHistoryColumn(row.history) ?? []),
+            { previousContent: row.body, changedAt: now },
+          ];
+          updateBody.run(
+            input.body,
+            input.structuredBody !== undefined ? JSON.stringify(input.structuredBody) : null,
+            JSON.stringify(prior),
+            now,
+            scope.tenantId,
+            scope.agentId,
+            input.name,
+          );
+          return "superseded";
+        });
+        const outcome = tx();
+        logger?.debug(
+          { step: "mental-model-supersede", outcome, durationMs: systemNowMs() - startMs, hint: "mental-model supersede complete (history-append, non-destructive)" },
+          "Mental-model supersede complete",
+        );
+        return ok(outcome);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "mental-model-supersede",
+            err: error,
+            errorKind: "internal" as const,
+            durationMs: systemNowMs() - startMs,
+            hint: "mental-model supersede failed — check DB integrity (the transaction rolled back)",
+          },
+          "Mental-model supersede failed",
         );
         return err(error);
       }

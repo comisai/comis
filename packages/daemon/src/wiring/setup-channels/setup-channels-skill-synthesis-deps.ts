@@ -184,8 +184,15 @@ export function buildReflectionCronDeps(deps: ReflectionDepsInput): ReflectionCr
           sender,
           text: texts.text,
           signature: texts.signature,
-          // INV-5/D-04: derive trust DAEMON-SIDE (deny-on-unknown). The job filters on it.
+          // FOLD-04 AXIS 1 (INV-5/D-04): derive SESSION-origin trust DAEMON-SIDE
+          // (deny-on-unknown). The job filters on it.
           trustedOrigin: deriveTrustedOrigin(sender, senderTrustMap, defaultTrustLevel),
+          // FOLD-04 AXIS 2 (Phase 225): the per-MEMORY source-trust axis is always
+          // false for kind:skill — a skill source is an OUTCOME trajectory (a finished
+          // session), NOT a source memory carrying a per-memory trustLevel. The
+          // profile/topic builders (Plan 04) set this from the memory's
+          // `trustLevel === "external"`.
+          sourceTrustExternal: false,
         });
       }
       return out;

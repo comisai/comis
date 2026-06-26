@@ -39,8 +39,9 @@ import type { StructuredBody } from "./reflection-port.js";
  * NOTE: `structuredBody` (the v2.31 Reflection section-AST) IS now mirrored
  * (Phase 223 / REFLECT-04) — `get`/`list` surface it (undefined when the
  * `structured_body` column is NULL or holds garbage) so a reflect refresh can
- * delta-op against the prior doc. The `history` column stays DB-only/NULL until
- * Phase 224 (FORGET-04 supersession) wires it.
+ * delta-op against the prior doc. `history` (the FOLD-01 bi-temporal supersede
+ * trail) IS now mirrored too (Phase 225) — `get`/`list` surface the appended
+ * prior-body array (undefined when the `history` column is NULL or corrupt).
  */
 export interface MentalModel {
   /** Deterministic id (hash of the (tenant, agent, kind, topicKey, name) natural key — replay-stable). */
@@ -74,6 +75,14 @@ export interface MentalModel {
    * to the `body` markdown via `renderStructuredBody`.
    */
   structuredBody?: StructuredBody | undefined;
+  /**
+   * The FOLD-01 bi-temporal supersede trail (Phase 225) — the ordered (oldest-
+   * first) array of prior bodies a {@link MentalModelStorePort.supersede} appended,
+   * each `{ previousContent, changedAt }`. `undefined` when the `history` column is
+   * NULL (a doc never superseded) or holds corrupt JSON (degrade-to-absent, never a
+   * throw). The shape mirrors `MemoryEntry["history"]` (the 224 FORGET-04 precedent).
+   */
+  history?: ReadonlyArray<{ previousContent: string; changedAt: number }> | undefined;
   /** Injected epoch ms the row was admitted. */
   createdAt: number;
 }
@@ -180,6 +189,29 @@ export interface MentalModelStorePort {
     scope: LearningScope,
     promoteAtProofCount: number,
   ): Promise<Result<{ changed: boolean }, Error>>;
+
+  /**
+   * FOLD-01 bi-temporal supersede (Phase 225). A profile/topic doc CORRECTION
+   * UPDATEs the named doc's `body` (and `structuredBody` when supplied) and APPENDs
+   * the PRIOR body to `history` (`{ previousContent, changedAt }`, oldest-first); the
+   * row is UPDATEd, never DELETEd — deletion stays reserved for the security
+   * eviction path ({@link evict}). Mirrors the 224 `SqliteMemoryAdapter.supersede`
+   * FORGET-04 model exactly: the untrusted body passes `validateMemoryWrite` BEFORE
+   * the transaction (a `critical` body — secret egress / dangerous command — is
+   * rejected with `err`, never persisted; a `warn` is permitted because the row's
+   * trust is the fixed `'learned'`), the SELECT-incumbent → history-append → UPDATE
+   * runs inside ONE atomic transaction, and every statement is `(tenant, agent)`-
+   * scoped with bound params. `trust_level` is NEVER touched — a correction cannot
+   * escalate trust. Returns `"superseded"` on a successful revise, `"not-found"`
+   * when no scoped incumbent matched (no row written), or `err` (firewall-rejected,
+   * parse fault, or DB error — the transaction rolled back). Unresolved scope
+   * fails-closed with `err(...)` — never widens to a shared/global pool (SEC-01).
+   */
+  supersede(
+    input: { name: string; body: string; structuredBody?: StructuredBody },
+    scope: LearningScope,
+    now: number,
+  ): Promise<Result<"superseded" | "not-found", Error>>;
 
   /**
    * WRITE (name-keyed demote — the reuse-outcome loop entry point). Resolve the
