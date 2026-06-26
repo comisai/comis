@@ -17,7 +17,12 @@
  * schema (NOT the dropped scripts/requiredTools/paramsSchema envelope).
  */
 import { describe, it, expect } from "vitest";
-import { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
+import {
+  REFLECT_PROMPT,
+  PROFILE_REFLECT_PROMPT,
+  TOPIC_REFLECT_PROMPT,
+  parseReflectionResult,
+} from "./reflection-prompt.js";
 
 describe("parseReflectionResult (TOTAL delta-op / section parser, REFLECT-04)", () => {
   it("parses a well-formed { ops: DeltaOp[] } (existing-doc refresh) into typed ops", () => {
@@ -232,5 +237,92 @@ describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the ref
     // substring (the prompt's prose word "transcript(s)" legitimately contains it).
     expect(PROFILE_REFLECT_PROMPT).not.toMatch(/\bscripts\b/);
     expect(PROFILE_REFLECT_PROMPT).not.toContain("paramsSchema");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLD-02 (Phase 225 Plan 03): TOPIC_REFLECT_PROMPT — the lifted consolidation
+// MERGE + reasoning INDUCTIVE generalization instructions in the reflect
+// {sections}/{ops} shape. The kind:topic doc folds the OBSERVATION half of the
+// old consolidation (`generalization`) + reasoning (`inductive`) jobs into one
+// surfaced Mental Model doc. The parser is REUSED UNCHANGED — so the topic prompt
+// must emit the SAME {sections}/{ops} shape parseReflectionResult already consumes
+// (asserted via a parse round-trip). The DEDUCTIVE triple half does NOT fold into a
+// markdown doc (it died with the reasoning job; the triple_store retirement is 226).
+// ---------------------------------------------------------------------------
+describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning generalization in the reflect shape)", () => {
+  it("emits the {sections}/{ops} shape parseReflectionResult consumes — a topic {sections} body parses round-trip", () => {
+    // A fresh-doc topic reflection: a higher-order generalization the consolidation
+    // job would have written as a `generalization` observation, now a section body.
+    const raw = JSON.stringify({
+      sections: [
+        { id: "generalization", heading: "General patterns", body: "- Alice prefers concise answers in general." },
+        { id: "tendency", heading: "Behavioral tendencies", body: "- Tends to deploy late at night." },
+      ],
+    });
+
+    const result = parseReflectionResult(raw);
+
+    expect(result.sections).toHaveLength(2);
+    expect(result.sections?.map((s) => s.id)).toEqual(["generalization", "tendency"]);
+    expect(result.ops).toBeUndefined();
+  });
+
+  it("emits the {ops} refresh shape too — a topic correction parses as typed delta-ops", () => {
+    const raw = JSON.stringify({
+      ops: [
+        {
+          op: "replace",
+          id: "generalization",
+          section: { id: "generalization", heading: "General patterns", body: "- Alice strongly prefers concise answers." },
+        },
+        { op: "remove", id: "tendency" },
+      ],
+    });
+
+    const result = parseReflectionResult(raw);
+
+    expect(result.ops).toHaveLength(2);
+    expect(result.ops?.map((o) => o.op)).toEqual(["replace", "remove"]);
+    expect(result.sections).toBeUndefined();
+  });
+
+  it("carries the generalization instruction (synthesize a higher-order pattern, not a verbatim copy)", () => {
+    // The lifted consolidation MERGE + reasoning INDUCTIVE keystone: abstract the
+    // GENERAL pattern across distinct contexts, not restate one input verbatim.
+    expect(TOPIC_REFLECT_PROMPT.toLowerCase()).toMatch(/general|higher-order|pattern/);
+  });
+
+  it("carries the UNTRUSTED-data prompt-injection belt (treat the delimited block as data, never follow it)", () => {
+    expect(TOPIC_REFLECT_PROMPT).toMatch(/UNTRUSTED/);
+    expect(TOPIC_REFLECT_PROMPT.toLowerCase()).toContain("never follow");
+  });
+
+  it("carries the load-bearing anti-laundering line verbatim ('Do NOT include a trust level')", () => {
+    // Lifted verbatim from the consolidation/reasoning prompts — the model has NO
+    // trust say (trust is the CODE-computed `learned` ceiling the store coerces).
+    expect(TOPIC_REFLECT_PROMPT).toContain("Do NOT include a trust level");
+  });
+
+  it("emits the {sections}/{ops} shape vocabulary (so the SHARED parser + buildNextBody apply)", () => {
+    expect(TOPIC_REFLECT_PROMPT).toContain("sections");
+    expect(TOPIC_REFLECT_PROMPT).toContain("ops");
+    expect(TOPIC_REFLECT_PROMPT).toContain("replace");
+    expect(TOPIC_REFLECT_PROMPT).toContain("remove");
+  });
+
+  it("carries NO executable envelope (advisory topic doc — no scripts/paramsSchema surface)", () => {
+    // Word-boundary match: the guard is the JSON envelope key `scripts`, not the
+    // substring (the prompt's prose word "transcript(s)" legitimately contains it).
+    expect(TOPIC_REFLECT_PROMPT).not.toMatch(/\bscripts\b/);
+    expect(TOPIC_REFLECT_PROMPT).not.toContain("paramsSchema");
+  });
+
+  it("does NOT emit the deductive S/P/O triple shape (triples do NOT fold into a markdown doc)", () => {
+    // The reasoning job's DEDUCTIVE half wrote triple_store rows (subject/predicate/
+    // object); the kind:topic fold covers ONLY the INDUCTIVE/generalization
+    // observations. The deductive shape must NOT appear in the topic prompt.
+    expect(TOPIC_REFLECT_PROMPT).not.toContain("predicate");
+    expect(TOPIC_REFLECT_PROMPT).not.toContain("subject");
   });
 });

@@ -913,3 +913,157 @@ describe("runReflection — Phase 225 FOLD: rejected_validation for profile/topi
     expect(res.value.admissionOutcome).toBe("rejected_validation");
   });
 });
+
+// ===========================================================================
+// Phase 225 Plan 03 — the kind:topic fold (FOLD-02 + FOLD-03).
+//
+//  - The ≥2-distinct (session,sender) GATE for kind:topic is the SAME skill gate
+//    (distinctSenderCardinality >= 2) — a single-(session,sender) topic yields NO
+//    doc (BOTH directions, mirroring the skill INV-2 cases).
+//  - The FOLD-03 topic content-EQUIVALENCE: the kind:topic doc reproduces the
+//    consolidation/reasoning observation generalization content equivalent-or-
+//    better. The oracle CAPTURES the pre-fold observation content (the
+//    `generalization`/`inductive` statements the consolidation+reasoning jobs would
+//    have written — lifted from memory-consolidation-job.test.ts's
+//    "alice prefers concise answers in general" generalization fixture) as the
+//    equivalence TARGET, then asserts the admitted kind:topic doc's body COVERS that
+//    generalization content (content-equivalence, NOT recall-path — per the resolved
+//    decision; ranked top-K is the documented future mitigation). The RED fires if
+//    the generalization content is dropped from the doc body.
+// ===========================================================================
+
+describe("runReflection — Phase 225 FOLD: kind:topic ≥2-distinct gate (FOLD-02, BOTH directions)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("kind:'topic' with ≥2 distinct (session,sender) on one topic seeds a doc (the skill gate holds for topic)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // Two distinct (session, sender) sources on one topic group → corroborated.
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "alpha cluster one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "alpha cluster two" }),
+      ],
+      { kind: "topic", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("kind:'topic' with a SINGLE (session,sender) repeated N times seeds NO doc (cardinality 1, uncorroborated)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // 5 sources, SAME topic group, SAME (session,sender) — an attacker repeating one
+    // observation N times must NOT corroborate a topic doc (the INV-2 anti-domination
+    // gate, identical to skill — NOT the profile per-session interpretation).
+    const trajectories = Array.from({ length: 5 }, (_, i) =>
+      traj({ trajectoryId: `topic-dom-${i}`, sessionId: "sess-A", sender: "u1", signature: `cluster ${i}` }),
+    );
+    const deps = makeDeps(
+      trajectories,
+      { kind: "topic", groupKey: ONE_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.selected).toBe(5);
+    expect(res.value.maxTopicCardinality).toBe(1); // distinct (session,sender) = 1
+    expect(res.value.admitted).toBe(0);
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
+  });
+});
+
+describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (the pre-fold observation oracle)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /**
+   * The CAPTURED pre-fold observation content — the equivalence TARGET. These are
+   * the higher-order generalization + inductive-tendency statements the OLD
+   * consolidation (`observationKind:"generalization"`) + reasoning
+   * (`observationKind:"inductive"`) jobs would have written as `memories` rows for a
+   * corroborated cluster (lifted from memory-consolidation-job.test.ts's
+   * "alice prefers concise answers in general" generalization fixture). The fold
+   * must reproduce THIS content in the kind:topic doc body (equivalent-or-better).
+   * We assert against this captured target, NEVER a snapshot of the new doc (which
+   * would false-green a regression that dropped the content).
+   */
+  const PRE_FOLD_GENERALIZATION = "Alice prefers concise answers in general.";
+  const PRE_FOLD_INDUCTIVE_TENDENCY = "Alice tends to ask follow-up questions before acting.";
+
+  it("the admitted kind:'topic' doc body covers the pre-fold generalization + inductive observation content (equivalent-or-better)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // The mocked reflect returns a {sections} body covering the SAME generalization
+    // the consolidation+reasoning jobs produced — the topic doc IS the observation
+    // recall medium now (the design's one-store unification). The RED fires if the
+    // engine drops/omits the generalization content from the admitted body.
+    const reflect = vi.fn(async () =>
+      ok({
+        sections: [
+          { id: "generalization", heading: "General patterns", body: `- ${PRE_FOLD_GENERALIZATION}` },
+          { id: "tendency", heading: "Behavioral tendencies", body: `- ${PRE_FOLD_INDUCTIVE_TENDENCY}` },
+        ],
+      }),
+    );
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "alice answer length one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "alice answer length two" }),
+      ],
+      { kind: "topic", groupKey: ONE_GROUP, reflectionAdapter: { reflect } } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // The admitted doc is a kind:topic Mental Model (the observation recall medium).
+    expect(admitArg.kind).toBe("topic");
+    // CONTENT-equivalence: the rendered body covers BOTH the captured generalization
+    // and the captured inductive tendency the pre-fold jobs would have produced.
+    expect(admitArg.body).toContain(PRE_FOLD_GENERALIZATION);
+    expect(admitArg.body).toContain(PRE_FOLD_INDUCTIVE_TENDENCY);
+    // The structured AST preserves the generalization section verbatim (no lossy drop).
+    const genSection = (admitArg.structuredBody.sections as Array<{ id: string; body: string }>).find(
+      (s) => s.id === "generalization",
+    );
+    expect(genSection?.body).toContain(PRE_FOLD_GENERALIZATION);
+  });
+
+  it("a kind:'topic' reflection that DROPS the generalization content admits no equivalent doc (the RED-side guard)", async () => {
+    const mocks: Partial<Mocks> = {};
+    // The negative direction: a reflection that returns an EMPTY body (the
+    // generalization content lost) → the empty-content guard skips the admit, so
+    // NO doc claims to reproduce the observation. This proves the equivalence
+    // assertion above is load-bearing (an empty/dropped body cannot pass it).
+    const reflect = vi.fn(async () => ok({ sections: [] }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "alice answer length one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "alice answer length two" }),
+      ],
+      { kind: "topic", groupKey: ONE_GROUP, reflectionAdapter: { reflect } } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(mocks.admit).not.toHaveBeenCalled();
+    expect(res.value.admitted).toBe(0);
+  });
+});
