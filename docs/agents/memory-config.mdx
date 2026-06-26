@@ -85,7 +85,6 @@ agents:
       entityLane: { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 }  # default off
       mmr: { enabled: true, lambda: 0.7 }       # MMR diversity re-rank — default off
       feedback: { enabled: true }               # FEED recall-utility loop (uses scoring.usefulnessAlpha)
-      onlineTuning: { enabled: true }           # LEARN-RANK recall-apply gate (pairs with memoryOnlineTuning)
       forget: { enabled: true }                 # FORGET decay gate (uses scoring.forgetAlpha)
       queryUnderstanding:                       # LEARN-IQ (LLM-free)
         intentReweight: true
@@ -146,11 +145,6 @@ agents:
       maxSourceMemories: 200
       maxSourceChars: 24000
 
-    memoryOnlineTuning:              # the LEARN-RANK bandit (learns scoring alphas)
-      enabled: true
-      schedule: "0 8 * * *"
-      maxSourceMemories: 200
-
     memoryLifecycle:                 # FORGET sweep / tier promote-demote (soft eviction gated by learningForgetting, below)
       enabled: true
       schedule: "0 9 * * *"
@@ -160,11 +154,8 @@ agents:
     # ───────────────────────────────────────────────────────────────────
     # 5. VERIFIED LEARNING — outcome-gated ranking & forgetting (v2.26; default OFF)
     # ───────────────────────────────────────────────────────────────────
-    learningTuning:                  # LEARN-TUNE — outcome-rewarded, per-intent ranking bandit
-      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
-      learner: bandit                # bandit (deterministic UCB) | nudge (conservative fallback)
-      perIntent: true                # learn a per-(tenant, agent, intent) vector
-      exploration: 0.1               # UCB confidence weight [0..1]
+    learningTuning:                  # LEARN-TUNE — gates the outcome-reward write (recordUsage/recordFailure → failure_count)
+      enabled: true                  # default ON (opt-out); force-disabled by memory.costFeatures.enabled: false
 
     learningForgetting:              # LEARN-FORGET — wrongness-based soft eviction
       enabled: true                  # default ON (opt-out); force-disabled by memory.costFeatures.enabled: false
@@ -187,7 +178,6 @@ agents:
 | Entity lane | `rag.entityLane.enabled` | Entity-seeded recall expansion |
 | MMR diversity | `rag.mmr.enabled` | Maximal-marginal-relevance diversification |
 | **FEED** loop | `rag.feedback.enabled` | Boosts memories that proved useful (`scoring.usefulnessAlpha`) |
-| **LEARN-RANK** | `rag.onlineTuning.enabled` | Applies bandit-learned ranking weights at recall |
 | **LEARN-IQ** | `rag.queryUnderstanding.intentReweight` (+ `synonyms`, `temporalParse`) | LLM-free query understanding / lane reweighting |
 | **FORGET** | `rag.forget.enabled` | FadeMem per-type decay demotes stale memories (`scoring.forgetAlpha`) |
 | **USER** | `memoryUserRepresentation.enabled` | Builds a per-user representation |
@@ -197,19 +187,18 @@ agents:
 | Review | `memoryReview.enabled` | Turns sessions into reviewed memories |
 | Consolidation | `memoryConsolidation.enabled` | Clusters + folds/dedups memories |
 | Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
-| Online tuning | `memoryOnlineTuning.enabled` | The bandit cron that learns the alphas for LEARN-RANK |
 | Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep (the soft-eviction behaviour is gated by `learningForgetting`, below) |
-| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default true, opt-out)* | Outcome-rewarded, per-query-intent ranking: gates the bandit on a real task outcome + learns a vector per intent. Composes with `memoryOnlineTuning` + `rag.onlineTuning` |
+| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default true, opt-out)* | Gates the **outcome-reward write** — success→`recordUsage` / failure→`recordFailure` on the `memory_usefulness` store (the `failure_count` source that **LEARN-FORGET** reads). Composes with `memoryUsefulnessJudge` + `learningForgetting` |
 | **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default true, opt-out)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
 
 ## Outcome-gated ranking & forgetting (v2.26)
 
-**Verified Learning** adds two per-agent loops that gate ranking and forgetting on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy. Both **default ON (opt-out)**, gated by the master `memory.costFeatures.enabled` switch (also default on) — so a default install **does** learn-to-rank and forget. Set a per-agent flag (`learningTuning.enabled` / `learningForgetting.enabled`) **or** the master `memory.costFeatures.enabled` to `false` to opt out.
+**Verified Learning** gates **forgetting** on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy, and feeds that outcome into a per-memory recall-utility ledger. Both knobs **default ON (opt-out)**, gated by the master `memory.costFeatures.enabled` switch (also default on) — so a default install **does** record outcome reward and forget by wrongness. Set a per-agent flag (`learningTuning.enabled` / `learningForgetting.enabled`) **or** the master `memory.costFeatures.enabled` to `false` to opt out. Recall ranking itself is the **fixed `rag.scoring`** fusion (deterministic RRF + the cross-encoder reranker) — the v2.26 per-intent tuned-alpha bandit was **removed in v2.31** (it never validated a recall lift).
 
-- **Ranking** — `agents.<id>.learningTuning.enabled` turns the tuned-alpha learner into an **outcome-rewarded, per-query-intent** bandit: it learns a separate ranking-weight vector per deterministic `classifyIntent` bucket, rewarded when a recalled memory rides a `success` trajectory and penalised on `failure`/`corrected`. The learner is deterministic, and the **trust weight is never tuned** (it stays config-sourced and provably frozen). It composes with the existing `memoryOnlineTuning` (the cron) + `rag.onlineTuning` (the apply) — all must be on for tuning to be live.
+- **Outcome reward (the ranking-signal write)** — `agents.<id>.learningTuning.enabled` gates the **outcome-reward write**: when a recalled memory rides a `success` trajectory the daemon calls `recordUsage` on the `memory_usefulness` store, and on `failure`/`corrected` it calls `recordFailure` (incrementing the memory's outcome-attributed `failure_count`). This write is the **`failure_count` source** that LEARN-FORGET reads; it no longer tunes any recall weight (recall stays the fixed `rag.scoring`). It composes with `memoryUsefulnessJudge` (the recall-utility signal) + `learningForgetting` (the forgetting consumer).
 - **Forgetting** — `agents.<id>.learningForgetting.enabled` couples a memory's decay to its outcome-attributed `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently weak memory: it is marked `evicted_at` (excluded from recall, still resolvable via `asOf`/inspect, **reversible**, never hard-deleted). A memory implicated in **`eviction.failureEvictionFloor`** (default 3) or more **corroborated** failures is soft-evicted regardless of its decayed strength — the recall-shape strength floors above the threshold, so this floor is what makes wrongness-eviction reachable. A **corroboration gate** (≥2 independent failures, or one deterministic source, on every `failure_count` increment) and **exemptions** for pinned / `system` / high-`proof_count` memories make induced eviction impractical: a poisoner cannot evict a well-corroborated, pinned, or system memory no matter how many failures it induces. It composes with `memoryLifecycle` (the sweep schedule) + `rag.forget` (score-decay).
 
-See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`tuned_alpha` / `memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. Both loops emit **counts-only** signals (`memory:online_tuning_applied`, `learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
+See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. The forgetting loop emits **counts-only** signals (`learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
 
 ## Deepened user model: revise & generalize (v2.26)
 
@@ -225,8 +214,6 @@ Both are **default-safe** and surface **counts-only** through `comis explain` / 
 1. **Some capabilities need built derived state, not just the flag:**
    - **KG** (`rag.lanes.graphSpread`) is a no-op until the knowledge graph is populated with
      entities/edges.
-   - **LEARN-RANK** (`rag.onlineTuning`) only changes recall after the `memoryOnlineTuning`
-     bandit has run and learned weights.
    - **FEED** (`rag.feedback`) is meaningful once `memoryUsefulnessJudge` has scored recalls.
    - **FORGET** demotion (`rag.forget`) shows up at recall; **eviction** is the `memoryLifecycle`
      sweep — live as **soft, reversible** eviction (`evicted_at`) when the v2.26
