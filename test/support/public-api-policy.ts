@@ -524,25 +524,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
-      // Verified Learning WS2 (P2 Skills, Phase 201) — DEAD as of Phase 223 Plan 05.
-      // The synthesis adapter (createLlmSkillSynthesisAdapter), the JOB
-      // (runSkillSynthesis), its source type (SynthesisSourceTrajectory), and the
-      // approval-gate subset (SkillApprovalGate) were CONSUMED by the synthesis cron
-      // wiring — but Plan 05 swapped that wiring to the reflection engine
-      // (setup-channels-memory-crons-wire.ts now imports runReflection /
-      // createLlmReflectionAdapter, and setup-channels-skill-synthesis-deps.ts no
-      // longer imports the sandbox adapter or SkillApprovalGate). So these synthesis
-      // exports lost their last cross-package consumer and are interface-first orphans
-      // again — re-listed here (the shrink-only ratchet runs BOTH ways). Plan 06
-      // DELETES the synthesis job/adapter/prompt/source + these entries. The deps/result
-      // SHAPE types were already ahead-of-consumer (referenced via Parameters<>).
-      "createLlmSkillSynthesisAdapter",
-      "runSkillSynthesis",
-      "SynthesisSourceTrajectory",
-      "SkillApprovalGate",
-      "LlmSkillSynthesisAdapterDeps",
-      "SkillSynthesisJobDeps",
-      "SkillSynthesisJobResult",
+      // Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
+      // The synthesis adapter / JOB / prompt / source / approval-gate subset were
+      // the dead embedding-clustering pipeline the reflection engine REPLACED
+      // (Plan 05 swapped the cron; Plan 06 deleted skill-synthesis-job.ts +
+      // llm-skill-synthesis-adapter.ts + skill-synthesis-prompt.ts). Their barrel
+      // re-exports are gone, so they need no allowlist entry — removed (the
+      // shrink-only ratchet runs BOTH ways).
       // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06) — the
       // reflection JOB (runReflection) + classifier + the cheap-model reflect
       // adapter (createLlmReflectionAdapter) + prompt/parser, surfaced on the

@@ -678,28 +678,6 @@ export { createOutcomeJudgeSeam } from "./memory/index.js";
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
-// Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
-// procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid
-// tier (SKILL-02). Re-exported from the memory sub-barrel beside its daemon
-// consumer (Plan 07 wiring) so the public-export-consumers gate never sees an
-// orphan once that wiring lands. The synthesis JOB (`runSkillSynthesis`) lands in
-// the same plan's later tasks. The synthesis PROMPT + parser stay agent-internal.
-export { createLlmSkillSynthesisAdapter } from "./memory/index.js";
-export type { LlmSkillSynthesisAdapterDeps } from "./memory/index.js";
-
-// The procedural skill-synthesis JOB (SKILL-03/04/05/08) the daemon invokes from
-// the `__SKILL_SYNTHESIS__` cron (Plan 07): select success → abstain → cluster
-// (anti-domination) → synthesize → validate → admit. Consumes @comis/core PORT
-// TYPES only (the agent↛memory / agent↛skills closed-graph cut); the daemon
-// injects the store + validation adapters + the LCD-merged source.
-export { runSkillSynthesis } from "./memory/index.js";
-export type {
-  SkillSynthesisJobDeps,
-  SkillSynthesisJobResult,
-  SynthesisSourceTrajectory,
-  SkillApprovalGate,
-} from "./memory/index.js";
-
 // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06). The
 // reflection JOB (runReflection) + the cheap-model reflect adapter + the
 // prompt/parser the daemon invokes from the __REFLECT__ cron (Plan 05): SELECT
@@ -708,8 +686,8 @@ export type {
 // Consumes @comis/core PORT TYPES + the static guard + the pure delta-ops only
 // (the agent↛memory / agent↛skills cut); the daemon injects the store + adapter.
 // Re-exported from the memory sub-barrel beside its daemon consumer (Plan 05) so
-// the public-export-consumers gate never sees an orphan once that wiring lands.
-// These ship ALONGSIDE the synthesis exports above — deleted in Plan 06.
+// the public-export-consumers gate never sees an orphan. This REPLACED the dead
+// embedding-clustering synthesis pipeline (job/adapter/prompt), deleted in Plan 06.
 export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
 export type {
   LlmReflectionAdapterDeps,

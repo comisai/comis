@@ -182,7 +182,7 @@ export interface RunReflectionResult {
 }
 
 // ---------------------------------------------------------------------------
-// Anti-domination cardinality (copied VERBATIM from skill-synthesis-job.ts)
+// Anti-domination cardinality (the ≥2-distinct corroboration metric, INV-2)
 // ---------------------------------------------------------------------------
 
 /** Distinct (sessionId, sender) cardinality of a member set (the anti-domination metric). */
