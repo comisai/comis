@@ -76,7 +76,8 @@ export const COVERAGE_DIMENSIONS = [
   "rag.pinned.enabled",
   "rag.forget.enabled",
   "rag.feedback.enabled",
-  "rag.onlineTuning.enabled",
+  // (rag.onlineTuning.enabled removed in v2.31 / Phase 224 — the recall-apply
+  //  tuning gate was deleted with the UCB bandit; no live surface to cover.)
   "rag.includeTrustLevels",
   // Security
   "security.storage",
@@ -457,24 +458,8 @@ export const coverageMatrix: readonly CoverageCell[] = [
     reference: "covered in Phase 140 (TOOL+MCP) — rag.feedback live-fire test",
     phase: "140",
   },
-  {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.onlineTuning —
-    // buildMemConfig lanes array does not include "onlineTuning"; this cell was never exercised.
-    dimension: "rag.onlineTuning.enabled",
-    modeValue: "true",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — rag.onlineTuning live-fire test",
-    phase: "140",
-  },
-  {
-    // CR-02: recall-lanes.test.ts LANE_PAIRS contains no entries for rag.onlineTuning —
-    // buildMemConfig lanes array does not include "onlineTuning"; this cell was never exercised.
-    dimension: "rag.onlineTuning.enabled",
-    modeValue: "false",
-    status: "skipped",
-    reference: "covered in Phase 140 (TOOL+MCP) — rag.onlineTuning live-fire test",
-    phase: "140",
-  },
+  // (rag.onlineTuning.enabled true/false cells removed in v2.31 / Phase 224 — the
+  //  recall-apply tuning gate was deleted with the UCB bandit; nothing to cover.)
   {
     dimension: "rag.includeTrustLevels",
     modeValue: "true",
