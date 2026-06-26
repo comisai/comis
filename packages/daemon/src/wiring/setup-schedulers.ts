@@ -101,17 +101,15 @@ export async function setupSchedulers(deps: {
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
-  // Master cost-feature kill switch (opt-out posture). When the operator sets
-  // memory.costFeatures.enabled:false, EVERY LLM cost-bearing memory cron is force-disabled at
-  // its registration site below — regardless of the agent's own per-feature opt-in. The gated
-  // set is the FIVE cost crons: memoryReview, memoryConsolidation, memoryReasoning,
-  // memoryUserRepresentation, memoryUsefulnessJudge. (memoryOnlineTuning — the bandit cron —
-  // was deleted in Phase 224.) NOT gated: the $0
-  // keyless memoryLifecycle sweep, and the socialModeling cron (which has its OWN privacy
-  // sign-off gate and stays independent). Default true (schema default) ⇒ byte-identical
-  // registration. Read defensively (`!== false`) so an unexpectedly-absent block fails OPEN to
-  // the prior behavior rather than silently disabling features.
-  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  // Master cost-feature kill switch (opt-out posture; renamed from memory.costFeatures.enabled to
+  // memory.enabled in Phase 226). When the operator sets memory.enabled:false, EVERY LLM
+  // cost-bearing memory cron is force-disabled at its registration site below — regardless of the
+  // agent's own per-feature opt-in. The gated set: memoryReview, memoryUsefulnessJudge, the
+  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep, and the
+  // socialModeling cron (which has its OWN privacy sign-off gate and stays independent). Default
+  // true (schema default) ⇒ byte-identical registration. Read defensively (`!== false`) so an
+  // unexpectedly-absent block fails OPEN to the prior behavior rather than silently disabling features.
+  const costFeaturesEnabled = container.config.memory?.enabled !== false;
 
   /** Resolve the formatted session key for an agent's main heartbeat session. */
   function resolveMainSessionKey(agentId: string): string {
@@ -528,23 +526,23 @@ export async function setupSchedulers(deps: {
     // -- Reflection cron job (v2.31 Reflection, Phase 223, REFLECT-01) --
     // The reflect-engine replacement for the dead procedural-synthesis clustering cron.
     // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
-    // operator sets learningSkills.enabled AND the master cost kill switch is on; a default agent
-    // registers NO job → byte-identical with the config absent. Default schedule 30 9 * * * runs
-    // AFTER the lifecycle sweep's 0 9 (so the outcome signals it selects on have settled). Job
+    // operator sets learning.enabled AND the master cost kill switch is on; a default agent
+    // registers NO job → byte-identical with the config absent. The schedule comes from
+    // learning.reflect.schedule (Phase 226 — was a hardcoded 30 9; default 0 3 * * *). Job
     // options mirror the other memory crons 1:1 (isolated / next-heartbeat / no forward-to-main /
     // fresh). The __REFLECT__ sentinel (setup-channels-memory-crons-wire.ts) re-checks the knob +
     // injects the @comis/memory mental-model store + the trusted-origin source into runReflection,
-    // then re-emits the learning:skill_* counts. The learningSkills config key is REUSED (the
-    // reflect:* rename is Phase 226); a reflected candidate is admitted at state:candidate.
-    const learningSkillsCfg = agentConfig.learningSkills;
-    if (costFeaturesEnabled && learningSkillsCfg?.enabled) {
+    // then re-emits the learning:skill_* counts. A reflected candidate is admitted at state:candidate.
+    const learningCfg = agentConfig.learning;
+    if (costFeaturesEnabled && learningCfg?.enabled) {
       const reflectJobId = `reflect-${agentId}`;
+      const reflectSchedule = learningCfg.reflect?.schedule ?? "0 3 * * *";
       if (!scheduler.getJobs().some((j) => j.id === reflectJobId)) {
         await scheduler.addJob({
           id: reflectJobId,
           name: "Reflection",
           agentId,
-          schedule: { kind: "cron", expr: "30 9 * * *" },
+          schedule: { kind: "cron", expr: reflectSchedule },
           payload: { kind: "system_event", text: "__REFLECT__" },
           sessionTarget: "isolated",
           wakeMode: "next-heartbeat",
@@ -554,7 +552,7 @@ export async function setupSchedulers(deps: {
           enabled: true,
           createdAtMs: systemNowMs(),
         });
-        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered reflection cron job");
+        schedulerLogger.info({ agentId, schedule: reflectSchedule }, "Registered reflection cron job");
       }
     }
   }

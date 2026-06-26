@@ -365,11 +365,11 @@ export async function setupMemory(deps: {
   // into daemon startup — it just stays OFF and recall degrades to fusion.
   let rerankerModelsDir: string | undefined;
   let modelPresent = false;
-  if (memoryConfig.rerankerModel) {
+  if (memoryConfig.recall.rerankerModel) {
     try {
       rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
       modelPresent = await rerankerModelPresent({
-        modelUri: memoryConfig.rerankerModel,
+        modelUri: memoryConfig.recall.rerankerModel,
         modelsDir: rerankerModelsDir,
       });
     } catch (e) {
@@ -429,7 +429,7 @@ export async function setupMemory(deps: {
     }
     if (modelsDirForBuild !== undefined) {
       const rr = await createLocalRerankerProvider({
-        modelUri: memoryConfig.rerankerModel,
+        modelUri: memoryConfig.recall.rerankerModel,
         modelsDir: modelsDirForBuild,
         gpu: memoryConfig.rerankerGpu,
         threads: memoryConfig.rerankerThreads,
@@ -442,7 +442,7 @@ export async function setupMemory(deps: {
         disposeReranker = port.dispose
           ? async () => { await port.dispose?.(); }
           : undefined;
-        memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+        memoryLogger.debug({ model: memoryConfig.recall.rerankerModel }, "Reranker provider initialized");
       } else {
         memoryLogger.warn(
           { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
@@ -455,8 +455,9 @@ export async function setupMemory(deps: {
   // 6.5.2. Create memory adapter with raw provider dimensions
   // Adapter uses embedding port only at query time (search()), not during construction.
   // Created BEFORE cache wiring because createSqliteEmbeddingCache needs the db handle.
-  const effectiveDimensions = embeddingPort ? embeddingPort.dimensions : memoryConfig.embeddingDimensions;
-  const adjustedMemoryConfig = { ...memoryConfig, embeddingDimensions: effectiveDimensions };
+  const effectiveDimensions = embeddingPort ? embeddingPort.dimensions : memoryConfig.recall.embeddingDimensions;
+  // Phase 226: the recall keepers nest under memory.recall — override the nested dimension.
+  const adjustedMemoryConfig = { ...memoryConfig, recall: { ...memoryConfig.recall, embeddingDimensions: effectiveDimensions } };
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
 

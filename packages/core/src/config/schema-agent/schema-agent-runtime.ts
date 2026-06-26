@@ -26,9 +26,7 @@ import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
-import { LearningTuningConfigSchema } from "../schema-learning-tuning.js";
-import { LearningForgettingConfigSchema } from "../schema-learning-forgetting.js";
-import { LearningSkillsConfigSchema } from "../schema-learning-skills.js";
+import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
@@ -408,7 +406,7 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   backgroundTasks: BackgroundTasksConfigSchema.optional(),
   /** Periodic memory review configuration (session history extraction). Opt-out posture:
    *  default-ON. A COST feature — force-disabled at its registration site when the
-   *  master kill switch `memory.costFeatures.enabled` is false. */
+   *  master kill switch `memory.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
   /** Directional relationship-modeling configuration (STAYS OFF — privacy/consent gate
    *  `privacyReviewSignedOffBy`, NOT flipped by the opt-out posture). */
@@ -421,30 +419,17 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
   /** Outcome-signal (Verified Learning WS1) configuration. Opt-OUT posture:
    *  default-ON, so `.parse({})` produces an active block; the master cost switch
-   *  (`memory.costFeatures.enabled`) force-disables it at the registration site. */
+   *  (`memory.enabled`) force-disables it at the registration site. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
-  /** Outcome-rewarded usefulness-feedback write gate (RANK-01). Opt-OUT posture:
-   *  default-ON; force-disabled by `memory.costFeatures.enabled: false`. Gates the
-   *  daemon reward seam's success→`recordUsage` / failure→`recordFailure` write to the
-   *  usefulness store — the FORGET-02 `failure_count` source the lifecycle sweep JOINs on.
-   *  (The UCB recall bandit — learner/perIntent/exploration, the memoryOnlineTuning cron,
-   *  the rag.onlineTuning apply — was DELETED in Phase 224; this block now carries ONLY
-   *  `enabled`. The now-narrow scope rename is deferred to Phase 226.) */
-  learningTuning: LearningTuningConfigSchema.default(() => LearningTuningConfigSchema.parse({})),
-  /** Soft-eviction policy (Verified Learning WS4 / forgetting). Opt-OUT posture: default-ON
-   *  (safe now that outcome fusion uses recency — a recovered turn no longer wrongly decays the
-   *  memories it used). The on/off switch + failurePenalty/strengthThreshold knobs the lifecycle
-   *  sweep's eviction BEHAVIOR reads. Composes WITH memoryLifecycle + rag.forget; the master
-   *  cost switch force-disables it at the registration site. */
-  learningForgetting: LearningForgettingConfigSchema.default(() =>
-    LearningForgettingConfigSchema.parse({}),
-  ),
-  /** Procedural-learning loop (Verified Learning WS2 / skills). Opt-OUT posture:
-   *  default-ON, so `.parse({})` yields an active block; the master cost switch
-   *  force-disables it at the registration site. The on/off switch + validation /
-   *  approval / minConfidence / promoteAtProofCount knobs the synthesis job,
-   *  sandbox-validation adapter, and admission gate read. */
-  learningSkills: LearningSkillsConfigSchema.default(() => LearningSkillsConfigSchema.parse({})),
+  /** The collapsed per-agent LEARNING layer (Phase 226 / SIMPLIFY-01/05). ONE
+   *  `learning.enabled` master gate (folds the former learningSkills.enabled +
+   *  learningTuning.enabled + learningForgetting.enabled) under the top-level
+   *  `memory.enabled` kill-switch + the reflect/forget cost-bound knobs. Opt-OUT posture:
+   *  default-ON, so `.parse({})` yields an active block; force-disabled when
+   *  `memory.enabled: false`. The RANK-01 reward / FORGET-02 accrual / SURFACE-04 promote
+   *  writes STAY wired behind this one flag. (Replaces learningSkills/learningTuning/
+   *  learningForgetting — those keys are now rejected at parse, the D-01a operator-update path.) */
+  learning: LearningConfigSchema.default(() => LearningConfigSchema.parse({})),
   /** Offline triple-extraction cron (Verified Learning WS7). Opt-OUT posture: default-ON,
    *  so `.parse({})` yields an active block; the master cost switch force-disables it at
    *  the registration site. */

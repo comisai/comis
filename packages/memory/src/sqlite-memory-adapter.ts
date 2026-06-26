@@ -114,8 +114,8 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       dbPath: config.dbPath,
       walMode: config.walMode,
       initSchema: (db) => {
-        // Initialize schema and capture per-instance vec state
-        const schemaResult = initSchema(db, config.embeddingDimensions);
+        // Initialize schema and capture per-instance vec state (Phase 226: recall keys nest under .recall)
+        const schemaResult = initSchema(db, config.recall.embeddingDimensions);
         vecAvailable = schemaResult.vecAvailable;
       },
     });

@@ -584,7 +584,8 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     return {
       config: {
         agents: over.agents ?? {},
-        memory: { costFeatures: { enabled: over.costFeatures ?? true } },
+        // Phase 226: the master kill-switch is `memory.enabled` (was memory.costFeatures.enabled).
+        memory: { enabled: over.costFeatures ?? true },
         providers: { entries: {} },
       },
       secretManager: { get: (name: string): string | undefined => secrets[name] },
@@ -833,7 +834,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
             elevatedReply: { senderTrustMap: { flooder: "admin" }, defaultTrustLevel: "external" },
           },
         },
-        memory: { costFeatures: { enabled: true } },
+        memory: { enabled: true },
         providers: { entries: {} },
       },
       secretManager: { get: (): string | undefined => undefined },
@@ -879,7 +880,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
             elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
           },
         },
-        memory: { costFeatures: { enabled: true } },
+        memory: { enabled: true },
         providers: { entries: {} },
       },
       secretManager: { get: (): string | undefined => undefined },

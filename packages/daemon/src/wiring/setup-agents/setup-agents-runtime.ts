@@ -326,8 +326,8 @@ export async function setupSingleAgent(
     eligibilityContext,  // Runtime eligibility context
   );
   skillRegistry.init();
-  // SURFACE-01/03 (v2.26): per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). WR-03: gated on learningSkills.enabled × the master cost switch so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; WR-01: registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
-  const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.costFeatures?.enabled !== false && effectiveConfig.learningSkills?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry });
+  // SURFACE-01/03 (v2.26): per-agent cache of promoted read-only learned procedures, refreshed out-of-band (the sync seam reads `.current`). WR-03: gated on learning.enabled × the master cost switch (memory.enabled, renamed in Phase 226) so default-OFF does ZERO surface work (no list()/rmSync) and stays byte-identical; WR-01: registers its refresh so the promote/demote loop re-refreshes it (next-session pickup).
+  const learnedSurface = wireAgentLearnedSkillSurface({ enabled: container.config.memory?.enabled !== false && effectiveConfig.learning?.enabled === true, agentId, learnedSkillStore: deps.learnedSkillStore, scope: { tenantId: container.config.tenantId, agentId }, workspaceDir: dir, logger: perAgentLogger, registry: deps.learnedSkillSurfaceRegistry });
 
   // Per-agent ToolCapabilityPort adapter. Construction sits here so the adapter can close
   // over this agent's skillRegistry; reused by pi-executor (capability-index renderer) AND

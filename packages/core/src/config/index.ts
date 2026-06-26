@@ -46,21 +46,14 @@ export type { SocialModelingConfig } from "./schema-social-modeling.js";
 export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
 export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
 
-// Outcome-signal (Verified Learning WS1) schema — per-agent, default-OFF
+// Outcome-signal (Verified Learning WS1) schema — per-agent, default-ON (opt-out)
 export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
 
-// Learning-tuning (Verified Learning WS3 / ranking) schema — per-agent, default-OFF
-export { LearningTuningConfigSchema } from "./schema-learning-tuning.js";
-export type { LearningTuningConfig } from "./schema-learning-tuning.js";
-
-// Learning-forgetting (Verified Learning WS4 / forgetting) schema — per-agent, default-OFF
-export { LearningForgettingConfigSchema } from "./schema-learning-forgetting.js";
-export type { LearningForgettingConfig } from "./schema-learning-forgetting.js";
-
-// Procedural-learning (Verified Learning WS2 / skills) schema — per-agent, default-OFF
-export { LearningSkillsConfigSchema } from "./schema-learning-skills.js";
-export type { LearningSkillsConfig } from "./schema-learning-skills.js";
+// The collapsed learning-layer schema (Phase 226 / SIMPLIFY-01/05) — per-agent, default-ON.
+// Replaces the per-loop schema-learning-skills/-tuning/-forgetting (deleted; no re-export aliases, I1).
+export { LearningConfigSchema } from "./schema-learning.js";
+export type { LearningConfig } from "./schema-learning.js";
 
 // Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
 export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";

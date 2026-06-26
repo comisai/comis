@@ -1264,8 +1264,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // `userRepresentationStore` to the v2.31 mental-model store — a `kind:"profile"`
   // Mental Model doc (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`).
   //
-  // It is injected on its OWN gate — `config.learningSkills.enabled` (the SURVIVING
-  // learning flag; the old `memoryUserRepresentation.enabled` is deleted in Plan 05)
+  // It is injected on its OWN gate — `config.learning.enabled` (the collapsed
+  // learning flag, Phase 226 / SIMPLIFY-05; was learningSkills.enabled)
   // AND the optional store dep — INDEPENDENT of whether RAG ran, whether recall hit,
   // and independent of `rag.enabled`. This is why it lives OUTSIDE the
   // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
@@ -1284,7 +1284,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // profile. The profile content was redaction-checked + validateLearnedDocBody-clean +
   // high-trust at WRITE time. memorySections is seeded by the recall block (or empty),
   // so the profile appends after any retrieved sections + temporal guidance.
-  if (config.learningSkills?.enabled && deps.mentalModelStore) {
+  if (config.learning?.enabled && deps.mentalModelStore) {
     try {
       const profiles = await deps.mentalModelStore.list(
         {

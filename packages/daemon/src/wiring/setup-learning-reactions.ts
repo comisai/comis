@@ -47,6 +47,7 @@ import {
   KEYLESS_PROVIDER_TYPES,
   KEYLESS_API_KEY_SENTINEL,
   type TypedEventBus,
+  type MemoryConfig,
   type OutcomeSignalPort,
   type ClockPort,
   type ComisLogger,
@@ -543,7 +544,10 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
 export interface ReactionWiringContainer {
   config: {
     agents?: Record<string, AgentReactionConfig | undefined>;
-    memory?: { costFeatures?: { enabled?: boolean } };
+    // H-1 (Phase 226): the REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
+    // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename — a missed rename is a
+    // compile error, never a silent `undefined !== false === true` force-ENABLE (the inverted kill-switch).
+    memory?: Pick<MemoryConfig, "enabled">;
     providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
   };
   secretManager: { get(name: string): string | undefined };
@@ -658,7 +662,7 @@ function resolveCorrectionDetector(
  * called in ONE line from the `setupLearningOutcomeWiring` site.
  *
  * Gates (mirror the 198 byte-identity computation):
- *  - `costFeaturesEnabled = memory.costFeatures.enabled !== false` (master switch).
+ *  - `costFeaturesEnabled = memory.enabled !== false` (master switch, renamed from costFeatures.enabled in Phase 226).
  *  - `learningOutcomeEnabled(id) = costFeaturesEnabled && agent.learningOutcome.enabled`.
  *  - `correctionEnabled(id) = learningOutcomeEnabled(id) && agent.learningOutcome.correction.enabled`.
  *  - `recordOutboundMessage` is built ONLY when SOME agent has learning-outcome on
@@ -673,7 +677,7 @@ export function buildReactionWiringDeps(
   timers: TimerPort,
 ): BuildReactionWiringResult {
   const { eventBus, outcomeStore, logger } = container;
-  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  const costFeaturesEnabled = container.config.memory?.enabled !== false;
   const agents = container.config.agents ?? {};
 
   const learningOutcomeEnabled = (agentId: string): boolean =>

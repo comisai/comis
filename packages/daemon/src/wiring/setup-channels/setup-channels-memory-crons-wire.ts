@@ -189,16 +189,16 @@ export async function handleWireMemoryCronSentinel(
 
     const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
     const lifecycleStartMs = clock.now();
-    // FORGET-06 per-call policy: thread THIS agent's learningForgetting eviction policy onto the
-    // sweep CALL. OFF (the default) → no override → DORMANT sweep (byte-identical).
-    const lf = agentConfig?.learningForgetting;
-    // The eviction store consumes only the master gate + the corroborated-failure floor
-    // (the FadeMem strength-decay disjunct + its strengthThreshold/failurePenalty knobs
-    // were deleted in Phase 224-02 — the strength branch floored above its threshold and
-    // never fired). The config keys still parse (their collapse is Phase 226); they are
-    // simply no longer threaded into the sweep override.
-    const evictionPolicy = lf?.enabled
-      ? { evictionEnabled: lf.eviction?.enabled !== false, failureEvictionFloor: lf.eviction?.failureEvictionFloor }
+    // FORGET-06 per-call policy: thread THIS agent's collapsed learning forget policy onto the
+    // sweep CALL. OFF (memory.enabled / learning.enabled) → no override → DORMANT sweep (byte-identical).
+    // Phase 226 (SIMPLIFY-01) collapsed the former `learningForgetting` block into `learning.forget`:
+    // the eviction store consumes only the master gate + the corroborated-failure floor (the FadeMem
+    // strength-decay disjunct + its strengthThreshold/failurePenalty knobs were deleted in Phase 224-02
+    // — the strength branch floored above its threshold and never fired). With the per-loop block gone,
+    // `evictionEnabled` folds into the single `learning.enabled` gate; the floor reads learning.forget.failureEvictionFloor.
+    const learningCfg = agentConfig?.learning;
+    const evictionPolicy = learningCfg?.enabled
+      ? { evictionEnabled: true, failureEvictionFloor: learningCfg.forget?.failureEvictionFloor }
       : undefined;
     const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({
       tenantId: lifecycleTenantId,
@@ -325,7 +325,7 @@ export async function handleWireMemoryCronSentinel(
     }
 
     const agentConfig = agents[agentId];
-    const cfg = agentConfig?.learningSkills;
+    const cfg = agentConfig?.learning;
     if (!cfg?.enabled) {
       // The opt-in gate (defence-in-depth re-check): a disabled (or default-config) agent does
       // NOTHING — short-circuit ok so the scheduler records a clean run. Byte-identical (OFF).
@@ -422,11 +422,11 @@ export async function handleWireMemoryCronSentinel(
         ...(groupKey ? { groupKey } : {}),
         config: {
           enabled: cfg.enabled,
-          minConfidence: cfg.minConfidence,
-          // The per-run topic ceiling (the DoS bound — one LLM call each). No config key
-          // (learningSkills has none); 10 mirrors the job's DEFAULT_MAX_DOCS_PER_RUN. Each
-          // kind is bounded independently → a known 3×maxDocsPerRun per-run LLM ceiling.
-          maxDocsPerRun: 10,
+          minConfidence: cfg.reflect.minConfidence,
+          // The per-run topic ceiling (the DoS bound — one LLM call each). Phase 226 wires this
+          // from `learning.reflect.maxDocsPerRun` (default 25; was a hardcoded 10). Each kind is
+          // bounded independently → a known 3×maxDocsPerRun per-run LLM ceiling.
+          maxDocsPerRun: cfg.reflect.maxDocsPerRun,
         },
         sourceTrajectories,
         reflectionAdapter,

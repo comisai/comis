@@ -69,23 +69,22 @@ export interface LearningOutcomeWiringDeps {
   /** Structured logger for the OBS-01 INFO completion line + the non-fatal failure WARN. */
   logger: ComisLogger;
   /**
-   * Per-agent effective enable: true ONLY when the agent has
-   * `learningOutcome.enabled` AND the master `memory.costFeatures.enabled` switch
-   * is on. Default-OFF (no agent opts in) → the subscriber is a no-op.
+   * Per-agent effective enable: true ONLY when the agent has `learning.enabled`
+   * (Phase 226 / M-1 — the ONE collapsed learning flag) AND the master
+   * `memory.enabled` switch is on. With `memory.enabled:false` → the subscriber is a no-op.
    */
   learningOutcomeEnabled: (agentId: string) => boolean;
   /**
    * Per-agent reward-write enable (RANK-01): true ONLY when the agent has
-   * `learningTuning.enabled` AND the master `memory.costFeatures.enabled` switch is
-   * on. Gates the SUCCESS→`recordUsage` positive-reward write. Default-OFF → no
-   * reward write (byte-identical).
+   * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
+   * SUCCESS→`recordUsage` positive-reward write (STAYS wired behind the one flag — M-1).
    */
   learningTuningEnabled: (agentId: string) => boolean;
   /**
    * Per-agent failure-accrual enable (FORGET-02): true ONLY when the agent has
-   * `learningForgetting.enabled` AND the master `memory.costFeatures.enabled`
-   * switch is on. Gates the FAILURE/CORRECTED→`recordFailure` accrual (itself
-   * corroboration-gated, FORGET-03). Default-OFF → no failure accrual (byte-identical).
+   * `learning.enabled` AND the master `memory.enabled` switch is on. Gates the
+   * FAILURE/CORRECTED→`recordFailure` accrual (itself corroboration-gated, FORGET-03;
+   * STAYS wired behind the one flag — M-1).
    */
   learningForgettingEnabled: (agentId: string) => boolean;
   /**
@@ -98,15 +97,15 @@ export interface LearningOutcomeWiringDeps {
   learnedSkillStore?: MentalModelStorePort;
   /**
    * Per-agent learned-skill promote/demote enable (SURFACE-04/05): true ONLY when the
-   * agent has `learningSkills.enabled` AND the master `memory.costFeatures.enabled`
-   * switch is on. Gates the entire promote/demote loop. DEFAULT-OFF
-   * (`learningSkills.enabled` defaults false) → no promote/demote/emit (byte-identical).
+   * agent has `learning.enabled` (M-1 — the ONE collapsed flag) AND the master
+   * `memory.enabled` switch is on. Gates the entire promote/demote loop (STAYS wired
+   * behind the one flag). With `memory.enabled:false` → no promote/demote/emit (byte-identical).
    */
   learningSkillsEnabled?: (agentId: string) => boolean;
   /**
-   * Per-agent `promoteAtProofCount` (the threshold the candidate→active transition
-   * crosses — schema default 3). Passed verbatim into `learnedSkillStore.promote(id,
-   * scope, threshold)` (the Plan 02 D2 store-side CASE gate). Read once per agent.
+   * Per-agent promote threshold (the candidate→active transition crosses it — now
+   * `learning.reflect.promoteAtProofCount`, schema default 3). Passed verbatim into
+   * `learnedSkillStore.promote(id, scope, threshold)` (the Plan 02 D2 store-side CASE gate).
    */
   learningSkillsPromoteAt?: (agentId: string) => number;
   /**
@@ -129,7 +128,7 @@ export interface LearningOutcomeWiringDeps {
    * (byte-identical). These three fields ARE the {@link JudgeUpgradeDeps} structural subset.
    */
   outcomeJudge?: OutcomeJudge;
-  /** Per-agent judge enable (costFeatures && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
+  /** Per-agent judge enable (memory.enabled && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
   learningOutcomeJudgeEnabled?: (agentId: string) => boolean;
   /** LCD-backed per-turn transcript reader; absent/empty ⇒ the judge never runs (byte-identical). */
   readTurnTranscript?: (scope: JudgeScope) => string | undefined;
@@ -630,7 +629,7 @@ export interface SetupLearningOutcomeDeps {
    * (no agent has the judge on / no cheap-model key) the upgrade path is never entered.
    */
   outcomeJudge?: OutcomeJudge;
-  /** Per-agent judge enable (costFeatures && learningOutcome.enabled && judge.enabled). */
+  /** Per-agent judge enable (memory.enabled && learningOutcome.enabled && judge.enabled). */
   learningOutcomeJudgeEnabled?: (agentId: string) => boolean;
   /** LCD-backed per-turn transcript reader for the judge to score. */
   readTurnTranscript?: (scope: JudgeScope) => string | undefined;
@@ -641,21 +640,27 @@ export interface SetupLearningOutcomeDeps {
  * parsed config and stand up {@link wireLearningOutcome}.
  *
  * Every gate force-disables on the master cost switch
- * (`memory.costFeatures.enabled !== false` — exactly like the six cost crons,
- * OUTCOME-09) AND requires the agent's own per-feature flag (all default OFF):
- *  - `learningOutcome.enabled`    → the observe/resolve/emit subscriber (Phase 198).
- *  - `learningTuning.enabled`     → the SUCCESS→reward write (RANK-01).
- *  - `learningForgetting.enabled` → the FAILURE/CORRECTED→failure_count accrual (FORGET-02).
- * With the default config every gate is `false` for every agent → the subscriber
- * observes/resolves/emits/writes NOTHING → ranking/recall/replies are byte-identical.
+ * (`memory.enabled !== false` — renamed from costFeatures.enabled in Phase 226,
+ * OUTCOME-09) AND requires the agent's own learning flag. Phase 226 / M-1 COLLAPSED
+ * the four former per-feature flags (learningOutcome / learningTuning / learningForgetting /
+ * learningSkills `.enabled`) into the ONE `learning.enabled` gate — the RANK-01 reward,
+ * FORGET-02 accrual, and SURFACE-04 promote/demote WRITES all STAY wired, just behind the
+ * single flag. With `memory.enabled:false` every gate is `false` for every agent → the
+ * subscriber observes/resolves/emits/writes NOTHING → ranking/recall/replies are byte-identical.
  */
 export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void {
   // Master cost kill-switch: read defensively (`!== false`) so an absent block
   // fails OPEN to the per-agent flag rather than silently force-disabling.
-  const costFeaturesEnabled = deps.config.memory?.costFeatures?.enabled !== false;
+  const costFeaturesEnabled = deps.config.memory?.enabled !== false;
   // Hoist the typed agents map once (mirrors setup-schedulers.ts:107) so the per-agent
   // lookup is a bracket access on a known Record (not a dynamic optional-chain sink).
   const agents = deps.config.agents ?? {};
+  // M-1 (Phase 226): the single collapsed learning gate. The four reward/promote WRITES that
+  // were independently gated (each default-ON behind costFeatures) now share this one flag
+  // (default-ON `learning.enabled` under default-ON `memory.enabled`) — net enablement matches
+  // the prior opt-out posture; the per-feature split is gone by design (D-01).
+  const learningEnabled = (agentId: string): boolean =>
+    costFeaturesEnabled && agents[agentId]?.learning?.enabled === true;
   wireLearningOutcome({
     eventBus: deps.eventBus,
     outcomeStore: deps.outcomeStore,
@@ -663,18 +668,14 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
     learnedSkillStore: deps.learnedSkillStore,
     clock: deps.clock,
     logger: deps.logger,
-    learningOutcomeEnabled: (agentId: string): boolean =>
-      costFeaturesEnabled && agents[agentId]?.learningOutcome?.enabled === true,
-    learningTuningEnabled: (agentId: string): boolean =>
-      costFeaturesEnabled && agents[agentId]?.learningTuning?.enabled === true,
-    learningForgettingEnabled: (agentId: string): boolean =>
-      costFeaturesEnabled && agents[agentId]?.learningForgetting?.enabled === true,
-    // SURFACE-04/05: the learned-skill promote/demote gate (default-OFF —
-    // `learningSkills.enabled` defaults false) + the per-agent promote threshold.
-    learningSkillsEnabled: (agentId: string): boolean =>
-      costFeaturesEnabled && agents[agentId]?.learningSkills?.enabled === true,
+    learningOutcomeEnabled: learningEnabled, // the observe/resolve/emit subscriber (Phase 198)
+    learningTuningEnabled: learningEnabled, // RANK-01 SUCCESS→reward write — STAYS wired
+    learningForgettingEnabled: learningEnabled, // FORGET-02 FAILURE→failure_count accrual — STAYS wired
+    // SURFACE-04/05: the learned-skill promote/demote gate — STAYS wired behind the one flag +
+    // the per-agent promote threshold now reads learning.reflect.promoteAtProofCount.
+    learningSkillsEnabled: learningEnabled,
     learningSkillsPromoteAt: (agentId: string): number =>
-      agents[agentId]?.learningSkills?.promoteAtProofCount ?? 3,
+      agents[agentId]?.learning?.reflect?.promoteAtProofCount ?? 3,
     // WR-01: route a post-transition re-refresh to the agent's surface cache (a no-op
     // for an unregistered/default-off agent). Undefined registry ⇒ undefined closure.
     refreshLearnedSkillSurface: deps.learnedSkillSurfaceRegistry

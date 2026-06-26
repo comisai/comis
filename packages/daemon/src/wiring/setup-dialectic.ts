@@ -91,7 +91,8 @@ export interface DialecticWiringDeps {
    *  model/operationModels + rag). The wiring enables when ANY agent opts in and resolves the
    *  seam/recall/maxRecall per invoking agent from THIS map. */
   agentsConfig: Record<string, PerAgentConfig>;
-  /** The master cost-feature kill switch (`memory.costFeatures.enabled`, opt-out posture).
+  /** The master cost-feature kill switch (`memory.enabled`, opt-out posture; renamed from
+   *  costFeatures.enabled in Phase 226).
    *  The dialectic (`memory_ask`) is the ONE query-time LLM tool in the memory stack — a
    *  cost-bearing feature — so when this is `false` the wiring returns the dead `{}` (no seam,
    *  no recall builder, no maxRecall ⇒ the handler abstains, the tool is never exposed) EVEN
@@ -166,10 +167,10 @@ export interface DialecticBootSlice {
       providers?: { entries?: Record<string, (JudgeProviderEntry & { capabilities?: ProviderCapabilities }) | undefined> };
       /** The configured tenant (the daemon-wide `container.config.tenantId`). */
       tenantId: string;
-      /** The master cost-feature kill switch (`memory.costFeatures.enabled`). Threaded into the
-       *  dialectic wiring so the query-time `memory_ask` tool is force-disabled when the operator
-       *  turns all cost features off. */
-      memory: { costFeatures: { enabled: boolean } };
+      /** The master cost-feature kill switch (`memory.enabled`, renamed from costFeatures.enabled in
+       *  Phase 226). Threaded into the dialectic wiring so the query-time `memory_ask` tool is
+       *  force-disabled when the operator turns all cost features off. */
+      memory: { enabled: boolean };
     };
     eventBus?: TypedEventBus;
   };
@@ -202,7 +203,7 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
     agentsConfig: c.agentsConfig,
     // The master cost-feature kill switch — the dialectic (memory_ask) is a cost feature, so a
     // `false` here force-disables it regardless of any agent's per-agent dialectic.enabled.
-    costFeaturesEnabled: c.container.config.memory.costFeatures.enabled,
+    costFeaturesEnabled: c.container.config.memory.enabled,
     secretManager: c.container.secretManager,
     // FLAG-3: per-agent OAuth-credential resolver — returns a per-call getApiKey for the cheap
     // provider when that agent has an OAuth manager (openai-codex), else undefined (seam falls back
