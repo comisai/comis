@@ -313,6 +313,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
       // the LLM-free standing-block read.
       userRepresentationStore: deps.userRepresentationStore,
+      // FOLD-01 (Phase 225 Plan 02): forward the mental-model store — the REWIRED
+      // <user_profile> source (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
+      // → buildProfileBlock, replacing userRepresentationStore). A missing forward here is the
+      // SAME silent no-op (the profile block never renders even with the store wired daemon-side).
+      mentalModelStore: deps.mentalModelStore,
       // Forward the directional relationship store the SAME way as
       // userRepresentationStore — a missing forward here is a silent no-op (the
       // <channel_relationships> block never renders even with the store wired in the daemon).

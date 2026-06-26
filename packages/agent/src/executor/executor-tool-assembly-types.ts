@@ -85,6 +85,14 @@ export interface ToolAssemblyDeps {
    *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
    *  Pitfall 1). */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+  /** Optional mental-model store (the v2.31 Reflection doc store), forwarded into
+   *  prompt-assembly's LLM-free `<user_profile>` standing-block injection (FOLD-01, Phase 225
+   *  Plan 02 — the rewired source replacing `userRepresentationStore`; a deterministic
+   *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter, NO model call). Absent ->
+   *  no list, no push, byte-identical prompt. TYPE-only from @comis/core (the agent↛memory build
+   *  cut). A missing forward here leaves the profile injection a silent no-op even when the store
+   *  is wired in the daemon (the documented latent field-plumbing drop — Pitfall 1). */
+  mentalModelStore?: import("@comis/core").MentalModelStorePort;
   /** Optional directional relationship store. Forwarded into
    *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
    *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical

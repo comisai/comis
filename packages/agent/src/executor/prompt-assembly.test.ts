@@ -695,26 +695,30 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
-  // 4a-bis. The LLM-free per-user-profile standing block.
-  // The profile is read (deterministically) + pushed onto memorySections
-  // exactly like the temporal-guidance block. Its binding proof is
-  // default-OFF byte-identity (the cost gate): with NO userRepresentationStore
-  // dep the prompt is byte-identical AND read() is called 0 times. The block
-  // appears ONLY when the store returns rows, and the injection is LLM-free
-  // (a store.read + the pure formatter — never a model call).
+  // 4a-bis. The LLM-free per-user-profile standing block (FOLD-01, Phase 225).
+  // The fold REWIRES the source: the <user_profile> block now reads from the
+  // mental-model store (`mentalModelStore.list(scope, "profile")` → buildProfileBlock),
+  // NOT the deleted userRepresentationStore. The per-user doc is selected by
+  // `topicKey === sessionKey.userId` (the profile groupKey is the userId; LearningScope
+  // carries only (tenant, agent), so the user axis lives in the doc's topicKey). The
+  // gate is the SURVIVING `learningSkills.enabled` flag (NOT the soon-deleted
+  // `memoryUserRepresentation`) + the store dep. Binding proofs: default-OFF
+  // byte-identity (no store dep ⇒ list() 0 times, byte-identical prompt), the cost
+  // gate (knob off ⇒ list() 0 times), the standing block injects on a zero-recall turn
+  // and with rag.enabled=false (it lives OUTSIDE the recall `if`), and the injection is
+  // LLM-free (a store.list + the pure formatter — never a model call). GAP-2 half-1: the
+  // <user_profile> content is DISJOINT from <available_skills> (no double-surface).
   // -----------------------------------------------------------------
-  describe("per-user-profile injection (LLM-free standing block)", () => {
+  describe("per-user-profile injection (LLM-free standing block, mental-model store)", () => {
     /**
-     * The standing-block config: the profile's OWN gate
-     * (`memoryUserRepresentation.enabled`) is ON. The profile push
-     * site is gated on this knob + the store dep, INDEPENDENT of recall hits and
-     * independent of `rag.enabled`. `rag.enabled` is left ON here only so the
-     * recall path also runs (the prior tests asserted recall is still constructed
-     * exactly once); the standing block no longer NEEDS a recall hit to inject.
+     * The standing-block config: the SURVIVING gate `learningSkills.enabled` is ON
+     * (it defaults on, but set it explicitly). `rag.enabled` is left ON only so the
+     * recall path also runs (the recall-construction assertions still hold); the
+     * standing block does NOT need a recall hit to inject.
      */
     function ragConfig() {
       return makeConfig({
-        memoryUserRepresentation: { enabled: true },
+        learningSkills: { enabled: true },
         rag: {
           enabled: true,
           maxResults: 5,
@@ -725,14 +729,13 @@ describe("assembleExecutionPrompt", () => {
       });
     }
     /**
-     * The standing-block config WITHOUT a recall hit: the profile knob is ON but
-     * `rag.enabled` is OFF (no recall, no recall hits). The durable
-     * profile MUST still inject on a zero-recall turn. The push must NOT be nested
-     * inside the recall-hit branch.
+     * The standing-block config WITHOUT a recall hit: `learningSkills` ON but
+     * `rag.enabled` OFF (no recall). The durable profile MUST still inject on a
+     * zero-recall turn — the push must NOT be nested inside the recall-hit branch.
      */
-    function userReprOnlyConfig() {
+    function learningOnlyConfig() {
       return makeConfig({
-        memoryUserRepresentation: { enabled: true },
+        learningSkills: { enabled: true },
         rag: { enabled: false },
       });
     }
@@ -756,22 +759,67 @@ describe("assembleExecutionPrompt", () => {
         store: vi.fn(),
       } as any;
     }
-    /** A spy UserRepresentationStore counting read() calls, returning a fixed set. */
+    /** A kind:profile MentalModel for user `userId` carrying the 4 prefix-type facts. */
+    function profileDoc(userId: string): import("@comis/core").MentalModel {
+      return {
+        id: `mm-profile-${userId}`,
+        name: `profile-${userId}`,
+        description: `Durable profile for ${userId}`,
+        body: "(rendered)",
+        kind: "profile",
+        topicKey: userId, // the profile groupKey IS the userId (the per-user axis)
+        trustLevel: "learned",
+        state: "active",
+        proofCount: 2,
+        confidence: 0.7,
+        mutating: false,
+        sourceTrajIds: ["s1", "s2"],
+        structuredBody: {
+          sections: [
+            { id: "identity", heading: "Identity", body: "- name is Sam" },
+            { id: "preference", heading: "Preferences", body: "- likes terse replies" },
+          ],
+        },
+        createdAt: 1_000,
+      };
+    }
+    /**
+     * A spy MentalModelStorePort counting list() calls + recording the (scope, kind)
+     * each call received, returning a fixed doc set.
+     */
     function makeSpyStore(
-      entries: import("@comis/core").UserRepresentationEntry[],
-    ): { store: import("@comis/core").UserRepresentationStore; reads: () => number } {
-      let readCalls = 0;
+      docs: import("@comis/core").MentalModel[],
+    ): {
+      store: import("@comis/core").MentalModelStorePort;
+      lists: () => number;
+      lastScope: () => import("@comis/core").LearningScope | undefined;
+      lastKind: () => string | undefined;
+    } {
+      let listCalls = 0;
+      let scope: import("@comis/core").LearningScope | undefined;
+      let kind: string | undefined;
       const store = {
-        upsert: vi.fn(),
-        read: vi.fn(async () => {
-          readCalls += 1;
-          return { ok: true as const, value: entries };
+        admit: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(async (s: import("@comis/core").LearningScope, k?: string) => {
+          listCalls += 1;
+          scope = s;
+          kind = k;
+          // Mimic listByKindStmt: filter by kind when supplied.
+          const filtered = k === undefined ? docs : docs.filter((d) => d.kind === k);
+          return { ok: true as const, value: filtered };
         }),
-      } as unknown as import("@comis/core").UserRepresentationStore;
-      return { store, reads: () => readCalls };
+        promote: vi.fn(),
+        demote: vi.fn(),
+        promoteByName: vi.fn(),
+        demoteByName: vi.fn(),
+        supersede: vi.fn(),
+        evict: vi.fn(),
+      } as unknown as import("@comis/core").MentalModelStorePort;
+      return { store, lists: () => listCalls, lastScope: () => scope, lastKind: () => kind };
     }
 
-    it("default-OFF: with NO userRepresentationStore dep the prompt is byte-identical (no <user_profile> block)", async () => {
+    it("default-OFF: with NO mentalModelStore dep the prompt is byte-identical (no <user_profile> block)", async () => {
       const params = makeParams({
         config: ragConfig(),
         deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
@@ -779,24 +827,14 @@ describe("assembleExecutionPrompt", () => {
       });
       const result = await assembleExecutionPrompt(params);
 
-      // No store dep ⇒ no profile read ⇒ no block ⇒ byte-identity preserved.
+      // No store dep ⇒ no profile list ⇒ no block ⇒ byte-identity preserved.
       expect(result.dynamicPreamble).not.toContain("<user_profile>");
       expect(result.systemPrompt).not.toContain("<user_profile>");
     });
 
-    it("default-OFF cost gate: with NO store dep, read() is called 0 times AND the prompt equals the no-store baseline", async () => {
+    it("default-OFF cost gate: with NO store dep, list() is called 0 times AND the prompt equals the no-store baseline", async () => {
       // The store is CONSTRUCTED (spy) but NOT wired into deps — the off config.
-      // Mirror recall-iq-contribution.bench.test.ts:633-640: the off config never
-      // reads (the cost gate) and is byte-identical to the feature-absent path.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+      const spy = makeSpyStore([profileDoc("u")]);
 
       const baseline = await assembleExecutionPrompt(
         makeParams({
@@ -806,20 +844,20 @@ describe("assembleExecutionPrompt", () => {
         }),
       );
 
-      // THE COST GATE: the store was never wired, so its read() was never called.
-      expect(spy.reads(), "read() NEVER called in the off (no-store-dep) config").toBe(0);
+      // THE COST GATE: the store was never wired, so its list() was never called.
+      expect(spy.lists(), "list() NEVER called in the off (no-store-dep) config").toBe(0);
       expect(baseline.dynamicPreamble).not.toContain("<user_profile>");
     });
 
-    it("store present but empty: read() runs, the formatter returns null, nothing is pushed → byte-identical prompt", async () => {
-      const emptySpy = makeSpyStore([]); // the user has no profile rows
+    it("store present but no profile for this user: list() runs, the formatter yields nothing → byte-identical prompt", async () => {
+      const emptySpy = makeSpyStore([]); // no profile docs at all
       const withStore = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
           deps: {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
-            userRepresentationStore: emptySpy.store,
+            mentalModelStore: emptySpy.store,
           },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
@@ -832,84 +870,67 @@ describe("assembleExecutionPrompt", () => {
         }),
       );
 
-      // The read ran (store present) but found nothing → no block → identical prompt.
-      expect(emptySpy.reads(), "read() runs once when the store is present").toBe(1);
+      // The list ran (store present) but found nothing → no block → identical prompt.
+      expect(emptySpy.lists(), "list() runs once when the store is present").toBe(1);
       expect(withStore.dynamicPreamble).not.toContain("<user_profile>");
       expect(withStore.dynamicPreamble).toEqual(withoutStore.dynamicPreamble);
       expect(withStore.systemPrompt).toEqual(withoutStore.systemPrompt);
     });
 
-    it("LLM-free injection ON: a store returning rows injects the <user_profile> block via store.read + the pure formatter (no model call)", async () => {
-      const spy = makeSpyStore([
-        {
-          id: "p2",
-          entryType: "preference",
-          content: "likes terse replies",
-          trust: "learned",
-          createdAt: 2_000,
-        },
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("LLM-free injection ON: a profile doc injects the <user_profile> block via list() + buildProfileBlock (no model call)", async () => {
+      const spy = makeSpyStore([profileDoc("u")]);
       const result = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
           deps: {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
-            userRepresentationStore: spy.store,
+            mentalModelStore: spy.store,
           },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
-      // The block + every entry's content appear; the read drove it (LLM-free).
+      // The block + the doc's facts appear; the list drove it (LLM-free).
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
       expect(result.dynamicPreamble).toContain("likes terse replies");
-      expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
-      // The injection adds NO extra model/recall seam: recall is still constructed
-      // exactly once (the profile path is a store.read + the pure formatter, never a
-      // second createMemoryRecall / reasoning call).
+      expect(spy.lists(), "the injection is a store.list (deterministic, LLM-free)").toBe(1);
+      // The list is kind-filtered to "profile" (never an unfiltered list).
+      expect(spy.lastKind()).toBe("profile");
+      // The injection adds NO extra model/recall seam: recall is still constructed once.
       expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
     });
 
-    it("standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
-      // RED-first: the profile <user_profile> block was wrongly NESTED inside
-      // the `recalled.value.length > 0` recall-hit branch, so it silently dropped on
-      // every zero-recall turn (greetings/off-topic/sparse store). The durable per-user
-      // profile is a STANDING block — it must inject whenever its OWN knob is on + the
-      // store has rows, independent of whether THIS turn's recall hit. This test wires a
-      // populated store + a recall that returns ok([]) (the beforeEach default) and asserts
-      // the block IS present. On the pre-fix (nested) code this FAILS (the push site is
-      // unreachable when recalled.value.length === 0).
-      const memoryPort = ragMemoryPort(); // builds the port (and sets a recall hit)
-      // Force ZERO recall hits AFTER ragMemoryPort() (which set a non-empty result):
-      // recall succeeds but returns nothing this turn — the recall-hit branch is NOT
-      // entered, so the pre-fix (nested) profile push is unreachable here.
-      mockRecall.mockResolvedValue({ ok: true, value: [] });
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("selects the CURRENT user's profile doc by topicKey===userId (cross-user isolation at read)", async () => {
+      // Two users' profile docs in the (tenant, agent) scope; only THIS user's renders.
+      const mine = profileDoc("user-me");
+      const theirs: import("@comis/core").MentalModel = {
+        ...profileDoc("user-other"),
+        structuredBody: { sections: [{ id: "identity", heading: "Identity", body: "- SECRET other-user fact" }] },
+      };
+      const spy = makeSpyStore([theirs, mine]);
       const result = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort,
-            userRepresentationStore: spy.store,
-          },
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), mentalModelStore: spy.store },
+          sessionKey: { tenantId: "t", userId: "user-me", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam"); // mine
+      expect(result.dynamicPreamble).not.toContain("SECRET other-user fact"); // theirs
+    });
+
+    it("standing block: a profile injects on a ZERO-recall turn (recall returns ok([])) — NOT recall-conditional", async () => {
+      const memoryPort = ragMemoryPort();
+      mockRecall.mockResolvedValue({ ok: true, value: [] }); // zero recall hits this turn
+      const spy = makeSpyStore([profileDoc("u")]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort, mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
@@ -917,114 +938,119 @@ describe("assembleExecutionPrompt", () => {
       // The standing block injects even though recall returned NOTHING this turn.
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
-      expect(spy.reads(), "the standing-block read runs on a zero-recall turn").toBe(1);
+      expect(spy.lists(), "the standing-block list runs on a zero-recall turn").toBe(1);
     });
 
     it("standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
-      // The other half: the block was ALSO gated behind `rag.enabled` +
-      // `deps.memoryPort` (the outer recall guard). An operator who enables
-      // `memoryUserRepresentation` but runs `rag.enabled: false` got ZERO profile
-      // injection (the offline builder wrote rows nothing ever read). The standing
-      // block must inject on its OWN knob + store, with NO RAG/memoryPort at all.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+      const spy = makeSpyStore([profileDoc("u")]);
       const result = await assembleExecutionPrompt(
         makeParams({
-          config: userReprOnlyConfig(), // rag.enabled = false, NO memoryPort wired
-          deps: {
-            workspaceDir: "/workspace",
-            userRepresentationStore: spy.store,
-          },
+          config: learningOnlyConfig(), // rag.enabled = false, NO memoryPort wired
+          deps: { workspaceDir: "/workspace", mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
-      expect(spy.reads(), "the standing-block read runs even with rag.enabled=false").toBe(1);
+      expect(spy.lists(), "the standing-block list runs even with rag.enabled=false").toBe(1);
     });
 
-    it("cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
-      // The gate moved from store-presence-only to (knob && store). Prove the
-      // knob is load-bearing — and that this is a true regression guard: wire the store
-      // AND drive a recall HIT (so the OLD nested push site WOULD have run), but leave
-      // `memoryUserRepresentation` OFF. The cost gate must hold: read() is NEVER called
-      // and the prompt equals the knob-off baseline (default-OFF byte-identity). On the
-      // pre-fix code (gated on store-presence inside the recall-hit branch) this FAILS —
-      // it would read once and inject. The recall block itself still runs (rag.enabled),
-      // so the baseline includes the recalled section; only the profile is gated off.
-      const memoryPort = ragMemoryPort(); // sets a non-empty recall hit
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
-      const knobOff = await assembleExecutionPrompt(
+    it("cost gate: learningSkills OFF + store present + recall HIT ⇒ list() NEVER called and the prompt is byte-identical", async () => {
+      // Prove the SURVIVING gate is load-bearing: wire the store AND drive a recall
+      // HIT, but set learningSkills.enabled=false. list() must NEVER fire and the
+      // prompt must equal the gate-off baseline (default-OFF byte-identity).
+      const memoryPort = ragMemoryPort();
+      const spy = makeSpyStore([profileDoc("u")]);
+      const gateOff = await assembleExecutionPrompt(
         makeParams({
-          // knobOffRagConfig: rag.enabled ON (recall hits) but the profile knob OFF.
           config: makeConfig({
-            rag: {
-              enabled: true,
-              maxResults: 5,
-              minScore: 0.3,
-              includeTrustLevels: ["learned"],
-              maxContextChars: 5000,
-            },
+            learningSkills: { enabled: false },
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort,
-            userRepresentationStore: spy.store,
-          },
+          deps: { workspaceDir: "/workspace", memoryPort, mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
       const baseline = await assembleExecutionPrompt(
         makeParams({
           config: makeConfig({
-            rag: {
-              enabled: true,
-              maxResults: 5,
-              minScore: 0.3,
-              includeTrustLevels: ["learned"],
-              maxContextChars: 5000,
-            },
+            learningSkills: { enabled: false },
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
           deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
-      expect(spy.reads(), "knob off ⇒ read() NEVER called even on a recall hit (the cost gate)").toBe(0);
-      expect(knobOff.dynamicPreamble).not.toContain("<user_profile>");
-      expect(knobOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
-      expect(knobOff.systemPrompt).toEqual(baseline.systemPrompt);
+      expect(spy.lists(), "gate off ⇒ list() NEVER called even on a recall hit (the cost gate)").toBe(0);
+      expect(gateOff.dynamicPreamble).not.toContain("<user_profile>");
+      expect(gateOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(gateOff.systemPrompt).toEqual(baseline.systemPrompt);
     });
 
-    it("forward-presence: deps.userRepresentationStore reaches the read site with the prompt's own (tenant, agent, user) scope", async () => {
-      // The threading guard (a dropped thread is a silent no-op). Mirror
-      // the deps.tripleStore forward-presence test (lines 310-337): assert the dep the
-      // caller passed is the one whose read() fires, scoped to THIS prompt's identity.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("GAP-2 half-1: the <user_profile> content is DISJOINT from the <available_skills> source (no double-surface)", async () => {
+      // The profile facts surface ONCE — in the <user_profile> block — never ALSO in
+      // the <available_skills> source (which prompt-assembly reads via the SEPARATE
+      // getPromptSkillsXml seam). The two channels are disjoint by SOURCE: the profile
+      // comes from mentalModelStore.list(scope,"profile"); the skills surface is
+      // daemon-materialized from list(scope,"skill") (kind-filtered — GAP-2 half-2). This
+      // asserts the two sources never share content (the harness mocks the rich-prompt
+      // assembler, so assert the disjointness at the source, not the assembled string).
+      const skillsXml =
+        "<available_skills>\n<skill><name>alpha</name><description>a skill</description></skill>\n</available_skills>";
+      const spy = makeSpyStore([profileDoc("u")]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            mentalModelStore: spy.store,
+            getPromptSkillsXml: () => skillsXml,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The profile facts are in the <user_profile> block (the dynamic preamble)…
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      // …and the <available_skills> SOURCE carries NEITHER profile fact (disjoint).
+      expect(skillsXml).toContain("<available_skills>");
+      expect(skillsXml).not.toContain("name is Sam");
+      expect(skillsXml).not.toContain("likes terse replies");
+      // The list issued for the profile is kind-filtered to "profile" (never "skill"),
+      // so the profile read can never pull a skills-channel doc and vice-versa.
+      expect(spy.lastKind()).toBe("profile");
+    });
+
+    it("non-fatal: a list() err is swallowed → no block, the agent proceeds (no throw)", async () => {
+      const store = {
+        admit: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(async () => ({ ok: false as const, error: new Error("unresolved scope") })),
+        promote: vi.fn(),
+        demote: vi.fn(),
+        promoteByName: vi.fn(),
+        demoteByName: vi.fn(),
+        supersede: vi.fn(),
+        evict: vi.fn(),
+      } as unknown as import("@comis/core").MentalModelStorePort;
+
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), mentalModelStore: store },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).not.toContain("<user_profile>");
+    });
+
+    it("forward-presence: deps.mentalModelStore reaches the list site with the prompt's own (tenant, agent) scope", async () => {
+      const spy = makeSpyStore([profileDoc("user-Q")]);
       await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
@@ -1032,24 +1058,20 @@ describe("assembleExecutionPrompt", () => {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
             tenantId: "tenant-X",
-            userRepresentationStore: spy.store,
+            mentalModelStore: spy.store,
           },
           agentId: "agent-Z",
           sessionKey: { tenantId: "tenant-X", userId: "user-Q", channelId: "chat-1" } as any,
         }),
       );
 
-      // The exact dep the caller passed is the one that ran (forward-presence).
-      expect(spy.reads()).toBe(1);
-      const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
-      const scopeArg = readMock.mock.calls[0][0] as {
-        tenantId: string;
-        agentId: string;
-        userId: string;
-      };
+      // The exact dep the caller passed is the one that ran (forward-presence), scoped
+      // to THIS prompt's (tenant, agent) — the load-bearing isolation boundary.
+      expect(spy.lists()).toBe(1);
+      const scopeArg = spy.lastScope()!;
       expect(scopeArg.tenantId).toBe("tenant-X");
       expect(scopeArg.agentId).toBe("agent-Z");
-      expect(scopeArg.userId).toBe("user-Q");
+      expect(spy.lastKind()).toBe("profile");
     });
   });
 

@@ -72,7 +72,7 @@ import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
-import { buildUserRepresentationBlock } from "./user-representation-block.js";
+import { buildProfileBlock } from "./user-representation-block.js";
 import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
@@ -457,8 +457,20 @@ export interface PromptAssemblyParams {
      *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
      *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
      *  build cut. The read is a deterministic store.read + a pure formatter; NO
-     *  model call crosses onto the recall hot path (the milestone's #1 constraint). */
+     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
+     *  DEPRECATED by the v2.31 fold (Phase 225 Plan 02): the `<user_profile>` block
+     *  now reads from {@link mentalModelStore} (`list(scope,"profile")`). This field
+     *  is no longer read by prompt-assembly and is removed with its port in Plan 05. */
     userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+    /** Optional mental-model store (the v2.31 Reflection doc store) for the LLM-free
+     *  `<user_profile>` standing-block injection (FOLD-01, Phase 225 Plan 02 — the
+     *  rewired source, replacing `userRepresentationStore`). Absent ⇒ no list, no push,
+     *  byte-identical prompt (the cost gate). The agent receives the segregated port
+     *  TYPE only — the agent↛memory build cut. The read is a deterministic
+     *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter (the per-user
+     *  doc is selected by `topicKey === sessionKey.userId`); NO model call crosses onto
+     *  the recall hot path (the milestone's #1 constraint). */
+    mentalModelStore?: import("@comis/core").MentalModelStorePort;
     /** Optional channel-relationship store for the LLM-free directional standing-block
      *  injection (read side; default-OFF, gated on the privacy-review sign-off).
      *  Absent ⇒ no read, no push, byte-identical prompt (the cost gate). The agent
@@ -1255,32 +1267,54 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // USER-PROFILE STANDING BLOCK: the LLM-free per-user-profile block is a DURABLE
   // standing block ("what we know about this user"), NOT a per-recall-conditional one.
-  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled`
-  // AND the optional store dep — INDEPENDENT of whether RAG ran, whether
-  // recall hit, and independent of `rag.enabled`. This is why it lives OUTSIDE the
+  // FOLD-01 (Phase 225 Plan 02): the source is REWIRED from the deleted
+  // `userRepresentationStore` to the v2.31 mental-model store — a `kind:"profile"`
+  // Mental Model doc (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`).
+  //
+  // It is injected on its OWN gate — `config.learningSkills.enabled` (the SURVIVING
+  // learning flag; the old `memoryUserRepresentation.enabled` is deleted in Plan 05)
+  // AND the optional store dep — INDEPENDENT of whether RAG ran, whether recall hit,
+  // and independent of `rag.enabled`. This is why it lives OUTSIDE the
   // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
   // there silently dropped the profile on every zero-recall turn (greetings/off-topic/
   // sparse store) and gave RAG-off deployments ZERO injection.
   //
-  // Default-OFF byte-identity (the cost gate): with the knob off OR no store dep,
-  // read() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
-  // store.read scoped to THIS prompt's own (tenant, agent, user) + the pure
-  // buildUserRepresentationBlock formatter (NO model call — the recall hot path stays
-  // LLM-free). The formatter returns null on an empty profile ⇒ nothing pushed ⇒
-  // byte-identity. Non-fatal: a read err is swallowed so the agent proceeds without the
-  // profile. The profile content was redaction-checked + validateMemoryWrite-clean +
+  // Default-OFF byte-identity (the cost gate): with the gate off OR no store dep,
+  // list() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
+  // `list(scope,"profile")` scoped to THIS prompt's own (tenant, agent) + the pure
+  // buildProfileBlock formatter (NO model call — the recall hot path stays LLM-free).
+  // The profile groupKey is the userId, carried on the doc's `topicKey` (LearningScope
+  // has only (tenant, agent)), so the CURRENT user's doc is selected by
+  // `topicKey === sessionKey.userId` — cross-user isolation at read (T-225-09). The
+  // formatter returns undefined on an empty/absent profile ⇒ nothing pushed ⇒
+  // byte-identity. Non-fatal: a list err is swallowed so the agent proceeds without the
+  // profile. The profile content was redaction-checked + validateLearnedDocBody-clean +
   // high-trust at WRITE time. memorySections is seeded by the recall block (or empty),
   // so the profile appends after any retrieved sections + temporal guidance.
-  if (config.memoryUserRepresentation?.enabled && deps.userRepresentationStore) {
+  if (config.learningSkills?.enabled && deps.mentalModelStore) {
     try {
-      const profile = await deps.userRepresentationStore.read({
-        tenantId: deps.tenantId ?? sessionKey.tenantId,
-        agentId: agentId ?? config.name,
-        userId: sessionKey.userId,
-      });
-      if (profile.ok && profile.value.length > 0) {
-        const profileBlock = buildUserRepresentationBlock(profile.value);
-        if (profileBlock) memorySections.push(profileBlock);
+      const profiles = await deps.mentalModelStore.list(
+        {
+          tenantId: deps.tenantId ?? sessionKey.tenantId,
+          agentId: agentId ?? config.name,
+        },
+        "profile",
+      );
+      if (profiles.ok) {
+        // The per-user doc: the profile groupKey is the userId on the doc's topicKey.
+        // Select THIS user's doc by `topicKey === userId`. A doc with an EMPTY topicKey
+        // is user-agnostic (a single-user agent whose builder set no per-user groupKey)
+        // and is shown to any user; a doc carrying a DIFFERENT user's topicKey is NEVER
+        // shown (cross-user isolation — no sole-doc fallback that could leak A's profile
+        // to B). When userId is itself absent, only an empty-topicKey doc qualifies.
+        const userId = sessionKey.userId;
+        const mine =
+          (userId !== undefined ? profiles.value.find((d) => d.topicKey === userId) : undefined) ??
+          profiles.value.find((d) => d.topicKey === "");
+        if (mine) {
+          const profileBlock = buildProfileBlock(mine);
+          if (profileBlock) memorySections.push(profileBlock);
+        }
       }
     } catch (profileErr) {
       logger.debug(

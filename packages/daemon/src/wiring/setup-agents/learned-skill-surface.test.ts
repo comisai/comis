@@ -388,6 +388,80 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
 });
 
 // ---------------------------------------------------------------------------
+// GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1): the wholesale surface MUST be
+// kind-filtered to EXCLUDE kind:"profile" — a profile doc surfaces ONCE (in the
+// rewired <user_profile> block, prompt-assembly), never ALSO in <available_skills>.
+// The fix changes `list(scope)` → `list(scope, "skill")` (the listByKindStmt
+// path). RED on the pre-fix code: the unfiltered list() returns the profile doc,
+// which then materializes into .learned-skills (the double-surface).
+// ---------------------------------------------------------------------------
+
+/**
+ * A KIND-AWARE MentalModelStorePort stub mimicking the real `listByKindStmt`: it
+ * records every `kind` arg `list()` was called with, and FILTERS `docs` by that
+ * kind (an omitted kind ⇒ ALL kinds — the pre-fix, double-surfacing behavior).
+ */
+function makeKindAwareStore(docs: MentalModel[]): {
+  store: MentalModelStorePort;
+  kindCalls: () => Array<"skill" | "profile" | "topic" | undefined>;
+} {
+  const calls: Array<"skill" | "profile" | "topic" | undefined> = [];
+  const store = {
+    admit: async () => ok({ id: "x", admitted: true }),
+    get: async () => ok(undefined),
+    list: async (_scope: LearningScope, kind?: "skill" | "profile" | "topic") => {
+      calls.push(kind);
+      const filtered = kind === undefined ? docs : docs.filter((d) => d.kind === kind);
+      return ok(filtered);
+    },
+    promote: async () => ok(undefined),
+    demote: async () => ok(undefined),
+    promoteByName: async () => ok({ changed: true }),
+    demoteByName: async () => ok({ changed: true }),
+    supersede: async () => ok("superseded" as const),
+    evict: async () => ok(undefined),
+  } as unknown as MentalModelStorePort;
+  return { store, kindCalls: () => calls };
+}
+
+describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (no double-surface)", () => {
+  it("a kind:'profile' doc in the store is NOT materialized into .learned-skills", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      // A profile doc that WOULD surface (active, read-only) on an unfiltered list().
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // The skill still surfaces (regression guard)…
+    expect(existsSync(safePath(workDir, ".learned-skills", "alpha", "SKILL.md"))).toBe(true);
+    // …the profile doc does NOT (the kind filter excludes it — no double-surface).
+    expect(existsSync(safePath(workDir, ".learned-skills", "profile-user-u", "SKILL.md"))).toBe(false);
+  });
+
+  it("a kind:'profile' doc is NOT in the surfaced (cached) set the seam renders", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    const surfaced = await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(surfaced.some((s) => s.name === "alpha")).toBe(true);
+    expect(surfaced.some((s) => s.kind === "profile")).toBe(false);
+  });
+
+  it("calls list() with the 'skill' kind filter (the listByKindStmt path), never an unfiltered list", async () => {
+    const { store, kindCalls } = makeKindAwareStore([learned({ name: "alpha", kind: "skill" })]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // Every list() the surface issues is kind-filtered to "skill" — never undefined
+    // (an unfiltered list would re-admit a profile/topic doc into the skills channel).
+    expect(kindCalls().length).toBeGreaterThan(0);
+    expect(kindCalls().every((k) => k === "skill")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WR-01: createRefreshableLearnedSkillSurface — a re-refresh after a promote
 // picks up the newly-active skill on the NEXT listing (SURFACE-03: it updates
 // cache.current; the next freeze reads it). Without the re-refresh the boot

@@ -212,7 +212,14 @@ export async function refreshLearnedSkillSurface(args: {
   const { learnedSkillStore, scope, workspaceDir, logger } = args;
   if (!learnedSkillStore) return [];
 
-  const result = await learnedSkillStore.list(scope);
+  // GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1): KIND-FILTER to "skill" only. The
+  // wholesale surface materializes into <available_skills>; a kind:"profile" doc must
+  // NOT surface here — it surfaces ONCE, in the rewired <user_profile> block
+  // (prompt-assembly), so its facts are not double-surfaced/confused into the skills
+  // channel. (kind:"topic" is decided in Plan 03; for now "skill" correctly excludes
+  // profile and is the minimal change.) The kind filter is an ADDITIONAL AND over the
+  // load-bearing (tenant, agent) scope, never a replacement (the listByKindStmt path).
+  const result = await learnedSkillStore.list(scope, "skill");
   if (!result.ok) {
     logger.debug(
       {
