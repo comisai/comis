@@ -105,9 +105,9 @@ export async function setupSchedulers(deps: {
   // memory.enabled in Phase 226). When the operator sets memory.enabled:false, EVERY LLM
   // cost-bearing memory cron is force-disabled at its registration site below — regardless of the
   // agent's own per-feature opt-in. The gated set: memoryReview, memoryUsefulnessJudge, the
-  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep, and the
-  // socialModeling cron (which has its OWN privacy sign-off gate and stays independent). Default
-  // true (schema default) ⇒ byte-identical registration. Read defensively (`!== false`) so an
+  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep. (The
+  // socialModeling cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
+  // Default true (schema default) ⇒ byte-identical registration. Read defensively (`!== false`) so an
   // unexpectedly-absent block fails OPEN to the prior behavior rather than silently disabling features.
   const costFeaturesEnabled = container.config.memory?.enabled !== false;
 
@@ -386,41 +386,18 @@ export async function setupSchedulers(deps: {
     //    ONE __REFLECT__ cron (which now reflects skill + profile + topic in one pass, Plan 04). The
     //    I1 model — the old crons are GONE, not run in parallel. (Their now-dead job BODIES are
     //    deleted in Plan 05; this plan removes the registrations + the sentinel intercepts so they
-    //    never fire.) __SOCIAL_MODELING__ below is Phase 226 scope and stays live.
+    //    never fire.) __SOCIAL_MODELING__ was DELETED in Phase 226-04 (the block below).
 
-    // -- Social modeling cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The privacy-review gate is STRICTER than
-    // the other memory crons: register ONLY when the operator BOTH sets socialModeling.enabled AND
-    // records a privacy-review sign-off (privacyReviewSignedOffBy). A knob-on-but-not-signed-off agent
-    // registers NO job → byte-identical with the config absent (the sign-off is the operator gate; the
-    // sentinel handler re-checks the SAME dual gate, defense-in-depth). Default schedule 0 6 * * * runs
-    // AFTER the representation cron's 0 5 so relationships are built over freshly-profiled memories.
-    // The __SOCIAL_MODELING__ sentinel is intercepted in setup-channels-memory-crons → runRelationshipBuild
-    // (the per-channel offline directional-edge upsert, source-grouped via memoryApi.inspect +
-    // parseFormattedSessionKey + the createRelationshipSeam cheap-model seam).
-    const socialModelingConfig = agentConfig.socialModeling;
-    if (socialModelingConfig?.enabled && socialModelingConfig?.privacyReviewSignedOffBy) {
-      const memSocialJobId = `memory-social-modeling-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memSocialJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memSocialJobId,
-          name: "Memory social modeling",
-          agentId,
-          schedule: { kind: "cron", expr: socialModelingConfig.schedule ?? "0 6 * * *" },
-          payload: { kind: "system_event", text: "__SOCIAL_MODELING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: socialModelingConfig.schedule ?? "0 6 * * *" }, "Registered memory social modeling cron job");
-      }
-    }
+    // (The social-modeling cron — __SOCIAL_MODELING__, gated by socialModeling.enabled +
+    // a recorded privacyReviewSignedOffBy — was DELETED in Phase 226 SIMPLIFY-03 with the
+    // ENTIRE social-modeling subsystem (the runRelationshipBuild offline directional-edge
+    // builder, the createRelationshipSeam cheap-model seam, the RelationshipStore port +
+    // sqlite adapter, the `relationship` table, the relationship-block prompt injection).
+    // The per-agent socialModeling config key is gone — a config carrying it is now rejected
+    // at parse (the D-01a operator-update path). Deleting it removes a prompt-injected
+    // relationship-model attack surface; no dormant seam left behind (full delete, I1).
+    // After this, the learning crons are exactly 3: __REFLECT__ + __MEMORY_LIFECYCLE__ +
+    // the event-driven OutcomeSignalPort.resolve path (__MEMORY_REVIEW__ stays accumulate-tier).)
 
     // (The usefulness-judge cron — __USEFULNESS_JUDGE__, gated by memoryUsefulnessJudge.enabled
     // — was DELETED in Phase 226 SIMPLIFY-03 (D-03). It was a dormant cost-gated cheap-model

@@ -40,13 +40,6 @@ export type {
   LifecycleSweepReport,
 } from "./memory-lifecycle.js";
 export type {
-  RelationshipStore,
-  RelationshipScope,
-  RelationshipTrust,
-  RelationshipEntry,
-  RelationshipInput,
-} from "./relationship-store.js";
-export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,

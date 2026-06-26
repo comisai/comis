@@ -343,48 +343,12 @@ export function ensureTripleTable(db: Database.Database): void {
   `);
 }
 
-/**
- * Create the `relationship` table — the sole storage for directional, multi-party
- * relationship modeling. Additive, forward-only,
- * idempotent. One row = the durable, DIRECTIONAL, HIGH-TRUST edge `subjectUser`'s
- * representation OF `aboutUser`, scoped to one (tenant, agent, channel). Sole
- * adapter: `createSqliteRelationshipStore`.
- *
- * The high-trust floor at the DB layer: `CHECK(trust IN
- * ('system','learned'))` — `'external'` STRUCTURALLY ABSENT, so external content
- * can NEVER enter a relationship (defense-in-depth with the adapter write-boundary
- * reject (layer 3) + the port-type floor (layer 2)). Isolation (EXTENDED with
- * `channel_id`, the NEW privacy axis): every row carries
- * `tenant_id`+`agent_id`+`channel_id`, `idx_relationship_scope` leads with all
- * three, the adapter filters every statement on them; the directional
- * `(subject_user_id, about_user_id)` pair is ROW DATA, NOT a security filter (A→B
- * is DISTINCT from B→A, never symmetrized). The `source_memory_id -> memories(id)`
- * `ON DELETE CASCADE` fires via the `PRAGMA foreign_keys = ON` set by
- * `openSqliteDatabase`.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already exists
- *   (the FK target). Call AFTER `ensureTripleTable` in `initSchema`.
- */
-export function ensureRelationshipTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS relationship (
-      id               TEXT NOT NULL,
-      tenant_id        TEXT NOT NULL,
-      agent_id         TEXT NOT NULL,
-      channel_id       TEXT NOT NULL,
-      subject_user_id  TEXT NOT NULL,
-      about_user_id    TEXT NOT NULL,
-      content          TEXT NOT NULL,
-      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
-      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
-      created_at       INTEGER NOT NULL,
-      updated_at       INTEGER,
-      PRIMARY KEY (id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_relationship_scope
-      ON relationship(tenant_id, agent_id, channel_id);
-  `);
-}
+// (The `relationship` table — the sole storage for the directional social-modeling
+//  subsystem — was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem
+//  (the __SOCIAL_MODELING__ cron, the RelationshipStore port + adapter, the
+//  relationship-block prompt injection). A fresh DB no longer creates it; an existing
+//  DB's orphaned `relationship` table is inert (never read/written) — no migration, no
+//  read path. No alias, I1.)
 
 /**
  * Initialize the full memory schema on the given SQLite database.
@@ -534,7 +498,9 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count (v2.26 WS4, FORGET-02)
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
-  ensureRelationshipTable(db); // directional relationships
+  // (ensureRelationshipTable — the directional social-modeling table — was DELETED in
+  //  Phase 226 SIMPLIFY-03 with the rest of that subsystem; orphaned tables on existing
+  //  DBs are inert, no migration.)
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)

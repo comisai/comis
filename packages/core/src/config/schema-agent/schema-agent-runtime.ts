@@ -22,7 +22,6 @@ import { NotificationConfigSchema } from "../schema-notification.js";
 import { VerbosityConfigSchema } from "../schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "../schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "../schema-memory-review.js";
-import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningConfigSchema } from "../schema-learning.js";
@@ -406,9 +405,10 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default-ON. A COST feature — force-disabled at its registration site when the
    *  master kill switch `memory.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
-  /** Directional relationship-modeling configuration (STAYS OFF — privacy/consent gate
-   *  `privacyReviewSignedOffBy`, NOT flipped by the opt-out posture). */
-  socialModeling: SocialModelingConfigSchema.optional(),
+  // (The `socialModeling` key was DELETED in Phase 226 SIMPLIFY-03 — the entire
+  //  social-modeling subsystem (the __SOCIAL_MODELING__ cron + the RelationshipStore port +
+  //  adapter + the `relationship` table + the relationship-block prompt injection) is gone.
+  //  z.strictObject now rejects a config carrying it, the D-01a operator-update path. No alias, I1.)
   /** memory_ask grounded-Q&A tool config — the ONE allowed query-time LLM surface.
    *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),

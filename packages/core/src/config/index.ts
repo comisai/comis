@@ -38,9 +38,10 @@ export type { VerbosityConfig, VerbosityLevel, VerbosityOverride } from "./schem
 export { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 export type { MemoryReviewConfig } from "./schema-memory-review.js";
 
-// Social-modeling schema
-export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
-export type { SocialModelingConfig } from "./schema-social-modeling.js";
+// (The social-modeling schema was DELETED in Phase 226 SIMPLIFY-03 — the entire
+// social-modeling subsystem (the __SOCIAL_MODELING__ cron, the RelationshipStore port,
+// the sqlite adapter, the relationship table, the relationship-block prompt injection)
+// is gone; no re-export alias, I1.)
 
 // (The offline usefulness-judge schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
 // usefulness-judge cron is gone; no re-export alias, I1.)
