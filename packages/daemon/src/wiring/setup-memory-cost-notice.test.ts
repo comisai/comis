@@ -2,13 +2,14 @@
 /**
  * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
  *
- * On daemon startup, when the master kill switch `memory.costFeatures.enabled`
- * is ON (the default) AND at least one LLM cost-bearing memory feature is
- * actually active for some agent, the daemon emits ONE prominent WARN that:
+ * On daemon startup, when the master kill switch `memory.enabled` (renamed from
+ * `memory.costFeatures.enabled` in Phase 226) is ON (the default) AND at least
+ * one LLM cost-bearing memory feature is actually active for some agent, the
+ * daemon emits ONE prominent WARN that:
  *   - names the active cost features,
  *   - states they spend the operator's own LLM/API budget,
  *   - gives the exact one-line config to turn them ALL off
- *     (`memory.costFeatures.enabled: false`).
+ *     (`memory.enabled: false`).
  *
  * When the kill switch is OFF, or when NO cost feature is active (today's
  * default bare config), the notice emits NOTHING. The notice never logs a
@@ -62,9 +63,10 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     const warn = warns[0]!;
     // Names the active feature.
     expect(JSON.stringify(warn.payload)).toContain("memoryReview");
-    // Gives the exact one-line disable config.
+    // Gives the exact one-line disable config — the LIVE key (renamed from
+    // memory.costFeatures.enabled in Phase 226; z.strictObject rejects the old one).
     expect(JSON.stringify({ p: warn.payload, m: warn.msg })).toContain(
-      "memory.costFeatures.enabled: false",
+      "memory.enabled: false",
     );
     // States it spends the operator's own budget.
     expect((warn.msg + JSON.stringify(warn.payload)).toLowerCase()).toMatch(

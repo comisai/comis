@@ -223,7 +223,7 @@ export function registerMemoryCommand(program: Command): void {
         info(
           "No outcome events recorded yet. Outcome learning is ON by default " +
             "(opt-out via agents.<id>.learningOutcome.enabled: false, or the master " +
-            "memory.costFeatures.enabled: false); events accrue as agent turns finish.",
+            "memory.enabled: false); events accrue as agent turns finish.",
         );
         return;
       }
@@ -275,8 +275,8 @@ export function registerMemoryCommand(program: Command): void {
         }
         info(
           "No learned skills yet — none have been synthesized + admitted. Skill synthesis " +
-            "is ON by default (opt-out via agents.<id>.learningSkills.enabled: false, or the master " +
-            "memory.costFeatures.enabled: false), and runs on its schedule over successful trajectories (procedures only).",
+            "is ON by default (opt-out via agents.<id>.learning.enabled: false, or the master " +
+            "memory.enabled: false), and runs on its schedule over successful trajectories (procedures only).",
         );
         return;
       }

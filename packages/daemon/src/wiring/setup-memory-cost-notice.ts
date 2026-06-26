@@ -2,14 +2,14 @@
 /**
  * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
  *
- * On daemon startup, when the master cost-feature kill switch
- * (`memory.costFeatures.enabled`) is ON (the default) AND at least one LLM
- * cost-bearing memory feature is actually active for some agent, emit ONE
- * prominent WARN that:
+ * On daemon startup, when the master cost-feature kill switch (`memory.enabled`,
+ * renamed from `memory.costFeatures.enabled` in Phase 226) is ON (the default)
+ * AND at least one LLM cost-bearing memory feature is actually active for some
+ * agent, emit ONE prominent WARN that:
  *   - names the active cost features,
  *   - states they spend the operator's OWN LLM/API budget,
  *   - gives the exact one-line config to turn them ALL off
- *     (`memory.costFeatures.enabled: false`).
+ *     (`memory.enabled: false`).
  *
  * Emitted once per startup (this function is called once from the daemon boot
  * sequence). When the kill switch is OFF, or when NO cost feature is active
@@ -53,7 +53,8 @@ const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; la
 export interface MemoryCostFeatureNoticeDeps {
   /** All per-agent configs (the same `container.config.agents` map). */
   agents: Record<string, CostFeatureAgentSlice>;
-  /** The master kill switch (`memory.costFeatures.enabled`). When false ⇒ no notice. */
+  /** The master kill switch (`memory.enabled`, renamed from `memory.costFeatures.enabled`
+   *  in Phase 226). When false ⇒ no notice. */
   costFeaturesEnabled: boolean;
   /** Counts/names-only structural logger — never a secret/key. */
   logger: ComisLogger;
@@ -94,9 +95,9 @@ export function emitMemoryCostFeatureNotice(deps: MemoryCostFeatureNoticeDeps): 
     {
       activeCostFeatures: activeFeatures,
       activeCostFeatureCount: activeFeatures.length,
-      disableWith: "memory.costFeatures.enabled: false",
+      disableWith: "memory.enabled: false",
       errorKind: "config" as const,
-      hint: "These memory features make LLM/API calls that spend YOUR configured provider budget. To turn ALL of them off in one place, set `memory.costFeatures.enabled: false` in your config.",
+      hint: "These memory features make LLM/API calls that spend YOUR configured provider budget. To turn ALL of them off in one place, set `memory.enabled: false` in your config.",
     },
     "LLM cost-bearing memory features are ACTIVE and will spend your own LLM/API budget",
   );

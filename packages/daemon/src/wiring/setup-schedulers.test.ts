@@ -984,7 +984,7 @@ describe("setupSchedulers", () => {
     await setupSchedulers(deps);
 
     const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
-      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+      (c: any[]) => JSON.stringify(c).includes("memory.enabled: false"),
     );
     expect(disclosureWarn, "a cost-disclosure WARN naming the off-switch was emitted").toBeDefined();
   });
@@ -999,7 +999,7 @@ describe("setupSchedulers", () => {
     await setupSchedulers(deps);
 
     const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
-      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+      (c: any[]) => JSON.stringify(c).includes("memory.enabled: false"),
     );
     expect(disclosureWarn, "no cost-disclosure WARN when nothing is active").toBeUndefined();
   });

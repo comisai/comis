@@ -526,4 +526,62 @@ describe("no-backward-compat", () => {
       `resolveModelTier still present in: ${hits.join(", ")}`,
     ).toHaveLength(0);
   });
+
+  // Phase 226 SIMPLIFY-01: `memory.costFeatures.enabled` was RENAMED to the
+  // top-level `memory.enabled` master kill-switch, and `z.strictObject` now
+  // REJECTS the old key (the D-01a operator-update path). So no SHIPPED runtime
+  // string an operator reads — a daemon boot-notice hint, a `comis memory` help
+  // line, a `memory.ask` abstain hint — may instruct them to set the deleted
+  // `costFeatures.enabled` key: following it would write a config that fails at
+  // next boot. This guard pins the post-rename invariant (the verifier WARNING +
+  // the 226-01 SUMMARY's "broad plan-06 scrub" that plan-06 scoped to docs/ only).
+  //
+  // SCOPE: only the OPERATOR-FACING config-key STRING (`costFeatures.enabled`,
+  // i.e. the dotted key path) appearing OUTSIDE a comment. JSDoc/line-comment
+  // tombstones that document the rename ("renamed from `memory.costFeatures.enabled`
+  // in Phase 226") are the established 223/224/225 tombstone convention and are
+  // dev-facing — they are NOT operator-visible and are intentionally allowed
+  // (comment-stripped before the scan). The internal `costFeaturesEnabled`
+  // variable name carries no dot, so it never matches the dotted key pattern.
+  it("no shipped operator-facing runtime string names the deleted `costFeatures.enabled` config key (Phase 226 SIMPLIFY-01)", () => {
+    // Match the DOTTED dead config-key path only (`costFeatures.enabled`, with
+    // optional `memory.` prefix). Tolerates whitespace around the dot. Does NOT
+    // match the comment-only prose nor the `costFeaturesEnabled` identifier.
+    const deadKeyPattern = /costFeatures\s*\.\s*enabled/;
+    const allFiles = listAllProductionFiles();
+    const violations: ViolationCitation[] = [];
+    for (const file of allFiles) {
+      const text = readFileSync(file, "utf8");
+      // Strip block comments, then scan line-by-line stripping any trailing
+      // line comment (the tombstones live in comments — a key named there is
+      // NOT operator-visible). Best-effort, same spirit as audio-wiring-guard's
+      // stripComments; precise enough because the dead key only ever appears in
+      // a comment or a string literal here.
+      const noBlock = text.replace(/\/\*[\s\S]*?\*\//g, "");
+      const lines = noBlock.split(/\r?\n/);
+      const rel = repoRelative(file);
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i] ?? "";
+        // Drop a `//` line comment tail (and a `*`-prefixed JSDoc continuation
+        // line, which after block-strip can still carry tombstone prose).
+        const codeOnly = raw.replace(/\/\/.*$/, "");
+        if (/^\s*\*/.test(raw)) continue; // JSDoc continuation line — comment, skip
+        if (deadKeyPattern.test(codeOnly)) {
+          violations.push({ file: rel, line: i + 1, snippet: raw.trim().slice(0, 160) });
+        }
+      }
+    }
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "No shipped operator-facing runtime string under packages/*/src/ may name the deleted `memory.costFeatures.enabled` config key. Phase 226 SIMPLIFY-01 renamed it to `memory.enabled` and z.strictObject now REJECTS the old key — an operator who follows such a hint (boot notice / `comis memory` help / `memory.ask` abstain hint) would write a config that fails at next boot.",
+        violations,
+        suggestedFix:
+          "Rewrite the operator-facing string to name the live key `memory.enabled` (e.g. `memory.enabled: false`). Per-loop opt-outs are `agents.<id>.learning.enabled` (skills) and `agents.<id>.learningOutcome.enabled` (outcome). Comment-only tombstones documenting the rename are allowed (they are not operator-visible).",
+        designRef:
+          "Phase 226 SIMPLIFY-01 (costFeatures→memory.enabled rename) + CLAUDE.md Docs-Current / troubleshooting feedback-loop (\"name the exact config key\")",
+      }),
+    ).toEqual([]);
+  });
 });
