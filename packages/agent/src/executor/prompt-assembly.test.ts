@@ -541,8 +541,17 @@ describe("assembleExecutionPrompt", () => {
   //     config). The trust FILTER (memory-recall.ts:534-536) stays frozen — that
   //     file is UNTOUCHED by this plan (asserted via the git-diff verify gate).
   // -----------------------------------------------------------------
-  describe("deterministic apply overlay (gated buildScoringAlphas at the recall scoring arg)", () => {
-    /** The static config alphas the overlay merges onto (the SOLE trust-weight source). */
+  describe("recall scoring is fixed config.rag.scoring (RECALL-02/03 — the bandit overlay is deleted)", () => {
+    // Phase 224 (RECALL-02/03): the UCB online-tuning bandit + its tuned-alpha
+    // overlay are DELETED. Recall scoring now reverts to the fixed config.rag.scoring
+    // alphas (fused RRF + the existing cross-encoder reranker, no learned-weight write
+    // path). These tests are the INVERSE of the former "deterministic apply overlay"
+    // suite: the `scoring` arg into createMemoryRecall is exactly config.rag.scoring
+    // (object identity — NO buildScoringAlphas merge), and NO tunedAlphaStore read fires
+    // even when one is (legacy) wired. They FAIL on the pre-deletion overlay code, which
+    // wrapped scoring in buildScoringAlphas(...) and read the store behind an onlineTuning gate.
+
+    /** The static config alphas — now the SOLE scoring source (no overlay). */
     const CONFIG_SCORING = {
       recencyAlpha: 0.2,
       temporalAlpha: 0.2,
@@ -551,25 +560,29 @@ describe("assembleExecutionPrompt", () => {
       usefulnessAlpha: 0.1,
     };
 
-    /** A spy TunedAlphaStore counting read() calls + capturing the read scope. */
-    function makeTunedSpy(
-      vector: import("@comis/core").TunedAlphaVector | undefined,
-    ): {
+    /** A learned-vector store spy: counts reads + returns a vector whose alphas DIFFER
+     *  from config — so a surviving overlay would visibly rewrite scoring (the RED signal). */
+    function makeLearnedStore(): {
       store: import("@comis/core").TunedAlphaStore;
       reads: () => number;
-      lastScope: () => { tenantId: string; agentId: string; intent?: string } | undefined;
     } {
       let readCalls = 0;
-      let scope: { tenantId: string; agentId: string; intent?: string } | undefined;
       const store = {
         upsert: vi.fn(),
-        read: vi.fn(async (s: { tenantId: string; agentId: string; intent?: string }) => {
+        read: vi.fn(async () => {
           readCalls += 1;
-          scope = s;
-          return { ok: true as const, value: vector };
+          return {
+            ok: true as const,
+            value: {
+              recencyAlpha: 0.91,
+              temporalAlpha: 0.82,
+              proofAlpha: 0.73,
+              usefulnessAlpha: 0.64,
+            },
+          };
         }),
       } as unknown as import("@comis/core").TunedAlphaStore;
-      return { store, reads: () => readCalls, lastScope: () => scope };
+      return { store, reads: () => readCalls };
     }
 
     /** A memoryPort + a non-empty recall result so the recall path runs end-to-end. */
@@ -581,8 +594,10 @@ describe("assembleExecutionPrompt", () => {
       } as any;
     }
 
-    /** Base rag config with the static scoring alphas; `onlineTuning` toggled per test. */
-    function tuningConfig(onlineTuning?: { enabled: boolean }) {
+    /** Base rag config with the static scoring alphas. `onlineTuning` is set ON here so
+     *  these tests EXERCISE the (now-deleted) gated read+overlay path: pre-deletion the
+     *  store is read and the vector overlays scoring; post-deletion neither happens. */
+    function tuningConfig() {
       return makeConfig({
         rag: {
           enabled: true,
@@ -591,12 +606,12 @@ describe("assembleExecutionPrompt", () => {
           includeTrustLevels: ["learned"],
           maxContextChars: 5000,
           scoring: { ...CONFIG_SCORING },
-          ...(onlineTuning !== undefined ? { onlineTuning } : {}),
+          onlineTuning: { enabled: true },
         },
       });
     }
 
-    /** The `scoring` arg captured off the (mocked) createMemoryRecall config object. */
+    /** The `scoring` arg captured off the (mocked) createMemoryRecall options object. */
     function capturedScoring(): {
       recencyAlpha: number;
       temporalAlpha: number;
@@ -608,106 +623,72 @@ describe("assembleExecutionPrompt", () => {
       return (mockCreateMemoryRecall.mock.calls[0][1] as { scoring: any }).scoring;
     }
 
-    it("Test 1 (default-OFF byte-identity): tuning OFF ⇒ read() 0 times AND scoring is byte-identical to config", async () => {
-      // The store is CONSTRUCTED (spy) and WIRED, but onlineTuning is OFF — the
-      // gate must short-circuit BEFORE the read. FAILS on a pre-patch that reads
-      // the store above the enabled gate (the MMR readEmbeddings=0 analog).
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.9,
-        temporalAlpha: 0.8,
-        proofAlpha: 0.7,
-        usefulnessAlpha: 0.6,
-      });
+    it("scoring is the FIXED config alphas even with onlineTuning ON + a learned vector wired (FAILS on the surviving overlay)", async () => {
+      // The binding proof of the deletion. onlineTuning is ON and a learned store returning
+      // DIFFERENT alphas (0.91/0.82/0.73/0.64) is wired. Pre-deletion the overlay reads that
+      // vector and rewrites scoring to those values; post-deletion the read+overlay are gone,
+      // so scoring is the untouched config alphas (0.2/0.2/0.1/0.1/0.1). FAILS on pre-patch.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: false }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            // tunedAlphaStore is no longer a dep field post-deletion → cast through any.
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
         }),
       );
-
-      // THE COST GATE: tuning off ⇒ the store read NEVER fires.
-      expect(spy.reads(), "read() NEVER called when onlineTuning is off").toBe(0);
-      // ...and the static config alphas pass unchanged (byte-identical recall).
+      // The learned vector did NOT reach scoring — the config alphas are untouched.
       expect(capturedScoring()).toEqual(CONFIG_SCORING);
     });
 
-    it("Test 2 (apply): tuning ON + a learned vector ⇒ the four non-trust alphas reach scoring; read() runs ONCE scoped to (tenant, agent)", async () => {
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.91,
-        temporalAlpha: 0.82,
-        proofAlpha: 0.73,
-        usefulnessAlpha: 0.64,
-      });
+    it("scoring is config.rag.scoring by OBJECT IDENTITY — the call site forwards the config ref, no overlay clone (FAILS on pre-patch)", async () => {
+      // Post-deletion the call site passes `config.rag.scoring` straight through, so the
+      // captured arg IS the same reference as the input config's rag.scoring. Pre-deletion,
+      // with onlineTuning ON + a learned vector, buildScoringAlphas BUILDS a NEW object
+      // (the four tuned alphas + config trust) — a different reference. FAILS on pre-patch.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
+      const configScoringRef = config.rag.scoring; // the exact reference the call site must forward
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
           agentId: "agent-1",
         }),
       );
-
-      const scoring = capturedScoring();
-      // The four tuned non-trust alphas overlay the static config alphas.
-      expect(scoring.recencyAlpha).toBe(0.91);
-      expect(scoring.temporalAlpha).toBe(0.82);
-      expect(scoring.proofAlpha).toBe(0.73);
-      expect(scoring.usefulnessAlpha).toBe(0.64);
-      // The read fired exactly once, scoped to the live (tenant, agent) + the per-intent
-      // bucket (RANK-02): the default "Hello" message classifies to the "factual" intent.
-      expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "factual" });
+      expect(capturedScoring()).toBe(configScoringRef);
     });
 
-    it("Test 2b (RANK-02 per-intent read): the read scope carries classifyIntent(query) — a temporal query reads the 'temporal' bucket", async () => {
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.91,
-        temporalAlpha: 0.82,
-        proofAlpha: 0.73,
-        usefulnessAlpha: 0.64,
-      });
+    it("a wired tunedAlphaStore is NEVER read even with onlineTuning ON — the gated overlay read is gone (FAILS on pre-patch)", async () => {
+      // The deletion removes the read entirely. Pre-deletion, onlineTuning ON ⇒ the store is
+      // read once; post-deletion the read never fires. FAILS on the pre-patch read block.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
-          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
-          agentId: "agent-1",
-          // A temporal query → classifyIntent → "temporal" → the per-intent bucket read.
-          msg: makeMsg({ text: "what happened yesterday" }),
-        }),
-      );
-      expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "temporal" });
-    });
-
-    it("Test 3 (belt #2 at the apply site): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
-      // Even a learned vector that (type-widened) smuggles a trust weight cannot move
-      // the apply-site trust weight — the overlay sources it from config. FAILS if
-      // trustAlpha is taken from the tuned vector.
-      const smuggled = {
-        recencyAlpha: 0.95,
-        temporalAlpha: 0.95,
-        proofAlpha: 0.95,
-        usefulnessAlpha: 0.95,
-        trustAlpha: 0.99,
-      } as unknown as import("@comis/core").TunedAlphaVector;
-      const spy = makeTunedSpy(smuggled);
-      await assembleExecutionPrompt(
-        makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
           agentId: "agent-1",
         }),
       );
-
-      const scoring = capturedScoring();
-      // belt #2: the trust weight is byte-identical to config (0.1), NOT the smuggled 0.99.
-      expect(scoring.trustAlpha).toBe(CONFIG_SCORING.trustAlpha);
-      expect(scoring.trustAlpha).toBe(0.1);
-      // The four non-trust alphas DID overlay (proving the vector was applied, not ignored).
-      expect(scoring.recencyAlpha).toBe(0.95);
+      expect(learned.reads(), "the deleted overlay must never read the store").toBe(0);
+      expect(capturedScoring()).toEqual(CONFIG_SCORING);
     });
   });
 
