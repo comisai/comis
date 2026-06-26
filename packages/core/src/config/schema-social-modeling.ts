@@ -21,9 +21,9 @@
  * relationship modeling is per-channel + per-tenant scoped and directional, but it
  * is multi-party PII, so it does not activate without a recorded review.
  *
- * Mirrors {@link MemoryUserRepresentationConfigSchema}'s shape and conventions (the
- * cost-gate cron pattern), with the added privacy-review sign-off field; kept
- * deliberately small.
+ * Mirrors the cost-gate cron config shape + conventions (the
+ * pattern the deleted user-representation schema also followed), with the added
+ * privacy-review sign-off field; kept deliberately small.
  *
  * @module
  */

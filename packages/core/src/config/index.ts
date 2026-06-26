@@ -38,18 +38,6 @@ export type { VerbosityConfig, VerbosityLevel, VerbosityOverride } from "./schem
 export { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 export type { MemoryReviewConfig } from "./schema-memory-review.js";
 
-// Memory consolidation schema
-export { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.js";
-export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js";
-
-// Memory reasoning schema
-export { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
-export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
-
-// Per-user representation schema
-export { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
-export type { MemoryUserRepresentationConfig } from "./schema-memory-user-representation.js";
-
 // Social-modeling schema
 export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
 export type { SocialModelingConfig } from "./schema-social-modeling.js";

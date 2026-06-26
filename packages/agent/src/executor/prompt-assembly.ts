@@ -455,16 +455,9 @@ export interface PromptAssemblyParams {
     provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
     /** Optional per-user profile store for the LLM-free standing-block injection
      *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
-     *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
-     *  build cut. The read is a deterministic store.read + a pure formatter; NO
-     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
-     *  DEPRECATED by the v2.31 fold (Phase 225 Plan 02): the `<user_profile>` block
-     *  now reads from {@link mentalModelStore} (`list(scope,"profile")`). This field
-     *  is no longer read by prompt-assembly and is removed with its port in Plan 05. */
-    userRepresentationStore?: import("@comis/core").UserRepresentationStore;
     /** Optional mental-model store (the v2.31 Reflection doc store) for the LLM-free
-     *  `<user_profile>` standing-block injection (FOLD-01, Phase 225 Plan 02 — the
-     *  rewired source, replacing `userRepresentationStore`). Absent ⇒ no list, no push,
+     *  `<user_profile>` standing-block injection (FOLD-01, Phase 225 — the kind:"profile"
+     *  read source; the standalone userRepresentationStore was deleted in Plan 05). Absent ⇒ no list, no push,
      *  byte-identical prompt (the cost gate). The agent receives the segregated port
      *  TYPE only — the agent↛memory build cut. The read is a deterministic
      *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter (the per-user

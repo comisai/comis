@@ -94,13 +94,6 @@ agents:
     # ───────────────────────────────────────────────────────────────────
     # 3. BUILD-PATH / TOOL CAPABILITIES (write memory; some run on a cron)
     # ───────────────────────────────────────────────────────────────────
-    memoryUserRepresentation:        # USER — a per-user profile
-      enabled: true
-      schedule: "0 5 * * *"
-      maxEntriesPerRun: 50
-      maxSourceMemories: 200
-      maxSourceChars: 24000
-
     socialModeling:                  # SOCIAL — directional relationship model
       enabled: true
       privacyReviewSignedOffBy: "your-name-here"   # REQUIRED — stays OFF without a non-empty sign-off
@@ -113,17 +106,6 @@ agents:
       maxOutputTokens: 1024
       maxRecall: 10
 
-    memoryReasoning:                 # REASON — offline deductive/inductive observations
-      enabled: true
-      schedule: "0 4 * * *"
-      maxCandidatesPerRun: 200
-      surprisalTopFraction: 0.1
-      knnK: 10
-      maxObservationsPerRun: 25
-      maxReasoningTokens: 1024
-      reasonExternal: false
-      autoTags: []
-
     # ───────────────────────────────────────────────────────────────────
     # 4. MAINTENANCE / LIFECYCLE JOBS (cron-driven; default off)
     # ───────────────────────────────────────────────────────────────────
@@ -133,11 +115,6 @@ agents:
       minMessages: 5
       maxSessionsPerRun: 10
       maxReviewTokens: 4096
-
-    memoryConsolidation:             # cluster + fold / dedup
-      enabled: true
-      schedule: "30 3 * * *"
-      similarityThreshold: 0.82
 
     memoryUsefulnessJudge:           # scores recall-utility → feeds the FEED loop
       enabled: true
@@ -180,19 +157,17 @@ agents:
 | **FEED** loop | `rag.feedback.enabled` | Boosts memories that proved useful (`scoring.usefulnessAlpha`) |
 | **LEARN-IQ** | `rag.queryUnderstanding.intentReweight` (+ `synonyms`, `temporalParse`) | LLM-free query understanding / lane reweighting |
 | **FORGET** | `rag.forget.enabled` | FadeMem per-type decay demotes stale memories (`scoring.forgetAlpha`) |
-| **USER** | `memoryUserRepresentation.enabled` | Builds a per-user representation |
+| **REFLECT** (incl. profile + topic) | `learningSkills.enabled` | The one outcome-gated reflection cron — maintains the learned **skill** docs, the per-user **profile** doc (was USER), and higher-order **topic** observations (was REASON/Consolidation) in one pass |
 | **SOCIAL** | `socialModeling.enabled` **+** `socialModeling.privacyReviewSignedOffBy` | Directional relationship model (double-gated) |
 | **DIALECTIC** | `dialectic.enabled` | The `memory_ask` grounded-Q&A tool (query-time LLM) |
-| **REASON** | `memoryReasoning.enabled` | Offline deductive/inductive observations |
 | Review | `memoryReview.enabled` | Turns sessions into reviewed memories |
-| Consolidation | `memoryConsolidation.enabled` | Clusters + folds/dedups memories |
 | Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
 | Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep (the soft-eviction behaviour is gated by `learningForgetting`, below) |
 | **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default true, opt-out)* | Gates the **outcome-reward write** — success→`recordUsage` / failure→`recordFailure` on the `memory_usefulness` store (the `failure_count` source that **LEARN-FORGET** reads). Composes with `memoryUsefulnessJudge` + `learningForgetting` |
 | **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default true, opt-out)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
 
 <Note>
-  **v2.31 fold:** the **USER** (`memoryUserRepresentation`), **REASON** (`memoryReasoning`), and **Consolidation** (`memoryConsolidation`) work no longer runs as three separate nightly crons — it folds into the **one learning-reflection cron** (gated by `learningSkills.enabled`), which now maintains the per-user **profile** doc and the higher-order **topic** observations in the same pass as the learned **skill** docs (one outcome-gated engine, anti-poison two-axis). Their per-job `schedule:` keys are therefore inert; the keys still parse for now and are removed in a later v2.31 patch. A profile **correction** is preserved non-destructively (bi-temporal history-append), not overwritten.
+  **v2.31 fold:** the standalone **USER** (`memoryUserRepresentation`), **REASON** (`memoryReasoning`), and **Consolidation** (`memoryConsolidation`) crons + their config keys were **removed in v2.31** — the work folds into the **one learning-reflection cron** (gated by `learningSkills.enabled`), which maintains the per-user **profile** doc and higher-order **topic** observations in the same pass as the learned **skill** docs (one outcome-gated engine, anti-poison two-axis). A profile **correction** is preserved non-destructively (bi-temporal history-append on the Mental Model doc), not overwritten. Those three keys no longer parse; remove them from any config.
 </Note>
 
 ## Outcome-gated ranking & forgetting (v2.26)
@@ -204,14 +179,9 @@ agents:
 
 See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. The forgetting loop emits **counts-only** signals (`learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
 
-## Deepened user model: revise & generalize (v2.26)
+## Deepened user model: revise (folded into reflection, v2.31)
 
-Two further v2.26 deepenings change how the **USER** representation and **Consolidation** maintain long-term knowledge — both **non-destructive** and **`asOf`-auditable**:
-
-- **The user model revises (it does not rebuild).** With `memoryUserRepresentation.enabled` on, the builder no longer overwrites a profile slot. A contradicting profile fact of **equal-or-higher trust soft-closes** the incumbent belief (bi-temporal `t_valid_end`/`expired_at` — never deleted, still resolvable via `asOf`) and records the new one as current truth; a restatement **bumps confidence** in place; a **lower-trust** contradiction is **recorded-not-believed** (anti-poison); topic-distinct facts **coexist**. The default profile read returns **current truth only**, and per-record history is **bounded** by `memoryUserRepresentation.historyCap` (default 10). See the bi-temporal [`user_representation` columns](/operations/data-directory#user-representation-verified-learning-v2-26) for the storage detail.
-- **Consolidation can generalize (it abstracts, it does not copy).** With `memoryConsolidation.generalize.enabled` on (default off), the consolidation cron adds a second pass that synthesizes **one higher-order `semantic` memory** ("user prefers X in general") from a cluster spanning at least `generalize.minDistinctContexts` distinct `(session, sender)` contexts — an anti-domination gate so one repeated session cannot mint a "general" preference. The generalization is a **new node** (the source memories are kept + linked, trust never raised above `learned`), is **byte-identical when off**, abstains on small/nano models, and is itself **supersedable** by a later contradicting triple.
-
-Both are **default-safe** and surface **counts-only** through `comis explain` / `comis fleet` (the `learning` signal's `userModelRevised` / `memoriesGeneralized` counts and the benign `user_model_revised` verdict). See [`memoryUserRepresentation` / `memoryConsolidation.generalize` in config-yaml](/reference/config-yaml#user-representation-agents-memoryuserrepresentation).
+The per-user **profile** and higher-order **topic** observations are now maintained by the one outcome-gated reflection cron (`learningSkills.enabled`) as `kind:"profile"` / `kind:"topic"` Mental Model docs — the standalone user-representation + consolidation/reasoning crons were removed in v2.31 (see the fold note above). The non-destructive revision semantics carry over: a profile **correction** **supersedes** the prior doc with a bi-temporal **history-append** (the prior body is preserved in the doc's `history`, never hard-deleted), and external-trust sources are excluded by the engine's two-axis anti-poison SELECT. The activity surfaces **counts-only** through `comis explain` / `comis fleet` (the `learning` signal's reflection counts). The full key-by-key rewrite of this section lands in a later v2.31 docs pass.
 
 ## Dependencies & gotchas
 

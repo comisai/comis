@@ -146,12 +146,6 @@ export interface SingleAgentDeps {
    *  hit 3×). Byte-identical no-op when absent OR when no lcd_distilled result is
    *  present. The core LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
   provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-  /** Per-user representation store. Threaded into each per-agent
-   *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
-   *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port
-   *  TYPE (agent↛memory cut). Dormant until the offline builder writes rows (default-OFF cost gate);
-   *  absent ⇒ no read, no push, byte-identical prompt. */
-  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Directional relationship store. Threaded into each per-agent
    *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>`
    *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port TYPE

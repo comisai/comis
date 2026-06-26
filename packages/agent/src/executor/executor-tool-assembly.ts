@@ -308,20 +308,15 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // and pinned entries are never prepended to recall results even when the operator
       // has set `rag.pinned.enabled: true` and pinned memories in the DB.
       pinnedStore: deps.pinnedStore,
-      // Forward the per-user representation store the SAME way as usefulnessStore — a
-      // missing forward here is a silent no-op (the profile <user_profile> block never renders even
-      // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
-      // the LLM-free standing-block read.
-      userRepresentationStore: deps.userRepresentationStore,
-      // FOLD-01 (Phase 225 Plan 02): forward the mental-model store — the REWIRED
-      // <user_profile> source (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
-      // → buildProfileBlock, replacing userRepresentationStore). A missing forward here is the
-      // SAME silent no-op (the profile block never renders even with the store wired daemon-side).
+      // FOLD-01 (Phase 225): forward the mental-model store — the kind:"profile" source for the
+      // rewired <user_profile> block (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
+      // → buildProfileBlock; the standalone userRepresentationStore was deleted in Plan 05). A
+      // missing forward here is a silent no-op (the profile block never renders even with the store
+      // wired daemon-side — the documented field-plumbing drop, Pitfall 1).
       mentalModelStore: deps.mentalModelStore,
-      // Forward the directional relationship store the SAME way as
-      // userRepresentationStore — a missing forward here is a silent no-op (the
-      // <channel_relationships> block never renders even with the store wired in the daemon).
-      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
+      // Forward the directional relationship store the SAME way — a missing forward here is a silent
+      // no-op (the <channel_relationships> block never renders even with the store wired in the
+      // daemon). prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
       relationshipStore: deps.relationshipStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,

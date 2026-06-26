@@ -481,7 +481,7 @@ A one-hop entity-associative fusion lane. When disabled (the default), RRF fusio
 
 **Enabling the opt-in recall features**
 
-Reranking, the entity lane, and consolidation all ship off. The reranker model and the recall trace live under the top-level `memory` and `diagnostics` keys (not under `agents`). A schema-valid block that turns them on:
+Reranking and the entity lane both ship off. The reranker model and the recall trace live under the top-level `memory` and `diagnostics` keys (not under `agents`). A schema-valid block that turns them on:
 
 ```yaml
 agents:
@@ -499,9 +499,6 @@ agents:
         trustAlpha: 0.1
       entityLane:
         enabled: true               # opt-in (default false) -- one-hop associative lane
-    memoryConsolidation:
-      enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
-      schedule: "30 3 * * *"
     contextEngine:
       version: dag                  # the default lossless LCD engine; set "pipeline" for the simpler engine
 
@@ -752,25 +749,6 @@ Controls whether within-conversation history is assembled **relevance-first** (t
 > unconditional floor-token weight; the kept LTM/KG ids; and a `relevanceFirst` boolean)
 > fires only on the relevance-first path; it carries no message, memory, or query content.
 
-#### Memory Consolidation (agents.*.memoryConsolidation)
-
-Periodic LLM-driven consolidation of similar memories into observations. Opt-in (default off) because each run spends model tokens -- it is a cost gate. When enabled, a scheduled cron clusters near-duplicate memories and folds each cluster into a single observation; external-trust memories are excluded by default.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable periodic consolidation for this agent (opt-in cost gate) |
-| `schedule` | `string` | `"30 3 * * *"` | Cron schedule for consolidation runs (daily at 03:30 UTC by default) |
-| `similarityThreshold` | `number` | `0.82` | Cluster-neighbour cosine threshold for single-link clustering (0-1) |
-| `dedupThreshold` | `number` | `0.9` | Content-similarity threshold for the deterministic dedup pre-check (0-1) |
-| `maxCandidatesPerRun` | `number` | `200` | Maximum raw candidates fetched per run (positive) |
-| `maxClusterSize` | `number` | `12` | Maximum candidates folded into one observation (positive) |
-| `maxClustersPerRun` | `number` | `25` | Maximum clusters consolidated per run (positive) |
-| `maxConsolidationTokens` | `number` | `1024` | Maximum LLM response tokens for one merge call (positive) |
-| `consolidateExternal` | `boolean` | `false` | Include external-trust memories in consolidation (excluded by default) |
-| `autoTags` | `string[]` | `[]` | Extra tags applied to every created observation |
-| `generalize.enabled` | `boolean` | `false` | Verified Learning (v2.26): a second consolidation pass that synthesizes a higher-order "user prefers X in general" `semantic` memory (`observation_kind='generalization'`) from a diverse cluster. Opt-in (default off — consolidation is byte-identical when off); abstains on small/nano models. The synthesized node is non-destructive (sources kept + linked, trust never raised above `learned`) and is supersedable by a later contradicting triple |
-| `generalize.minDistinctContexts` | `number` | `3` | Minimum distinct `(session, sender)` contexts a cluster must span before it generalizes — an anti-domination gate so one repeated session cannot mint a "general" preference |
-
 #### Learning Outcome (agents.*.learningOutcome)
 
 The **Verified Learning** outcome signal (v2.26 WS1): a durable record of each finished trajectory's net task-outcome (`success` / `failure` / `corrected` / `unknown`), so learning can gate on a real task-outcome instead of a text-overlap proxy. **Default-OFF** and **gated by the master cost switch** (`memory.costFeatures.enabled` -- when that is `false`, `learningOutcome` is force-disabled regardless of the per-agent flag). The deterministic tool/pipeline signal is the primary source; the cost-gated LLM judge (`judge.enabled`, default **on** / opt-out) is the **fallback** that resolves a CONVERSATIONAL turn — one with no deterministic tool/pipeline signal, which would otherwise fuse to `unknown` and derive no learning. The judge runs ONE cheap-model pass ONLY when the deterministic resolve is `unknown` (so resolved turns skip it) and is force-disabled by the master cost switch. The capture is daemon-side and content-free -- ids / closed enums / counts only, never a message body. When enabled, observations are written to the `outcome_events` ledger (see [data-directory.mdx](/operations/data-directory)) and surfaced on the trajectory for `comis explain` (the `learning` obs signal) and via `comis memory learning`.
@@ -831,15 +809,6 @@ The **Verified Learning** wrongness-based soft eviction (v2.26 WS4): the per-age
 | `failurePenalty` | `number` (0–1) | `0.5` | Weight applied to a recalled memory's `failure_count` when decaying its strength (more corroborated failures → lower strength → earlier eviction). Bounded and saturating, so one stray failure barely moves a strong memory while sustained wrongness drops a weak one below the threshold |
 
 > **Gate composition.** `learningForgetting` drives the soft-eviction **behaviour**; it **composes with** — does not replace — the existing `memoryLifecycle` cron (the schedule that runs the sweep) and the existing `rag.forget` score-decay, all under the master `memory.costFeatures.enabled`. There is **no `halfLifeDays` knob**: v2.26 adds eviction + the failure coupling on top of the existing decay, not a new decay parameter. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`.
-
-#### User Representation (agents.*.memoryUserRepresentation)
-
-The per-user profile builder. On by default in v1 (`enabled: true`, opt-out — a cost feature, so force-disabled by `memory.costFeatures.enabled: false`). As of **Verified Learning (v2.26)** the builder **revises** the profile instead of rebuilding it: the `user_representation` table is **bi-temporal**, so a contradicting profile fact of **equal-or-higher trust soft-closes** the incumbent belief (`t_valid_end`/`expired_at` — never hard-deleted, still resolvable via `asOf`) while a **lower-trust** contradiction is **recorded-not-believed** (anti-poison) and a restatement bumps confidence in place. The default profile read returns **current truth only**. See the bi-temporal [`user_representation` columns](/operations/data-directory#user-representation-verified-learning-v2-26) for the storage detail; the revision activity surfaces counts-only on `comis explain` (the `learning` signal's `userModelRevised` count).
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Build a per-user representation for this agent (opt-out; force-disabled by `memory.costFeatures.enabled: false`) |
-| `historyCap` | `number` | `10` | Verified Learning (v2.26): bounded `asOf` history — superseded profile rows for a `(user, entryType)` slot beyond this many are trimmed **oldest-`expired_at`-first** (the one sanctioned delete; anti-unbounded-growth). A recent `asOf` within the cap still resolves |
 
 #### Memory Triple Extraction (agents.*.memoryTripleExtraction)
 

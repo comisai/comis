@@ -22,9 +22,6 @@ import { NotificationConfigSchema } from "../schema-notification.js";
 import { VerbosityConfigSchema } from "../schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "../schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "../schema-memory-review.js";
-import { MemoryConsolidationConfigSchema } from "../schema-memory-consolidation.js";
-import { MemoryReasoningConfigSchema } from "../schema-memory-reasoning.js";
-import { MemoryUserRepresentationConfigSchema } from "../schema-memory-user-representation.js";
 import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
@@ -413,15 +410,6 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    *  default-ON. A COST feature — force-disabled at its registration site when the
    *  master kill switch `memory.costFeatures.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
-  /** Periodic memory consolidation configuration (observation clustering). Opt-out
-   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryConsolidation: MemoryConsolidationConfigSchema.default(() => MemoryConsolidationConfigSchema.parse({})),
-  /** Periodic memory reasoning configuration (deductive/inductive observations).
-   *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryReasoning: MemoryReasoningConfigSchema.default(() => MemoryReasoningConfigSchema.parse({})),
-  /** Periodic per-user representation profile-builder configuration. Opt-out
-   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryUserRepresentation: MemoryUserRepresentationConfigSchema.default(() => MemoryUserRepresentationConfigSchema.parse({})),
   /** Directional relationship-modeling configuration (STAYS OFF — privacy/consent gate
    *  `privacyReviewSignedOffBy`, NOT flipped by the opt-out posture). */
   socialModeling: SocialModelingConfigSchema.optional(),

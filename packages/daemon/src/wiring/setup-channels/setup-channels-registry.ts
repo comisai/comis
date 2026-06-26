@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -215,13 +215,6 @@ export interface ChannelsDeps {
    *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
    *  anyway, so a default-config agent never reaches it). */
   tripleStore?: TripleStorePort;
-  /** Per-user representation store — forwarded to the cron path
-   *  so the opt-in __USER_REPRESENTATION__ sentinel runs runUserRepresentationBuild's offline
-   *  upsert write. Built in setup-memory on the shared db handle; injected as the port TYPE
-   *  (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a missing
-   *  thread silently disables the offline-builder write path. Absent => the
-   *  representation sentinel cannot run (the cron is off-by-default anyway). */
-  userRepresentationStore?: UserRepresentationStore;
   /** Directional relationship store — forwarded to the cron path
    *  so the opt-in + sign-off-gated __SOCIAL_MODELING__ sentinel runs runRelationshipBuild's offline
    *  per-channel directional-edge upsert write. Built in setup-memory on the shared db handle; injected
@@ -422,7 +415,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
     tripleStore: deps.tripleStore,
-    userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
     usefulnessStore: deps.usefulnessStore,

@@ -211,13 +211,6 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// The `user_representation` read-projection schema is co-located in
-// `user-representation-row-schema.ts` (this file is at the 800-line cap; the
-// tuned-alpha-row-schema.ts / outcome-event-row-schema.ts precedent) and re-exported
-// here so existing importers keep their import site. v2.26 WS5 REVISE-02: it carries
-// the four bi-temporal columns (t_valid_start/t_valid_end/expired_at/confidence) for
-// the asOf read + the supersession incumbent SELECT.
-export { UserRepresentationRowSchema } from "./user-representation-row-schema.js";
 
 // Schema for a `relationship` row projection. The scoped read
 // projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the

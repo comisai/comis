@@ -26,8 +26,8 @@ export const RetentionConfigSchema = z.strictObject({
  * Master cost-feature kill switch (v1 opt-out posture).
  *
  * A single top-level gate over EVERY LLM cost-bearing memory feature — the
- * offline crons (memoryReview, memoryConsolidation, memoryReasoning,
- * memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning) and the
+ * offline crons (memoryReview, the __REFLECT__ reflection cron, memoryUsefulnessJudge,
+ * memoryTripleExtraction, socialModeling) and the
  * query-time dialectic tool (`memory_ask`). When `enabled` is `false`, ALL of
  * them are force-disabled at their registration sites regardless of their
  * per-agent config — the operator's single escape hatch from any LLM/API spend

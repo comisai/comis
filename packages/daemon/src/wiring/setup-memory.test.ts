@@ -149,19 +149,9 @@ const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
   readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
 })));
-// Per-user representation store factory — mocked so
-// setup wires it without a real DB. setupMemory builds this on the shared db handle (mirror
-// the triple/embedding stores); without the mock entry the @comis/memory factory is undefined
-// and EVERY setup call throws `createSqliteUserRepresentationStore is not a function` (the
-// MEMORY.md "setup-memory mock" gate). The two segregated port halves are stubbed
-// (the upsert write + the (tenant, agent, user)-scoped read the prompt-assembly injection reads).
-const mockCreateSqliteUserRepresentationStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: [] })),
-})));
 // Directional relationship store factory — mocked so setup
 // wires it without a real DB. setupMemory builds this on the shared db handle (mirror the
-// triple/embedding/user-representation stores); without the mock entry the @comis/memory factory is
+// triple/embedding stores); without the mock entry the @comis/memory factory is
 // undefined and EVERY setup call throws `createSqliteRelationshipStore is not a function` (the
 // MEMORY.md "setup-memory mock" gate). The two segregated port halves are stubbed (the
 // directional upsert write + the (tenant, agent, channel)-scoped read the prompt-assembly injection reads).
@@ -223,7 +213,6 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
   createSqliteTripleStore: mockCreateSqliteTripleStore,
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
-  createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
   createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
@@ -1351,74 +1340,6 @@ describe("setupMemory", () => {
     // The bulk-scoped read the MMR diversity re-rank hydrates from (mirror the temporal/triple
     // presence assertions — a defined port method proves the store, not just a truthy field).
     expect(result.embeddingStore.readEmbeddings).toBeTypeOf("function");
-  });
-
-  it("builds the per-user representation store on the SAME shared db handle and returns it", async () => {
-    const container = createMinimalContainer(); // all-default config (memoryUserRepresentation OFF)
-    const setupMemory = await getSetupMemory();
-
-    const result = await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-
-    // Built UNCONDITIONALLY (no opt-in gate at build time — only the LLM-free <user_profile>
-    // injection in prompt-assembly is gated on the dep being present + the offline builder cron
-    // is its own default-OFF cost gate). Without the mock-map entry this call throws
-    // "createSqliteUserRepresentationStore is not a function".
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledOnce();
-    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
-    // entity/temporal/causal/triple/embedding/consolidation/usefulness stores receive) — NOT a
-    // second Database. A separate handle silently returns empty (the source_memory_id ON DELETE
-    // CASCADE + the (tenant, agent, user) isolation scope must stay consistent with the memory
-    // rows the profile is distilled from).
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb }),
-    );
-    expect(result.userRepresentationStore).toBeDefined();
-    // The two segregated port halves prove the store, not just a truthy field (mirror the
-    // embeddingStore.readEmbeddings presence assertion): the upsert write (offline builder) +
-    // the (tenant, agent, user)-scoped read (the prompt-assembly <user_profile> injection).
-    expect(result.userRepresentationStore.upsert).toBeTypeOf("function");
-    expect(result.userRepresentationStore.read).toBeTypeOf("function");
-  });
-
-  it("REVISE-02 (Phase 203): forwards the MAX configured memoryUserRepresentation.historyCap of an ENABLED agent into the user-rep store constructor", async () => {
-    const container = createMinimalContainer({
-      agents: {
-        // disabled agent's cap is ignored even though it is larger
-        ignored: { memoryUserRepresentation: { enabled: false, historyCap: 99 } },
-        a: { memoryUserRepresentation: { enabled: true, historyCap: 7 } },
-        b: { memoryUserRepresentation: { enabled: true, historyCap: 25 } },
-      },
-    });
-    const setupMemory = await getSetupMemory();
-    await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb, historyCap: 25 }),
-    );
-  });
-
-  it("REVISE-02 (Phase 203): omits historyCap (store keeps its default) when no ENABLED agent configures it", async () => {
-    const container = createMinimalContainer({
-      agents: { a: { memoryUserRepresentation: { enabled: false, historyCap: 50 } } },
-    });
-    const setupMemory = await getSetupMemory();
-    await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-    const arg = mockCreateSqliteUserRepresentationStore.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.historyCap).toBeUndefined();
   });
 });
 

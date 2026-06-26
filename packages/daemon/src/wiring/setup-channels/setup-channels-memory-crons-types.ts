@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
@@ -82,12 +82,10 @@ export interface MemoryCronContext {
   tenantId?: string;
   // All stores below are injected from setup-memory on the shared db; the agent
   // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
-  /** The inductive applyConsolidation write (__MEMORY_CONSOLIDATION__). */
+  /** Orphaned in Phase 225-05 (the __MEMORY_CONSOLIDATION__ cron + its writer were deleted); retired in 226. */
   consolidationStore?: MemoryConsolidationStore;
-  /** The deductive trust-first upsertTriple write (__MEMORY_REASONING__ + __MEMORY_TRIPLE_EXTRACTION__). */
+  /** The deductive trust-first upsertTriple write (__MEMORY_TRIPLE_EXTRACTION__). */
   tripleStore?: TripleStorePort;
-  /** The per-user profile upsert write (__USER_REPRESENTATION__). */
-  userRepresentationStore?: UserRepresentationStore;
   /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
   relationshipStore?: RelationshipStore;
   /** The per-memory usefulness store: the WRITE surface (`recordUsage`) the

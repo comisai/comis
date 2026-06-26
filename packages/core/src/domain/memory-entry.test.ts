@@ -8,8 +8,6 @@ import {
   StructuredMemorySchema,
   ExtractedEntitySchema,
   MemoryEntitySchema,
-  // The per-user representation prefix-type enum
-  UserRepresentationTypeSchema,
   type MemorySource,
 } from "./memory-entry.js";
 
@@ -614,43 +612,5 @@ describe("MemorySource type export (provenance shape)", () => {
     const result = MemorySourceSchema.parse(s);
     expect(result.who).toBe("system");
     expect(result.channel).toBe("memory-review");
-  });
-});
-
-/**
- * The per-user representation prefix-type enum.
- *
- * The offline profile-builder classifies each profile entry into one of four
- * PREFIX types — `identity` / `preference` / `relationship` / `instruction`
- * (Honcho's "representation" read). This is a DISTINCT vocabulary from the
- * cognitive `memoryType` (`working`/`episodic`/`semantic`/`procedural`) and from
- * the trust ladder (`system`/`learned`/`external`): a memoryType value or a
- * trust value MUST NOT parse as a representation type. The enum lives in the
- * domain layer beside `TrustLevelSchema` (the analog precedent); the type-only
- * `UserRepresentationStore` port imports the inferred TYPE.
- */
-describe("UserRepresentationTypeSchema (the prefix-type enum, distinct from memoryType)", () => {
-  it("parses each of the four prefix types", () => {
-    expect(UserRepresentationTypeSchema.parse("identity")).toBe("identity");
-    expect(UserRepresentationTypeSchema.parse("preference")).toBe("preference");
-    expect(UserRepresentationTypeSchema.parse("relationship")).toBe("relationship");
-    expect(UserRepresentationTypeSchema.parse("instruction")).toBe("instruction");
-  });
-
-  it("REJECTS the memoryType vocabulary (the enums are distinct)", () => {
-    // None of the cognitive memory classes is a representation prefix type.
-    expect(UserRepresentationTypeSchema.safeParse("working").success).toBe(false);
-    expect(UserRepresentationTypeSchema.safeParse("episodic").success).toBe(false);
-    expect(UserRepresentationTypeSchema.safeParse("semantic").success).toBe(false);
-    expect(UserRepresentationTypeSchema.safeParse("procedural").success).toBe(false);
-  });
-
-  it("REJECTS trust-ladder values (no trust value leaks into the type enum)", () => {
-    // The trust ladder (system/learned/external) is a SEPARATE axis. In
-    // particular `external` — the low-trust value the profile structurally
-    // excludes — is not a representation type.
-    expect(UserRepresentationTypeSchema.safeParse("external").success).toBe(false);
-    expect(UserRepresentationTypeSchema.safeParse("system").success).toBe(false);
-    expect(UserRepresentationTypeSchema.safeParse("learned").success).toBe(false);
   });
 });

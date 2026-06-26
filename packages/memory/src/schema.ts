@@ -11,7 +11,6 @@ import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
-import { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
@@ -19,9 +18,6 @@ import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
-
-// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (sibling file, keeps schema.ts under the 800-line cap) so existing `./schema.js` importers keep their import site.
-export { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -348,48 +344,6 @@ export function ensureTripleTable(db: Database.Database): void {
 }
 
 /**
- * Create the segregated per-user-representation table.
- * Forward-only additive, idempotent, safe on every boot (a fresh DB and
- * a pre-table live `~/.comis` DB both gain the empty table with no backfill; NEVER
- * wipes). One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
- * scoped to one (tenant, agent, user); PK is the per-row `id`; `created_at` is the
- * injected clock. The sole adapter is `createSqliteUserRepresentationStore`.
- *
- * The high-trust floor at the DB layer: the `trust` CHECK admits only
- * `system`/`learned` — `'external'` is DELIBERATELY OMITTED, so an external claim
- * can NEVER enter the profile (layer 1 of the 3-layer anti-poisoning defense; the
- * adapter's write-time reject is layer 3, the port-type floor is layer 2).
- * `entry_type`'s own CHECK pins the four prefix-types — the DISTINCT vocabulary
- * from `memory_type`. Isolation (EXTENDED with
- * `user_id`): every row carries `tenant_id`+`agent_id`+`user_id`,
- * `idx_user_repr_scope` leads with all three, and the adapter filters every
- * statement on them. The `source_memory_id -> memories(id)` `ON DELETE CASCADE`
- * fires via the `PRAGMA foreign_keys = ON` set by `openSqliteDatabase`.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already exists
- *   (the FK target). Call AFTER `ensureTripleTable` in `initSchema`.
- */
-export function ensureUserRepresentationTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS user_representation (
-      id               TEXT NOT NULL,
-      tenant_id        TEXT NOT NULL,
-      agent_id         TEXT NOT NULL,
-      user_id          TEXT NOT NULL,
-      entry_type       TEXT NOT NULL CHECK(entry_type IN ('identity','preference','relationship','instruction')),
-      content          TEXT NOT NULL,
-      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
-      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
-      created_at       INTEGER NOT NULL,
-      updated_at       INTEGER,
-      PRIMARY KEY (id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_user_repr_scope
-      ON user_representation(tenant_id, agent_id, user_id);
-  `);
-}
-
-/**
  * Create the `relationship` table — the sole storage for directional, multi-party
  * relationship modeling. Additive, forward-only,
  * idempotent. One row = the durable, DIRECTIONAL, HIGH-TRUST edge `subjectUser`'s
@@ -409,7 +363,7 @@ export function ensureUserRepresentationTable(db: Database.Database): void {
  * `openSqliteDatabase`.
  *
  * @param db - An open better-sqlite3 Database whose `memories` table already exists
- *   (the FK target). Call AFTER `ensureUserRepresentationTable` in `initSchema`.
+ *   (the FK target). Call AFTER `ensureTripleTable` in `initSchema`.
  */
 export function ensureRelationshipTable(db: Database.Database): void {
   db.exec(`
@@ -580,8 +534,6 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count (v2.26 WS4, FORGET-02)
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
-  ensureUserRepresentationTable(db); // per-user representation
-  ensureUserRepresentationBitemporalColumns(db); // v2.26 WS5 REVISE-02 — bi-temporal columns + current-truth index (forward-only)
   ensureRelationshipTable(db); // directional relationships
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)

@@ -78,13 +78,6 @@ export interface ToolAssemblyDeps {
    *  agent recall even when the store is wired in the daemon and `rag.pinned.enabled`
    *  is true (the R6 blocker). TYPE-only from @comis/core (the agent↛memory build cut). */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
-  /** Optional per-user representation store, threaded into prompt-assembly's LLM-free
-   *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
-   *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core
-   *  (the agent↛memory build cut). A missing forward here leaves the profile injection a silent
-   *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
-   *  Pitfall 1). */
-  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Optional mental-model store (the v2.31 Reflection doc store), forwarded into
    *  prompt-assembly's LLM-free `<user_profile>` standing-block injection (FOLD-01, Phase 225
    *  Plan 02 — the rewired source replacing `userRepresentationStore`; a deterministic

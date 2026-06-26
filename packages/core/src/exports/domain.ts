@@ -12,8 +12,6 @@ export {
   parseReaction,
   // MemoryEntry
   TrustLevelSchema,
-  // Per-user representation prefix-type enum
-  UserRepresentationTypeSchema,
   MemorySourceSchema,
   MemoryEntrySchema,
   // Structured extraction + domain target
@@ -103,8 +101,6 @@ export type {
   NormalizedMessage,
   NormalizedReaction,
   TrustLevel,
-  // Per-user representation prefix type
-  UserRepresentationType,
   MemoryEntry,
   // MemoryExportEnvelope
   MemoryExportEnvelope,

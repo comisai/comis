@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
@@ -80,11 +80,6 @@ export interface CronEventListenerDeps {
   /** Per-user representation store — the offline-builder
    *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
    *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
-   *  memory adapter owns; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op. Absent => the representation sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
-  userRepresentationStore?: UserRepresentationStore;
   /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
    *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
    *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
@@ -232,7 +227,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
       tripleStore: deps.tripleStore,
-      userRepresentationStore: deps.userRepresentationStore,
       relationshipStore: deps.relationshipStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
       usefulnessStore: deps.usefulnessStore,

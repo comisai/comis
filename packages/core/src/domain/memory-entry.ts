@@ -15,31 +15,6 @@ export const TrustLevelSchema = z.enum(["system", "learned", "external"]);
 export type TrustLevel = z.infer<typeof TrustLevelSchema>;
 
 /**
- * Prefix types for the per-user representation profile. The offline
- * profile-builder classifies each entry into one of four PREFIX types
- * (Honcho's "representation" read):
- *
- * - `identity`: a durable fact about who the user is (name, role, locale, …)
- * - `preference`: a stated/observed preference (the LongMemEval recall target)
- * - `relationship`: how the user relates to the agent or to known entities
- * - `instruction`: a standing directive the user wants the agent to follow
- *
- * This is a DISTINCT vocabulary from the cognitive {@link MemoryEntrySchema}
- * `memoryType` (`working`/`episodic`/`semantic`/`procedural`) and from the
- * {@link TrustLevelSchema} ladder — a memoryType or trust value must NOT parse
- * as a representation type. It is the ONLY runtime value the per-user
- * representation profile adds; the type-only `UserRepresentationStore` port
- * consumes the inferred TYPE.
- */
-export const UserRepresentationTypeSchema = z.enum([
-  "identity",
-  "preference",
-  "relationship",
-  "instruction",
-]);
-export type UserRepresentationType = z.infer<typeof UserRepresentationTypeSchema>;
-
-/**
  * Source provenance: who created this entry and through which channel.
  */
 export const MemorySourceSchema = z.strictObject({

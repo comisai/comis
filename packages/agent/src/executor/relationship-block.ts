@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The PURE deterministic channel-relationship formatter (read side). The
- * directional analog of {@link buildUserRepresentationBlock}
+ * directional analog of {@link buildProfileBlock}
  * (user-representation-block.ts): a pure function over {@link RelationshipEntry}[]
  * that returns a FIXED-shape system-prompt block (a `<channel_relationships>`
  * block), or `null` when there is nothing to inject. When it returns `null` the

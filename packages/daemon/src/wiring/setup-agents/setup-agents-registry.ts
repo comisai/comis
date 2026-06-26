@@ -205,12 +205,8 @@ export async function setupAgents(deps: {
    *  Built in setup-memory on the shared db. */
   pinnedStore?: import("@comis/core").MemoryPinnedStore;
   provenanceStore?: import("@comis/core").LcdProvenanceReadStore; // LCD provenance READ store (Phase 173, DIST-03) → createPiExecutor → createMemoryRecall down-weighting (built-but-not-wired fix); built in setup-memory; core TYPE only (agent↛memory cut)
-  /** Per-user representation store. Threaded into each per-agent
-   *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
-   *  Built in setup-memory on the shared db. */
-  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Directional relationship store. Threaded into each per-agent
-   *  createPiExecutor like userRepresentationStore (the recall LLM-free `<channel_relationships>`
+   *  createPiExecutor like entityStore (the recall LLM-free `<channel_relationships>`
    *  injection read path). Built in setup-memory on the shared db. */
   relationshipStore?: import("@comis/core").RelationshipStore;
   learnedSkillStore?: import("@comis/core").MentalModelStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
@@ -459,7 +455,6 @@ export async function setupAgents(deps: {
     usefulnessStore: deps.usefulnessStore,
     pinnedStore: deps.pinnedStore,
     provenanceStore: deps.provenanceStore,
-    userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     learnedSkillStore: deps.learnedSkillStore, learnedSkillSurfaceRegistry: deps.learnedSkillSurfaceRegistry,
     deliveryMirror: deps.deliveryMirror,

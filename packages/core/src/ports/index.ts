@@ -35,14 +35,6 @@ export type {
   TripleInput,
 } from "./triple-store.js";
 export type {
-  UserRepresentationStore,
-  UserRepresentationScope,
-  UserRepresentationTrust,
-  UserRepresentationEntry,
-  UserRepresentationInput,
-  ReviseOutcome,
-} from "./user-representation-store.js";
-export type {
   MemoryLifecyclePort,
   MemoryLifecycleScope,
   LifecycleSweepReport,

@@ -25,7 +25,6 @@ import type {
   MemoryUsefulnessStore,
   MemoryPinnedStore,
   LcdProvenanceReadStore,
-  UserRepresentationStore,
   MentalModelStorePort,
   RelationshipStore,
   RerankerPort,
@@ -169,16 +168,11 @@ export interface PiExecutorDeps {
    *  absent OR no lcd_distilled result -> no read, recall order unchanged. TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   provenanceStore?: LcdProvenanceReadStore;
-  /** Optional per-user representation store. Built in the daemon on the shared memory db
-   *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
-   *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
-   *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
-  userRepresentationStore?: UserRepresentationStore;
   /** Optional mental-model store (v2.31 Reflection doc store; the SAME store feeding the
-   *  learned-skill surface). FOLD-01 (Phase 225 Plan 02): threaded into prompt-assembly's
-   *  LLM-free `<user_profile>` injection via ToolAssemblyDeps — the rewired source replacing
-   *  `userRepresentationStore`. Absent -> no profile list, byte-identical prompt (cost gate).
-   *  TYPE-only from @comis/core (the agent↛memory cut). */
+   *  learned-skill surface). FOLD-01 (Phase 225): threaded into prompt-assembly's
+   *  LLM-free `<user_profile>` injection via ToolAssemblyDeps as the kind:"profile" read source
+   *  (the standalone userRepresentationStore was deleted in Plan 05). Absent -> no profile list,
+   *  byte-identical prompt (cost gate). TYPE-only from @comis/core (the agent↛memory cut). */
   mentalModelStore?: MentalModelStorePort;
   /** Optional directional relationship store. Built in the daemon on the shared memory
    *  db handle; threaded into prompt-assembly's LLM-free `<channel_relationships>` injection via

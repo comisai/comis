@@ -51,10 +51,8 @@
 
 /** Stable identifier for each default-OFF capability. Closed union. */
 export type CapabilityId =
-  | "user" // USER per-user representation
   | "social" // SOCIAL directional relationship model
   | "dialectic" // memory_ask grounded-Q&A tool
-  | "reason" // offline deductive/inductive reasoning
   | "feed" // recall-utility feedback loop
   | "learnIq" // LLM-free intent-reweight query understanding
   | "kg" // graph-spread recall lane
@@ -91,7 +89,6 @@ export interface CapabilityDescriptor {
  * the measured-lift gate.
  */
 export const V2_9_CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze([
-  { id: "user", label: "Per-user representation", configPath: "memoryUserRepresentation.enabled" },
   {
     id: "social",
     label: "Directional relationship model",
@@ -99,7 +96,6 @@ export const V2_9_CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     operatorGatePath: "socialModeling.privacyReviewSignedOffBy",
   },
   { id: "dialectic", label: "memory_ask grounded Q&A", configPath: "dialectic.enabled" },
-  { id: "reason", label: "Offline reasoning", configPath: "memoryReasoning.enabled" },
   { id: "feed", label: "Recall-utility feedback loop", configPath: "rag.feedback.enabled" },
   {
     id: "learnIq",
@@ -168,7 +164,7 @@ export const ACTIVATED_CAPABILITIES: readonly ActivationDecision[] = Object.free
  * flips its default ON; removing one reverts it. No back-compat shim, no migration.
  */
 export const V1_OPT_OUT_CAPABILITIES: ReadonlySet<CapabilityId> = Object.freeze(
-  new Set<CapabilityId>(["user", "dialectic", "reason", "feed", "learnIq", "kg", "forget"]),
+  new Set<CapabilityId>(["dialectic", "feed", "learnIq", "kg", "forget"]),
 );
 
 /** How a capability's effective default resolved ON (audit-traceable). */

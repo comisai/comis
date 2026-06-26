@@ -15,7 +15,8 @@
  * recordUsage write) is deferred — this schema only lands the default-OFF knob so
  * it can later be enabled without new config machinery.
  *
- * Mirrors {@link MemoryUserRepresentationConfigSchema}'s cost-gate cron shape; kept
+ * Mirrors the cost-gate cron config shape (the pattern the deleted
+ * user-representation schema also followed); kept
  * deliberately small — the judge needs no per-run write cap (it writes through the
  * existing recordUsage port, bounded by the source set it scores).
  *
