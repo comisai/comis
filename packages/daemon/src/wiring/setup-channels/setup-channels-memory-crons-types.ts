@@ -34,13 +34,27 @@ import type { ReflectionSourceTrajectory } from "@comis/agent";
  */
 export interface ReflectionCronDeps {
   /** The @comis/memory mental-model store. `get` reads the prior doc for delta-ops;
-   *  `admit` is the candidate/learned write target. Built on the shared db handle. */
-  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit">;
+   *  `admit` is the candidate/learned write target; `supersede` (Phase 225 FOLD-01) is
+   *  the bi-temporal history-append a profile/topic CORRECTION routes through (the prior
+   *  body is preserved in `history`, never overwritten). Built on the shared db handle. */
+  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit" | "supersede">;
   /** The @comis/memory outcome-signal store (the fail-closed success gate the job selects on). */
   outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
-  /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed);
-   *  each carries a daemon-derived `trustedOrigin` (INV-5/D-04) the job filters on. */
-  buildSourceTrajectories: (agentId: string, tenantId: string) => Promise<ReflectionSourceTrajectory[]>;
+  /**
+   * Build the per-KIND source trajectories for the reflection SELECT step (Phase 225
+   * FOLD — the daemon-side `kind` seam). SKILL sources are OUTCOME trajectories (the
+   * LCD-merged review source, buildReviewSessionSource — NOT sessionStore.listDetailed),
+   * each carrying a daemon-derived `trustedOrigin` (INV-5/D-04 axis 1) + `sourceTrustExternal:false`
+   * (axis 2 is N/A for an outcome trajectory). PROFILE/TOPIC sources are built from the
+   * agent's high-trust SOURCE MEMORIES (memoryApi.inspect), each carrying `sourceTrustExternal =
+   * (trustLevel === "external")` (FOLD-04 axis 2 — the old user-rep layer-1 firewall). The job
+   * filters on BOTH axes.
+   */
+  buildSourceTrajectories: (
+    kind: "skill" | "profile" | "topic",
+    agentId: string,
+    tenantId: string,
+  ) => Promise<ReflectionSourceTrajectory[]>;
 }
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
