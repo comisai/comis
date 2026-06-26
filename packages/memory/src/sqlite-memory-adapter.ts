@@ -602,49 +602,73 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
         //    V4 WHERE rejects, or an unknown id). NO row written.
         if (incumbent === undefined) return "not-found";
 
+        // 2'. Did the correction actually rewrite content? A no-change correction
+        //     (newContent === incumbent.content — e.g. a user "re-confirms" a fact)
+        //     is still recorded in history below (the correction is the durable
+        //     signal), but the re-index lanes MUST short-circuit on it: the
+        //     memories_au / memories_tri_au triggers are themselves guarded
+        //     `WHEN old.content IS NOT new.content` (schema-trigram.ts), so on a
+        //     no-change UPDATE they do NOT fire — and the manual re-index work below
+        //     would then either no-op-throw (the trigram INSERT collides on the
+        //     existing twin's PK rowid → caught) or, worse, DESTRUCTIVELY drop the
+        //     still-valid cached vec embedding and force a pointless re-embed. Mirror
+        //     the consolidation-store precedent (sqlite-memory-consolidation-
+        //     store.ts:428), which guards its identical twin re-insert on the same
+        //     `contentChanged` flag.
+        const contentChanged = newContent !== incumbent.content;
+
         // 3. Append the prior state to history (oldest-first), then update content.
         //    The shape { previousContent, changedAt } is the canonical history entry
         //    (MemoryEntrySchema.history + the growObservation precedent) — the row
-        //    mapper's HistorySchema parses exactly this on read-back.
+        //    mapper's HistorySchema parses exactly this on read-back. History is
+        //    appended REGARDLESS of contentChanged: a re-confirmation is a recorded
+        //    correction even when the value is identical.
         const prior: MemoryEntry["history"] = [
           ...(parseHistoryColumn(incumbent.history) ?? []),
           { previousContent: incumbent.content, changedAt: now },
         ];
         // The memories_au AFTER UPDATE OF content trigger re-syncs memory_fts
-        // automatically (delete old.content + insert new.content).
+        // automatically (delete old.content + insert new.content) — but ONLY when
+        // its `WHEN old.content IS NOT new.content` guard holds, so a no-change
+        // UPDATE here leaves memory_fts untouched (no churn).
         updateContent.run(newContent, JSON.stringify(prior), now, id, ...scopeArgs);
 
-        // 3'. Re-insert the NORMALIZED memory_fts_tri trigram twin for the new
-        //     content (the growObservation precedent, sqlite-memory-consolidation-
-        //     store.ts:428): the memories_tri_au trigger (WHEN old.content IS NOT
-        //     new.content) just DELETED the stale twin row, so without this the
-        //     corrected row would be de-indexed in the trigram lane. Same guarded
-        //     shape as the store-path twin write; never re-throw (would ROLLBACK the
-        //     authoritative content update — the fail-safe direction is de-indexed,
-        //     never stale-indexed).
-        try {
-          this.db
-            .prepare(
-              "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
-            )
-            .run(id, normalizeForSearch(newContent));
-        } catch {
-          // Trigram twin absent on this host, or an exceptional twin insert failure
-          // → leave the row de-indexed in the trigram lane (fail-safe). The content
-          // update is authoritative and stands; recall degrades to word + vector.
-        }
+        // 3'. Re-index the changed content. SKIP entirely on a no-change correction:
+        //     the WHEN-guarded triggers did not fire, so the existing twin / vec rows
+        //     are already correct and must be left alone (matches the trigger path
+        //     and the growObservation precedent).
+        if (contentChanged) {
+          // 3'a. Re-insert the NORMALIZED memory_fts_tri trigram twin for the new
+          //      content: the memories_tri_au trigger (WHEN old.content IS NOT
+          //      new.content) just DELETED the stale twin row, so without this the
+          //      corrected row would be de-indexed in the trigram lane. Same guarded
+          //      shape as the store-path twin write; never re-throw (would ROLLBACK
+          //      the authoritative content update — the fail-safe direction is
+          //      de-indexed, never stale-indexed).
+          try {
+            this.db
+              .prepare(
+                "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+              )
+              .run(id, normalizeForSearch(newContent));
+          } catch {
+            // Trigram twin absent on this host, or an exceptional twin insert failure
+            // → leave the row de-indexed in the trigram lane (fail-safe). The content
+            // update is authoritative and stands; recall degrades to word + vector.
+          }
 
-        // 3''. Invalidate the stale vec embedding: the vec0 twin still holds the C1
-        //      vector (vec_memories has no content trigger), which would surface the
-        //      row for C1-similar queries as if it were current. Mirror store()'s
-        //      no-precomputed-embedding path — drop the stale vec row + clear
-        //      has_embedding, so the background indexer re-embeds C2. (store() only
-        //      writes a vec row when the caller pre-supplies entry.embedding; a
-        //      content correction supplies none, so the faithful mirror is
-        //      invalidate-for-reindex, not a synchronous embed.)
-        if (vecAvailable) {
-          this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
-          this.db.prepare("UPDATE memories SET has_embedding = 0 WHERE id = ?").run(id);
+          // 3'b. Invalidate the now-stale vec embedding: the vec0 twin still holds the
+          //      C1 vector (vec_memories has no content trigger), which would surface
+          //      the row for C1-similar queries as if it were current. Mirror store()'s
+          //      no-precomputed-embedding path — drop the stale vec row + clear
+          //      has_embedding, so the background indexer re-embeds C2. (store() only
+          //      writes a vec row when the caller pre-supplies entry.embedding; a
+          //      content correction supplies none, so the faithful mirror is
+          //      invalidate-for-reindex, not a synchronous embed.)
+          if (vecAvailable) {
+            this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
+            this.db.prepare("UPDATE memories SET has_embedding = 0 WHERE id = ?").run(id);
+          }
         }
         return "superseded";
       });

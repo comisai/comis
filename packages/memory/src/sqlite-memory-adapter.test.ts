@@ -2018,6 +2018,69 @@ describe("SqliteMemoryAdapter.supersede (FORGET-04 contradiction → revise, non
     expect(rawRow(bEntry.id, "tenant-b")!.content).toBe("B: lives in Boston");
   });
 
+  it("WR-01: a no-change correction (newContent === incumbent.content) preserves the vec embedding + the single trigram twin, and still appends history", async () => {
+    // Embedding port present → vecAvailable, so the (pre-patch) UNCONDITIONAL vec
+    // invalidation in supersede is reachable and observable.
+    adapter = new SqliteMemoryAdapter(testConfig, createMockEmbeddingPort(4));
+    const db = adapter.getDb();
+    // Non-Latin (trigram-routed) content so the trigram twin lane is exercised too.
+    // הספרים folds to הספרימ in normalizeForSearch.
+    const HE_STORED = String.fromCodePoint(0x5d4, 0x5e1, 0x5e4, 0x5e8, 0x5d9, 0x5dd); // הספרים
+    // Store WITH a precomputed embedding so a vec_memories row + has_embedding = 1
+    // exist; a no-change correction must NOT throw those away (identical content
+    // ⇒ the cached vector is still valid; re-embedding is wasted work).
+    const entry = makeEntry({ content: HE_STORED, createdAt: 1_000, embedding: [0.1, 0.2, 0.3, 0.4] });
+    await adapter.store(entry);
+
+    const hasEmbedding = (id: string): number =>
+      (db.prepare("SELECT has_embedding FROM memories WHERE id = ?").get(id) as { has_embedding: number }).has_embedding;
+    const vecRowCount = (id: string): number =>
+      (db.prepare("SELECT COUNT(*) AS c FROM vec_memories WHERE memory_id = ?").get(id) as { c: number }).c;
+    const triAvailable =
+      (db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'table' AND name = 'memory_fts_tri'").get() as { c: number }).c > 0;
+    const twinRowCount = (id: string): number =>
+      (db
+        .prepare("SELECT COUNT(*) AS c FROM memory_fts_tri WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)")
+        .get(id) as { c: number }).c;
+
+    expect(adapter.vecAvailable).toBe(true); // guard: the vec lane must be live for this test to mean anything
+    expect(hasEmbedding(entry.id)).toBe(1);
+    expect(vecRowCount(entry.id)).toBe(1);
+    if (triAvailable) expect(twinRowCount(entry.id)).toBe(1);
+
+    // Supersede to the SAME content. The memories_tri_au / vec lanes have no real
+    // content change to react to — the manual re-index work is pure waste and, for
+    // vec, DESTRUCTIVE (drops the valid cached embedding). The guard must short-
+    // circuit both the vec invalidation and the twin re-insert on `contentChanged`.
+    const res = await adapter.supersede(
+      entry.id,
+      HE_STORED,
+      { tenantId: "default", agentId: "default" },
+      5_000,
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toBe("superseded");
+
+    // RED on pre-patch: the unconditional `DELETE FROM vec_memories` +
+    // `has_embedding = 0` ran on an unchanged correction → vec row gone,
+    // has_embedding flipped to 0 (a needless re-embed forced). Post-patch both
+    // are preserved because content did not change.
+    expect(hasEmbedding(entry.id)).toBe(1);
+    expect(vecRowCount(entry.id)).toBe(1);
+    // The trigram twin remains a single row (no churn; the WHEN-guarded trigger
+    // never deleted it, and the guarded manual re-insert is skipped).
+    if (triAvailable) expect(twinRowCount(entry.id)).toBe(1);
+
+    // The correction is STILL recorded in history even though content was unchanged
+    // (the user correction is the durable signal; only the index re-work is guarded).
+    const histRow = rawRow(entry.id);
+    expect(histRow!.content).toBe(HE_STORED);
+    const history = JSON.parse(histRow!.history!) as Array<{ previousContent: string; changedAt: number }>;
+    expect(history).toHaveLength(1);
+    expect(history[0]!.previousContent).toBe(HE_STORED);
+    expect(history[0]!.changedAt).toBe(5_000);
+  });
+
   it("rejects a correction whose NEW content fails the redaction firewall (validateMemoryWrite critical) — content unchanged", async () => {
     adapter = new SqliteMemoryAdapter(testConfig);
     const entry = makeEntry({ content: "user prefers tea", createdAt: 1_000 });
