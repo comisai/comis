@@ -618,13 +618,14 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __SOCIAL_MODELING__ cron registration. The gate
-  // is STRICTER than the other memory crons: register ONLY when enabled AND a
-  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present.
-  // A knob-on-but-no-sign-off agent registers NO job (byte-identical).
+  // Phase 226-04 (SIMPLIFY-03 part 2): the __SOCIAL_MODELING__ cron is DELETED with
+  // the ENTIRE social-modeling subsystem (the RelationshipStore port + sqlite adapter,
+  // the `relationship` table, the offline directional-edge builder, the relationship-block
+  // prompt injection, the per-agent socialModeling config key). Even when an agent attempts
+  // a (legacy-shaped) opt-in WITH a sign-off, NO __SOCIAL_MODELING__ job is registered.
   // -------------------------------------------------------------------------
 
-  it("registers NO __SOCIAL_MODELING__ cron for a default (social-off) agent", async () => {
+  it("DELETE (226-04): registers NO __SOCIAL_MODELING__ cron even when an agent attempts to opt in with a sign-off", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -632,49 +633,8 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // socialModeling undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const socialAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
-    );
-    expect(socialAdds.length).toBe(0);
-  });
-
-  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the privacy-review gate)", async () => {
-    // The knob alone does NOT register a job — a recorded sign-off is required.
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        socialModeling: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const socialAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
-    );
-    expect(socialAdds.length).toBe(0);
-  });
-
-  it("registers the __SOCIAL_MODELING__ cron (default 0 6 * * *) only when enabled AND signed-off", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in (enabled + signed off) — the registration block is gone,
+        // so it is inert (the socialModeling key is now rejected at parse anyway).
         socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
       },
     };
@@ -682,18 +642,10 @@ describe("setupSchedulers", () => {
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const socialAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__SOCIAL_MODELING__");
-    expect(socialAdd).toBeDefined();
-    expect(socialAdd.id).toBe("memory-social-modeling-agent-1");
-    expect(socialAdd.name).toBe("Memory social modeling");
-    // Default schedule runs AFTER the representation cron's 0 5 so relationships are
-    // built over freshly-reasoned/profiled memories the same night.
-    expect(socialAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
-    expect(socialAdd.sessionTarget).toBe("isolated");
-    expect(socialAdd.sessionStrategy).toBe("fresh");
-    expect(socialAdd.payload).toEqual({ kind: "system_event", text: "__SOCIAL_MODELING__" });
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
+    );
+    expect(socialAdds.length, "the __SOCIAL_MODELING__ cron is deleted — it must never register").toBe(0);
   });
 
   // (The __USEFULNESS_JUDGE__ cron-registration tests were removed in Phase 226 SIMPLIFY-03 —
@@ -788,13 +740,13 @@ describe("setupSchedulers", () => {
   // set is: memoryReview, memoryConsolidation, memoryReasoning,
   // memoryUserRepresentation, memoryUsefulnessJudge. (memoryOnlineTuning — the bandit
   // cron — was deleted in Phase 224.) The
-  // $0 keyless memoryLifecycle sweep and the privacy-gated socialModeling cron
-  // are NOT gated by this switch (lifecycle is keyless; social has its OWN
-  // privacy sign-off gate). When the switch is on (the default) registration is
-  // unchanged → byte-identical.
+  // $0 keyless memoryLifecycle sweep is NOT gated by this switch (lifecycle is keyless).
+  // (The privacy-gated socialModeling cron was DELETED in Phase 226-04 with the rest of
+  // that subsystem.) When the switch is on (the default) registration is unchanged →
+  // byte-identical.
   // -------------------------------------------------------------------------
 
-  /** A fully-enabled agent: every cost cron + lifecycle on; social on AND signed off. */
+  /** A fully-enabled agent: every cost cron + the keyless lifecycle sweep on. */
   function allFeaturesOnAgent() {
     return {
       name: "Agent 1",
@@ -806,7 +758,6 @@ describe("setupSchedulers", () => {
       memoryReasoning: { enabled: true },
       memoryUserRepresentation: { enabled: true },
       memoryLifecycle: { enabled: true },
-      socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
     };
   }
 
@@ -823,8 +774,11 @@ describe("setupSchedulers", () => {
   // (a no-op scaffold whose `extract` returns []) registrations are GONE — even when
   // an operator attempts to opt a (legacy-shaped) agent in, NO job is registered. The
   // surviving learning/memory crons are __MEMORY_REVIEW__ (accumulate-tier),
-  // __MEMORY_LIFECYCLE__ (keyless forget sweep), __REFLECT__ (the engine) — plus
-  // __SOCIAL_MODELING__ until Plan 04 deletes it.
+  // __MEMORY_LIFECYCLE__ (keyless forget sweep), __REFLECT__ (the engine).
+  // (__SOCIAL_MODELING__ was DELETED in Phase 226-04 with the rest of that subsystem.)
+  // The "learning crons = 3" end state = __REFLECT__ + __MEMORY_LIFECYCLE__ + the
+  // event-driven OutcomeSignalPort.resolve path (NOT a sentinel — there is no __OUTCOME__
+  // cron); __MEMORY_REVIEW__ is accumulate-tier (kept, not counted as a learning cron).
   // -------------------------------------------------------------------------
 
   it("DELETE (SIMPLIFY-03): registers NO __USEFULNESS_JUDGE__ cron even when an agent attempts to opt in", async () => {
@@ -887,6 +841,38 @@ describe("setupSchedulers", () => {
     expect(added, "reflection (the engine) survives").toContain("__REFLECT__");
     expect(added, "the deleted usefulness judge must NOT appear").not.toContain("__USEFULNESS_JUDGE__");
     expect(added, "the deleted triple-extraction must NOT appear").not.toContain("__MEMORY_TRIPLE_EXTRACTION__");
+    expect(added, "the deleted social-modeling cron must NOT appear (226-04)").not.toContain("__SOCIAL_MODELING__");
+  });
+
+  it("the learning crons are exactly 3 (__REFLECT__ + __MEMORY_LIFECYCLE__ + the event-driven resolution path) — no __SOCIAL_MODELING__, no __OUTCOME__ sentinel", async () => {
+    // The "learning crons = 3" end state after 226-04: __REFLECT__ (the reflection engine)
+    // + __MEMORY_LIFECYCLE__ (the keyless forget sweep) + the event-driven
+    // OutcomeSignalPort.resolve path (which is NOT a scheduler sentinel — it rides the event
+    // bus, so it never appears in addJob). __MEMORY_REVIEW__ is accumulate-tier (kept, not
+    // counted). __SOCIAL_MODELING__ is gone (226-04); no __OUTCOME__ cron ever existed.
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReview: { enabled: true },
+        memoryLifecycle: { enabled: true },
+        learning: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    // The two learning crons that DO register as scheduler sentinels:
+    expect(added, "reflection engine").toContain("__REFLECT__");
+    expect(added, "keyless forget sweep").toContain("__MEMORY_LIFECYCLE__");
+    // The third learning path (outcome resolution) is event-driven — NOT a sentinel:
+    expect(added, "outcome resolution rides the event bus, not the scheduler").not.toContain("__OUTCOME__");
+    // The deleted social-modeling cron must never register:
+    expect(added, "social-modeling deleted in 226-04").not.toContain("__SOCIAL_MODELING__");
   });
 
   // Phase 225 FOLD §3.2: __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
@@ -963,7 +949,7 @@ describe("setupSchedulers", () => {
     }
   });
 
-  it("leaves the $0 lifecycle sweep and the privacy-gated social cron UNAFFECTED by the cost kill switch", async () => {
+  it("leaves the $0 keyless lifecycle sweep UNAFFECTED by the cost kill switch", async () => {
     const { addJob } = withRegistrableScheduler();
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
@@ -971,8 +957,9 @@ describe("setupSchedulers", () => {
     const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
     // The keyless lifecycle sweep is NOT a cost feature → still registered.
     expect(addedSentinels).toContain("__MEMORY_LIFECYCLE__");
-    // socialModeling has its OWN privacy gate (independent of the cost switch) → still registered.
-    expect(addedSentinels).toContain("__SOCIAL_MODELING__");
+    // (The privacy-gated __SOCIAL_MODELING__ cron — which this also used to assert — was
+    //  DELETED in Phase 226-04 with the rest of that subsystem, so it must NOT register.)
+    expect(addedSentinels).not.toContain("__SOCIAL_MODELING__");
   });
 
   it("registers ALL cost-bearing memory crons when the kill switch is on (the default — byte-identical)", async () => {

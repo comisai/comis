@@ -186,28 +186,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       //  were REMOVED here, not just shrunk. createReasoningSeam was likewise deleted [the
       //  __MEMORY_TRIPLE_EXTRACTION__ scaffold that reused it was de-wired]. The work folded into the
       //  ONE __REFLECT__ cron [Plan 04].)
-      // Offline directional relationship builder.
-      // SHRUNK: the offline-builder run-fn + the cheap-model seam-factory are now CONSUMED
-      // by the daemon __SOCIAL_MODELING__ cron dispatch (setup-channels-memory-crons.ts), so they
-      // were REMOVED from this list (the shrink — mirror the per-user-representation builder/seam
-      // shrink; allowlist-shrink enforces shrink-only). buildRelationshipPrompt +
-      // parseRelationshipOutput are imported by the seam via the RELATIVE same-package path (the
-      // prompt stays agent-internal), so their @comis/agent index re-exports have no cross-package
-      // importer — baseline orphans (mirror buildUserRepresentationPrompt above). The
-      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
-      // SourceMemory read-shape are referenced via inline objects only — baseline orphans (mirror
-      // MemoryUserRepresentationDeps). RelationshipSeamDeps (the seam-factory input shape) is called
-      // with an inline object, so the TYPE itself has no cross-package importer.
-      "buildRelationshipPrompt",
-      "parseRelationshipOutput",
-      "MemoryRelationshipDeps",
-      "MemoryRelationshipConfig",
-      "MemoryRelationshipStats",
-      "MemoryRelationshipResult",
-      "RelationshipSourceMemory",
-      "RelationshipCandidate",
-      "RelationshipBuildOutput",
-      "RelationshipSeamDeps",
+      // (Phase 226-04 DELETED the offline directional relationship builder + its prompt/parser +
+      //  seam-factory (runRelationshipBuild / createRelationshipSeam / buildRelationshipPrompt /
+      //  parseRelationshipOutput + the MemoryRelationship* Deps/Config/Stats/Result SHAPE types +
+      //  the Candidate/BuildOutput/SourceMemory/SeamDeps types) — the ENTIRE social-modeling
+      //  subsystem is gone, so they are no longer re-exported from @comis/agent and their allowlist
+      //  entries were removed, not just shrunk.)
       // Offline tuned-alpha bandit. SHRUNK:
       // runOnlineTuning is now CONSUMED by the daemon __ONLINE_TUNING__ cron-sentinel dispatch
       // (setup-channels-memory-crons.ts), so it was REMOVED from this list (the interface-first
@@ -2096,26 +2080,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       //  Scope/Trust/Entry/Input DTOs + the UserRepresentationType(Schema) prefix-type enum —
       //  no longer exported from @comis/core [the <user_profile> read folded onto the
       //  MentalModelStorePort kind:"profile" path], so their allowlist entries were removed.)
-      // Directional relationship port. This is
-      // the first piece: the type-only RelationshipStore port
-      // carrying the directional (subjectUserId, aboutUserId) pair + the
-      // (tenant, agent, channel) scope is the contract every later piece consumes —
-      // the SOLE @comis/memory adapter, the offline directional builder,
-      // the (optional) LLM-free injection, and the daemon wiring all import these
-      // from @comis/core BY TYPE (never @comis/memory — the agent↛memory build cut).
-      // No in-repo consumer exists yet (the adapter lands later), so the
-      // export-graph walker counts them as orphans. They are the documented
-      // port API surface — tracked here as planned-orphans, mirror the
-      // TripleStorePort ahead-of-consumer dance. Shrinks as
-      // the adapter (by TYPE) → the builder/injection → the daemon wiring
-      // reference each name directly.
-      "RelationshipStore",
-      "RelationshipScope",
-      // RelationshipTrust is referenced only INSIDE RelationshipInput.trust (a field
-      // type, not a standalone import) — the same orphan shape as TripleTrust.
-      "RelationshipTrust",
-      "RelationshipEntry",
-      "RelationshipInput",
+      // (Phase 226-04 DELETED the type-only RelationshipStore port + its
+      //  Scope/Trust/Entry/Input DTOs — the ENTIRE social-modeling subsystem (the
+      //  __SOCIAL_MODELING__ cron, the sqlite adapter, the `relationship` table, the
+      //  offline directional builder, the relationship-block prompt injection) is gone,
+      //  so they are no longer exported from @comis/core and their allowlist entries
+      //  were removed, not just shrunk.)
       // StorageModePreRead is the return type of preReadStorageMode (daemon-boot
       // pre-read); the daemon imports preReadStorageMode (which has an in-repo
       // consumer) but does not import the return type name directly, so it is an
@@ -2684,28 +2654,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       //  UserRepresentationRowSchema are no longer exported from @comis/memory [the
       //  user_representation table was dropped; the profile folded onto mental_models], so
       //  their allowlist entries were removed.)
-      // Directional relationship store.
-      // SHRUNK: the SOLE (tenant, agent, channel)-scoped directional-edge adapter factory is
-      // now CONSUMED by its daemon composition-root consumer (setup-memory.ts constructs it on the
-      // shared db handle), so it was REMOVED from this list (the shrink-only
-      // allowlist-shrink.test.ts enforces this shrink — mirror the triple-store adapter shrink).
-      // MemoryRelationshipStoreDeps is the constructor-deps SHAPE type (referenced via inline
-      // objects only); RelationshipRowSchema is the row schema consumed by createRowMapper inside
-      // the adapter (an intra-file value reference, not a cross-file import) — both PERMANENT
-      // baseline orphans (mirror MemoryTripleStoreDeps / MemoryTripleRowSchema above).
-      "MemoryRelationshipStoreDeps",
-      "RelationshipRowSchema",
+      // (Phase 226-04 DELETED the directional relationship sqlite adapter
+      //  (createSqliteRelationshipStore + MemoryRelationshipStoreDeps) + its RelationshipRowSchema
+      //  row schema — the ENTIRE social-modeling subsystem is gone, so they are no longer exported
+      //  from @comis/memory and their allowlist entries were removed.)
       // Tuned-alpha store. createSqliteTunedAlphaStore
       // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
       // upsert + scoped read; undefined-on-absent). SHRUNK: the daemon
       // composition-root now CONSTRUCTS it on the shared db handle in setup-memory, so
       // the transient factory-orphan was REMOVED from this list (the factory-orphan shrink —
-      // mirror createSqliteTripleStore / the user-representation + relationship adapter
+      // mirror createSqliteTripleStore / the user-representation adapter
       // shrinks; allowlist-shrink enforces shrink-only). MemoryTunedAlphaStoreDeps is the
       // constructor-deps SHAPE type (referenced via inline objects only); TunedAlphaRowSchema
       // is the row schema consumed by createRowMapper inside the adapter (an intra-file value
       // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
+      // MemoryTripleStoreDeps / MemoryTripleRowSchema above).
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
       // Memory-lifecycle store.
@@ -2733,8 +2696,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // composition-root consumer LANDS in Plan 04 (Wave 4 — setup-learning.ts
       // constructs it on the shared db handle in setup-memory + the default-OFF
       // learningOutcome wiring subscribes/prunes), at which point this factory
-      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle +
-      // relationship adapter shrinks; allowlist-shrink enforces shrink-only).
+      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle
+      // adapter shrinks; allowlist-shrink enforces shrink-only).
       // OutcomeStoreDeps is the constructor-deps SHAPE type (referenced via inline
       // objects only — the daemon calls the factory with an inline `{ db, logger }`)
       // — PERMANENT baseline orphan (mirror MemoryTunedAlphaStoreDeps /

@@ -145,26 +145,27 @@ describe("handleMemoryCronSentinel", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  // Phase 225 FOLD §3.2: the standalone __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
-  // __USER_REPRESENTATION__ intercepts were REMOVED (their work folds into __REFLECT__, Plan 04;
-  // their scheduler registrations are gone too). A stray sentinel must NO LONGER be handled here —
-  // it falls through (the WIRE leaf does not handle them either, so `handled` is false) and the
-  // consolidation/reasoning/user-rep jobs are NEVER invoked.
-  it.each(["__MEMORY_CONSOLIDATION__", "__MEMORY_REASONING__", "__USER_REPRESENTATION__"])(
-    "no longer handles the removed %s sentinel (folded into __REFLECT__) — falls through, runs no job",
+  // Phase 225 FOLD §3.2 + Phase 226-04: the standalone __MEMORY_CONSOLIDATION__ /
+  // __MEMORY_REASONING__ / __USER_REPRESENTATION__ intercepts were REMOVED (their work folds
+  // into __REFLECT__), and __SOCIAL_MODELING__ was DELETED in 226-04 with the rest of the
+  // social-modeling subsystem (its scheduler registration is gone too). A stray sentinel must
+  // NO LONGER be handled here — it falls through (the WIRE leaf does not handle it either, so
+  // `handled` is false) and the consolidation/reasoning/user-rep/relationship jobs are NEVER invoked.
+  it.each(["__MEMORY_CONSOLIDATION__", "__MEMORY_REASONING__", "__USER_REPRESENTATION__", "__SOCIAL_MODELING__"])(
+    "no longer handles the removed %s sentinel — falls through, runs no job",
     async (sentinel) => {
       const ctx = makeCtx({
-        agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true }, memoryReasoning: { enabled: true }, memoryUserRepresentation: { enabled: true } } },
+        agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true }, memoryReasoning: { enabled: true }, memoryUserRepresentation: { enabled: true }, socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
         apiKey: "test-key",
-        inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+        inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "tenant-a:u1:chan-1" } }],
       });
-      (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn() };
       const onComplete = vi.fn();
       const handled = await handleMemoryCronSentinel(sentinel, { agentId: "agent-1", onComplete }, ctx);
       expect(handled).toBe(false); // not handled here, and not by the WIRE leaf → falls through
       expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
       expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
       expect(mockRunUserRepresentationBuild).not.toHaveBeenCalled();
+      expect(mockRunRelationshipBuild, "the deleted __SOCIAL_MODELING__ builder must never run").not.toHaveBeenCalled();
     },
   );
 });
@@ -173,100 +174,10 @@ describe("handleMemoryCronSentinel", () => {
 // + its cron were deleted; recall scoring is the fixed config.rag.scoring alphas.)
 
 // ---------------------------------------------------------------------------
-// __SOCIAL_MODELING__ sentinel (the offline
-// directional relationship builder). The gate is STRICTER than the per-user
-// representation cron: it requires BOTH enabled AND a recorded privacy-review
-// sign-off. The write-side resolves channelId per source from the
-// session key and SKIPS NULL-session-key sources.
+// (The __SOCIAL_MODELING__ sentinel describe block — the offline directional relationship
+//  builder dispatch — was DELETED in Phase 226-04 with the rest of the social-modeling
+//  subsystem. The 'no longer handled' assertion above now covers __SOCIAL_MODELING__.)
 // ---------------------------------------------------------------------------
-
-describe("handleMemoryCronSentinel __SOCIAL_MODELING__", () => {
-  // A formatted session key {tenant}:{user}:{channelId} — parseFormattedSessionKey
-  // recovers channelId from this on the write side.
-  const sk = (channelId: string, userId = "user_a") => `tenant-a:${userId}:${channelId}`;
-
-  it("short-circuits ok and runs NOTHING when socialModeling is disabled (the opt-in gate)", async () => {
-    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } } });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
-    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("short-circuits ok and runs NOTHING when enabled but NO privacy-review sign-off (the sign-off gate)", async () => {
-    // The knob alone does NOT activate — a recorded sign-off is required.
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true } } },
-      apiKey: "test-key",
-      inspectRows: [{ id: "s1", userId: "user_a", content: "A trusts B", trustLevel: "learned", source: { sessionKey: sk("chan-1") } }],
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
-    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("groups sources by resolved channelId and invokes runRelationshipBuild PER channel when enabled + signed-off + keyed", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
-      apiKey: "test-key",
-      inspectRows: [
-        { id: "s1", userId: "user_a", content: "A about B", trustLevel: "learned", source: { sessionKey: sk("chan-1", "user_a") } },
-        { id: "s2", userId: "user_b", content: "B about A", trustLevel: "learned", source: { sessionKey: sk("chan-1", "user_b") } },
-        { id: "s3", userId: "user_c", content: "C about D", trustLevel: "learned", source: { sessionKey: sk("chan-2", "user_c") } },
-      ],
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    // Two distinct channels (chan-1, chan-2) => two per-channel build invocations.
-    expect(mockRunRelationshipBuild).toHaveBeenCalledTimes(2);
-    const channelIds = mockRunRelationshipBuild.mock.calls.map((c) => (c[0] as any).channelId).sort();
-    expect(channelIds).toEqual(["chan-1", "chan-2"]);
-    // The build is scoped to the agent + tenant + channel and receives the relationshipStore port.
-    const firstArg = mockRunRelationshipBuild.mock.calls[0][0] as any;
-    expect(firstArg.agentId).toBe("agent-1");
-    expect(firstArg.tenantId).toBe("tenant-a");
-    expect(firstArg.relationshipStore).toBe(ctx.relationshipStore);
-    expect(mockCreateRelationshipSeam).toHaveBeenCalledOnce();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("SKIPS a NULL-session-key source (0 build invocations for a NULL-only set — never bucketed under undefined)", async () => {
-    // A source whose channelId cannot be resolved is SKIPPED + counted,
-    // NEVER bucketed under an empty/undefined channel.
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
-      apiKey: "test-key",
-      inspectRows: [
-        { id: "s1", userId: "user_a", content: "system fact, no session key", trustLevel: "learned", source: { sessionKey: null } },
-      ],
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    // A NULL-session-key-only source set yields 0 build invocations (no undefined-channel bucket).
-    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("skips with an error when enabled + signed-off but NO API key (no key value used)", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
-      apiKey: undefined,
-      inspectRows: [{ id: "s1", userId: "user_a", content: "A about B", trustLevel: "learned", source: { sessionKey: sk("chan-1") } }],
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
-    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-});
 
 // ---------------------------------------------------------------------------
 // __MEMORY_LIFECYCLE__ sentinel (the DORMANT

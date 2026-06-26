@@ -108,20 +108,21 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     expect(blob).toMatch(/dialectic|memory_ask/);
   });
 
-  it("does NOT treat the keyless lifecycle sweep or the privacy-gated social cron as cost features", () => {
+  it("does NOT treat the keyless lifecycle sweep as a cost feature", () => {
+    // (The privacy-gated social cron — which this also covered — was DELETED in
+    //  Phase 226-04 with the rest of that subsystem.)
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
       agents: {
         "agent-1": {
           ...bareAgent(),
           memoryLifecycle: { enabled: true },
-          socialModeling: { enabled: true, privacyReviewSignedOffBy: "op@example.com" },
         },
       },
       costFeaturesEnabled: true,
       logger: logger as never,
     });
-    // Neither is a $-spending LLM cost feature gated by this switch ⇒ no disclosure.
+    // The keyless lifecycle sweep is not a $-spending LLM cost feature gated by this switch ⇒ no disclosure.
     expect(logger._calls("warn")).toHaveLength(0);
   });
 

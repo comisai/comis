@@ -34,15 +34,14 @@ vi.mock("@comis/agent", () => ({
   REFLECT_PROMPT: "MOCK_SKILL_REFLECT_PROMPT",
   PROFILE_REFLECT_PROMPT: "MOCK_PROFILE_REFLECT_PROMPT",
   TOPIC_REFLECT_PROMPT: "MOCK_TOPIC_REFLECT_PROMPT",
-  // The other named imports the module pulls (consolidation/reasoning/userrep/social/tuning)
+  // The other named imports the module pulls (consolidation/reasoning/userrep/tuning)
   // are not on this leaf's code path, but the wholesale mock must satisfy the import list of
-  // any transitively-imported module — keep them present as no-op spies.
+  // any transitively-imported module — keep them present as no-op spies. (The social-modeling
+  // exports — runRelationshipBuild / createRelationshipSeam — were DELETED in Phase 226-04.)
   runMemoryConsolidation: vi.fn(),
   runMemoryReasoning: vi.fn(),
   runUserRepresentationBuild: vi.fn(),
   createUserRepresentationSeam: vi.fn(),
-  runRelationshipBuild: vi.fn(),
-  createRelationshipSeam: vi.fn(),
   resolveModelProfile: vi.fn(() => ({ capabilityClass: "frontier" })),
 }));
 

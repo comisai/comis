@@ -147,16 +147,9 @@ const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
   readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
 })));
-// Directional relationship store factory — mocked so setup
-// wires it without a real DB. setupMemory builds this on the shared db handle (mirror the
-// triple/embedding stores); without the mock entry the @comis/memory factory is
-// undefined and EVERY setup call throws `createSqliteRelationshipStore is not a function` (the
-// MEMORY.md "setup-memory mock" gate). The two segregated port halves are stubbed (the
-// directional upsert write + the (tenant, agent, channel)-scoped read the prompt-assembly injection reads).
-const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: [] })),
-})));
+// (The directional relationship store factory mock — createSqliteRelationshipStore — was
+//  DELETED in Phase 226-04 with the rest of the social-modeling subsystem; setupMemory no
+//  longer constructs it, so no mock entry is needed.)
 // Outcome-signal store factory (Verified Learning WS1) — mocked so setupMemory wires it
 // (createSqliteOutcomeStore + wireLearningOutcome) without a real DB. Without the mock entry the
 // @comis/memory factory is undefined and EVERY setup call throws `createSqliteOutcomeStore is not
@@ -211,7 +204,6 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
   createSqliteTripleStore: mockCreateSqliteTripleStore,
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
-  createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
   createSqliteMentalModelStore: mockCreateSqliteMentalModelStore,
