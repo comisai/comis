@@ -243,8 +243,9 @@ function docNameForTopic(topicKey: string): string {
  * counts). The run returns `err` only on an unrecoverable precondition.
  */
 export async function runReflection(deps: RunReflectionDeps): Promise<Result<RunReflectionResult, Error>> {
-  const { agentId, scope, config, sourceTrajectories, reflectionAdapter, outcomeSignal, mentalModelStore, clock, logger } =
-    deps;
+  // `reflectionAdapter` + `mentalModelStore` are destructured (and used) inside the
+  // per-topic `reflectTopic` helper off the same `deps`, not in this function body.
+  const { agentId, scope, config, sourceTrajectories, outcomeSignal, clock, logger } = deps;
 
   const startMs = clock.now();
   const maxDocsPerRun = config.maxDocsPerRun ?? DEFAULT_MAX_DOCS_PER_RUN;
