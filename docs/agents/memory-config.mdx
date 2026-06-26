@@ -191,6 +191,10 @@ agents:
 | **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default true, opt-out)* | Gates the **outcome-reward write** — success→`recordUsage` / failure→`recordFailure` on the `memory_usefulness` store (the `failure_count` source that **LEARN-FORGET** reads). Composes with `memoryUsefulnessJudge` + `learningForgetting` |
 | **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default true, opt-out)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
 
+<Note>
+  **v2.31 fold:** the **USER** (`memoryUserRepresentation`), **REASON** (`memoryReasoning`), and **Consolidation** (`memoryConsolidation`) work no longer runs as three separate nightly crons — it folds into the **one learning-reflection cron** (gated by `learningSkills.enabled`), which now maintains the per-user **profile** doc and the higher-order **topic** observations in the same pass as the learned **skill** docs (one outcome-gated engine, anti-poison two-axis). Their per-job `schedule:` keys are therefore inert; the keys still parse for now and are removed in a later v2.31 patch. A profile **correction** is preserved non-destructively (bi-temporal history-append), not overwritten.
+</Note>
+
 ## Outcome-gated ranking & forgetting (v2.26)
 
 **Verified Learning** gates **forgetting** on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy, and feeds that outcome into a per-memory recall-utility ledger. Both knobs **default ON (opt-out)**, gated by the master `memory.costFeatures.enabled` switch (also default on) — so a default install **does** record outcome reward and forget by wrongness. Set a per-agent flag (`learningTuning.enabled` / `learningForgetting.enabled`) **or** the master `memory.costFeatures.enabled` to `false` to opt out. Recall ranking itself is the **fixed `rag.scoring`** fusion (deterministic RRF + the cross-encoder reranker) — the v2.26 per-intent tuned-alpha bandit was **removed in v2.31** (it never validated a recall lift).
