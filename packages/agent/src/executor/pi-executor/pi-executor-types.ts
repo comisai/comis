@@ -174,12 +174,11 @@ export interface PiExecutorDeps {
    *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
    *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   userRepresentationStore?: UserRepresentationStore;
-  /** Optional mental-model store (the v2.31 Reflection doc store). Built in the daemon on
-   *  the shared memory db handle (the SAME store wired for the learned-skill surface);
-   *  threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps
-   *  (FOLD-01, Phase 225 Plan 02 — the rewired source replacing `userRepresentationStore`).
-   *  Absent -> no profile list, no push, byte-identical prompt (the default-OFF cost gate).
-   *  TYPE-only from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
+  /** Optional mental-model store (v2.31 Reflection doc store; the SAME store feeding the
+   *  learned-skill surface). FOLD-01 (Phase 225 Plan 02): threaded into prompt-assembly's
+   *  LLM-free `<user_profile>` injection via ToolAssemblyDeps — the rewired source replacing
+   *  `userRepresentationStore`. Absent -> no profile list, byte-identical prompt (cost gate).
+   *  TYPE-only from @comis/core (the agent↛memory cut). */
   mentalModelStore?: MentalModelStorePort;
   /** Optional directional relationship store. Built in the daemon on the shared memory
    *  db handle; threaded into prompt-assembly's LLM-free `<channel_relationships>` injection via

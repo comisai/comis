@@ -183,7 +183,7 @@ describe("buildProfileBlock — FOLD-03 equivalence with the pre-fold <user_prof
     };
   }
 
-  it("reproduces the <user_profile> wrapper", () => {
+  it("renders the <user_profile> wrapper", () => {
     const block = buildProfileBlock(makeProfileModel());
     expect(block).not.toBeUndefined();
     expect(block).toContain("<user_profile>");
