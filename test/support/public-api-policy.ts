@@ -164,14 +164,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
-      // Consolidation job. Phase 225 FOLD §3.2 RE-ORPHANED runMemoryConsolidation: the
-      // daemon __MEMORY_CONSOLIDATION__ sentinel intercept was REMOVED (its work folds into
-      // the ONE __REFLECT__ cron, Plan 04), so the export lost its production consumer. This
-      // is a TRANSITIONAL orphan — Plan 05 DELETES the job file + this export together (the
-      // job BODY is intentionally kept this plan for Plan 05's delete). MemoryConsolidationDeps
-      // (the SHAPE) was already a baseline orphan (called with an inline object).
-      "runMemoryConsolidation",
-      "MemoryConsolidationDeps",
       // Offline triple-extraction job.
       // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
       // OPTIONAL (the job is default-OFF and the benchmark calls
@@ -186,48 +178,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // Offline reasoning job. Phase 225 FOLD §3.2 RE-ORPHANED runMemoryReasoning: the daemon
-      // __MEMORY_REASONING__ sentinel intercept was REMOVED (folds into __REFLECT__, Plan 04),
-      // so it lost its production consumer — a TRANSITIONAL orphan (Plan 05 deletes the job +
-      // this export together; the BODY is kept this plan for Plan 05's delete). createReasoningSeam
-      // is STILL consumed (the WIRE leaf imports it) — no entry. The Deps/Config/Stats/Result SHAPE
-      // types + the ReasoningOutput seam-output type are referenced via inline objects only (the
-      // gated bench constructs them structurally / imports them same-package) — baseline orphans
-      // (mirror MemoryTripleExtractionDeps). ReasoningSeamDeps is the createReasoningSeam input
-      // shape — called with an inline object, so the TYPE itself has no cross-package importer.
-      "runMemoryReasoning",
-      "MemoryReasoningDeps",
-      "MemoryReasoningConfig",
-      "MemoryReasoningStats",
-      "MemoryReasoningResult",
-      "ReasoningOutput",
-      "ReasoningSeamDeps",
-      // Offline per-user representation builder. Phase 225 FOLD §3.2 RE-ORPHANED
-      // runUserRepresentationBuild + createUserRepresentationSeam: the daemon __USER_REPRESENTATION__
-      // cron-sentinel intercept was REMOVED (the per-user PROFILE is now built by the ONE __REFLECT__
-      // cron's kind:"profile" pass — the source build sets sourceTrustExternal from the per-memory
-      // trustLevel, the OLD layer-1 firewall; Plan 04), so both lost their production consumer. These
-      // are TRANSITIONAL orphans — Plan 05 DELETES the job + seam + these exports together (the BODIES
-      // are kept this plan for Plan 05's delete). buildUserRepresentationPrompt +
-      // parseUserRepresentationOutput are imported by createUserRepresentationSeam via the RELATIVE
-      // same-package path (the prompt stays agent-internal) — baseline orphans (mirror
-      // DEDUCTIVE_PROMPT/parseDeductiveResult being relative-only). The Deps/Config/Stats/Result SHAPE
-      // types + the Candidate/BuildOutput seam-output types + the SourceMemory read-shape are
-      // referenced via inline objects only — baseline orphans (mirror MemoryReasoningDeps).
-      // UserRepresentationSeamDeps (the createUserRepresentationSeam input shape) is called with an
-      // inline object, so the TYPE itself has no cross-package importer (mirror ReasoningSeamDeps).
-      "runUserRepresentationBuild",
-      "createUserRepresentationSeam",
-      "buildUserRepresentationPrompt",
-      "parseUserRepresentationOutput",
-      "MemoryUserRepresentationDeps",
-      "MemoryUserRepresentationConfig",
-      "MemoryUserRepresentationStats",
-      "MemoryUserRepresentationResult",
-      "UserRepresentationSourceMemory",
-      "UserRepresentationCandidate",
-      "UserRepresentationBuildOutput",
-      "UserRepresentationSeamDeps",
+      // (Phase 225-05 DELETED the standalone reasoning + user-representation jobs/seams/prompts +
+      //  their @comis/agent exports — runMemoryReasoning / MemoryReasoning* / ReasoningOutput /
+      //  ReasoningSeamDeps and runUserRepresentationBuild / createUserRepresentationSeam /
+      //  build|parseUserRepresentationOutput|Prompt / MemoryUserRepresentation* /
+      //  UserRepresentationSourceMemory|Candidate|BuildOutput|SeamDeps — so their allowlist entries
+      //  were REMOVED here, not just shrunk. createReasoningSeam was likewise deleted [the
+      //  __MEMORY_TRIPLE_EXTRACTION__ scaffold that reused it was de-wired]. The work folded into the
+      //  ONE __REFLECT__ cron [Plan 04].)
       // Offline directional relationship builder.
       // SHRUNK: the offline-builder run-fn + the cheap-model seam-factory are now CONSUMED
       // by the daemon __SOCIAL_MODELING__ cron dispatch (setup-channels-memory-crons.ts), so they
@@ -1567,20 +1525,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
-      // Per-agent consolidation config schema. Wired into PerAgentConfig
-      // (schema-agent-runtime) WITHIN @comis/core; the daemon consumes the
-      // INFERRED config TYPE, not the schema value. The schema value therefore has no
-      // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
-      "MemoryConsolidationConfigSchema",
-      // Per-agent reasoning config schema + type. Wired into
-      // PerAgentConfig (schema-agent-runtime) WITHIN @comis/core; the schema-runtime attach
-      // is a self-import (the public-export-consumers gate skips same-package imports), so
-      // both the schema value AND the inferred config TYPE are surfaced AHEAD of their
-      // cross-package consumers — the reasoning job reads MemoryReasoningConfig
-      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema +
-      // runMemoryTripleExtraction). Shrink when the consumer lands.
-      "MemoryReasoningConfigSchema",
-      "MemoryReasoningConfig",
+      // (Phase 225-05 DELETED the consolidation + reasoning config schemas —
+      //  MemoryConsolidationConfigSchema / MemoryReasoningConfigSchema / MemoryReasoningConfig
+      //  are no longer exported from @comis/core, so their allowlist entries were removed.)
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -2145,31 +2092,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the offline writer / lane reference it directly.
       "TripleTrust",
-      // Per-user representation port + prefix-type enum.
-      // This is the first piece: the type-only
-      // UserRepresentationStore port + the UserRepresentationType prefix-type enum
-      // are the contract every later piece consumes — the SOLE @comis/memory
-      // adapter, the offline profile-builder, the LLM-free
-      // prompt-assembly injection, and the daemon wiring all
-      // import these from @comis/core BY TYPE (never @comis/memory — the agent↛
-      // memory build cut). No in-repo consumer exists yet (the adapter lands
-      // later), so the export-graph walker counts them as orphans. They are the
-      // documented port API surface — tracked here as planned-orphans,
-      // mirror the TripleStorePort / MemoryEmbeddingStore ahead-of-consumer dance.
-      // Shrinks as the adapter (by TYPE) → the builder/injection →
-      // the daemon wiring reference each name directly.
-      "UserRepresentationStore",
-      "UserRepresentationScope",
-      // UserRepresentationTrust is referenced only INSIDE UserRepresentationInput.trust
-      // (a field type, not a standalone import) — the same orphan shape as TripleTrust.
-      "UserRepresentationTrust",
-      "UserRepresentationEntry",
-      "UserRepresentationInput",
-      // The prefix-type enum (value schema + inferred type). The builder
-      // classifies entries with UserRepresentationTypeSchema; the port consumes the
-      // inferred UserRepresentationType. Shrinks when those consumers land.
-      "UserRepresentationTypeSchema",
-      "UserRepresentationType",
+      // (Phase 225-05 DELETED the type-only UserRepresentationStore port + its
+      //  Scope/Trust/Entry/Input DTOs + the UserRepresentationType(Schema) prefix-type enum —
+      //  no longer exported from @comis/core [the <user_profile> read folded onto the
+      //  MentalModelStorePort kind:"profile" path], so their allowlist entries were removed.)
       // Directional relationship port. This is
       // the first piece: the type-only RelationshipStore port
       // carrying the directional (subjectUserId, aboutUserId) pair + the
@@ -2180,14 +2106,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // No in-repo consumer exists yet (the adapter lands later), so the
       // export-graph walker counts them as orphans. They are the documented
       // port API surface — tracked here as planned-orphans, mirror the
-      // UserRepresentationStore / TripleStorePort ahead-of-consumer dance. Shrinks as
+      // TripleStorePort ahead-of-consumer dance. Shrinks as
       // the adapter (by TYPE) → the builder/injection → the daemon wiring
       // reference each name directly.
       "RelationshipStore",
       "RelationshipScope",
       // RelationshipTrust is referenced only INSIDE RelationshipInput.trust (a field
-      // type, not a standalone import) — the same orphan shape as TripleTrust /
-      // UserRepresentationTrust.
+      // type, not a standalone import) — the same orphan shape as TripleTrust.
       "RelationshipTrust",
       "RelationshipEntry",
       "RelationshipInput",
@@ -2754,28 +2679,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
-      // Per-user representation store.
-      // createSqliteUserRepresentationStore's daemon consumer LANDED
-      // (setup-memory.ts constructs the SOLE adapter on the shared db handle) — the
-      // factory-orphan SHRANK on schedule (mirror createSqliteTripleStore /
-      // the entry above); its entry is removed.
-      // MemoryUserRepresentationStoreDeps is the constructor-deps SHAPE type
-      // (referenced via inline objects only); UserRepresentationRowSchema is the row
-      // schema consumed by createRowMapper inside the adapter (an intra-file value
-      // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryTripleStoreDeps / MemoryTripleRowSchema).
-      "MemoryUserRepresentationStoreDeps",
-      "UserRepresentationRowSchema",
+      // (Phase 225-05 DELETED the per-user-representation store —
+      //  createSqliteUserRepresentationStore + MemoryUserRepresentationStoreDeps +
+      //  UserRepresentationRowSchema are no longer exported from @comis/memory [the
+      //  user_representation table was dropped; the profile folded onto mental_models], so
+      //  their allowlist entries were removed.)
       // Directional relationship store.
       // SHRUNK: the SOLE (tenant, agent, channel)-scoped directional-edge adapter factory is
       // now CONSUMED by its daemon composition-root consumer (setup-memory.ts constructs it on the
-      // shared db handle, mirror the per-user-representation adapter), so it was REMOVED from
-      // this list (the shrink-only allowlist-shrink.test.ts enforces this shrink — mirror the
-      // user-representation / triple-store adapter shrink). MemoryRelationshipStoreDeps is
-      // the constructor-deps SHAPE type (referenced via inline objects only); RelationshipRowSchema is
-      // the row schema consumed by createRowMapper inside the adapter (an intra-file value reference,
-      // not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryUserRepresentationStoreDeps / UserRepresentationRowSchema above).
+      // shared db handle), so it was REMOVED from this list (the shrink-only
+      // allowlist-shrink.test.ts enforces this shrink — mirror the triple-store adapter shrink).
+      // MemoryRelationshipStoreDeps is the constructor-deps SHAPE type (referenced via inline
+      // objects only); RelationshipRowSchema is the row schema consumed by createRowMapper inside
+      // the adapter (an intra-file value reference, not a cross-file import) — both PERMANENT
+      // baseline orphans (mirror MemoryTripleStoreDeps / MemoryTripleRowSchema above).
       "MemoryRelationshipStoreDeps",
       "RelationshipRowSchema",
       // Tuned-alpha store. createSqliteTunedAlphaStore

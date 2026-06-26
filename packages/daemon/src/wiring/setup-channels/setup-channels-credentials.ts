@@ -67,19 +67,15 @@ export interface CronEventListenerDeps {
    *  isolation. Absent => causes parsed but not persisted. Built
    *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store. Threaded into runMemoryConsolidation by the
-   *  opt-in `__MEMORY_CONSOLIDATION__` sentinel below. Built in setup-memory on the SAME db
-   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). Absent =>
-   *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
-   *  reaches it. */
+  /** Consolidation store. ORPHANED in Phase 225-05 (the runMemoryConsolidation job +
+   *  the `__MEMORY_CONSOLIDATION__` sentinel were deleted); the port + its memories table are
+   *  retired in Phase 226. Still threaded (no live writer). Built in setup-memory on the SAME db
+   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store — deductive current-truth write path, threaded into runMemoryReasoning via
-   *  the opt-in `__MEMORY_REASONING__` sentinel below (port TYPE, agent↛memory cut; same db
+  /** Triple store — deductive current-truth write path, threaded into runMemoryTripleExtraction via
+   *  the opt-in `__MEMORY_TRIPLE_EXTRACTION__` sentinel below (port TYPE, agent↛memory cut; same db
    *  handle as the memory adapter). Absent ⇒ sentinel can't run; cron is off-by-default. */
   tripleStore?: TripleStorePort;
-  /** Per-user representation store — the offline-builder
-   *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
-   *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
   /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
    *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
    *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →

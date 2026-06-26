@@ -443,7 +443,7 @@ export interface BootContext {
    *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
    *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store — cron path ONLY (registerCronEventListeners → runMemoryConsolidation sentinel; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut). */
+  /** Consolidation store — ORPHANED in Phase 225-05 (the runMemoryConsolidation job + its cron were deleted); port retired in Phase 226. Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
   outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __REFLECT__ cron success gate (agent↛memory cut)
   learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __REFLECT__ get/admit target

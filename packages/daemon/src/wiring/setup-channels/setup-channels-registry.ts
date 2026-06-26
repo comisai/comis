@@ -201,18 +201,17 @@ export interface ChannelsDeps {
    *  successful store. Built in setup-memory on the shared db handle; injected as the port
    *  TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store — forwarded to registerCronEventListeners so
-   *  the opt-in __MEMORY_CONSOLIDATION__ sentinel runs runMemoryConsolidation with the
-   *  injected store. Built in setup-memory on the shared db handle; injected as the port
-   *  TYPE (agent↛memory cut). Absent => the consolidation sentinel cannot run (the cron is
-   *  off-by-default anyway, so a default-config agent never reaches it). */
+  /** Consolidation store — ORPHANED in Phase 225-05 (the runMemoryConsolidation job +
+   *  the __MEMORY_CONSOLIDATION__ sentinel were deleted); the port is retired in Phase 226.
+   *  Still forwarded (no live writer). Built in setup-memory on the shared db handle; injected
+   *  as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
   /** Triple store — forwarded to registerCronEventListeners so
-   *  the opt-in __MEMORY_REASONING__ sentinel runs runMemoryReasoning's DEDUCTIVE write
-   *  via the trust-first upsertTriple. Built in setup-memory on the shared db handle;
+   *  the opt-in __MEMORY_TRIPLE_EXTRACTION__ sentinel runs runMemoryTripleExtraction's DEDUCTIVE
+   *  write via the trust-first upsertTriple. Built in setup-memory on the shared db handle;
    *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry →
    *  credentials chain — a missing thread silently disables the deductive
-   *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
+   *  write path. Absent => the sentinel cannot run (the cron is off-by-default
    *  anyway, so a default-config agent never reaches it). */
   tripleStore?: TripleStorePort;
   /** Directional relationship store — forwarded to the cron path
