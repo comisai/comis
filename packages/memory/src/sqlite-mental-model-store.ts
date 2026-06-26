@@ -245,6 +245,16 @@ export function createSqliteMentalModelStore(
       "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
   );
+  // promoteByName keys on the NAME (not the re-derived id) — SKILL-04: a reflected
+  // doc is admitted WITH a non-empty topicKey, so re-deriving the id with an assumed
+  // `topicKey:''` MISSES it. The name is UNIQUE per (tenant, agent) (the SAME key
+  // get() resolves by), so a name-keyed UPDATE finds the row regardless of topicKey.
+  // Identical proof-bar CASE to promoteStmt; only the WHERE key differs (name vs id).
+  const promoteByNameStmt = db.prepare(
+    "UPDATE mental_models SET proof_count = proof_count + 1, " +
+      "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
+      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+  );
   // demote: step state back toward stale on a verified failure (soft, monotone).
   // WR-06: the WHERE pins `state IN ('active','candidate')` — the ONLY states a demote
   // moves. A terminal-state row (stale/archived) therefore matches 0 rows, so the
@@ -256,6 +266,15 @@ export function createSqliteMentalModelStore(
       "state = CASE WHEN state = 'active' THEN 'stale' WHEN state = 'candidate' THEN 'stale' ELSE state END, " +
       "strength = CASE WHEN strength > 0 THEN strength - 1 ELSE strength END, " +
       "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ? AND state IN ('active', 'candidate')",
+  );
+  // demoteByName keys on the NAME (not the re-derived id) — SKILL-04, the mirror of
+  // promoteByNameStmt. Same monotone state step + the WR-06 `state IN
+  // ('active','candidate')` terminal-state guard; only the WHERE key differs.
+  const demoteByNameStmt = db.prepare(
+    "UPDATE mental_models SET " +
+      "state = CASE WHEN state = 'active' THEN 'stale' WHEN state = 'candidate' THEN 'stale' ELSE state END, " +
+      "strength = CASE WHEN strength > 0 THEN strength - 1 ELSE strength END, " +
+      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND name = ? AND state IN ('active', 'candidate')",
   );
   // evict: SOFT — set evicted_at + archive; NEVER a hard DELETE (provenance survives).
   const evictStmt = db.prepare(
@@ -434,28 +453,23 @@ export function createSqliteMentalModelStore(
       scope: LearningScope,
       promoteAtProofCount: number,
     ): Promise<Result<{ changed: boolean }, Error>> {
-      // Resolve the NAME → the deterministic hash id the lifecycle WHERE keys on
-      // (the same derivation admit() uses — one place, never duplicated by the
-      // caller). promoteByName resolves a SKILL by name, so kind/topicKey are the
-      // skill defaults (byte-identity with the pre-generalization id). Then run
-      // promote's dedicated bind path and report rows-changed so a 0-row write
-      // (an unknown/evicted name) is detectable (not a silent lie).
+      // Resolve the row by `(tenant, agent, name)` — the SAME key get() resolves by.
+      // SKILL-04 fix: the reuse loop holds only the skill NAME (ATTR-01), and a
+      // reflected doc is admitted WITH a non-empty topicKey, so re-deriving the id
+      // with a hardcoded `topicKey:''` (the prior behavior) MISSED any reflected doc
+      // and `changed` was always false — the entire reflect→reuse→promote loop was
+      // silently dead on its real input. A skill name is UNIQUE per (tenant, agent),
+      // so a name-keyed UPDATE finds the row regardless of topicKey. Reports
+      // rows-changed so a 0-row write (an unknown/evicted name) stays detectable.
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const id = mentalModelId({
-          tenantId: scope.tenantId,
-          agentId: scope.agentId,
-          kind: "skill",
-          topicKey: "",
-          name,
-        });
         const now = scope.now ?? systemNowMs();
-        const info = promoteStmt.run(promoteAtProofCount, now, scope.tenantId, scope.agentId, id);
+        const info = promoteByNameStmt.run(promoteAtProofCount, now, scope.tenantId, scope.agentId, name);
         const changed = info.changes > 0;
         logger?.debug(
-          { step: "learned-skill-promote-by-name", id, changed, promoteAtProofCount, durationMs: systemNowMs() - startMs },
+          { step: "learned-skill-promote-by-name", name, changed, promoteAtProofCount, durationMs: systemNowMs() - startMs },
           "Learned-skill promoteByName complete",
         );
         return ok({ changed });
@@ -470,25 +484,20 @@ export function createSqliteMentalModelStore(
     },
 
     async demoteByName(name: string, scope: LearningScope): Promise<Result<{ changed: boolean }, Error>> {
-      // Resolve the NAME → the hash id (same derivation as admit/promote; the
-      // skill defaults), run demote, and report rows-changed so an unknown/evicted
-      // name (0 rows) is never counted as a real demote.
+      // Resolve the row by `(tenant, agent, name)` — the mirror of promoteByName's
+      // SKILL-04 fix. Re-deriving the id with `topicKey:''` missed any reflected doc
+      // (non-empty topicKey); the name is UNIQUE per (tenant, agent). The WR-06
+      // terminal-state guard lives in the statement, so an unknown/evicted/stale name
+      // yields 0 rows → changed:false (never a phantom transition).
       const rejected = rejectUnresolvedScope(scope);
       if (rejected) return rejected;
       const startMs = systemNowMs();
       try {
-        const id = mentalModelId({
-          tenantId: scope.tenantId,
-          agentId: scope.agentId,
-          kind: "skill",
-          topicKey: "",
-          name,
-        });
         const now = scope.now ?? systemNowMs();
-        const info = demoteStmt.run(now, scope.tenantId, scope.agentId, id);
+        const info = demoteByNameStmt.run(now, scope.tenantId, scope.agentId, name);
         const changed = info.changes > 0;
         logger?.debug(
-          { step: "learned-skill-demote-by-name", id, changed, durationMs: systemNowMs() - startMs },
+          { step: "learned-skill-demote-by-name", name, changed, durationMs: systemNowMs() - startMs },
           "Learned-skill demoteByName complete",
         );
         return ok({ changed });
