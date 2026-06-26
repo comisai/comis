@@ -228,7 +228,9 @@ describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the ref
   });
 
   it("carries NO executable envelope (advisory profile doc — no scripts/paramsSchema surface)", () => {
-    expect(PROFILE_REFLECT_PROMPT).not.toContain("scripts");
+    // Word-boundary match: the guard is the JSON envelope key `scripts`, not the
+    // substring (the prompt's prose word "transcript(s)" legitimately contains it).
+    expect(PROFILE_REFLECT_PROMPT).not.toMatch(/\bscripts\b/);
     expect(PROFILE_REFLECT_PROMPT).not.toContain("paramsSchema");
   });
 });
