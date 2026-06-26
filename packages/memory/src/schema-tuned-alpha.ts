@@ -4,9 +4,12 @@
  * RANK-05) transactional PK-widening REBUILD that widens the legacy 2-col PK
  * `(tenant_id, agent_id)` to the per-intent 3-col `(tenant_id, agent_id, intent)`
  * and adds the RESERVED posterior-slot columns `outcome_reward_sum` / `outcome_n`.
- * Plus the `memory_usefulness.failure_count` per-column add (FORGET-02) — the
- * outcome-attributed task-failure signal, DISTINCT from `ignored_count`
- * (recalled-but-not-cited).
+ *
+ * NOTE (Phase 224, v2.31): the `memory_usefulness.failure_count` migration that
+ * once co-lived here was RELOCATED to `schema-usefulness.ts` — `failure_count` is
+ * a KEEPER (the FORGET-02 source the lifecycle sweep JOINs on), whereas this file
+ * (the bandit `tuned_alpha` migration) is slated for deletion when the bandit is
+ * cut. Only `ensureTunedAlphaIntent` remains here.
  *
  * ## The `outcome_reward_sum` / `outcome_n` columns are RESERVED/INERT in v1 (WR-04)
  *
@@ -18,8 +21,8 @@
  * current reward path. Do NOT build a reader against them expecting a live posterior.
  *
  * Extracted from `schema.ts` (which is at the 800-line cap) — the
- * `schema-outcome-events.ts` co-location precedent. `initSchema` CALLS the two
- * ensure fns so the migrations run on every boot.
+ * `schema-outcome-events.ts` co-location precedent. `initSchema` CALLS
+ * `ensureTunedAlphaIntent` so the migration runs on every boot.
  *
  * ## Why a REBUILD, not `ADD COLUMN intent`
  *
@@ -123,28 +126,5 @@ export function ensureTunedAlphaIntent(db: Database.Database): void {
     // Restore the pragma. No foreign_key_check needed: tuned_alpha has no FK
     // (per-scope CONFIG state), and the INSERT…SELECT copies rows verbatim.
     if (fkWasOn) db.pragma("foreign_keys = ON");
-  }
-}
-
-/**
- * Idempotently ensure `memory_usefulness` carries the `failure_count` column —
- * the outcome-attributed task-failure signal (FORGET-02). DISTINCT from
- * `ignored_count` (recalled-but-not-cited, a usage proxy): a correct-but-unused
- * memory accrues `ignored_count`, never `failure_count`. The per-column
- * `ensureMemoryColumns` idiom: a `PRAGMA table_info` presence guard, then an
- * `ADD COLUMN ... NOT NULL DEFAULT 0` (O(1), constant default — never NULL for a
- * count). Forward-only, re-run-safe.
- *
- * @param db - An open better-sqlite3 Database whose `memory_usefulness` table
- *   already exists (call AFTER `ensureUsefulnessTable` in `initSchema`).
- */
-export function ensureUsefulnessFailureColumn(db: Database.Database): void {
-  const cols = new Set(
-    (db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string }[]).map(
-      (r) => r.name,
-    ),
-  );
-  if (!cols.has("failure_count")) {
-    db.exec(`ALTER TABLE memory_usefulness ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0`);
   }
 }

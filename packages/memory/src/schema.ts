@@ -17,7 +17,8 @@ import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
-import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
+import { ensureTunedAlphaIntent } from "./schema-tuned-alpha.js";
+import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 
 // Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (sibling file, keeps schema.ts under the 800-line cap) so existing `./schema.js` importers keep their import site.
