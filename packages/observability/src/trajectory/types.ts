@@ -85,11 +85,10 @@ export const TRAJECTORY_EVENT_TYPES = [
   // task-outcome (daemon-side emit, learningOutcome.enabled-gated). Counts/ids/closed-enums
   // ONLY — no bodies/alpha (SEC-01). Bridged so `comis explain` can reconstruct it (OBS-02).
   "learning.outcome_observed",
-  // RANK-06 (v2.26 WS3): the bandit applied a (per-intent) tuned-alpha update — counts +
-  // the per-intent dim ONLY, NEVER an alpha value (SEC-01). FORGET-06 (WS4): the lifecycle
-  // sweep demoted / soft-evicted N memories — counts ONLY (daemon-side emit). All bridged
-  // for `comis explain` (OBS-02).
-  "memory.online_tuning_applied",
+  // FORGET-06 (v2.26 WS4): the lifecycle sweep demoted / soft-evicted N memories — counts
+  // ONLY (daemon-side emit). Bridged for `comis explain` (OBS-02). (The RANK-06
+  // memory.online_tuning_applied bandit type was removed in Phase 224 — the UCB
+  // online-tuning bandit was deleted; recall is fixed-RRF.)
   "learning.memory_demoted",
   "learning.memory_evicted",
   // SKILL-09 (v2.26 WS2, Phase 201): the procedural-synthesis telemetry — admitted-skill

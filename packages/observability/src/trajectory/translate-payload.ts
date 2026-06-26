@@ -293,8 +293,6 @@ export function translatePayload(
 
     case "learning:outcome_observed": // OUTCOME-08: trajectoryId + closed-enum outcome/source + numeric confidence ONLY (no body/alpha/recalled ids; agentId/sessionKey/traceId envelope-only — §2.7 / SEC-01).
       return { trajectoryId: payload.trajectoryId, outcome: payload.outcome, source: payload.source, confidence: payload.confidence };
-    case "memory:online_tuning_applied": // RANK-06: bandit-applied COUNTS + the per-intent dim ONLY — NEVER an alpha value or FEED content (§2.7 / SEC-01); agentId/timestamp envelope-only.
-      return { updated: payload.updated, clampHits: payload.clampHits, signalCount: payload.signalCount, intent: payload.intent, durationMs: payload.durationMs };
     case "learning:memory_demoted":
     case "learning:memory_evicted":
     case "learning:skill_synthesized":

@@ -709,29 +709,6 @@ export interface AgentEvents {
   };
 
   /**
-   * RANK-06 (v2.26 WS3): the OFFLINE tuned-alpha bandit applied a (possibly per-intent)
-   * update. PROMOTED from an optional-chained `eventBus?.emit` (which evaded the type
-   * system, the trajectory, AND the EMIT_REGEX gate) to a typed key emitted via PLAIN
-   * `eventBus.emit` (online-tuning-job.ts). Counts/booleans + the closed-union per-intent
-   * dim ONLY — NEVER an alpha VALUE or FEED content (§2.7 / SEC-01; the `.not.toMatch(/alpha/i)`
-   * belt). `intent` = the `classifyIntent` bucket tuned (omitted → global ''). Bridged for
-   * `comis explain` (OBS-02). Adding one is a compile error.
-   */
-  "memory:online_tuning_applied": {
-    agentId: string;
-    /** A next tuned vector was upserted (false when off / no signal / failed). */
-    updated: boolean;
-    /** How many of the four alphas hit a clamp bound (0/1) this run. */
-    clampHits: number;
-    /** Number of FEED-signal ids aggregated this run. */
-    signalCount: number;
-    /** The per-intent bucket tuned (closed-union string); omitted → global ''. */
-    intent?: string;
-    durationMs: number;
-    timestamp: number;
-  };
-
-  /**
    * FORGET-06 (v2.26 WS4): the lifecycle sweep demoted (`learning:memory_demoted`) /
    * SOFT-evicted (`learning:memory_evicted`, set `evicted_at`, never DELETE) N memories
    * this run. Emitted DAEMON-SIDE (the lifecycle store has no bus) from the real sweep
