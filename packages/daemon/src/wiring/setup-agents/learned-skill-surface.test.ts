@@ -454,10 +454,61 @@ describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (n
     const { store, kindCalls } = makeKindAwareStore([learned({ name: "alpha", kind: "skill" })]);
     await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
 
-    // Every list() the surface issues is kind-filtered to "skill" — never undefined
-    // (an unfiltered list would re-admit a profile/topic doc into the skills channel).
+    // The surface admits skill + topic (Plan 03) while excluding profile. A SINGLE
+    // list() round-trip cannot express "skill OR topic" via the single-kind
+    // listByKindStmt filter, so the surface lists unfiltered (kind === undefined)
+    // and filters in code to skill|topic. Every list() call is unfiltered.
     expect(kindCalls().length).toBeGreaterThan(0);
-    expect(kindCalls().every((k) => k === "skill")).toBe(true);
+    expect(kindCalls().every((k) => k === undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLD-02 (Phase 225 Plan 03): the wholesale surface BROADENS to admit
+// kind:"topic" (the design's one-store unification — a surfaced topic doc IS the
+// observation recall medium) while STILL excluding kind:"profile" (the Plan-02
+// guard — a profile doc surfaces ONCE, in <user_profile>). The filter becomes
+// `d.kind === "skill" || d.kind === "topic"` over an unfiltered list(scope).
+// RED on the Plan-02 code (list(scope,"skill")): a kind:topic doc does NOT surface.
+// ---------------------------------------------------------------------------
+
+describe("FOLD-02: the wholesale surface admits kind:'topic' (still excludes kind:'profile')", () => {
+  it("a kind:'topic' doc IS materialized into .learned-skills (the observation recall medium)", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // The skill still surfaces (regression)…
+    expect(existsSync(safePath(workDir, ".learned-skills", "alpha", "SKILL.md"))).toBe(true);
+    // …AND the topic doc now surfaces (the broadened filter admits it).
+    expect(existsSync(safePath(workDir, ".learned-skills", "topic-cluster-x", "SKILL.md"))).toBe(true);
+  });
+
+  it("a kind:'topic' doc IS in the surfaced (cached) set the seam renders; a kind:'profile' doc is NOT", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    const surfaced = await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(surfaced.some((s) => s.name === "alpha")).toBe(true);
+    expect(surfaced.some((s) => s.kind === "topic")).toBe(true);
+    // The profile doc stays excluded (no double-surface — the Plan-02 guard holds).
+    expect(surfaced.some((s) => s.kind === "profile")).toBe(false);
+  });
+
+  it("a kind:'profile' doc is STILL NOT materialized into .learned-skills (regression of the Plan-02 guard)", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(existsSync(safePath(workDir, ".learned-skills", "topic-cluster-x", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(workDir, ".learned-skills", "profile-user-u", "SKILL.md"))).toBe(false);
   });
 });
 

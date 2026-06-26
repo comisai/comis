@@ -212,14 +212,18 @@ export async function refreshLearnedSkillSurface(args: {
   const { learnedSkillStore, scope, workspaceDir, logger } = args;
   if (!learnedSkillStore) return [];
 
-  // GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1): KIND-FILTER to "skill" only. The
-  // wholesale surface materializes into <available_skills>; a kind:"profile" doc must
-  // NOT surface here — it surfaces ONCE, in the rewired <user_profile> block
-  // (prompt-assembly), so its facts are not double-surfaced/confused into the skills
-  // channel. (kind:"topic" is decided in Plan 03; for now "skill" correctly excludes
-  // profile and is the minimal change.) The kind filter is an ADDITIONAL AND over the
-  // load-bearing (tenant, agent) scope, never a replacement (the listByKindStmt path).
-  const result = await learnedSkillStore.list(scope, "skill");
+  // GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1) + FOLD-02 (Plan 03): KIND-FILTER the
+  // wholesale surface to admit kind:"skill" AND kind:"topic" while EXCLUDING
+  // kind:"profile". The surface materializes into <available_skills>; a
+  // kind:"profile" doc must NOT surface here — it surfaces ONCE, in the rewired
+  // <user_profile> block (prompt-assembly), so its facts are not double-surfaced into
+  // the skills channel. kind:"topic" DOES surface (Plan 03): the design's one-store
+  // unification makes a surfaced topic doc the OBSERVATION recall medium (ranked
+  // top-K is the documented future mitigation, not this phase). The port's single-
+  // kind `list(scope, kind)` filter cannot express "skill OR topic" in one call, so
+  // we list UNFILTERED (one DB round-trip) and AND a code-side kind predicate over
+  // the load-bearing (tenant, agent) scope — never a replacement for it.
+  const result = await learnedSkillStore.list(scope);
   if (!result.ok) {
     logger.debug(
       {
@@ -234,14 +238,18 @@ export async function refreshLearnedSkillSurface(args: {
     return [];
   }
 
-  materializeLearnedSkills(workspaceDir, result.value, logger);
-  const surfaced = result.value.filter(isSurfaceable);
+  // Admit skill + topic; exclude profile (the no-double-surface guard).
+  const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
+  materializeLearnedSkills(workspaceDir, visible, logger);
+  const surfaced = visible.filter(isSurfaceable);
   logger.debug(
     {
       agentId: scope.agentId,
       submodule: "learned-skill-surface",
       surfacedCount: surfaced.length,
-      totalCount: result.value.length,
+      // The kind-VISIBLE total (skill + topic), so surfacedCount/totalCount reconcile
+      // (profile docs are excluded upstream and are not part of this surface's denom).
+      totalCount: visible.length,
     },
     "Learned-skill surface refreshed",
   );
