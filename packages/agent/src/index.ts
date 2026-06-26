@@ -198,10 +198,6 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
-// Memory consolidation (periodic clustering of near-duplicate memories → observations)
-export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
-export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
-
 // Offline triple extraction (conversation text → S/P/O triples
 // written into the trust-first bi-temporal KG; default-OFF, NEVER on the recall path)
 export { runMemoryTripleExtraction } from "./memory/memory-triple-extraction-job.js";
@@ -211,30 +207,6 @@ export type {
   MemoryTripleExtractionStats,
   TripleCandidate,
 } from "./memory/memory-triple-extraction-job.js";
-
-// Offline reasoning (typed deductive + inductive
-// observations: deductive → trust-first upsertTriple, inductive → applyConsolidation
-// (≤ learned); default-OFF, surprisal-gated, NEVER on the recall path)
-export { runMemoryReasoning } from "./memory/memory-reasoning-job.js";
-export type {
-  MemoryReasoningDeps,
-  MemoryReasoningConfig,
-  MemoryReasoningStats,
-  MemoryReasoningResult,
-  ReasoningOutput,
-} from "./memory/memory-reasoning-job.js";
-// The daemon-injected reasoning seam factory: builds the OFFLINE
-// reason() seam from a cheap resolved model, keeping the specialist prompts +
-// parsers agent-internal. Consumed by the daemon __MEMORY_REASONING__ sentinel.
-export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
-export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
-
-// Offline per-user representation build seam. The factory the daemon
-// __USER_REPRESENTATION__ sentinel calls to BUILD the build() seam from a cheap resolved
-// model, keeping USER_REPRESENTATION_PROMPT + its parser agent-internal. Consumed by the
-// daemon __USER_REPRESENTATION__ sentinel.
-export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
-export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
 
 // Offline usefulness-judge seam (the OPTIONAL second usefulness signal alongside the
 // keyless citation-marker attribution). The factory the daemon __USEFULNESS_JUDGE__
@@ -265,28 +237,6 @@ export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
 // shapes (AssembledSynthesis/CitationChain/ParsedSynthesis) are inferred at the consumer and
 // kept module-internal (no unconsumed type surface on the public barrel).
 export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory-dialectic-synthesis.js";
-
-// Offline per-user representation builder (the WRITE path of
-// the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
-// external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite
-// (skip non-clean) → upsert via the @comis/core port → counts-only event → idempotent.
-// The ONLY LLM use here and it is OFFLINE; the read path stays LLM-free.)
-export { runUserRepresentationBuild } from "./memory/memory-user-representation-job.js";
-export type {
-  MemoryUserRepresentationDeps,
-  MemoryUserRepresentationConfig,
-  MemoryUserRepresentationStats,
-  MemoryUserRepresentationResult,
-  UserRepresentationSourceMemory,
-} from "./memory/memory-user-representation-job.js";
-// The builder prompt + parser (the build() seam's payload shape) — agent-internal;
-// the daemon __USER_REPRESENTATION__ seam imports these to keep the prompt
-// string out of the daemon (mirrors createReasoningSeam).
-export {
-  parseUserRepresentationOutput,
-  buildUserRepresentationPrompt,
-} from "./memory/memory-user-representation-prompt.js";
-export type { UserRepresentationCandidate, UserRepresentationBuildOutput } from "./memory/memory-user-representation-prompt.js";
 
 // Offline directional relationship build seam. The factory the
 // daemon __SOCIAL_MODELING__ sentinel calls to BUILD the build() seam from a cheap resolved

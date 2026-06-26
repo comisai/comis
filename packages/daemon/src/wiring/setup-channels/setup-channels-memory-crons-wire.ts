@@ -35,7 +35,6 @@ import {
   resolveOperationModel,
   resolveProviderFamily,
   createUsefulnessJudgeSeam,
-  createReasoningSeam,
   runMemoryTripleExtraction,
   runReflection,
   createLlmReflectionAdapter,
@@ -50,9 +49,6 @@ import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memo
 
 /** The cheap-model output bound for the offline usefulness-judge call (cost axis). */
 const USEFULNESS_JUDGE_MAX_OUTPUT_TOKENS = 1024;
-
-/** The cheap-model output bound for the offline triple-extraction call (cost axis). */
-const TRIPLE_EXTRACTION_MAX_OUTPUT_TOKENS = 1024;
 
 /**
  * Handle the sibling-hosted memory-cron sentinels (`__USEFULNESS_JUDGE__` /
@@ -277,24 +273,13 @@ export async function handleWireMemoryCronSentinel(
     const tripleTenantId = tenantId ?? container.config.tenantId ?? "default";
     const tripleLogger = logger.child({ agentId, submodule: "triple-extraction" });
 
-    // The OFFLINE extractor seam: a cheap-model completeSimple over the raw conversation
-    // text (the createReasoningSeam cheap-model wrapper, reused). The job is the only LLM
-    // use here and it is OFFLINE; a thrown extractor is non-fatal inside the job. The source
-    // text is the bounded recent high-trust memory content (ids+content via memoryApi.inspect);
-    // the trust-first upsertTriple seam caps every candidate's trust in CODE.
-    const reasonSeam = createReasoningSeam({
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-      apiKey,
-      maxReasoningTokens: TRIPLE_EXTRACTION_MAX_OUTPUT_TOKENS,
-      clock,
-      logger: tripleLogger,
-      agentId,
-    });
-    // Adapt the reasoning seam (deductive/inductive) into the triple-extraction `extract`
-    // contract (text → TripleCandidate[]). The reasoning seam yields observation strings; the
-    // job's own validateMemoryWrite + upsertTriple bound what is written. An empty/failed call
-    // degrades to no candidates (the job stays non-fatal).
+    // The OFFLINE extractor `extract` contract (text → TripleCandidate[]). This is a P0
+    // scaffold: it returns [] (no fabricated triples), so no cheap-model seam is built here.
+    // (The reasoning-seam wrapper this scaffold formerly reused was deleted with the
+    // memory-reasoning subsystem in v2.31 Phase 225-05; the real extractor a future plan
+    // supplies will resolve its own seam.) The source text is the bounded recent high-trust
+    // memory content (ids+content via memoryApi.inspect); the job's own validateMemoryWrite +
+    // the trust-first upsertTriple seam cap every candidate's trust in CODE.
     const extract = async (_text: string): Promise<TripleCandidate[]> => [];
     const sourceText = memoryApi
       ? memoryApi
@@ -302,9 +287,6 @@ export async function handleWireMemoryCronSentinel(
           .map((r) => r.content)
           .join("\n")
       : "";
-    // reasonSeam is built so the cheap-model resolution is exercised + ready for the future
-    // real extractor; the scaffold `extract` returns [] (no fabricated triples in P0).
-    void reasonSeam;
 
     const result = await runMemoryTripleExtraction({
       tripleStore,
