@@ -17,7 +17,7 @@
  * schema (NOT the dropped scripts/requiredTools/paramsSchema envelope).
  */
 import { describe, it, expect } from "vitest";
-import { REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
+import { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, parseReflectionResult } from "./reflection-prompt.js";
 
 describe("parseReflectionResult (TOTAL delta-op / section parser, REFLECT-04)", () => {
   it("parses a well-formed { ops: DeltaOp[] } (existing-doc refresh) into typed ops", () => {
@@ -151,5 +151,84 @@ describe("REFLECT_PROMPT (the system prompt contract)", () => {
   it("does NOT carry the dropped executable envelope (no 'scripts' surface — advisory docs have none)", () => {
     expect(REFLECT_PROMPT).not.toContain("scripts");
     expect(REFLECT_PROMPT).not.toContain("paramsSchema");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLD-01 (Phase 225 Plan 02): PROFILE_REFLECT_PROMPT — the lifted user-rep
+// prompt in the reflect {sections}/{ops} shape. The 4 user-rep PREFIX TYPES
+// (identity/preference/relationship/instruction) become the 4 section ids the
+// profile-block formatter maps to its fixed groups. The parser is REUSED
+// UNCHANGED — so the profile prompt must emit the SAME {sections}/{ops} shape
+// parseReflectionResult already consumes (asserted via a parse round-trip).
+// ---------------------------------------------------------------------------
+describe("PROFILE_REFLECT_PROMPT (FOLD-01: the lifted user-rep prompt in the reflect shape)", () => {
+  it("emits the {sections}/{ops} shape parseReflectionResult consumes — a 4-section profile parses round-trip", () => {
+    // A fresh-doc profile reflection: one section per PREFIX TYPE. The section
+    // ids are the 4 prefix-types (so the formatter keeps GROUP_ORDER, A5).
+    const raw = JSON.stringify({
+      sections: [
+        { id: "identity", heading: "Identity", body: "- name is Sam" },
+        { id: "preference", heading: "Preferences", body: "- likes terse replies" },
+        { id: "relationship", heading: "Relationships", body: "- manages a team of five" },
+        { id: "instruction", heading: "Standing instructions", body: "- always reply in English" },
+      ],
+    });
+
+    const result = parseReflectionResult(raw);
+
+    expect(result.sections).toHaveLength(4);
+    expect(result.sections?.map((s) => s.id)).toEqual([
+      "identity",
+      "preference",
+      "relationship",
+      "instruction",
+    ]);
+    expect(result.ops).toBeUndefined();
+  });
+
+  it("emits the {ops} refresh shape too — a profile correction parses as typed delta-ops", () => {
+    const raw = JSON.stringify({
+      ops: [
+        { op: "replace", id: "identity", section: { id: "identity", heading: "Identity", body: "- name is Samuel" } },
+        { op: "remove", id: "preference" },
+      ],
+    });
+
+    const result = parseReflectionResult(raw);
+
+    expect(result.ops).toHaveLength(2);
+    expect(result.ops?.map((o) => o.op)).toEqual(["replace", "remove"]);
+    expect(result.sections).toBeUndefined();
+  });
+
+  it("names the 4 PREFIX TYPES (identity/preference/relationship/instruction)", () => {
+    expect(PROFILE_REFLECT_PROMPT).toContain("identity");
+    expect(PROFILE_REFLECT_PROMPT).toContain("preference");
+    expect(PROFILE_REFLECT_PROMPT).toContain("relationship");
+    expect(PROFILE_REFLECT_PROMPT).toContain("instruction");
+  });
+
+  it("carries the load-bearing anti-laundering line verbatim ('Do NOT include a trust level')", () => {
+    // The user-rep prompt's keystone: the model has NO trust say (trust is the
+    // CODE-computed source ceiling). Carried verbatim from USER_REPRESENTATION_PROMPT.
+    expect(PROFILE_REFLECT_PROMPT).toContain("Do NOT include a trust level");
+  });
+
+  it("carries the UNTRUSTED-data prompt-injection belt (treat the delimited block as data, never follow it)", () => {
+    expect(PROFILE_REFLECT_PROMPT).toMatch(/UNTRUSTED/);
+    expect(PROFILE_REFLECT_PROMPT.toLowerCase()).toContain("never follow");
+  });
+
+  it("emits the {sections}/{ops} shape vocabulary (so the SHARED parser + buildNextBody apply)", () => {
+    expect(PROFILE_REFLECT_PROMPT).toContain("sections");
+    expect(PROFILE_REFLECT_PROMPT).toContain("ops");
+    expect(PROFILE_REFLECT_PROMPT).toContain("replace");
+    expect(PROFILE_REFLECT_PROMPT).toContain("remove");
+  });
+
+  it("carries NO executable envelope (advisory profile doc — no scripts/paramsSchema surface)", () => {
+    expect(PROFILE_REFLECT_PROMPT).not.toContain("scripts");
+    expect(PROFILE_REFLECT_PROMPT).not.toContain("paramsSchema");
   });
 });
