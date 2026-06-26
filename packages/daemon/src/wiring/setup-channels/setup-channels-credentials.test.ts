@@ -24,7 +24,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // runMemoryConsolidation is the spy the behavioral tests assert against.
 // ---------------------------------------------------------------------------
 
-// Phase 203: runMemoryConsolidation now returns counts-only stats (was void) — the daemon emits learning:memory_generalized from them.
+// runMemoryConsolidation returns counts-only stats (generalized/clustersConsidered/durationMs).
+// (The learning:memory_generalized telemetry event was deleted in Phase 226 SIMPLIFY-04; the
+// consolidation cron no longer emits a learning event — the stats stay for the INFO completion line.)
 const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 // The reasoning job + its injected-seam factory. runMemoryReasoning

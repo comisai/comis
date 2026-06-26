@@ -91,27 +91,21 @@ export const TRAJECTORY_EVENT_TYPES = [
   // online-tuning bandit was deleted; recall is fixed-RRF.)
   "learning.memory_demoted",
   "learning.memory_evicted",
-  // SKILL-09 (v2.26 WS2, Phase 201): the procedural-synthesis telemetry — admitted-skill
-  // count + the static/dynamic verdict + the coverage closed-enum ONLY, NEVER a procedure
-  // body / script / finding (SEC-01). Daemon-side emit; bridged for `comis explain` (OBS-02).
-  "learning.skill_synthesized",
-  // OBS (hermes-usecases 2026-06-25): the synthesis FUNNEL — synthesized/validated/
-  // admitted + maxClusterCardinality (counts only). Answers "why was 0 admitted" from
-  // the trajectory (maxClusterCardinality:1 = uncorroborated → not admissible).
-  "learning.skill_synthesis_funnel",
-  "learning.skill_validated",
+  // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry, RENAMED
+  // from the old synthesis-funnel types. reflect.admitted = admitted-doc count; reflect.funnel
+  // = synthesized/validated/admitted + maxClusterCardinality + the admissionOutcome closed-enum
+  // (counts only). Answers "why was 0 admitted" from the trajectory (maxClusterCardinality:1 =
+  // uncorroborated → not admissible). Daemon-side emit; bridged for `comis explain` (OBS-02).
+  // The vestigial sandbox-validation type was REMOVED in the same lockstep.
+  "reflect.admitted",
+  "reflect.funnel",
   // SURFACE-06 (v2.26 WS2, Phase 202): the promote/demote telemetry — the COUNT ONLY,
   // NEVER an id-list / procedure body / script (SEC-01). Daemon-side emit (Plan 05);
   // bridged for `comis explain` (OBS-02).
   "learning.skill_promoted",
   "learning.skill_demoted",
-  // REVISE-/GENERAL- (v2.26 WS6/WS7, Phase 203): the user-model-revision +
-  // generalization telemetry — the COUNTS ONLY (superseded/corroborated/inserted +
-  // generalized/clustersConsidered + durationMs), NEVER a profile/memory body, an
-  // entryType, or a source id (SEC-01). Daemon-side emit (Plan 05); bridged for
-  // `comis explain` (OBS-02).
-  "learning.user_model_revised",
-  "learning.memory_generalized",
+  // Phase 226 SIMPLIFY-04: the user-rep-revision + generalization types were DELETED with
+  // their 0-emit events (those paths folded into the reflection engine in Phase 225).
 
   // TELEM-01 (v2.27 P1, Phase 173): a `pipeline` tool invocation was authored —
   // the reserved trajectory type for the counts-only pipeline:authored event

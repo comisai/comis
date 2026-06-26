@@ -45,37 +45,37 @@ export interface LearningEvents {
   };
 
   /**
-   * SKILL-09: a reflection run admitted N candidate skill docs. Emitted
-   * DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the reflection cron
-   * handler (setup-channels-memory-crons-wire.ts) AFTER `runReflection`
-   * returns — the daemon emit (not the agent job) keeps the trajectory-bridge entry
-   * landing with the emit (no agent-side gate trip). The `skill_synthesized` event
-   * NAME is kept (the `reflect:*` rename is Phase 226). COUNT ONLY — the reflected
-   * doc body content is a compile error here (the §2.7 / SEC-01 firewall). Bridged
+   * REFLECT (v2.31, Phase 226 SIMPLIFY-04): a reflection run admitted N candidate
+   * docs. Emitted DAEMON-SIDE (plain `eventBus.emit`, never `?.`) by the reflection
+   * cron handler (setup-channels-memory-crons-wire.ts) AFTER `runReflection` returns
+   * — the daemon emit (not the agent job) keeps the trajectory-bridge entry landing
+   * with the emit (no agent-side gate trip). RENAMED from `learning:skill_synthesized`
+   * to `reflect:admitted` (the reflection funnel rename — the forget/outcome events
+   * KEEP their `learning:*` names, Pitfall 6). COUNT ONLY — the reflected doc body is
+   * a compile error here (the §2.7 / SEC-01 firewall). Bridged
    * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain` / OBS-02.
    */
-  "learning:skill_synthesized": {
+  "reflect:admitted": {
     agentId: string;
-    /** How many candidate skills were admitted this run (count only). */
+    /** How many candidate docs were admitted this run (count only). */
     count: number;
     timestamp: number;
   };
 
   /**
-   * OBS (hermes-usecases obs-loop 2026-06-25): the reflection-run FUNNEL — counts
-   * ONLY, emitted DAEMON-SIDE alongside `learning:skill_synthesized` after
-   * `runReflection` returns (the reflection cron wire maps the reflect result onto
-   * these fields). Where `skill_synthesized.count` is only the ADMITTED tail, this
-   * carries the whole funnel so `comis explain` answers "why didn't a skill get
-   * learned" WITHOUT a DEBUG-log grep — the load-bearing field is
-   * `maxClusterCardinality` (the distinct (session,sender) corroboration size; a
-   * value of 1 = a single uncorroborated instance, so admission CORRECTLY refused;
-   * the same conservatism that defeats skill-poisoning). The `skill_synthesis_funnel`
-   * event NAME is kept (the `reflect:*` rename is Phase 226). COUNT ONLY — a reflected
-   * doc body is a compile error here (the §2.7 / SEC-01 firewall). Bridged
+   * REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run FUNNEL — counts ONLY,
+   * emitted DAEMON-SIDE alongside `reflect:admitted` after `runReflection` returns (the
+   * reflection cron wire maps the reflect result onto these fields). Where
+   * `reflect:admitted.count` is only the ADMITTED tail, this carries the whole funnel so
+   * `comis explain` answers "why didn't a doc get learned" WITHOUT a DEBUG-log grep — the
+   * load-bearing field is `maxClusterCardinality` (the distinct (session,sender)
+   * corroboration size; a value of 1 = a single uncorroborated instance, so admission
+   * CORRECTLY refused; the same conservatism that defeats poisoning). RENAMED from the
+   * old synthesis-funnel event to `reflect:funnel`. COUNT ONLY — a reflected doc
+   * body is a compile error here (the §2.7 / SEC-01 firewall). Bridged
    * (TRAJECTORY_BRIDGE_MAPPING) for `comis explain`.
    */
-  "learning:skill_synthesis_funnel": {
+  "reflect:funnel": {
     agentId: string;
     /** Trusted-origin success trajectories that entered reflection this run (count only; == reflect `selected`). */
     synthesized: number;
@@ -89,30 +89,12 @@ export interface LearningEvents {
      * RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free
      * closed enum so `comis explain` answers "why was 0 admitted" from ONE field. The
      * reflect verdict (classifyReflectOutcome): `no_successes` (no trusted-origin success
-     * cleared SELECT) / `uncorroborated` (cardinality<2) / `empty_reflection` /
+     * cleared SELECT) / `untrusted_origin` (all successes dropped at SELECT for an
+     * untrusted origin / external-trust source) / `uncorroborated` (cardinality<2) /
+     * `empty_reflection` / `rejected_name_length` (doc name over MAX_DOC_NAME_LENGTH) /
      * `rejected_validation` / `admitted`.
      */
     admissionOutcome: string;
-    timestamp: number;
-  };
-
-  /**
-   * SKILL-09: a synthesized candidate cleared (or failed) validation. Emitted
-   * DAEMON-SIDE after the validation adapter returns. The static/dynamic verdict
-   * BOOLEANS + the `coverage` CLOSED-ENUM ONLY — never the offending field name, a
-   * finding body, or a script (the SEC-01 firewall; a body/scripts field is a
-   * compile error). `coverage:'static-only'` means the dynamic sandbox replay did
-   * NOT run (no bwrap jail / a script-free candidate); `'full'` means a jailed
-   * script executed. Bridged for `comis explain` / OBS-02.
-   */
-  "learning:skill_validated": {
-    agentId: string;
-    /** The per-field static memory-poison scan passed (no CRITICAL field). */
-    staticOk: boolean;
-    /** The sandbox replay ran AND every embedded script exited 0 (false when static-only). */
-    dynamicOk: boolean;
-    /** Whether a real jail ran the dynamic replay (closed enum). */
-    coverage: "full" | "static-only";
     timestamp: number;
   };
 
@@ -140,36 +122,10 @@ export interface LearningEvents {
     timestamp: number;
   };
 
-  /**
-   * REVISE-01 (v2.26 Phase 203): the user-model revision run soft-closed `superseded`
-   * incumbents (higher/equal-trust contradiction), bumped `corroborated` confidences,
-   * and `inserted` new current-truth entries. Emitted DAEMON-SIDE (setup-channels-memory-crons.ts,
-   * Plan 05) — counts ONLY, never a profile entry's content/entry_type/id.
-   */
-  "learning:user_model_revised": {
-    agentId: string;
-    /** Incumbent profile entries soft-closed by a higher/equal-trust contradiction (count only). */
-    superseded: number;
-    /** Candidates that corroborated an incumbent — confidence bumped, no new row (count only). */
-    corroborated: number;
-    /** New entries inserted (no incumbent in that belief slot) (count only). */
-    inserted: number;
-    durationMs: number;
-    timestamp: number;
-  };
-
-  /**
-   * GENERAL-01 (v2.26 Phase 203): the consolidation generalization pass created `generalized`
-   * higher-order semantic memories from `clustersConsidered` diversity-passing clusters.
-   * Emitted DAEMON-SIDE — counts ONLY, never the synthesized content or source ids.
-   */
-  "learning:memory_generalized": {
-    agentId: string;
-    /** Higher-order semantic memories created this run (count only). */
-    generalized: number;
-    /** Clusters that met the diversity threshold and were considered (count only). */
-    clustersConsidered: number;
-    durationMs: number;
-    timestamp: number;
-  };
+  // Phase 226 SIMPLIFY-04: three vestigial learning telemetry events were DELETED here —
+  // the sandbox-validation event (the dynamic sandbox was deleted in 223), the
+  // user-rep-revision event, and the consolidation-generalization event (both folded into
+  // the reflection engine in 225). All three were grep-confirmed 0-emit at HEAD; their
+  // trajectory-bridge entries, translator cases, type members, and obs folds/verdicts were
+  // removed in the same lockstep change (no compat alias, I1).
 }

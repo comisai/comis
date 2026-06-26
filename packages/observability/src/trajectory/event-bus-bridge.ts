@@ -193,16 +193,18 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:memory_demoted": "learning.memory_demoted",
   "learning:memory_evicted": "learning.memory_evicted",
 
-  // SKILL-09 (v2.26 Verified Learning WS2, Phase 201 Plan 07): the learning-run
-  // telemetry. Both DAEMON-emitted (the reflection cron handler, NOT agent/
-  // orchestrator) after runReflection → the arch emit-scanner does not require them;
-  // mapped here so OBS-02 `comis explain` can reconstruct a reflection run. The
-  // `skill_*` event NAMES are kept (the `reflect:*` rename is Phase 226). Content-free:
-  // counts (synthesized) + the static/dynamic verdict + the coverage closed-enum ONLY —
-  // NEVER a doc body, a script, or a finding (SEC-01 §7).
-  "learning:skill_synthesized": "learning.skill_synthesized",
-  "learning:skill_synthesis_funnel": "learning.skill_synthesis_funnel",
-  "learning:skill_validated": "learning.skill_validated",
+  // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry,
+  // RENAMED from the old synthesis-funnel events to reflect:admitted / reflect:funnel.
+  // Both DAEMON-emitted (the reflection cron
+  // handler, NOT agent/orchestrator) after runReflection → the arch emit-scanner does
+  // not require them; mapped here so OBS-02 `comis explain` can reconstruct a
+  // reflection run. The forget (learning:memory_*) + outcome (learning:outcome_observed)
+  // events KEEP their learning:* names (Pitfall 6). Content-free: counts (synthesized/
+  // validated/admitted) + maxClusterCardinality + the admissionOutcome closed-enum ONLY
+  // — NEVER a doc body, a script, or a finding (SEC-01 §7). The vestigial
+  // sandbox-validation event (0-emit, sandbox deleted in 223) was REMOVED here.
+  "reflect:admitted": "reflect.admitted",
+  "reflect:funnel": "reflect.funnel",
 
   // SURFACE-06 (v2.26 Verified Learning WS2, Phase 202 Plan 03): the promote/demote
   // telemetry. Both DAEMON-emitted (the promote/demote loop, Plan 05 — NOT agent/
@@ -213,16 +215,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:skill_promoted": "learning.skill_promoted",
   "learning:skill_demoted": "learning.skill_demoted",
 
-  // REVISE-/GENERAL- (v2.26 Verified Learning WS6/WS7, Phase 203 Plan 05): the
-  // user-model-revision + generalization telemetry. Both DAEMON-emitted (the
-  // __USER_REPRESENTATION__ + __MEMORY_CONSOLIDATION__ cron handlers — NOT agent/
-  // orchestrator) so the arch emit-scanner does not require them; mapped here so
-  // OBS-02 `comis explain` can reconstruct a revision/generalization run.
-  // Content-free: the COUNTS ONLY (superseded/corroborated/inserted +
-  // generalized/clustersConsidered + durationMs) — NEVER a profile/memory body,
-  // an entryType, or a source id (SEC-01 §7).
-  "learning:user_model_revised": "learning.user_model_revised",
-  "learning:memory_generalized": "learning.memory_generalized",
+  // Phase 226 SIMPLIFY-04: the REVISE-/GENERAL- entries (the user-rep-revision +
+  // generalization events) were DELETED — both grep-confirmed 0-emit at HEAD (those paths
+  // were folded into the reflection engine in Phase 225). Their translator cases, type
+  // members, and obs folds/verdicts went with them in the same lockstep.
 
   // ---- Background task lifecycle (T2.2 / F9) ----
   // The promote/complete/fail transitions of a long-running tool detached past the

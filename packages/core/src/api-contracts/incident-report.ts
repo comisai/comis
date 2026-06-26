@@ -322,10 +322,9 @@ export const IncidentReportSchema = z.object({
       skillsUsed: z.array(z.string()),
       skillFailures: z.array(z.string()),
       synthesisAbstained: z.boolean(),
-      // REVISE-01 / GENERAL-01 (Phase 203): optional/additive revision + generalization
-      // counts (counts only, never bodies). Absent in P0..P3 — existing fixtures unaffected.
-      userModelRevised: z.number().optional(),
-      memoriesGeneralized: z.number().optional(),
+      // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
+      // were DELETED with their 0-emit events (the user-rep revision + generalization paths
+      // folded into the reflection engine in Phase 225). The block stays counts/ids-only.
     })
     .optional(),
   /** PERSIST-01 (observability-excellence, Phase 176): the prompt-cache breaks the
@@ -752,9 +751,8 @@ export interface IncidentSignals {
    * EMPTY in P0 (skill-use attribution lands Phase 201); `synthesisAbstained` is
    * false in P0 (synthesis is Phase 201). Absent ⇒ no learning records in the
    * trajectory (omitted from the report — the signal is per-agent default-OFF).
-   * `userModelRevised`/`memoriesGeneralized` (Phase 203) are optional counts of
-   * the session's profile-revision / higher-order-generalization activity (counts
-   * only, never bodies); absent in P0..P3.
+   * (The Phase-203 `userModelRevised`/`memoriesGeneralized` counts were removed in
+   * Phase 226 with their 0-emit events.)
    */
   learning?: {
     outcomeResolved: boolean;
@@ -763,10 +761,6 @@ export interface IncidentSignals {
     skillsUsed: string[];
     skillFailures: string[];
     synthesisAbstained: boolean;
-    /** REVISE-01 (Phase 203): incumbent profile entries soft-closed by revision this session (count only). Optional/additive. */
-    userModelRevised?: number;
-    /** GENERAL-01 (Phase 203): higher-order semantic memories synthesized this session (count only). Optional/additive. */
-    memoriesGeneralized?: number;
   };
 }
 

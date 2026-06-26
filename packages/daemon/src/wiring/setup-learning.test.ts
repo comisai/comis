@@ -1992,11 +1992,12 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 
-describe("wireLearningOutcome — surface refresh on skill ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
-  // A synthesis run that admits a candidate must refresh the per-agent surface NOW.
+describe("wireLearningOutcome — surface refresh on doc ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
+  // A reflection run that admits a candidate must refresh the per-agent surface NOW.
   // Otherwise the candidate stays invisible until the next boot, and promotion is
   // USE-gated (needs it surfaced first) — a second-order deadlock the post-promote
-  // refresh can never break. `learning:skill_synthesized.count` IS the admitted count.
+  // refresh can never break. `reflect:admitted.count` IS the admitted count (renamed
+  // from learning:skill_synthesized in Phase 226).
   function wire(refresh: (agentId: string) => void): TypedEventBus {
     const bus = new TypedEventBus();
     const { store } = makeStubStore();
@@ -2017,15 +2018,15 @@ describe("wireLearningOutcome — surface refresh on skill ADMISSION (SURFACE-AD
     return bus;
   }
 
-  it("refreshes the per-agent surface when a synthesis run ADMITTED >=1 skill", () => {
+  it("refreshes the per-agent surface when a reflection run ADMITTED >=1 doc", () => {
     const refresh = vi.fn();
-    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 1, timestamp: NOW });
+    wire(refresh).emit("reflect:admitted", { agentId: "agent-9", count: 1, timestamp: NOW });
     expect(refresh).toHaveBeenCalledWith("agent-9");
   });
 
-  it("does NOT refresh when a synthesis run admitted 0 skills (nothing new to surface)", () => {
+  it("does NOT refresh when a reflection run admitted 0 docs (nothing new to surface)", () => {
     const refresh = vi.fn();
-    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 0, timestamp: NOW });
+    wire(refresh).emit("reflect:admitted", { agentId: "agent-9", count: 0, timestamp: NOW });
     expect(refresh).not.toHaveBeenCalled();
   });
 });

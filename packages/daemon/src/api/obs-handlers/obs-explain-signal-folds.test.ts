@@ -19,10 +19,7 @@ import {
   emptyLearningFold,
   accumulateLearningRecord,
   accumulateSkillInvokedRecord,
-  accumulateSkillValidatedRecord,
-  accumulateSkillSynthesizedRecord,
-  accumulateUserModelRevisedRecord,
-  accumulateMemoryGeneralizedRecord,
+  accumulateReflectFunnelRecord,
   buildLearningSignal,
 } from "./obs-explain-signal-folds.js";
 
@@ -100,33 +97,13 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.outcome).toBe("unknown");
   });
 
-  it("a learning.skill_validated FAILURE (staticOk:false) marks the used skills as failing", () => {
-    const state = emptyLearningFold();
-    accumulateSkillInvokedRecord(state, { skillName: "synthesized_a" });
-    accumulateSkillValidatedRecord(state, { staticOk: false, dynamicOk: true, coverage: "full" });
-    const sig = buildLearningSignal(state);
-    expect(sig!.skillFailures).toEqual(["synthesized_a"]);
-  });
+  // Phase 226 SIMPLIFY-04: the learning.skill_validated FAILURE → skillFailures path was
+  // removed with the 0-emit event (the dynamic sandbox was deleted in 223). skillFailures now
+  // keys on the terminal outcome only — covered by the failure/corrected/success tests above.
 
-  it("a learning.skill_validated FAILURE (dynamicOk:false) marks the used skills as failing", () => {
+  it("synthesisAbstained is true when a reflect.funnel record carries abstained:true (Phase 226 rename)", () => {
     const state = emptyLearningFold();
-    accumulateSkillInvokedRecord(state, { skillName: "synthesized_b" });
-    accumulateSkillValidatedRecord(state, { staticOk: true, dynamicOk: false, coverage: "full" });
-    const sig = buildLearningSignal(state);
-    expect(sig!.skillFailures).toEqual(["synthesized_b"]);
-  });
-
-  it("a PASSING learning.skill_validated (both ok) does NOT mark a failure", () => {
-    const state = emptyLearningFold();
-    accumulateSkillInvokedRecord(state, { skillName: "clean_skill" });
-    accumulateSkillValidatedRecord(state, { staticOk: true, dynamicOk: true, coverage: "full" });
-    const sig = buildLearningSignal(state);
-    expect(sig!.skillFailures).toEqual([]);
-  });
-
-  it("synthesisAbstained is true when a skill_synthesized record carries abstained:true", () => {
-    const state = emptyLearningFold();
-    accumulateSkillSynthesizedRecord(state, { count: 0, abstained: true });
+    accumulateReflectFunnelRecord(state, { count: 0, abstained: true });
     const sig = buildLearningSignal(state);
     expect(sig).toBeDefined();
     expect(sig!.synthesisAbstained).toBe(true);
@@ -139,9 +116,9 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.synthesisAbstained).toBe(true);
   });
 
-  it("a non-abstained skill_synthesized record leaves synthesisAbstained false", () => {
+  it("a non-abstained reflect.funnel record leaves synthesisAbstained false", () => {
     const state = emptyLearningFold();
-    accumulateSkillSynthesizedRecord(state, { count: 3 });
+    accumulateReflectFunnelRecord(state, { admitted: 3, admissionOutcome: "admitted" });
     const sig = buildLearningSignal(state);
     expect(sig).toBeDefined();
     expect(sig!.synthesisAbstained).toBe(false);
@@ -150,7 +127,7 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
   it("the built block is content-free — only ids/counts/closed enums (no body/script)", () => {
     const state = emptyLearningFold();
     accumulateSkillInvokedRecord(state, { skillName: "s1", body: "secret-procedure", args: { pw: "hunter2" } });
-    accumulateSkillValidatedRecord(state, { staticOk: false, dynamicOk: false, coverage: "full", finding: "leak-me" });
+    accumulateReflectFunnelRecord(state, { admitted: 0, admissionOutcome: "rejected_validation", body: "leak-me" });
     accumulateLearningRecord(state, { outcome: "failure", source: "tool" });
     const json = JSON.stringify(buildLearningSignal(state));
     expect(json).not.toContain("secret-procedure");
@@ -158,69 +135,16 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(json).not.toContain("leak-me");
   });
 
-  // -------------------------------------------------------------------------
-  // OBS-02 (Phase 203 Plan 05): the user-model-revision + generalization counts
-  // fold into IncidentSignals.learning.{userModelRevised, memoriesGeneralized}
-  // from the bridged learning.user_model_revised / learning.memory_generalized
-  // trajectory records. COUNTS ONLY — a profile/memory body never crosses.
-  // -------------------------------------------------------------------------
-  it("REVISE/OBS-02: a learning.user_model_revised record folds superseded+corroborated+inserted into userModelRevised", () => {
-    const state = emptyLearningFold();
-    accumulateUserModelRevisedRecord(state, { superseded: 2, corroborated: 1, inserted: 3, durationMs: 11 });
-    const sig = buildLearningSignal(state);
-    expect(sig).toBeDefined();
-    // The revision activity count = the total slots touched this run (2 + 1 + 3).
-    expect(sig!.userModelRevised).toBe(6);
-  });
+  // Phase 226 SIMPLIFY-04: the REVISE/GENERAL fold tests were DELETED with the
+  // accumulateUserModelRevisedRecord + accumulateMemoryGeneralizedRecord folds and the
+  // userModelRevised / memoriesGeneralized signal fields (the user-rep revision +
+  // generalization paths folded into the reflection engine in Phase 225; their events are
+  // 0-emit). The learning block is now {outcome, sources, skillsUsed, skillFailures,
+  // synthesisAbstained} — counts/ids/closed-enums only.
 
-  it("GENERAL/OBS-02: a learning.memory_generalized record folds generalized into memoriesGeneralized", () => {
+  it("a reflect.funnel record alone (no outcome) STILL yields a learning block (count bumped)", () => {
     const state = emptyLearningFold();
-    accumulateMemoryGeneralizedRecord(state, { generalized: 2, clustersConsidered: 5, durationMs: 9 });
-    const sig = buildLearningSignal(state);
-    expect(sig).toBeDefined();
-    expect(sig!.memoriesGeneralized).toBe(2);
-  });
-
-  it("a revision/generalization record alone (no outcome) STILL yields a learning block (count bumped)", () => {
-    const revOnly = emptyLearningFold();
-    accumulateUserModelRevisedRecord(revOnly, { superseded: 1, corroborated: 0, inserted: 0 });
-    expect(buildLearningSignal(revOnly)).toBeDefined();
-    const genOnly = emptyLearningFold();
-    accumulateMemoryGeneralizedRecord(genOnly, { generalized: 1, clustersConsidered: 2 });
-    expect(buildLearningSignal(genOnly)).toBeDefined();
-  });
-
-  it("the revision/generalization counts are omitted when zero (no field churn on the frozen fixtures)", () => {
-    // A non-revision learning session (only a skill record) must NOT gain the new
-    // optional counts — they are present only when the activity actually happened.
-    const state = emptyLearningFold();
-    accumulateSkillInvokedRecord(state, { skillName: "s1" });
-    accumulateLearningRecord(state, { outcome: "success", source: "tool" });
-    const sig = buildLearningSignal(state);
-    expect(sig).toBeDefined();
-    expect(sig!.userModelRevised).toBeUndefined();
-    expect(sig!.memoriesGeneralized).toBeUndefined();
-  });
-
-  it("the revision/generalization fold is content-free — a smuggled body/entryType never reaches the block (SEC-01)", () => {
-    const state = emptyLearningFold();
-    accumulateUserModelRevisedRecord(state, {
-      superseded: 1,
-      corroborated: 0,
-      inserted: 0,
-      content: "prefers espresso every morning",
-      entryType: "preference",
-      sourceIds: ["mem-42"],
-    } as Record<string, unknown>);
-    accumulateMemoryGeneralizedRecord(state, {
-      generalized: 1,
-      clustersConsidered: 2,
-      body: "the generalized semantic memory",
-    } as Record<string, unknown>);
-    const json = JSON.stringify(buildLearningSignal(state));
-    expect(json).not.toContain("espresso");
-    expect(json).not.toContain("preference");
-    expect(json).not.toContain("mem-42");
-    expect(json).not.toContain("semantic memory");
+    accumulateReflectFunnelRecord(state, { admitted: 1, admissionOutcome: "admitted" });
+    expect(buildLearningSignal(state)).toBeDefined();
   });
 });

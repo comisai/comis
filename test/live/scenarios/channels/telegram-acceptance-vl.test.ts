@@ -525,7 +525,7 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the §10A.6 A->B reac
       ).toBeGreaterThanOrEqual(1);
 
       // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
-      // session's prompt-skills freeze (learning:skill_synthesized -> refresh). The
+      // session's prompt-skills freeze (reflect:admitted -> refresh; renamed Phase 226). The
       // durable learned_skills row is the deterministic ground truth for reuse.
       const inboundB = await r.send(
         "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",

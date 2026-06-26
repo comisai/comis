@@ -19,7 +19,7 @@ const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], indu
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // REFLECT-01: the reflection job + adapter the __REFLECT__ handler injects/calls.
-const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1 } })));
+const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, untrustedDrops: 0, nameLengthRejections: 0 } })));
 const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: vi.fn() })));
 
 vi.mock("@comis/agent", () => ({
@@ -76,7 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockResolveOperationModel.mockReturnValue({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" } as any);
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1 } });
+  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, untrustedDrops: 0, nameLengthRejections: 0 } });
   mockCreateLlmReflectionAdapter.mockReturnValue({ reflect: vi.fn() });
 });
 
@@ -193,32 +193,33 @@ describe("handleWireMemoryCronSentinel", () => {
     const builtKinds = (bundle!.buildSourceTrajectories as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort();
     expect(builtKinds).toEqual(["profile", "skill", "topic"]);
     expect(Array.isArray(skillArg.sourceTrajectories)).toBe(true);
-    // The daemon RE-EMITS the SUMMED counts DAEMON-SIDE after the loop (NAMES kept). With the
-    // default all-admit mock returning {selected:2, admitted:1} per kind → sum admitted = 3.
+    // The daemon RE-EMITS the SUMMED counts DAEMON-SIDE after the loop (reflect:* names,
+    // renamed Phase 226). With the default all-admit mock returning {selected:2, admitted:1}
+    // per kind → sum admitted = 3.
     const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
     const emitted = emitCalls.map((c) => c[0]);
-    expect(emitted).toContain("learning:skill_synthesized");
-    expect(emitted).toContain("learning:skill_synthesis_funnel");
-    // ONE summed emit (not per-kind) — the synthesized.count is the SUMMED admitted (3 = 3 kinds × 1).
-    expect(emitted.filter((e) => e === "learning:skill_synthesized")).toHaveLength(1);
-    const synthEmit = emitCalls.find((c) => c[0] === "learning:skill_synthesized");
+    expect(emitted).toContain("reflect:admitted");
+    expect(emitted).toContain("reflect:funnel");
+    // ONE summed emit (not per-kind) — the reflect:admitted.count is the SUMMED admitted (3 = 3 kinds × 1).
+    expect(emitted.filter((e) => e === "reflect:admitted")).toHaveLength(1);
+    const synthEmit = emitCalls.find((c) => c[0] === "reflect:admitted");
     expect((synthEmit?.[1] as { count: number }).count).toBe(3);
     // The funnel carries the SUMMED reflect mapping: synthesized = sum selected (6 = 3×2),
     // admitted = 3, maxClusterCardinality = max across kinds (2), the D5 admissionOutcome verdict.
-    const funnelEmit = emitCalls.find((c) => c[0] === "learning:skill_synthesis_funnel");
+    const funnelEmit = emitCalls.find((c) => c[0] === "reflect:funnel");
     const funnel = funnelEmit?.[1] as { maxClusterCardinality: number; admitted: number; admissionOutcome: string; synthesized: number };
     expect(funnel.maxClusterCardinality).toBe(2);
     expect(funnel.admitted).toBe(3);
     expect(funnel.synthesized).toBe(6); // = sum selected (trusted-origin successes entering reflection)
     expect(funnel.admissionOutcome).toBe("admitted");
-    // No per-candidate learning:skill_validated on the reflect path (dropped — no validation adapter).
+    // The vestigial learning:skill_validated is GONE (no validation event on the reflect path).
     expect(emitted).not.toContain("learning:skill_validated");
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
   });
 
   it("__REFLECT__ surfaces the uncorroborated funnel verdict (why 0 admitted) when ALL kinds admit nothing", async () => {
     // Every kind admits nothing for the uncorroborated reason → the SUMMED verdict is uncorroborated.
-    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0 } });
+    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
       apiKey: "test-key",
@@ -227,11 +228,11 @@ describe("handleWireMemoryCronSentinel", () => {
     const onComplete = vi.fn();
     await handleWireMemoryCronSentinel("__REFLECT__", { agentId: "agent-1", onComplete }, ctx);
     const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
-    const funnel = emitCalls.find((c) => c[0] === "learning:skill_synthesis_funnel")?.[1] as { admitted: number; maxClusterCardinality: number; admissionOutcome: string };
+    const funnel = emitCalls.find((c) => c[0] === "reflect:funnel")?.[1] as { admitted: number; maxClusterCardinality: number; admissionOutcome: string };
     expect(funnel.admitted).toBe(0); // 3 kinds × 0
     expect(funnel.maxClusterCardinality).toBe(1);
     expect(funnel.admissionOutcome).toBe("uncorroborated");
-    const synth = emitCalls.find((c) => c[0] === "learning:skill_synthesized")?.[1] as { count: number };
+    const synth = emitCalls.find((c) => c[0] === "reflect:admitted")?.[1] as { count: number };
     expect(synth.count).toBe(0);
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
   });

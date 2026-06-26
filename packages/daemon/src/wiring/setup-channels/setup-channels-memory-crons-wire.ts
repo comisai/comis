@@ -147,10 +147,10 @@ export async function handleWireMemoryCronSentinel(
   // (defence-in-depth — the scheduler already gates it; default OFF → clean ok no-op, ZERO
   // behavior change). Reads the LCD-merged source (NOT sessionStore.listDetailed — DAG-empty),
   // builds the cheap-model reflect adapter (wraps the UNTRUSTED transcript, INV-5) on the MID
-  // tier, runs runReflection, and RE-EMITS the counts-only learning:skill_* events DAEMON-SIDE
-  // (the NAMES are kept so the A→B ground-truth read + `comis explain` still work; the reflect:*
-  // rename is Phase 226). The bridge entry lands with the emit (no agent-side gate trip).
-  // Non-fatal + counts-only (§2.7).
+  // tier, runs runReflection, and RE-EMITS the counts-only reflect:* funnel events DAEMON-SIDE
+  // (Phase 226 SIMPLIFY-04 renamed the old synthesis-funnel events to reflect:admitted/reflect:funnel
+  // so the A→B ground-truth read + `comis explain` still work). The bridge entry lands with the
+  // emit (no agent-side gate trip). Non-fatal + counts-only (§2.7).
   if (resultText === "__REFLECT__") {
     const { agentId } = payload;
     if (!agentId) {
@@ -219,7 +219,7 @@ export async function handleWireMemoryCronSentinel(
       { kind: "topic", systemPrompt: TOPIC_REFLECT_PROMPT, source: "learned_topic_reflection" },
     ];
 
-    // SUMMED counts across the 3 kinds for ONE daemon-side learning:skill_* emit (counts
+    // SUMMED counts across the 3 kinds for ONE daemon-side reflect:* emit (counts
     // only — INV-6 / §2.7; NEVER a doc body / finding crosses the bus, for ANY kind).
     let anyError = false;
     let firstError: Error | undefined;
@@ -227,8 +227,15 @@ export async function handleWireMemoryCronSentinel(
     let sumAdmitted = 0;
     let sumSkipped = 0;
     let maxCardinality = 0;
+    // Phase 226 (D5 salvage + the 225 WR-01 gap): the 2 new funnel counts SUMMED across the
+    // kinds for the once-per-run INFO line (the per-kind verdict already encodes them — see below).
+    let sumUntrustedDrops = 0;
+    let sumNameLengthRejections = 0;
     // The acute "why 0 admitted" verdict: prefer the FIRST kind that admitted nothing for a
     // non-benign reason, else "admitted" if any kind admitted (first-match telemetry, counts-only).
+    // Each kind's runReflection already computes untrusted_origin / rejected_name_length from its
+    // own SELECT/admit counts, so a kind that drops everything for untrusted origin (or rejects a
+    // name over-cap) propagates that verdict here without a summed re-classify.
     let admissionOutcome: ReflectAdmissionOutcome = "no_successes";
 
     for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
@@ -279,6 +286,8 @@ export async function handleWireMemoryCronSentinel(
         sumSelected += v.selected;
         sumAdmitted += v.admitted;
         sumSkipped += v.skipped;
+        sumUntrustedDrops += v.untrustedDrops;
+        sumNameLengthRejections += v.nameLengthRejections;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
@@ -295,27 +304,32 @@ export async function handleWireMemoryCronSentinel(
 
     // OBS-01: ONE DAEMON-SIDE telemetry emit + completion line, SUMMED across the 3 kinds.
     // Counts ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default the
-    // whole block is unreachable (the no-op short-circuits above). The learning:skill_* NAMES
-    // are KEPT (Q2 — minimize blast radius; the reflect:* rename is Phase 226).
-    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
-    // The `learning:skill_synthesized.count` contract is "how many were ADMITTED this run"
+    // whole block is unreachable (the no-op short-circuits above). The funnel events are now
+    // reflect:* (Phase 226 SIMPLIFY-04 — the synthesis-funnel rename; the forget/outcome events
+    // KEEP their learning:* names, Pitfall 6). untrustedDrops + nameLengthRejections ride the
+    // INFO line (operator grep) — NOT the content-free bus payload (the admissionOutcome enum
+    // encodes them; INV-6 keeps the funnel payload counts + one closed enum only).
+    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
+    // The `reflect:admitted.count` contract is "how many were ADMITTED this run"
     // (events-learning.ts) — emit the SUMMED admitted across skill+profile+topic.
-    container.eventBus.emit("learning:skill_synthesized", { agentId, count: sumAdmitted, timestamp: clock.now() });
+    container.eventBus.emit("reflect:admitted", { agentId, count: sumAdmitted, timestamp: clock.now() });
     // The whole reflection FUNNEL alongside the admitted-count event, so `comis explain` answers
     // "why was 0 admitted" from the trajectory (maxClusterCardinality:1 = single uncorroborated
     // topic → not admissible) instead of a DEBUG-log grep. Counts only. Mapped from the SUMMED
     // reflect result: synthesized = selected (trusted-origin successes entering reflection),
     // validated/admitted = admitted (cleared the static validateLearnedDocBody guard + the write),
     // maxClusterCardinality = maxTopicCardinality (the distinct (session,sender) corroboration
-    // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5).
-    container.eventBus.emit("learning:skill_synthesis_funnel", {
+    // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5 + the 226
+    // untrusted_origin / rejected_name_length values).
+    container.eventBus.emit("reflect:funnel", {
       agentId,
       synthesized: sumSelected,
       validated: sumAdmitted,
       admitted: sumAdmitted,
       maxClusterCardinality: maxCardinality,
       // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
-      // enum: no_successes / uncorroborated / empty_reflection / rejected_validation / admitted).
+      // enum: no_successes / untrusted_origin / uncorroborated / empty_reflection /
+      // rejected_name_length / rejected_validation / admitted).
       admissionOutcome,
       timestamp: clock.now(),
     });

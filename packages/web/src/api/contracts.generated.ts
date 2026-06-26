@@ -8388,12 +8388,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "synthesisAbstained": {
               "type": "boolean"
-            },
-            "userModelRevised": {
-              "type": "number"
-            },
-            "memoriesGeneralized": {
-              "type": "number"
             }
           },
           "required": [
