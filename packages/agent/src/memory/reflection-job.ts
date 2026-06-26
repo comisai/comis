@@ -49,6 +49,7 @@
  * @module
  */
 
+import { createHash } from "node:crypto";
 import { ok, fromPromise, type Result } from "@comis/shared";
 import type {
   LearningScope,
@@ -58,7 +59,7 @@ import type {
   DocSection,
   DeltaOp,
 } from "@comis/core";
-import { validateLearnedDocBody } from "@comis/core";
+import { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import { applyDeltaOps, renderStructuredBody } from "@comis/core";
 import { normalizeOpeningRequest } from "./topic-key.js";
 import type { ReflectionAdapter } from "./llm-reflection-adapter.js";
@@ -272,8 +273,8 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
  * topicKey is already a sha256 hex of the normalized intent (INV-6), never the raw
  * transcript; the `skill-` prefix keeps the kebab-case lookup-name contract.
  *
- * WR-01: the name embeds the FULL topicKey (NOT a 16-char/64-bit truncation), so
- * name↔topicKey is bijective. The store's name-keyed `get`/`promoteByName`/
+ * WR-01 (Phase 223 review): the name embeds the FULL topicKey (NOT a 16-char/64-bit
+ * truncation), so name↔topicKey is bijective. The store's name-keyed `get`/`promoteByName`/
  * `demoteByName` resolve on name alone — a truncated name let two distinct
  * topicKeys (colliding on their first 16 hex chars) produce the SAME name with
  * DIFFERENT topic_key, two rows coexisting under the `(tenant, agent, kind,
@@ -283,11 +284,30 @@ function groupText(members: ReflectionSourceTrajectory[]): string {
  *
  * Phase 225 FOLD: the prefix is the KIND (`<kind>-<topicKey>`) — `profile-`/
  * `topic-` keep `(tenant, agent, kind, name)` unique ACROSS kinds (a profile and a
- * skill that happen to share a topicKey get distinct names). `profile-`/`topic-` +
- * 64 hex = 72/70 chars, well under `MAX_DOC_NAME_LENGTH` (120).
+ * skill that happen to share a topicKey get distinct names).
+ *
+ * WR-01 (Phase 225 review): unlike skill/topic — whose topicKey is ALWAYS a 64-char
+ * sha256 hex (`normalizeOpeningRequest`), so the name is 70 chars, bounded — the
+ * PROFILE group key is the RAW userId (the daemon sets `groupKey: (t) => t.sender`).
+ * A long sender id (a namespaced/email-channel address) makes `profile-<rawUserId>`
+ * exceed `MAX_DOC_NAME_LENGTH` (120); `validateLearnedDocBody` would then reject it
+ * AFTER the per-topic reflect call burned an LLM call, and the funnel would mis-report
+ * the silent drop as `rejected_validation` (a poison verdict) rather than a
+ * name-length problem. So the name is BOUNDED here: when `<kind>-<topicKey>` would
+ * overflow the cap we hash the group key into the name (`<kind>-<sha256hex>`),
+ * length-stable for ANY kind/groupKey origin. CRITICAL: only the NAME is hashed — the
+ * RAW `topicKey` still rides the admit input's `topicKey` column, so the
+ * `<user_profile>` read selector (`prompt-assembly.ts`, `d.topicKey === userId`)
+ * still resolves the profile. For the common short-id case (Telegram numeric, Discord/
+ * Slack snowflakes) and for ALL skill/topic docs the raw name is already under the
+ * cap, so this is byte-identical to the prior `<kind>-<topicKey>`.
  */
 function docNameForTopic(kind: "skill" | "profile" | "topic", topicKey: string): string {
-  return `${kind}-${topicKey}`;
+  const name = `${kind}-${topicKey}`;
+  if (name.length <= MAX_DOC_NAME_LENGTH) return name;
+  // Over-cap raw group key (a long profile userId) → hash the KEY into the name. The
+  // raw userId is preserved on the admit's `topicKey` column for the read selector.
+  return `${kind}-${createHash("sha256").update(topicKey).digest("hex")}`;
 }
 
 /** The default GROUP key (kind:skill) — the normalized opening-request signature. */

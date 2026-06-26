@@ -19,9 +19,10 @@
  *   - Delta-ops (REFLECT-04): an existing doc with a structuredBody refreshes via
  *     delta-ops, untargeted sections byte-identical; a new doc synthesizes fresh.
  */
+import { createHash } from "node:crypto";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok } from "@comis/shared";
-import { applyDeltaOps, renderStructuredBody } from "@comis/core";
+import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
 import type { ReflectionResult } from "./reflection-prompt.js";
 import {
@@ -950,6 +951,63 @@ describe("runReflection — Phase 225 FOLD: kind threading (Test A)", () => {
     const admitArg = (mocks.admit as Mock).mock.calls[0][0];
     expect(admitArg.kind).toBe("skill");
     expect(admitArg.name).toBe(`skill-${admitArg.topicKey}`);
+  });
+});
+
+// ===========================================================================
+// WR-01 (Phase 225 review): a profile groupKey is the RAW userId (NOT a hashed
+// topicKey — `setup-channels-memory-crons-wire.ts` sets `groupKey: (t) => t.sender`).
+// An unbounded `profile-<rawUserId>` doc name can exceed MAX_DOC_NAME_LENGTH (120)
+// for a legitimate long sender id (a namespaced/email-channel address), at which
+// point `validateLearnedDocBody` rejects it AFTER the reflect call burned an LLM
+// call — and reports the silent drop as `rejected_validation` (a poison verdict),
+// not a name-length problem. The fix bounds the NAME (hash the group key into the
+// name when it would overflow) while KEEPING the raw userId on the `topicKey`
+// column so the `<user_profile>` read selector (`d.topicKey === userId`,
+// prompt-assembly.ts) still resolves. RED on the pre-patch unbounded name.
+// ===========================================================================
+describe("runReflection — Phase 225 WR-01: a long-userId profile name is bounded (admitted, not rejected_validation)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // A legitimate long sender id (> MAX_DOC_NAME_LENGTH - "profile-".length = 112)
+  // so the UNBOUNDED `profile-<rawUserId>` name would overflow the 120-char cap.
+  const LONG_USER_ID = `email:${"a".repeat(140)}@really.long.namespaced.example.com`;
+  const LONG_GROUP = (): string => LONG_USER_ID;
+
+  it("a profile reflection for a > 112-char userId is ADMITTED (the name is bounded), NOT rejected_validation", async () => {
+    expect(LONG_USER_ID.length).toBeGreaterThan(MAX_DOC_NAME_LENGTH - "profile-".length);
+    const mocks: Partial<Mocks> = {};
+    // Two distinct (session, sender) sources the LONG_GROUP groupKey collapses → a
+    // corroborated 'profile' topic whose RAW group key (the userId) is long.
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "totally unrelated text one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "totally unrelated text two" }),
+      ],
+      { kind: "profile", groupKey: LONG_GROUP } as Partial<RunReflectionDeps>,
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // The headline: the long-userId profile is ADMITTED (the doc was seeded), and the
+    // verdict is NOT the mis-diagnosing `rejected_validation`.
+    expect(res.value.admitted).toBe(1);
+    expect(res.value.admissionOutcome).toBe("admitted");
+    expect(mocks.admit).toHaveBeenCalledTimes(1);
+
+    const admitArg = (mocks.admit as Mock).mock.calls[0][0];
+    // The NAME is bounded under the cap — for an over-cap group key it hashes the key
+    // (consistent with skill/topic, whose topicKey is already a 64-hex). The raw
+    // `profile-<userId>` would be 8 + 188 = 196 chars (> 120, the bug).
+    expect(admitArg.name.length).toBeLessThanOrEqual(MAX_DOC_NAME_LENGTH);
+    expect(admitArg.name).toBe(`profile-${createHash("sha256").update(LONG_USER_ID).digest("hex")}`);
+    // CRITICAL (the read-path invariant): the RAW userId still rides on the topicKey
+    // column UNHASHED, so the `<user_profile>` read selector (`d.topicKey === userId`)
+    // resolves this user's profile. Only the NAME is hashed, never the topicKey.
+    expect(admitArg.topicKey).toBe(LONG_USER_ID);
   });
 });
 
