@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
+import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * MemoryLifecyclePort: the SEGREGATED hexagonal boundary for the per-(tenant,
@@ -72,19 +73,20 @@ export interface MemoryLifecycleEvictionOverride {
  * in the sole adapter filters on `(tenantId, agentId)` — this is a load-bearing
  * SECURITY scope in a multi-agent DB, not a nicety: a sweep run under one
  * (tenant, agent) must NEVER touch (promote/demote/evict) another scope's rows.
- * Mirrors `TunedAlphaScope`.
+ *
+ * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope`, re-narrows
+ * the injected clock `now` to REQUIRED (the sweep's dormancy/age math), AND
+ * carries the lifecycle-specific per-call eviction `policy?` override.
  */
-export interface MemoryLifecycleScope {
-  /** Tenant partition (isolation boundary). */
-  tenantId: string;
-  /** Agent partition (isolation boundary). */
-  agentId: string;
+export type MemoryLifecycleScope = LearningScope & {
   /**
    * Injected wall-clock epoch milliseconds — the `now` the sweep uses for its
-   * event-age / dormancy bookkeeping (e.g. `nowMs − occurredAt > T_max`). NEVER
-   * `Date.now()` — the caller supplies it from an injected clock so the sweep
-   * stays deterministic/testable (globals.test.ts bans the wall-clock in src),
-   * mirroring `TunedAlphaScope.now`.
+   * event-age / dormancy bookkeeping (e.g. `nowMs − occurredAt > T_max`).
+   * REQUIRED on the sweep path. NEVER `Date.now()` — the caller supplies it from
+   * an injected clock so the sweep stays deterministic/testable (globals.test.ts
+   * bans the wall-clock in src).
    */
   now: number;
   /**
@@ -94,7 +96,7 @@ export interface MemoryLifecycleScope {
    * when omitted the constructor policy applies (DORMANT by default — byte-identical).
    */
   policy?: MemoryLifecycleEvictionOverride;
-}
+};
 
 /**
  * The counts-only summary of one lifecycle sweep. Ids/counts only —

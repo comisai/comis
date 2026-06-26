@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
+import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * MemoryUsefulnessStore: the SEGREGATED hexagonal boundary for the recall-utility
@@ -28,16 +29,19 @@ import type { Result } from "@comis/shared";
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: a write under
  * one (tenant, agent) must NEVER be visible to a read under another, even when
  * the `memory_id` is identical.
+ *
+ * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope`, re-narrows
+ * the injected clock `now` to REQUIRED (the `recordUsage`/`recordFailure` write
+ * paths), AND carries the usefulness-specific `intent?` per-query bucket key
+ * (an ADDITIONAL key, NEVER a relaxation of the (tenant, agent) isolation scope).
  */
-export interface UsefulnessScope {
-  /** Tenant partition (isolation boundary). */
-  tenantId: string;
-  /** Agent partition (isolation boundary). */
-  agentId: string;
+export type UsefulnessScope = LearningScope & {
   /**
-   * Injected epoch ms for `last_useful_at` bookkeeping. NEVER `Date.now()` — the
-   * caller supplies it from an injected clock so the write path stays
-   * deterministic/testable.
+   * Injected epoch ms for `last_useful_at` bookkeeping. REQUIRED on the
+   * usefulness write path. NEVER `Date.now()` — the caller supplies it from an
+   * injected clock so the write path stays deterministic/testable.
    */
   now: number;
   /**
@@ -54,7 +58,7 @@ export interface UsefulnessScope {
    * field flows to BOTH `recordUsage` (the write) AND the read automatically.
    */
   intent?: string;
-}
+};
 
 /**
  * Per-memory usefulness signal. Counts only — no content ever enters

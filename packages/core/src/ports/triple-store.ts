@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { MemorySearchResult } from "./memory.js";
+import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * TripleStorePort: the SEGREGATED hexagonal boundary for the trust-first
@@ -36,21 +37,25 @@ import type { MemorySearchResult } from "./memory.js";
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: a triple
  * written under one (tenant, agent) must NEVER be returned for another scope by
  * subject/object-string coincidence.
+ *
+ * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope` and
+ * re-narrows the injected clock `now` to REQUIRED (the `upsertTriple` write
+ * path). The KG recall lane (`spreadLane`, the live graphSpread consumer) reads
+ * via `Omit<TripleScope, "now">` — unaffected by the narrowing.
  */
-export interface TripleScope {
-  /** Tenant partition (isolation boundary). */
-  tenantId: string;
-  /** Agent partition (isolation boundary). */
-  agentId: string;
+export type TripleScope = LearningScope & {
   /**
    * Injected wall-clock epoch milliseconds for the write's bookkeeping
    * (`t_ingested`, and the soft-close `t_valid_end`/`expired_at` stamps when an
-   * incumbent is invalidated). NEVER `Date.now()` — the caller supplies it from
-   * an injected clock so the write path stays deterministic/testable. The row's
-   * VALID-time start comes from `TripleInput.tValidStart`, not this clock.
+   * incumbent is invalidated). REQUIRED on the triple write path. NEVER
+   * `Date.now()` — the caller supplies it from an injected clock so the write
+   * path stays deterministic/testable. The row's VALID-time start comes from
+   * `TripleInput.tValidStart`, not this clock.
    */
   now: number;
-}
+};
 
 /**
  * The Comis trust ladder, reused verbatim (the `memories.trust_level` CHECK set

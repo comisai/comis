@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { MemorySearchResult } from "./memory.js";
+import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * MemoryCausalStore: the SEGREGATED hexagonal boundary for causal-edge recall
@@ -34,19 +35,21 @@ import type { MemorySearchResult } from "./memory.js";
  * `(tenantId, agentId)` — this is a load-bearing SECURITY scope in a multi-agent
  * DB, not a nicety: an edge written under one (tenant, agent) must NEVER be
  * returned for another scope by memory-id coincidence.
+ *
+ * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} — the isolation
+ * fields are NOT re-declared (the 15× per-port repetition the collapse kills).
+ * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope` and
+ * re-narrows the injected clock `now` to REQUIRED (the `linkCausal` write path).
  */
-export interface CausalScope {
-  /** Tenant partition (isolation boundary). */
-  tenantId: string;
-  /** Agent partition (isolation boundary). */
-  agentId: string;
+export type CausalScope = LearningScope & {
   /**
    * Injected wall-clock epoch milliseconds for the edge's `created_at`
-   * bookkeeping. NEVER `Date.now()` — the caller supplies it from an injected
-   * clock so the write path stays deterministic/testable.
+   * bookkeeping. REQUIRED on the causal write path. NEVER `Date.now()` — the
+   * caller supplies it from an injected clock so the write path stays
+   * deterministic/testable.
    */
   now: number;
-}
+};
 
 export interface MemoryCausalStore {
   /**
