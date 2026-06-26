@@ -16,10 +16,11 @@
  * (today's default bare config), it emits NOTHING. It never logs a secret/key —
  * only feature names and a count.
  *
- * Scope of "cost-bearing" mirrors the kill switch exactly: the five crons
- * (memoryReview, memoryConsolidation, memoryReasoning, memoryUserRepresentation,
- * memoryUsefulnessJudge) and the query-time dialectic tool
- * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224.)
+ * Scope of "cost-bearing" mirrors the kill switch exactly: the surviving crons
+ * (memoryReview, memoryUsefulnessJudge) and the query-time dialectic tool
+ * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224;
+ * memoryConsolidation / memoryReasoning / memoryUserRepresentation were deleted in
+ * Phase 225-05 — their work folded into the one learningSkills-gated reflection cron.)
  * The $0 keyless memoryLifecycle sweep and the privacy-gated
  * socialModeling cron are NOT cost features here (lifecycle is keyless; social
  * has its own privacy gate), so neither triggers the notice.
@@ -32,9 +33,6 @@ import type { ComisLogger } from "@comis/infra";
 /** A per-agent config slice carrying only the cost-feature opt-in flags this notice reads. */
 interface CostFeatureAgentSlice {
   memoryReview?: { enabled?: boolean };
-  memoryConsolidation?: { enabled?: boolean };
-  memoryReasoning?: { enabled?: boolean };
-  memoryUserRepresentation?: { enabled?: boolean };
   memoryUsefulnessJudge?: { enabled?: boolean };
   dialectic?: { enabled?: boolean };
 }
@@ -47,9 +45,6 @@ interface CostFeatureAgentSlice {
  */
 const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; label: string }> = [
   { key: "memoryReview", label: "memoryReview (cron)" },
-  { key: "memoryConsolidation", label: "memoryConsolidation (cron)" },
-  { key: "memoryReasoning", label: "memoryReasoning (cron)" },
-  { key: "memoryUserRepresentation", label: "memoryUserRepresentation (cron)" },
   { key: "memoryUsefulnessJudge", label: "memoryUsefulnessJudge (cron)" },
   { key: "dialectic", label: "dialectic / memory_ask (query-time tool)" },
 ];

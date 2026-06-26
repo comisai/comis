@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Gap-closure forward-presence test — drives the REAL
- * `setupSingleAgent` boot path and asserts that `userRepresentationStore` from
- * `SingleAgentDeps` is actually forwarded into the `createPiExecutor(...)` deps
- * object literal.
+ * `setupSingleAgent` boot path and asserts that the kind:"profile" read source for the
+ * LLM-free `<user_profile>` standing block (`mentalModelStore`, sourced from
+ * `SingleAgentDeps.learnedSkillStore`) is actually forwarded into the
+ * `createPiExecutor(...)` deps object literal.
  *
- * The bug this file reproduces: the field was threaded
- * through the TYPES (setup-agents-types.ts, pi-executor-types.ts,
- * executor-tool-assembly.ts) and POPULATED in setup-agents-registry.ts, but the
- * `createPiExecutor` construction site in setup-agents-runtime.ts omitted it from
- * its 6-sibling-store line — so in the live daemon `deps.userRepresentationStore`
- * is always `undefined` and the LLM-free `<user_profile>` standing block is never
- * injected. (The earlier forward-presence tests checked the prompt-assembly /
- * setup-memory layers, NOT this executor-construction hop — which was untested for
- * every sibling store.)
+ * The bug class this file guards: a store can be threaded through the TYPES
+ * (setup-agents-types.ts, pi-executor-types.ts, executor-tool-assembly.ts) and POPULATED in
+ * setup-agents-registry.ts, yet the `createPiExecutor` construction site in
+ * setup-agents-runtime.ts can OMIT it from its sibling-store line — so in the live daemon
+ * `deps.mentalModelStore` is `undefined` and the `<user_profile>` standing block is a silent
+ * no-op. (The prompt-assembly / setup-memory forward-presence tests check OTHER layers, NOT
+ * this executor-construction hop.)
+ *
+ * v2.31 Phase 225-05: the `<user_profile>` source was the deleted `userRepresentationStore`;
+ * FOLD-01 (Plan 02) rewired it onto the MentalModelStorePort `kind:"profile"` path
+ * (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`). This test now pins the
+ * SAME executor-construction hop for the live source (`mentalModelStore`), preserving the guard.
  *
  * Mirrors the setup-agents-rerank-wiring.test.ts harness (the established analog
  * for asserting a deps field reaches the mocked createPiExecutor).
@@ -128,8 +132,10 @@ function makeContainer(agentId: string): AppContainer {
   } as unknown as AppContainer;
 }
 
-// The load-bearing sentinel — the exact object the executor construction must forward.
-const SENTINEL_USERREP = { read: vi.fn(), upsert: vi.fn() } as any;
+// The load-bearing sentinel — the exact MentalModelStorePort the executor construction must
+// forward as `mentalModelStore` (the kind:"profile" read source for <user_profile>). In
+// setup-agents-runtime.ts the construction reads it off SingleAgentDeps.learnedSkillStore.
+const SENTINEL_MENTAL_MODEL = { admit: vi.fn(), get: vi.fn(), list: vi.fn(), promote: vi.fn(), demote: vi.fn(), evict: vi.fn() } as any;
 
 function makeDeps(container: AppContainer): SingleAgentDeps {
   const logger = makeLogger();
@@ -141,7 +147,7 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
     resolvedAgentDir: "/tmp/agent-dir",
     mcpToolsInherited: false,
     rerankerModelPresent: false,
-    userRepresentationStore: SENTINEL_USERREP,
+    learnedSkillStore: SENTINEL_MENTAL_MODEL,
     oauthCredentialStore: { get: vi.fn(), set: vi.fn(), has: vi.fn(), list: vi.fn(), delete: vi.fn() } as any,
     mcpClientManager: {} as any,
     fileLock: { acquire: vi.fn(), release: vi.fn(), withLock: vi.fn(), isLocked: vi.fn(), cleanupStaleLocks: vi.fn(async () => 0) } as any,
@@ -154,15 +160,15 @@ function makeDeps(container: AppContainer): SingleAgentDeps {
 
 // --- Test ------------------------------------------------------------------
 
-describe("setupSingleAgent forwards userRepresentationStore into createPiExecutor (gap closure)", () => {
+describe("setupSingleAgent forwards mentalModelStore into createPiExecutor (the <user_profile> kind:profile source, gap closure)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("passes the SingleAgentDeps.userRepresentationStore through to the executor deps", async () => {
-    // RED on pre-fix code: the createPiExecutor object literal omits userRepresentationStore,
-    // so the executor (and thus prompt-assembly) never sees the store → the <user_profile>
-    // standing block is a silent no-op in the live daemon. GREEN once the forward is added.
+  it("passes the SingleAgentDeps.learnedSkillStore through to the executor deps as mentalModelStore", async () => {
+    // The createPiExecutor object literal must forward mentalModelStore (= deps.learnedSkillStore),
+    // else the executor (and thus prompt-assembly) never sees the store → the FOLD-01 <user_profile>
+    // standing block is a silent no-op in the live daemon.
     const agentId = "default";
     const container = makeContainer(agentId);
     const deps = makeDeps(container);
@@ -171,7 +177,7 @@ describe("setupSingleAgent forwards userRepresentationStore into createPiExecuto
     // createPiExecutor(effectiveConfig, deps) — the store is forwarded in the 2nd (deps) arg.
     expect(mockCreatePiExecutor).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userRepresentationStore: SENTINEL_USERREP }),
+      expect.objectContaining({ mentalModelStore: SENTINEL_MENTAL_MODEL }),
     );
   });
 });

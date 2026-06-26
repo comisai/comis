@@ -88,11 +88,14 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
   });
 
   it("aggregates every active cost feature across agents into the single notice", () => {
+    // The deleted memoryConsolidation/memoryReasoning/memoryUserRepresentation crons (Phase 225-05)
+    // are no longer cost features; the surviving disclosed crons are memoryReview + memoryUsefulnessJudge
+    // (+ the query-time dialectic tool).
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
       agents: {
-        "agent-1": { ...bareAgent(), memoryConsolidation: { enabled: true } },
-        "agent-2": { ...bareAgent(), memoryReasoning: { enabled: true }, dialectic: { enabled: true } },
+        "agent-1": { ...bareAgent(), memoryReview: { enabled: true } },
+        "agent-2": { ...bareAgent(), memoryUsefulnessJudge: { enabled: true }, dialectic: { enabled: true } },
       },
       costFeaturesEnabled: true,
       logger: logger as never,
@@ -100,8 +103,8 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     const warns = logger._calls("warn");
     expect(warns, "still exactly one notice regardless of feature count").toHaveLength(1);
     const blob = JSON.stringify(warns[0]!.payload);
-    expect(blob).toContain("memoryConsolidation");
-    expect(blob).toContain("memoryReasoning");
+    expect(blob).toContain("memoryReview");
+    expect(blob).toContain("memoryUsefulnessJudge");
     expect(blob).toMatch(/dialectic|memory_ask/);
   });
 
