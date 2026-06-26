@@ -318,11 +318,16 @@ describe("TOPIC_REFLECT_PROMPT (FOLD-02: the lifted consolidation+reasoning gene
     expect(TOPIC_REFLECT_PROMPT).not.toContain("paramsSchema");
   });
 
-  it("does NOT emit the deductive S/P/O triple shape (triples do NOT fold into a markdown doc)", () => {
-    // The reasoning job's DEDUCTIVE half wrote triple_store rows (subject/predicate/
-    // object); the kind:topic fold covers ONLY the INDUCTIVE/generalization
-    // observations. The deductive shape must NOT appear in the topic prompt.
-    expect(TOPIC_REFLECT_PROMPT).not.toContain("predicate");
-    expect(TOPIC_REFLECT_PROMPT).not.toContain("subject");
+  it("does NOT request the deductive S/P/O triple OUTPUT shape (triples do NOT fold into a markdown doc)", () => {
+    // The reasoning job's DEDUCTIVE half wrote triple_store rows via a
+    // { "subject", "predicate", "object" } JSON output; the kind:topic fold covers
+    // ONLY the INDUCTIVE/generalization observations. The topic prompt must NOT ask
+    // the model to emit that triple OUTPUT shape. (NB: the shared
+    // MEMORY_LANGUAGE_PRESERVATION_INSTRUCTION names "predicate" as a structural-key
+    // carve-out — a verbatim-English machine key — so the test targets the OUTPUT
+    // contract: the quoted JSON `"subject"` key + the "subject-predicate-object"
+    // phrasing the deductive prompt uses, neither of which is in this template.)
+    expect(TOPIC_REFLECT_PROMPT).not.toContain('"subject"');
+    expect(TOPIC_REFLECT_PROMPT.toLowerCase()).not.toContain("subject-predicate-object");
   });
 });
