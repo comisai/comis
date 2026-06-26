@@ -81,6 +81,7 @@ interface Mocks {
   resolve: Mock;
   get: Mock;
   admit: Mock;
+  supersede: Mock;
   logger: { info: Mock; debug: Mock; warn: Mock; error: Mock };
 }
 
@@ -93,6 +94,12 @@ function makeDeps(
   const resolve = (over.outcomeSignal?.resolve as Mock) ?? vi.fn(async () => ok(success()));
   const get = (over.mentalModelStore?.get as Mock) ?? vi.fn(async () => ok(undefined));
   const admit = (over.mentalModelStore?.admit as Mock) ?? vi.fn(async () => ok({ id: "id-1", admitted: true }));
+  // Phase 225 FOLD-01: the bi-temporal supersede a profile/topic CORRECTION routes through.
+  // `over.mentalModelStore.supersede` is `unknown` on the Pick<…,"get"|"admit"> type the skill
+  // tests pass, so read it off the cast object — only profile/topic tests supply it.
+  const supersede =
+    ((over.mentalModelStore as { supersede?: Mock } | undefined)?.supersede as Mock) ??
+    vi.fn(async () => ok("superseded" as const));
   const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
   if (mocksOut) {
@@ -100,6 +107,7 @@ function makeDeps(
     mocksOut.resolve = resolve;
     mocksOut.get = get;
     mocksOut.admit = admit;
+    mocksOut.supersede = supersede;
     mocksOut.logger = logger;
   }
 
@@ -122,7 +130,10 @@ function makeDeps(
     sourceTrajectories: trajectories,
     reflectionAdapter: { reflect },
     outcomeSignal: { resolve },
-    mentalModelStore: { get, admit },
+    // supersede is ALWAYS wired (production always injects it) — the engine routes a
+    // profile/topic CORRECTION through it but NEVER a skill (kind:skill stays admit-only,
+    // byte-identical with 223). So a skill test's admit assertions are unaffected.
+    mentalModelStore: { get, admit, supersede },
     clock: over.clock ?? { now: () => NOW },
     eventBus: over.eventBus ?? { emit: vi.fn() },
     logger,
@@ -479,6 +490,168 @@ describe("runReflection — delta-ops refresh vs fresh synth (REFLECT-04)", () =
     const admitArg = (mocks.admit as Mock).mock.calls[0][0];
     expect(admitArg.structuredBody.sections).toHaveLength(2);
     expect(admitArg.body).toBe(renderStructuredBody({ sections: freshReflection().sections! }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Profile-supersede routing (FOLD-01) — a profile/topic CORRECTION of an EXISTING
+// doc routes through store.supersede (bi-temporal history-append), NOT admit (the
+// destructive upsert). A NEW profile/topic doc still admits; a skill (any prior)
+// still admits — kind:skill is byte-identical with 223 (no supersede).
+// ---------------------------------------------------------------------------
+
+describe("runReflection — profile/topic supersede routing (FOLD-01)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const priorProfile = (): StructuredBody => ({
+    sections: [
+      { id: "identity", heading: "Identity", body: "Alice, a developer." },
+      { id: "preference", heading: "Preferences", body: "Prefers verbose answers." },
+    ],
+  });
+
+  function existingProfileDoc(prior: StructuredBody) {
+    return {
+      id: "profile-id",
+      name: "profile-u1",
+      description: "d",
+      body: renderStructuredBody(prior),
+      kind: "profile" as const,
+      topicKey: "u1",
+      trustLevel: "learned" as const,
+      state: "candidate" as const,
+      proofCount: 1,
+      confidence: 0.7,
+      mutating: false,
+      sourceTrajIds: [],
+      structuredBody: prior,
+      createdAt: NOW,
+    };
+  }
+
+  it("a PROFILE correction of an EXISTING doc routes through supersede (history-append), NOT admit", async () => {
+    const mocks: Partial<Mocks> = {};
+    const prior = priorProfile();
+    const get = vi.fn(async () => ok(existingProfileDoc(prior)));
+    // The correction flips the preference (a real body change → a delta-op).
+    const reflect = vi.fn(async () => ok({
+      ops: [{ op: "replace" as const, id: "preference", section: { id: "preference", heading: "Preferences", body: "Prefers CONCISE answers." } }],
+    }));
+    const supersede = vi.fn(async () => ok("superseded" as const));
+    const admit = vi.fn(async () => ok({ id: "profile-id", admitted: true }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "u1\nprefers concise" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u1", signature: "u1\nconcise please" }),
+      ],
+      {
+        kind: "profile",
+        groupKey: (t) => t.sender, // profile groups by user ⇒ topicKey === userId
+        mentalModelStore: { get, admit, supersede } as any,
+        reflectionAdapter: { reflect },
+      },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1); // a superseded correction counts as an admitted doc
+    // The CORRECTION routed through supersede (history-append), NOT the destructive admit upsert.
+    expect(supersede).toHaveBeenCalledOnce();
+    expect(admit).not.toHaveBeenCalled();
+    // supersede gets the doc name (profile-<topicKey>=profile-u1), the new rendered body, the
+    // delta-applied structuredBody, the scope, and the clock `now`.
+    const [input, scope, now] = (supersede as Mock).mock.calls[0];
+    expect(input.name).toBe("profile-u1");
+    const expectedBody = applyDeltaOps(prior, [
+      { op: "replace", id: "preference", section: { id: "preference", heading: "Preferences", body: "Prefers CONCISE answers." } },
+    ]);
+    expect(input.structuredBody).toEqual(expectedBody);
+    expect(input.body).toBe(renderStructuredBody(expectedBody));
+    expect(scope).toEqual(SCOPE);
+    expect(now).toBe(NOW);
+  });
+
+  it("a NEW profile doc (no prior) still ADMITs (supersede is only for an existing-doc correction)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const get = vi.fn(async () => ok(undefined)); // no prior doc
+    const reflect = vi.fn(async () => ok(freshReflection()));
+    const supersede = vi.fn(async () => ok("superseded" as const));
+    const admit = vi.fn(async () => ok({ id: "new-profile", admitted: true }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "u1\nfact one" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u1", signature: "u1\nfact two" }),
+      ],
+      { kind: "profile", groupKey: (t) => t.sender, mentalModelStore: { get, admit, supersede } as any, reflectionAdapter: { reflect } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(admit).toHaveBeenCalledOnce(); // a NEW doc admits
+    expect(supersede).not.toHaveBeenCalled();
+  });
+
+  it("a SKILL correction of an EXISTING doc still ADMITs (kind:skill is byte-identical — never supersede)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const prior = priorProfile();
+    const get = vi.fn(async () => ok({ ...existingProfileDoc(prior), kind: "skill" as const, name: "skill-tk", topicKey: "tk" }));
+    const reflect = vi.fn(async () => ok({
+      ops: [{ op: "replace" as const, id: "preference", section: { id: "preference", heading: "Preferences", body: "Changed." } }],
+    }));
+    const supersede = vi.fn(async () => ok("superseded" as const));
+    const admit = vi.fn(async () => ok({ id: "skill-id", admitted: true }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "deploy app" }),
+      ],
+      // kind omitted ⇒ skill default
+      { mentalModelStore: { get, admit, supersede } as any, reflectionAdapter: { reflect } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(res.value.admitted).toBe(1);
+    expect(admit).toHaveBeenCalledOnce(); // skill always admits
+    expect(supersede).not.toHaveBeenCalled();
+  });
+
+  it("a profile correction where supersede returns not-found falls back to admit (the get→supersede race)", async () => {
+    const mocks: Partial<Mocks> = {};
+    const prior = priorProfile();
+    const get = vi.fn(async () => ok(existingProfileDoc(prior)));
+    const reflect = vi.fn(async () => ok({
+      ops: [{ op: "replace" as const, id: "preference", section: { id: "preference", heading: "Preferences", body: "Prefers CONCISE answers." } }],
+    }));
+    // The doc was evicted between get and supersede → not-found → fall back to admit (never lose the write).
+    const supersede = vi.fn(async () => ok("not-found" as const));
+    const admit = vi.fn(async () => ok({ id: "profile-id", admitted: true }));
+    const deps = makeDeps(
+      [
+        traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "u1\nconcise" }),
+        traj({ trajectoryId: "b", sessionId: "s2", sender: "u1", signature: "u1\nconcise please" }),
+      ],
+      { kind: "profile", groupKey: (t) => t.sender, mentalModelStore: { get, admit, supersede } as any, reflectionAdapter: { reflect } },
+      mocks,
+    );
+
+    const res = await runReflection(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    expect(supersede).toHaveBeenCalledOnce();
+    expect(admit).toHaveBeenCalledOnce(); // fell back to admit on not-found
+    expect(res.value.admitted).toBe(1);
   });
 });
 

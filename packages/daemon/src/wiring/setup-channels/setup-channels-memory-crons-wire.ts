@@ -39,7 +39,12 @@ import {
   runMemoryTripleExtraction,
   runReflection,
   createLlmReflectionAdapter,
+  REFLECT_PROMPT,
+  PROFILE_REFLECT_PROMPT,
+  TOPIC_REFLECT_PROMPT,
   type TripleCandidate,
+  type ReflectionSourceTrajectory,
+  type ReflectAdmissionOutcome,
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
 
@@ -379,64 +384,125 @@ export async function handleWireMemoryCronSentinel(
     const reflectLogger = logger.child({ agentId, submodule: "reflection" });
     const reflectStartMs = clock.now();
 
-    // CLOSED-GRAPH CUT: the @comis/agent reflect adapter (wraps the UNTRUSTED transcript, INV-5)
-    // is built HERE on the resolved model; the @comis/memory store + the trusted-origin LCD source
-    // come in via the daemon-assembled bundle. The job consumes PORT TYPES only.
-    const reflectionAdapter = createLlmReflectionAdapter({ provider: resolved.provider, modelId: resolved.modelId, apiKey, clock, logger: reflectLogger, ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId) });
-    const sourceTrajectories = await reflection.buildSourceTrajectories(agentId, reflectTenantId);
+    // Phase 225 FOLD §3.2: ONE __REFLECT__ cron reflects ALL THREE kinds in one pass
+    // (the I1 model — ONE engine, LOOPED, not three engines). The model/cred resolution
+    // above runs ONCE (the same MID-tier reflect model for all kinds); per kind we vary
+    // only the adapter `systemPrompt` + `source` label and the per-kind source build +
+    // `groupKey`. SKILL keys on the normalized opening-request signature (the default,
+    // groupKey undefined); PROFILE groups by user (groupKey `t.sender` ⇒ topicKey ===
+    // userId, which Plan 02's <user_profile> read selects on); TOPIC keys like skill.
+    const reflectKinds: ReadonlyArray<{
+      kind: "skill" | "profile" | "topic";
+      systemPrompt: string;
+      source: "learned_skill_reflection" | "learned_profile_reflection" | "learned_topic_reflection";
+      groupKey?: (t: ReflectionSourceTrajectory) => string;
+    }> = [
+      { kind: "skill", systemPrompt: REFLECT_PROMPT, source: "learned_skill_reflection" },
+      { kind: "profile", systemPrompt: PROFILE_REFLECT_PROMPT, source: "learned_profile_reflection", groupKey: (t) => t.sender },
+      { kind: "topic", systemPrompt: TOPIC_REFLECT_PROMPT, source: "learned_topic_reflection" },
+    ];
 
-    const r = await runReflection({
-      agentId,
-      tenantId: reflectTenantId,
-      scope,
-      config: {
-        enabled: cfg.enabled,
-        minConfidence: cfg.minConfidence,
-        // The per-run topic ceiling (the DoS bound — one LLM call each). No config key
-        // (learningSkills has none); 10 mirrors the job's DEFAULT_MAX_DOCS_PER_RUN.
-        maxDocsPerRun: 10,
-      },
-      sourceTrajectories,
-      reflectionAdapter,
-      outcomeSignal: reflection.outcomeSignal,
-      mentalModelStore: reflection.learnedSkillStore,
-      clock,
-      logger: reflectLogger,
-      eventBus: container.eventBus,
-    });
+    // SUMMED counts across the 3 kinds for ONE daemon-side learning:skill_* emit (counts
+    // only — INV-6 / §2.7; NEVER a doc body / finding crosses the bus, for ANY kind).
+    let anyError = false;
+    let firstError: Error | undefined;
+    let sumSelected = 0;
+    let sumAdmitted = 0;
+    let sumSkipped = 0;
+    let maxCardinality = 0;
+    // The acute "why 0 admitted" verdict: prefer the FIRST kind that admitted nothing for a
+    // non-benign reason, else "admitted" if any kind admitted (first-match telemetry, counts-only).
+    let admissionOutcome: ReflectAdmissionOutcome = "no_successes";
 
-    if (r.ok) {
-      // OBS-01: an INFO completion line (the real counts) + the DAEMON-SIDE telemetry emit. Counts
-      // ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default this branch is
-      // unreachable (the no-op short-circuits above). The learning:skill_* NAMES are KEPT (Q2 —
-      // minimize blast radius; the reflect:* rename is Phase 226).
-      const v = r.value;
-      reflectLogger.info({ agentId, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete");
-      // The `learning:skill_synthesized.count` contract is "how many were ADMITTED this run"
-      // (events-learning.ts) — emit v.admitted.
-      container.eventBus.emit("learning:skill_synthesized", { agentId, count: v.admitted, timestamp: clock.now() });
-      // The whole reflection FUNNEL alongside the admitted-count event, so `comis explain` answers
-      // "why was 0 admitted" from the trajectory (maxClusterCardinality:1 = single uncorroborated
-      // topic → not admissible) instead of a DEBUG-log grep. Counts only. Mapped from the reflect
-      // result: synthesized = selected (trusted-origin successes entering reflection), validated =
-      // admitted (the count that cleared the static validateLearnedDocBody guard + admit),
-      // maxClusterCardinality = maxTopicCardinality (the distinct (session,sender) corroboration
-      // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5).
-      container.eventBus.emit("learning:skill_synthesis_funnel", {
-        agentId,
-        synthesized: v.selected,
-        validated: v.admitted,
-        admitted: v.admitted,
-        maxClusterCardinality: v.maxTopicCardinality,
-        // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
-        // enum: no_successes / uncorroborated / empty_reflection / rejected_validation / admitted).
-        admissionOutcome: v.admissionOutcome,
-        timestamp: clock.now(),
+    for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
+      // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
+      // transcript via the per-kind `source` label, INV-5) is built HERE on the resolved
+      // model; the @comis/memory store + the per-kind source come in via the daemon-assembled
+      // bundle. The job consumes PORT TYPES only. The base model/key/custom-model opts are
+      // identical across kinds — only systemPrompt + source vary.
+      const reflectionAdapter = createLlmReflectionAdapter({
+        provider: resolved.provider,
+        modelId: resolved.modelId,
+        apiKey,
+        clock,
+        logger: reflectLogger,
+        systemPrompt,
+        source,
+        ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
       });
-    } else {
-      reflectLogger.error({ agentId, err: r.error, hint: "Reflection failed -- will retry next cycle", errorKind: "internal" as const }, "Reflection error");
+      const sourceTrajectories = await reflection.buildSourceTrajectories(kind, agentId, reflectTenantId);
+
+      const r = await runReflection({
+        agentId,
+        tenantId: reflectTenantId,
+        scope,
+        kind, // Phase 225 FOLD — the threaded doc family (skill default if omitted)
+        ...(groupKey ? { groupKey } : {}),
+        config: {
+          enabled: cfg.enabled,
+          minConfidence: cfg.minConfidence,
+          // The per-run topic ceiling (the DoS bound — one LLM call each). No config key
+          // (learningSkills has none); 10 mirrors the job's DEFAULT_MAX_DOCS_PER_RUN. Each
+          // kind is bounded independently → a known 3×maxDocsPerRun per-run LLM ceiling.
+          maxDocsPerRun: 10,
+        },
+        sourceTrajectories,
+        reflectionAdapter,
+        outcomeSignal: reflection.outcomeSignal,
+        // FOLD-01: the store Pick now carries `supersede` — a profile/topic correction
+        // routes through it (history-append); skill stays admit-only (engine-enforced).
+        mentalModelStore: reflection.learnedSkillStore,
+        clock,
+        logger: reflectLogger.child({ submodule: "reflection", reflectKind: kind }),
+        eventBus: container.eventBus,
+      });
+
+      if (r.ok) {
+        const v = r.value;
+        sumSelected += v.selected;
+        sumAdmitted += v.admitted;
+        sumSkipped += v.skipped;
+        maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
+        // Per-kind INFO completion line (the real counts) so an operator sees each kind's
+        // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
+        reflectLogger.info({ agentId, reflectKind: kind, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome }, "Reflection (kind) complete");
+        // The acute verdict: "admitted" wins; otherwise keep the first non-benign reason.
+        if (v.admissionOutcome === "admitted") admissionOutcome = "admitted";
+        else if (admissionOutcome !== "admitted") admissionOutcome = v.admissionOutcome;
+      } else {
+        anyError = true;
+        firstError ??= r.error;
+        reflectLogger.error({ agentId, reflectKind: kind, err: r.error, hint: "Reflection failed for kind -- will retry next cycle", errorKind: "internal" as const }, "Reflection error");
+      }
     }
-    payload.onComplete?.({ status: r.ok ? "ok" : "error", error: r.ok ? undefined : r.error?.message });
+
+    // OBS-01: ONE DAEMON-SIDE telemetry emit + completion line, SUMMED across the 3 kinds.
+    // Counts ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default the
+    // whole block is unreachable (the no-op short-circuits above). The learning:skill_* NAMES
+    // are KEPT (Q2 — minimize blast radius; the reflect:* rename is Phase 226).
+    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
+    // The `learning:skill_synthesized.count` contract is "how many were ADMITTED this run"
+    // (events-learning.ts) — emit the SUMMED admitted across skill+profile+topic.
+    container.eventBus.emit("learning:skill_synthesized", { agentId, count: sumAdmitted, timestamp: clock.now() });
+    // The whole reflection FUNNEL alongside the admitted-count event, so `comis explain` answers
+    // "why was 0 admitted" from the trajectory (maxClusterCardinality:1 = single uncorroborated
+    // topic → not admissible) instead of a DEBUG-log grep. Counts only. Mapped from the SUMMED
+    // reflect result: synthesized = selected (trusted-origin successes entering reflection),
+    // validated/admitted = admitted (cleared the static validateLearnedDocBody guard + the write),
+    // maxClusterCardinality = maxTopicCardinality (the distinct (session,sender) corroboration
+    // size — the load-bearing field), admissionOutcome = the reflect verdict enum (D5).
+    container.eventBus.emit("learning:skill_synthesis_funnel", {
+      agentId,
+      synthesized: sumSelected,
+      validated: sumAdmitted,
+      admitted: sumAdmitted,
+      maxClusterCardinality: maxCardinality,
+      // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
+      // enum: no_successes / uncorroborated / empty_reflection / rejected_validation / admitted).
+      admissionOutcome,
+      timestamp: clock.now(),
+    });
+    payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? (firstError?.message ?? "reflection failed for one or more kinds") : undefined });
     return true;
   }
 

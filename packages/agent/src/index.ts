@@ -670,6 +670,10 @@ export type { CustomCompletionsModelSpec } from "./memory/index.js";
 // the public-export-consumers gate never sees an orphan. This REPLACED the dead
 // embedding-clustering synthesis pipeline (job/adapter/prompt), deleted in Plan 06.
 export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
+// The per-kind reflect prompts the daemon `__REFLECT__` cron injects as the adapter
+// `systemPrompt` (Plan 04): REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT
+// (Plan 02), TOPIC_REFLECT_PROMPT (Plan 03). One engine, varied per-kind prompt.
+export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT } from "./memory/index.js";
 export type {
   LlmReflectionAdapterDeps,
   ReflectionAdapter,

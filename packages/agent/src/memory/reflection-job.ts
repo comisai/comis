@@ -170,8 +170,17 @@ export interface RunReflectionDeps {
   reflectionAdapter: Pick<ReflectionAdapter, "reflect">;
   /** The outcome-signal port (the fail-closed success gate). */
   outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
-  /** The mental-model store (injected from @comis/memory, Plan 05). */
-  mentalModelStore: Pick<MentalModelStorePort, "get" | "admit">;
+  /**
+   * The mental-model store (injected from @comis/memory). `get` reads the prior doc
+   * for delta-ops; `admit` is the idempotent candidate write (a NEW doc, or a skill
+   * doc — byte-identical with 223). `supersede` (Phase 225 FOLD-01) is the bi-temporal
+   * history-append a profile/topic CORRECTION of an EXISTING doc routes through (the
+   * prior body is preserved in `history`, never overwritten). Optional with a
+   * skill-default posture: omitted ⇒ no doc supersedes (every kind admits, the 223
+   * behavior); kind:skill NEVER supersedes even when wired.
+   */
+  mentalModelStore: Pick<MentalModelStorePort, "get" | "admit"> &
+    Partial<Pick<MentalModelStorePort, "supersede">>;
   /** Wall-clock reads — durations + the admit timestamp. NEVER a wall-clock global. */
   clock: { now: () => number };
   /** Counts/ids-only event bus (the daemon emits the learning:skill_* events, Plan 05). */
@@ -526,9 +535,41 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
     return "rejected";
   }
 
-  // 5c. ADMIT at trust=learned / state=candidate (store-forced) / LOW proof_count /
-  //     deterministic id (idempotent re-admit, REFLECT-06).
+  // 5c. WRITE. A profile/topic CORRECTION of an EXISTING doc routes through
+  //     `supersede` (FOLD-01) — the bi-temporal history-append that preserves the prior
+  //     body in `history` rather than the destructive `admit` upsert (which overwrites
+  //     `body` + nulls `history` on conflict). A NEW doc (no prior) ALWAYS admits; a
+  //     SKILL doc ALWAYS admits (byte-identical with 223 — skill never supersedes,
+  //     even when `supersede` is wired). On a `not-found` supersede (the doc was
+  //     evicted between the `get` and the supersede — a race) we FALL BACK to admit so
+  //     the correction is never silently lost.
   const sourceTrajIds = members.map((m) => m.trajectoryId);
+  const isExistingDoc = prior !== undefined;
+  const supersede = mentalModelStore.supersede;
+  if (kind !== "skill" && isExistingDoc && supersede !== undefined) {
+    const supersedeRes = await fromPromise(supersede({ name: docName, body, structuredBody: nextBody }, scope, clock.now()));
+    if (!supersedeRes.ok || !supersedeRes.value.ok) {
+      logger.warn(
+        { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.supersede faulted — topic skipped (prior doc intact)" },
+        "reflection supersede faulted, skipping topic",
+      );
+      return "skipped";
+    }
+    if (supersedeRes.value.value === "superseded") {
+      // A profile/topic correction landed in history (the prior body preserved).
+      return "admitted";
+    }
+    // "not-found": the scoped incumbent vanished between get and supersede — fall through
+    // to admit so the reflected doc is still written (never lose the correction).
+    logger.debug(
+      { agentId, step: "admit" as const, topicKey, hint: "supersede found no incumbent (get→supersede race) — falling back to admit" },
+      "reflection supersede not-found, admitting instead",
+    );
+  }
+
+  // ADMIT at trust=learned / state=candidate (store-forced) / LOW proof_count /
+  // deterministic id (idempotent re-admit, REFLECT-06). The NEW-doc path for every kind,
+  // the skill path always, and the profile/topic supersede `not-found` fallback.
   const admitRes = await fromPromise(
     mentalModelStore.admit(
       {
