@@ -18,6 +18,15 @@ const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 const chatId = chatIdArg || '678314278';
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
+// Guard the #1 mis-invocation (hindsight-reflection-20260626): passing DATA in the maxMs slot
+// (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
+// the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
+// that actually landed. Fail LOUD instead of fabricating a no-reply.
+if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
+  console.error(`drive.mjs: non-numeric quiesceMs/maxMs (quiesceMs="${quiesceMsArg}", maxMs="${maxMsArg}"). ` +
+    `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
+  process.exit(2);
+}
 const DATA = dataArg || process.env.DATA || '/home/comis/.comis';
 const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
 const base = emu.apiRoot;

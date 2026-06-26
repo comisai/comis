@@ -111,3 +111,44 @@ drive these FIRST. The **reflection LLM call** that admits a doc (REFL-3/4 + INV
   the funnel verdict, not the model's willingness to be attacked.
 - **System-health sweep WILL find unrelated bugs** here (driving a basic memory/teach turn is part of the job,
   non-negotiable #6) — close each one test-first per `02-DISCIPLINE.md` before continuing.
+
+## v2.31 LIVE-RUN lessons (hindsight-reflection-20260626 — don't re-discover)
+- **The box may be on a STALE dist.** This run found the VPS running a PRE-v2.31 dist (no `schema-mental-models.js`);
+  deploy YOUR `fc96eec7` dist + PROVE on new code via ground truth (fresh `memory.db` has `mental_models`, NOT
+  `learned_skills`; the 3 crons via `cron.list`; fresh daemon.js mtime) before trusting any result.
+- **Migrate the config FIRST or the v2.31 daemon FATALs at parse.** A leftover v2.26 `memory.costFeatures.enabled`
+  is an unknown key under the `z.strictObject` `MemoryConfigSchema` → Bootstrap FATAL. cfg-patch
+  `{"memory":{"costFeatures":"__DELETE__","enabled":true}}` before the first v2.31 restart.
+- **Clean-slate MUST wipe the cron store for a true from-scratch** (`clean-restart.sh WIPE_CRONS=1`, added this run):
+  crons persist in `<workspace>/.scheduler/cron-jobs.json` which SURVIVES the `memory.db` wipe, so a v2.31 daemon
+  inherits 10 STALE crons (incl. the DELETED `__SKILL_SYNTHESIS__`/`__ONLINE_TUNING__`/…) from a prior dist. With
+  the wipe, exactly the 3 v2.31 crons re-register from config (Reflection/Memory lifecycle/Memory review).
+- **`drive.mjs` arg order is `<chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA]`** — passing DATA in the
+  maxMs slot makes `maxMs=NaN` → the poll loop never runs → an INSTANT false `0s [TIMEOUT] — NO SUBSTANTIVE
+  ANSWER` on a reply that landed. Now guarded (loud exit), but mind the order.
+- **The Reflection LLM call takes ~20-25s — POLL, don't fixed-sleep.** `cron.run jobName "Reflection"` returns
+  `{triggered:true}` immediately but the admit lands ~22s later (the LLM call). Reading `mental_models` after a
+  `sleep 12` shows `count:0` (a false negative). Poll the daemon log for `"Reflection complete (all kinds)"` (or
+  `"reflection run complete"` with `admissionOutcome`) BEFORE reading the store.
+- **REFL-3 surface RACES the async boot-refresh (SURFACE-RACE).** A freshly-admitted learned skill surfaces on the
+  NEXT session, AND the per-session `promptSkillsXml` snapshot freezes on the session's FIRST turn — so a turn that
+  races the async surface boot-refresh freezes the stale (pre-admit) skill list. Confirm `surfacedCount:N` in the
+  log (the surface cache populated) and use a FRESH session AFTER the refresh settles, else the agent lists only
+  the bundled skills (a false "the learned skill doesn't surface"). Once settled, the agent lists the learned skill.
+- **REFL-5 oracle precision (corrects the table above):** the raw-`memories` supersede is **recency-based** (a
+  correction adds a NEW row that wins recall; the prior row is KEPT, no delete; the `memories.history` column stays
+  NULL). The `history` JSON-array is the **MentalModel-tier** (kind:profile/topic) supersede column, NOT raw
+  `memories`. So REFL-5 oracle = `memories`: latest-wins-recall + prior-row-kept; `mental_models`: `history` array.
+- **Eviction (REFL-5b/INV-4) — the deterministic-gate method:** the live failure-accrual chain (recall→fail→
+  attribute, corroborated) is fragile/LLM-dependent. Prove the eviction BELT + INV-4 exemption like a gate-probe:
+  SEED `memory_usefulness.failure_count >= failureEvictionFloor(3)` on 3 memories (low-proof / high-proof≥5 /
+  pinned) via the daemon's better-sqlite3 (read-WRITE), then run the REAL `cron.run jobName "Memory lifecycle"` and
+  read `evicted_at` — low-proof EVICTS, high-proof+pinned SURVIVE. (`schema-memory-lifecycle.ts`'s "SCAFFOLD-DORMANT,
+  evicts NOTHING" comment is STALE — the wire passes `evictionEnabled:true`; eviction IS reachable.)
+- **SYNTH-YIELD is REPRODUCED in v2.31's reflection** (carried, NOT obsolete for content-quality): the REFL-3 admit
+  MECHANISM is GREEN (cardinality≥2 → admit kind=skill candidate trust=learned proof=1; all INV oracles hold), but
+  the reflection LLM (sonnet) distills THIN tool-orchestration transcripts UNRELIABLY — it over-generalized a
+  delivery-checklist into an ungrounded "research briefing" doc, and declined a cold-chain task (`empty_reflection`).
+  This is content-quality/LLM-yield (telemetry honest = NOT a false success), not a mechanism/security failure. Use
+  a RICH, distinctive, fabrication-free transcript if you need a grounded admit; don't expect a clean grounded skill
+  from a 1-line "write a file" task.
