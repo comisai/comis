@@ -58,6 +58,7 @@ import type {
   StructuredBody,
   DocSection,
   DeltaOp,
+  ReflectAdmissionOutcome,
 } from "@comis/core";
 import { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import { applyDeltaOps, renderStructuredBody } from "@comis/core";
@@ -192,9 +193,16 @@ export interface RunReflectionDeps {
 /**
  * The ACUTE reason a reflection run admitted nothing (or did) — a closed,
  * content-free enum so "why didn't a doc get learned?" is ONE readable field on
- * the funnel (the RC-4 diagnosability the synthesis-job established; the full
- * `reflectOutcome` rename is Phase 226). First-match-wins, computed from the
- * funnel counts:
+ * the funnel (the RC-4 diagnosability the synthesis-job established).
+ *
+ * IN-02: the canonical definition moved to `@comis/core` (events-learning.ts) so
+ * the `reflect:funnel.admissionOutcome` event payload is typed to the SAME closed
+ * union (core cannot import @comis/agent — the agent→core direction only). This
+ * job's `classifyReflectOutcome` produces it; the daemon emit assigns it onto the
+ * event field; one shared union ties them together (a free-form string is a compile
+ * error). Re-exported here so existing `@comis/agent` consumers keep importing it
+ * from the agent barrel unchanged. First-match-wins precedence (computed from the
+ * funnel counts) is documented at {@link classifyReflectOutcome} below:
  * - `no_successes`         — no trusted-origin `success`-outcome cleared SELECT.
  * - `uncorroborated`       — topics grouped but `maxTopicCardinality < 2` (the
  *                            anti-domination gate: needs ≥2 distinct (session,sender)).
@@ -213,14 +221,7 @@ export interface RunReflectionDeps {
  *                            generic `no_successes`.
  * - `admitted`             — ≥1 doc admitted.
  */
-export type ReflectAdmissionOutcome =
-  | "admitted"
-  | "uncorroborated"
-  | "rejected_validation"
-  | "rejected_name_length"
-  | "untrusted_origin"
-  | "empty_reflection"
-  | "no_successes";
+export type { ReflectAdmissionOutcome };
 
 /** What {@link runReflection} returns — counts/closed-scalars only; the daemon emits the events. */
 export interface RunReflectionResult {

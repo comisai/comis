@@ -459,7 +459,8 @@ export async function setupSchedulers(deps: {
     // options mirror the other memory crons 1:1 (isolated / next-heartbeat / no forward-to-main /
     // fresh). The __REFLECT__ sentinel (setup-channels-memory-crons-wire.ts) re-checks the knob +
     // injects the @comis/memory mental-model store + the trusted-origin source into runReflection,
-    // then re-emits the learning:skill_* counts. A reflected candidate is admitted at state:candidate.
+    // then emits the reflect:* counts (reflect:admitted + reflect:funnel — renamed from the old
+    // learning:skill_* funnel in Phase 226). A reflected candidate is admitted at state:candidate.
     const learningCfg = agentConfig.learning;
     if (costFeaturesEnabled && learningCfg?.enabled) {
       const reflectJobId = `reflect-${agentId}`;

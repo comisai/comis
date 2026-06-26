@@ -18,6 +18,32 @@
  *
  * Find events by prefix: memory:skill_*.
  */
+
+/**
+ * The CLOSED set of acute reasons a reflection run admitted nothing (or did) —
+ * the content-free verdict carried on `reflect:funnel.admissionOutcome` (INV-6).
+ *
+ * Canonical HERE in `@comis/core` (IN-02): the event payload that uses it lives in
+ * this file, and `@comis/agent` cannot be imported by core (the agent→core direction
+ * only). `@comis/agent`'s reflection-job re-exports THIS type and its
+ * `classifyReflectOutcome` returns it, so the daemon emit (which assigns the value)
+ * and this event contract share one closed union — a free-form string assigned into
+ * the funnel field is a compile error, not a silent INV-6 drift.
+ *
+ * Precedence/meaning is documented at the reflection classifier
+ * (`@comis/agent` reflection-job.ts `classifyReflectOutcome`):
+ *  `admitted` / `untrusted_origin` / `no_successes` / `uncorroborated` /
+ *  `empty_reflection` / `rejected_name_length` / `rejected_validation`.
+ */
+export type ReflectAdmissionOutcome =
+  | "admitted"
+  | "uncorroborated"
+  | "rejected_validation"
+  | "rejected_name_length"
+  | "untrusted_origin"
+  | "empty_reflection"
+  | "no_successes";
+
 export interface LearningEvents {
   /**
    * ATTR-02: skill-use attribution complete for one turn. MINIMAL payload —
@@ -93,8 +119,12 @@ export interface LearningEvents {
      * untrusted origin / external-trust source) / `uncorroborated` (cardinality<2) /
      * `empty_reflection` / `rejected_name_length` (doc name over MAX_DOC_NAME_LENGTH) /
      * `rejected_validation` / `admitted`.
+     *
+     * IN-02: typed to the CLOSED {@link ReflectAdmissionOutcome} union (was `string`) so
+     * the closed-enum contract is type-enforced — a free-form string into the funnel field
+     * is a compile error, not a silent INV-6 drift.
      */
-    admissionOutcome: string;
+    admissionOutcome: ReflectAdmissionOutcome;
     timestamp: number;
   };
 

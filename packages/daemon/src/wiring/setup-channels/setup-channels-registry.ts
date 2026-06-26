@@ -188,9 +188,11 @@ export interface ChannelsDeps {
    *  no-op). Absent ⇒ daemon-store-only review (pipeline byte-identical). */
   lcdStore?: import("@comis/core").ContextStorePort;
   contextBrowse?: import("@comis/core").ContextBrowsePort;
-  /** Memory read API — the __USER_REPRESENTATION__ sentinel scopes the
-   *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
-   *  daemon-side (the agent imports no memory package). */
+  /** Memory read API — the __REFLECT__ / __MEMORY_REVIEW__ crons scope the
+   *  per-(tenant, agent, user) high-trust source read over `inspect` (the
+   *  __USER_REPRESENTATION__ sentinel that formerly drove this was DELETED in
+   *  Phase 225 when that subsystem folded into the reflection engine). Built in
+   *  setup-memory; daemon-side (the agent imports no memory package). */
   memoryApi?: MemoryApi;
   /** Entity-associative store — forwarded to registerCronEventListeners so
    *  runMemoryReview (the write path) populates entity links after each successful store.

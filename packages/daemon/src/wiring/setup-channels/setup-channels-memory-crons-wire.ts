@@ -231,8 +231,11 @@ export async function handleWireMemoryCronSentinel(
     // kinds for the once-per-run INFO line (the per-kind verdict already encodes them — see below).
     let sumUntrustedDrops = 0;
     let sumNameLengthRejections = 0;
-    // The acute "why 0 admitted" verdict: prefer the FIRST kind that admitted nothing for a
-    // non-benign reason, else "admitted" if any kind admitted (first-match telemetry, counts-only).
+    // The acute "why 0 admitted" verdict (IN-03): `admitted` is STICKY (once any kind
+    // admitted, the summed verdict stays "admitted"); otherwise it is LAST-non-admitted-wins —
+    // each later non-admitting kind overwrites the field below, so the LAST kind's reason
+    // surfaces. Diagnostic field only (counts-only telemetry) — this only affects which
+    // benign/diagnostic reason shows when multiple kinds admit nothing for different reasons.
     // Each kind's runReflection already computes untrusted_origin / rejected_name_length from its
     // own SELECT/admit counts, so a kind that drops everything for untrusted origin (or rejects a
     // name over-cap) propagates that verdict here without a summed re-classify.
@@ -292,7 +295,8 @@ export async function handleWireMemoryCronSentinel(
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
         reflectLogger.info({ agentId, reflectKind: kind, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome }, "Reflection (kind) complete");
-        // The acute verdict: "admitted" wins; otherwise keep the first non-benign reason.
+        // The acute verdict: "admitted" is sticky; otherwise the LAST non-admitted kind's
+        // reason wins (each later non-admitting kind overwrites — IN-03).
         if (v.admissionOutcome === "admitted") admissionOutcome = "admitted";
         else if (admissionOutcome !== "admitted") admissionOutcome = v.admissionOutcome;
       } else {

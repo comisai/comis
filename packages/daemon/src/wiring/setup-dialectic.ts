@@ -42,6 +42,7 @@ import { buildCustomJudgeModelSpec, type JudgeProviderEntry } from "./setup-lear
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
 import type {
   PerAgentConfig,
+  MemoryConfig,
   ProviderCapabilities,
   ClockPort,
   TimerPort,
@@ -169,8 +170,10 @@ export interface DialecticBootSlice {
       tenantId: string;
       /** The master cost-feature kill switch (`memory.enabled`, renamed from costFeatures.enabled in
        *  Phase 226). Threaded into the dialectic wiring so the query-time `memory_ask` tool is
-       *  force-disabled when the operator turns all cost features off. */
-      memory: { enabled: boolean };
+       *  force-disabled when the operator turns all cost features off. The REAL `MemoryConfig` slice
+       *  (IN-01): tsc enforces the costFeatures→enabled rename here exactly as on the other H-1
+       *  gate readers — not a loose local `{ enabled: boolean }`. */
+      memory: Pick<MemoryConfig, "enabled">;
     };
     eventBus?: TypedEventBus;
   };
@@ -203,7 +206,10 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
     agentsConfig: c.agentsConfig,
     // The master cost-feature kill switch — the dialectic (memory_ask) is a cost feature, so a
     // `false` here force-disables it regardless of any agent's per-agent dialectic.enabled.
-    costFeaturesEnabled: c.container.config.memory.enabled,
+    // `!== false` (IN-01) matches the H-1 fail-open contract on every other gate reader: a
+    // missing/undefined `enabled` at this boundary stays ENABLED (default-on), never silently
+    // fail-CLOSED — though the schema always materializes `enabled` so this is defense-in-depth.
+    costFeaturesEnabled: c.container.config.memory.enabled !== false,
     secretManager: c.container.secretManager,
     // FLAG-3: per-agent OAuth-credential resolver — returns a per-call getApiKey for the cheap
     // provider when that agent has an OAuth manager (openai-codex), else undefined (seam falls back
