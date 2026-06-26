@@ -642,14 +642,18 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(Object.keys(evictPayload).sort()).toEqual(["agentId", "count", "timestamp"]);
   });
 
-  it("FORGET-06: threads learningForgetting.eviction policy (evictionEnabled/strengthThreshold/failurePenalty) into the sweep scope", async () => {
+  it("FORGET-06: threads learningForgetting.eviction policy (evictionEnabled + failureEvictionFloor) into the sweep scope", async () => {
+    // POST-224-02: the FadeMem strength-decay disjunct + its strengthThreshold/failurePenalty
+    // knobs are deleted; the override threads ONLY the master gate + the corroborated-failure
+    // floor (the reachable wrongness-eviction path). The config keys still parse (collapse = 226)
+    // but are no longer forwarded into the sweep.
     const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 1 } }));
     const ctx = makeCtx({
       agents: {
         "agent-1": {
           name: "Agent 1",
           memoryLifecycle: { enabled: true },
-          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.25 }, failurePenalty: 0.6 },
+          learningForgetting: { enabled: true, eviction: { enabled: true, failureEvictionFloor: 4 } },
         },
       },
       memoryLifecycleStore: { runLifecycleSweep: sweep },
@@ -658,8 +662,10 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     const scope = sweep.mock.calls[0][0] as { tenantId: string; agentId: string; now: number; policy?: any };
     expect(scope.policy).toBeDefined();
     expect(scope.policy.evictionEnabled).toBe(true);
-    expect(scope.policy.strengthThreshold).toBe(0.25);
-    expect(scope.policy.failurePenalty).toBe(0.6);
+    expect(scope.policy.failureEvictionFloor).toBe(4);
+    // The deleted decay knobs are NOT threaded into the override.
+    expect(scope.policy.strengthThreshold).toBeUndefined();
+    expect(scope.policy.failurePenalty).toBeUndefined();
   });
 
   it("byte-identity: with learningForgetting OFF (default), the sweep runs with eviction OFF and emits counts of 0 (no behavior change)", async () => {

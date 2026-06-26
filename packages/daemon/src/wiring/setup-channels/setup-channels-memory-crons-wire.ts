@@ -191,8 +191,13 @@ export async function handleWireMemoryCronSentinel(
     // FORGET-06 per-call policy: thread THIS agent's learningForgetting eviction policy onto the
     // sweep CALL. OFF (the default) → no override → DORMANT sweep (byte-identical).
     const lf = agentConfig?.learningForgetting;
+    // The eviction store consumes only the master gate + the corroborated-failure floor
+    // (the FadeMem strength-decay disjunct + its strengthThreshold/failurePenalty knobs
+    // were deleted in Phase 224-02 — the strength branch floored above its threshold and
+    // never fired). The config keys still parse (their collapse is Phase 226); they are
+    // simply no longer threaded into the sweep override.
     const evictionPolicy = lf?.enabled
-      ? { evictionEnabled: lf.eviction?.enabled !== false, strengthThreshold: lf.eviction?.strengthThreshold, failurePenalty: lf.failurePenalty, failureEvictionFloor: lf.eviction?.failureEvictionFloor }
+      ? { evictionEnabled: lf.eviction?.enabled !== false, failureEvictionFloor: lf.eviction?.failureEvictionFloor }
       : undefined;
     const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({
       tenantId: lifecycleTenantId,

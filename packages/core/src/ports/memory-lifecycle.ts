@@ -4,9 +4,10 @@ import type { Result } from "@comis/shared";
 /**
  * MemoryLifecyclePort: the SEGREGATED hexagonal boundary for the per-(tenant,
  * agent) memory LIFECYCLE sweep (Track C). A periodic,
- * KEYLESS maintenance pass that computes each memory's importance-decayed
- * strength + its hysteresis-banded tier and (in the LIVE policy) promotes,
- * demotes, or evicts rows accordingly.
+ * KEYLESS maintenance pass that, in the LIVE policy, soft-evicts each non-exempt
+ * candidate that is DORMANT past `maxDormantDays` OR corroborated-wrong
+ * (`failure_count >= failureEvictionFloor`). Tier promote/demote moves remain a
+ * deferred step (`promoted`/`demoted` stay 0).
  *
  * This is a NEW port — like TunedAlphaStore / MemoryUsefulnessStore /
  * UserRepresentationStore / TripleStorePort it deliberately does NOT widen the
@@ -19,16 +20,16 @@ import type { Result } from "@comis/shared";
  * agent↛memory build cut). No new authority is granted beyond a scoped sweep
  * within the caller's own (tenant, agent).
  *
- * LIVE soft eviction (v2.26 WS4 / FORGET-01) — when the policy is eviction-enabled
- * (the daemon threads `learningForgetting.eviction.enabled` ∧ `.enabled`), the
- * sweep soft-evicts candidates below the strength threshold that are not exempt
- * (pinned / `trust_level='system'` / high-`proof_count` — FORGET-03), reporting a
- * real `evicted` count. With the eviction behavior OFF (the default) the sweep
- * stays DORMANT — it computes strengths/tiers but applies NOTHING (`evicted`/
- * `demoted` = 0; the byte-identity guarantee). Tier demote/promote moves are still
- * deferred (`promoted`/`demoted` stay 0). The default-OFF `MemoryLifecycleConfigSchema`
- * knob is a behavior gate, NOT a back-compat fallback. The eviction policy is
- * NON-DESTRUCTIVE by design (the `evicted_at` marker — mirror `consolidated_at` —
+ * LIVE soft eviction (FORGET-01) — when the policy is eviction-enabled (the daemon
+ * threads `learningForgetting.eviction.enabled` ∧ `.enabled`), the sweep soft-evicts
+ * each non-exempt candidate that is DORMANT past `maxDormantDays` OR corroborated-wrong
+ * (`failure_count >= failureEvictionFloor`), where exempt = pinned ∨
+ * `trust_level='system'` ∨ high-`proof_count` (FORGET-03), reporting a real `evicted`
+ * count. With the eviction behavior OFF (the default) the sweep stays DORMANT — it
+ * scans but applies NOTHING (`evicted`/`demoted` = 0; the byte-identity guarantee).
+ * Tier demote/promote moves are still deferred (`promoted`/`demoted` stay 0). The
+ * default-OFF knob is a behavior gate, NOT a back-compat fallback. The eviction policy
+ * is NON-DESTRUCTIVE by design (the `evicted_at` marker — mirror `consolidated_at` —
  * never a hard DELETE of the raw row), and REVERSIBLE via {@link unevict}.
  *
  * The method returns `Promise<Result<…, Error>>` (the TunedAlphaStore Result
@@ -38,12 +39,10 @@ import type { Result } from "@comis/shared";
  */
 
 /**
- * The lifecycle TIER (FadeMem Eq.6 / hysteresis bands). A closed string-literal
- * union (mirror the `trustWeight` closed switch in score.ts) — the tier selects
- * the per-type decay shape β (durable → slow-tail 0.8 / ephemeral → sharp-drop
- * 1.2). The hysteresis dead-band (θ_promote 0.7 > θ_demote 0.3) is what moves a
- * row between these two tiers without flapping; the bands themselves live on
- * `MemoryLifecycleConfigSchema` as the dormant policy constants.
+ * The lifecycle TIER (durable vs ephemeral) the DEFERRED promote/demote step would
+ * assign a row. A closed string-literal union (mirror the `trustWeight` closed switch
+ * in score.ts). Tier moves are not applied in this build (`promoted`/`demoted` stay 0
+ * in {@link LifecycleSweepReport}); the type is retained for that deferred step.
  */
 export type MemoryTier = "durable" | "ephemeral";
 
@@ -58,16 +57,13 @@ export type MemoryTier = "durable" | "ephemeral";
 export interface MemoryLifecycleEvictionOverride {
   /** Activate LIVE soft eviction for THIS sweep (`learningForgetting.eviction.enabled ∧ .enabled`). */
   evictionEnabled?: boolean;
-  /** The [0,1] strength floor below which a non-exempt candidate is soft-evicted (`learningForgetting.eviction.strengthThreshold`). */
-  strengthThreshold?: number;
-  /** The [0,1] wrongness-coupling weight on `failure_count` (`learningForgetting.failurePenalty`). */
-  failurePenalty?: number;
   /**
-   * RC-3 (EVI-STRENGTH-FLOOR fix): the corroborated-`failure_count` floor at/above which a
-   * NON-EXEMPT memory is soft-evicted regardless of its (floored >0.25) decayed strength.
-   * Each `failure_count` increment is corroboration-gated; the FORGET-03 exemptions
-   * (pinned / system / high-proof) still gate it, so an induced-failure attacker cannot
-   * evict a well-corroborated memory. Omitted ⇒ the store default.
+   * The corroborated-`failure_count` floor at/above which a NON-EXEMPT memory is
+   * soft-evicted — the reachable wrongness-eviction path (FORGET-02, the
+   * EVI-STRENGTH-FLOOR fix). Each `failure_count` increment is corroboration-gated;
+   * the FORGET-03 exemptions (pinned / system / high-proof) still gate it, so an
+   * induced-failure attacker cannot evict a well-corroborated memory. Omitted ⇒ the
+   * store default.
    */
   failureEvictionFloor?: number;
 }
@@ -124,21 +120,20 @@ export interface LifecycleSweepReport {
 export interface MemoryLifecyclePort {
   /**
    * MAINTENANCE PATH. Run one lifecycle sweep for the caller's
-   * (tenant, agent) scope ONLY: scan the candidate rows, compute each one's
-   * importance-decayed strength + its hysteresis-banded tier (θ_promote 0.7 >
-   * θ_demote 0.3 dead-band; the bands + capacity caps + dormancy come from
-   * `MemoryLifecycleConfigSchema`), and — in the LIVE policy — promote/demote/
-   * evict accordingly (lowest-strength-first, usefulness-feedback-aware,
-   * NON-DESTRUCTIVE via a marker column). Returns a counts-only
-   * {@link LifecycleSweepReport}. Called ONLY by the daemon's default-OFF
-   * `__MEMORY_LIFECYCLE__` cron — never on the recall hot path.
+   * (tenant, agent) scope ONLY: scan the candidate rows and — in the LIVE policy —
+   * soft-evict each NON-exempt candidate that is DORMANT past `maxDormantDays`
+   * (disuse — days since last recall) OR corroborated-wrong (`failure_count >=
+   * failureEvictionFloor`), NON-DESTRUCTIVELY via the `evicted_at` marker column.
+   * Returns a counts-only {@link LifecycleSweepReport}. Called ONLY by the daemon's
+   * default-OFF `__MEMORY_LIFECYCLE__` cron — never on the recall hot path.
    *
    * LIVE soft eviction is gated on an eviction-enabled policy
-   * (`learningForgetting`): when ON, candidates below the strength threshold (and
-   * not exempt) are soft-evicted (`evicted` is real); when OFF (the default) the
-   * sweep computes but applies NOTHING (`evicted`/`demoted` 0 — byte-identity).
-   * Tier moves remain deferred (`promoted`/`demoted` 0). With the cron knob off it
-   * is not even registered (a default agent runs no sweep → byte-identical).
+   * (`learningForgetting`): when ON, the two-disjunct candidacy (dormancy OR the
+   * corroborated-failure floor), minus the FORGET-03 exemptions, is soft-evicted
+   * (`evicted` is real); when OFF (the default) the sweep scans but applies NOTHING
+   * (`evicted`/`demoted` 0 — byte-identity). Tier moves remain deferred
+   * (`promoted`/`demoted` 0). With the cron knob off it is not even registered (a
+   * default agent runs no sweep → byte-identical).
    *
    * NOTE: the SQLite adapter implements this; the daemon cron
    * wiring land in the implementation phases that follow.
