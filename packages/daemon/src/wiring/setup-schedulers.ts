@@ -383,105 +383,12 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory consolidation cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
-    // Registered ONLY when the operator sets memoryConsolidation.enabled; a default
-    // agent registers NO job. Default schedule 30 3 * * * runs AFTER the
-    // memory-review's 0 2 so review-minted memories are consolidation candidates the
-    // same night. Job options mirror the review job 1:1 (isolated / next-heartbeat /
-    // no forward-to-main / fresh session); the __MEMORY_CONSOLIDATION__ sentinel is
-    // intercepted in setup-channels-credentials → runMemoryConsolidation.
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryConsolidationConfig = agentConfig.memoryConsolidation;
-    if (costFeaturesEnabled && memoryConsolidationConfig?.enabled) {
-      const memConsolidationJobId = `memory-consolidation-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memConsolidationJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memConsolidationJobId,
-          name: "Memory consolidation",
-          agentId,
-          schedule: { kind: "cron", expr: memoryConsolidationConfig.schedule ?? "30 3 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_CONSOLIDATION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryConsolidationConfig.schedule ?? "30 3 * * *" }, "Registered memory consolidation cron job");
-      }
-    }
-
-    // -- Memory reasoning cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
-    // Registered ONLY when the operator sets memoryReasoning.enabled; a default agent
-    // registers NO job → byte-identical behavior with the config absent.
-    // Default schedule 0 4 * * * runs AFTER consolidation's 30 3 so reasoning works
-    // over freshly-consolidated observations the same night. Job options mirror the
-    // consolidation job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh
-    // session); the __MEMORY_REASONING__ sentinel is intercepted in
-    // setup-channels-credentials → runMemoryReasoning (both stores + the reason seam).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryReasoningConfig = agentConfig.memoryReasoning;
-    if (costFeaturesEnabled && memoryReasoningConfig?.enabled) {
-      const memReasoningJobId = `memory-reasoning-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memReasoningJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memReasoningJobId,
-          name: "Memory reasoning",
-          agentId,
-          schedule: { kind: "cron", expr: memoryReasoningConfig.schedule ?? "0 4 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_REASONING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryReasoningConfig.schedule ?? "0 4 * * *" }, "Registered memory reasoning cron job");
-      }
-    }
-
-    // -- Per-user representation cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat). Registered ONLY
-    // when the operator sets memoryUserRepresentation.enabled; a default agent registers NO job →
-    // byte-identical behavior with the config absent. Default schedule 0 5 * * * runs AFTER reasoning's
-    // 0 4 so the profile is built over freshly-reasoned memories. Job options mirror the reasoning job
-    // 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session); the __USER_REPRESENTATION__
-    // sentinel is intercepted in setup-channels-credentials → runUserRepresentationBuild (the per-user
-    // offline upsert write, source-scoped via memoryApi.inspect + the createUserRepresentationSeam).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryUserRepresentationConfig = agentConfig.memoryUserRepresentation;
-    if (costFeaturesEnabled && memoryUserRepresentationConfig?.enabled) {
-      const memUserReprJobId = `memory-user-representation-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memUserReprJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memUserReprJobId,
-          name: "Memory user representation",
-          agentId,
-          schedule: { kind: "cron", expr: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" },
-          payload: { kind: "system_event", text: "__USER_REPRESENTATION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" }, "Registered memory user representation cron job");
-      }
-    }
+    // -- (Phase 225 FOLD §3.2) The standalone __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+    //    __USER_REPRESENTATION__ cron registrations were REMOVED here: their work folds into the
+    //    ONE __REFLECT__ cron (which now reflects skill + profile + topic in one pass, Plan 04). The
+    //    I1 model — the old crons are GONE, not run in parallel. (Their now-dead job BODIES are
+    //    deleted in Plan 05; this plan removes the registrations + the sentinel intercepts so they
+    //    never fire.) __SOCIAL_MODELING__ below is Phase 226 scope and stays live.
 
     // -- Social modeling cron job --
     // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The privacy-review gate is STRICTER than

@@ -19,8 +19,14 @@
 
 import { parseFormattedSessionKey } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
-import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, type UserRepresentationSourceMemory, type RelationshipSourceMemory } from "@comis/agent";
-import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
+// Phase 225 FOLD: the consolidation/reasoning/user-rep symbols were dropped here with their
+// intercept branches (their work folds into __REFLECT__, Plan 04) — and they would become
+// TS2305-broken once Plan 05 deletes the job files. The 5 survivors below feed the
+// __SOCIAL_MODELING__ branch (Phase 226 scope) which stays live.
+import { resolveOperationModel, resolveProviderFamily, runRelationshipBuild, createRelationshipSeam, type RelationshipSourceMemory } from "@comis/agent";
+// resolveMemoryOpsCapability was dropped with the consolidation/reasoning branches (Phase 225
+// FOLD) — only those branches threaded the small-model abstain capabilityClass; __SOCIAL_MODELING__
+// does not. The helper file remains for Plan 05 / 226.
 import { cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import { handleWireMemoryCronSentinel } from "./setup-channels-memory-crons-wire.js";
 import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
@@ -28,304 +34,23 @@ import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memo
 export type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
 /**
- * Handle an LLM-backed memory-cron sentinel (`__MEMORY_CONSOLIDATION__` /
- * `__MEMORY_REASONING__`). Returns `true` when the sentinel was recognized + handled
- * (the caller then returns), `false` when it is neither (the caller falls through to
- * the normal delivery path). Mirrors the prior inline blocks verbatim.
+ * Handle an LLM-backed memory-cron sentinel. Returns `true` when the sentinel was
+ * recognized + handled (the caller then returns), `false` when it is neither (the
+ * caller falls through to the normal delivery path).
+ *
+ * Phase 225 FOLD §3.2: the `__MEMORY_CONSOLIDATION__` / `__MEMORY_REASONING__` /
+ * `__USER_REPRESENTATION__` intercepts were REMOVED — their work folds into the ONE
+ * `__REFLECT__` cron (Plan 04), and their scheduler registrations are gone, so the
+ * sentinels never fire. The surviving LLM-backed intercept here is `__SOCIAL_MODELING__`
+ * (Phase 226 scope); the WS7-wired sentinels live in the sibling wire leaf (the
+ * fall-through delegates there).
  */
 export async function handleMemoryCronSentinel(
   resultText: string | undefined,
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, memoryApi } = ctx;
-
-  // -- Memory consolidation sentinel intercept --
-  if (resultText === "__MEMORY_CONSOLIDATION__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Memory consolidation job fired without agentId", errorKind: "config" as const }, "Skipping memory consolidation -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for memory consolidation" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const consolidationConfig = agentConfig?.memoryConsolidation;
-    if (!consolidationConfig?.enabled) {
-      // The opt-in cost gate: a disabled agent does NO LLM work (clean ok run).
-      logger.debug({ agentId }, "Memory consolidation disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
-    const resolved = resolveOperationModel({
-      operationType: "cron",
-      agentProvider: agentConfig.provider ?? "anthropic",
-      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-      operationModels: agentConfig.operationModels ?? {},
-      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-    });
-
-    const providerEntry = container.config.providers?.entries?.[resolved.provider];
-    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
-    const apiKey = cred.apiKey;
-    if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "memory consolidation"), errorKind: "config" as const }, "Skipping memory consolidation -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
-      return true;
-    }
-    const consolidationResult = await runMemoryConsolidation({
-      agentId,
-      tenantId: tenantId ?? container.config.tenantId ?? "default",
-      config: consolidationConfig,
-      // Injected from setup-memory — the port TYPE only, no agent→memory edge.
-      consolidationStore: consolidationStore!,
-      eventBus: container.eventBus,
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-      apiKey,
-      ...cronCustomModelOpt(providerEntry, resolved.provider, resolved.modelId),
-      clock,
-      logger: logger.child({ agentId, submodule: "memory-consolidation" }),
-      // R6 (CR-01): small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
-      ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
-    });
-
-    if (!consolidationResult.ok) {
-      logger.error({ agentId, err: consolidationResult.error, hint: "Memory consolidation failed -- will retry next cycle", errorKind: "internal" as const }, "Memory consolidation error");
-    } else {
-      // GENERAL-01/OBS-01: an INFO completion line + the daemon-side learning:memory_generalized
-      // emit (counts-only, mirrors FORGET-06; generalize defaults OFF → counts 0). PLAIN emit
-      // (never ?.) so EMIT_REGEX sees it; the memory body NEVER crosses the bus (SEC-01 / T-203-leak).
-      // Defensive ?? 0: a value-less result (older job build) emits benign zero counts, never throws.
-      const c = consolidationResult.value;
-      const gen = { generalized: c?.generalized ?? 0, clustersConsidered: c?.clustersConsidered ?? 0, durationMs: c?.durationMs ?? 0 };
-      logger.child({ agentId, submodule: "memory-consolidation" }).info({ agentId, ...gen }, "Memory consolidation generalization summary");
-      container.eventBus.emit("learning:memory_generalized", { agentId, ...gen, timestamp: clock.now() });
-    }
-    payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
-    return true;
-  }
-
-  // -- Memory reasoning sentinel intercept --
-  // Mirrors the consolidation branch above 1:1, injecting BOTH stores + the OFFLINE
-  // reason() seam (createReasoningSeam keeps the specialist prompts agent-internal).
-  if (resultText === "__MEMORY_REASONING__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Memory reasoning job fired without agentId", errorKind: "config" as const }, "Skipping memory reasoning -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for memory reasoning" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const reasoningConfig = agentConfig?.memoryReasoning;
-    if (!reasoningConfig?.enabled) {
-      // The opt-in cost gate: a disabled agent does NO LLM work (clean ok run).
-      logger.debug({ agentId }, "Memory reasoning disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // Resolve the cheap "cron" model (never the agent's primary) + API key by NAME (Pino auto-redacts).
-    const resolved = resolveOperationModel({
-      operationType: "cron",
-      agentProvider: agentConfig.provider ?? "anthropic",
-      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-      operationModels: agentConfig.operationModels ?? {},
-      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-    });
-
-    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
-    const apiKey = cred.apiKey;
-    if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "memory reasoning"), errorKind: "config" as const }, "Skipping memory reasoning -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
-      return true;
-    }
-
-    const reasoningLogger = logger.child({ agentId, submodule: "memory-reasoning" });
-    const reasoningResult = await runMemoryReasoning({
-      agentId,
-      tenantId: tenantId ?? container.config.tenantId ?? "default",
-      config: reasoningConfig,
-      // BOTH stores injected from setup-memory — the port TYPES only.
-      consolidationStore: consolidationStore!,   // inductive applyConsolidation
-      tripleStore: tripleStore!,                 // deductive trust-first upsertTriple
-      eventBus: container.eventBus,
-      clock,
-      logger: reasoningLogger,
-      // The OFFLINE reasoning seam — a cheap-model completeSimple over the DEDUCTIVE/INDUCTIVE
-      // prompts (agent-internal), bounded by maxReasoningTokens; non-fatal (malformed → empty).
-      reason: createReasoningSeam({
-        provider: resolved.provider,
-        modelId: resolved.modelId,
-        apiKey,
-        maxReasoningTokens: reasoningConfig.maxReasoningTokens ?? 1024,
-        clock,
-        logger: reasoningLogger,
-        agentId,
-        ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
-      }),
-    });
-
-    if (!reasoningResult.ok) {
-      logger.error({ agentId, err: reasoningResult.error, hint: "Memory reasoning failed -- will retry next cycle", errorKind: "internal" as const }, "Memory reasoning error");
-    }
-    payload.onComplete?.({ status: reasoningResult.ok ? "ok" : "error", error: reasoningResult.ok ? undefined : reasoningResult.error?.message });
-    return true;
-  }
-
-  // -- Per-user representation sentinel intercept --
-  // Mirrors the reasoning branch (opt-in cost gate + cheap "cron" model/key + the OFFLINE
-  // build() seam, prompts agent-internal). Fires per (tenant, agent); builds a profile for
-  // EACH distinct high-trust user via runUserRepresentationBuild once per userId, scoped to
-  // (tenant, agent, user) with a readSources seam yielding ONLY that user's high-trust sources
-  // (the anti-poisoning external-exclude + the redaction firewall live in the job).
-  if (resultText === "__USER_REPRESENTATION__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "User representation job fired without agentId", errorKind: "config" as const }, "Skipping user representation build -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for user representation build" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const userReprConfig = agentConfig?.memoryUserRepresentation;
-    if (!userReprConfig?.enabled) {
-      // The opt-in cost gate: a disabled (or default-config) agent does NO LLM work —
-      // short-circuit ok so the scheduler records a clean run (mirror the reasoning gate).
-      logger.debug({ agentId }, "User representation build disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // The read surface MUST be present (injected from setup-memory). Absent => cannot scope
-    // the per-user source read — surface a clean error rather than silently no-op.
-    if (!memoryApi || !userRepresentationStore) {
-      logger.warn({ agentId, hint: "memoryApi/userRepresentationStore not injected -- cannot build per-user profile", errorKind: "config" as const }, "Skipping user representation build -- store/read surface missing");
-      payload.onComplete?.({ status: "error", error: "User representation read/write surface not wired" });
-      return true;
-    }
-
-    // Resolve the cheap model via the "cron" operation type (IDENTICAL to the reasoning block).
-    const resolved = resolveOperationModel({
-      operationType: "cron",
-      agentProvider: agentConfig.provider ?? "anthropic",
-      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-      operationModels: agentConfig.operationModels ?? {},
-      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-    });
-
-    const cred = await resolveCronJobCredential(container, agentId, resolved.provider, ctx.resolveAccessToken);
-    const apiKey = cred.apiKey;
-    if (!apiKey) {
-      logger.warn({ agentId, provider: resolved.provider, hint: cronCredentialSkipHint(cred, resolved.provider, "user representation build"), errorKind: "config" as const }, "Skipping user representation build -- no API key");
-      payload.onComplete?.({ status: "error", error: `No API key for ` + resolved.provider });
-      return true;
-    }
-
-    const reprTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const reprLogger = logger.child({ agentId, submodule: "user-representation" });
-
-    // Read the agent's HIGH-TRUST sources (system + learned) once, group by user here
-    // (InspectFilters has no userId axis); each user's slice becomes that user's readSources seam.
-    // `inspect` orders created_at DESC + applies `limit` BEFORE grouping, so a trust level with
-    // > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window across ALL users. No
-    // offset to page → a read returning exactly the cap emits a counts-only WARN (§2.7 — no silent drop).
-    const SOURCE_READ_LIMIT = 1000;
-    const sourcesByUser = new Map<string, UserRepresentationSourceMemory[]>();
-    for (const trustLevel of ["system", "learned"] as const) {
-      const rows = memoryApi.inspect({ tenantId: reprTenantId, agentId, trustLevel, limit: SOURCE_READ_LIMIT });
-      if (rows.length >= SOURCE_READ_LIMIT) {
-        reprLogger.warn(
-          {
-            agentId,
-            trustLevel,
-            limit: SOURCE_READ_LIMIT,
-            returned: rows.length,
-            errorKind: "validation" as const,
-            hint: "high-trust source read hit the per-trust-level cap — only the NEWEST sources are distilled into per-user profiles this run; older facts are dropped and per-user profiles may be incomplete/non-deterministic. Reduce retention or split the agent if this persists",
-          },
-          "User representation source read truncated at the per-trust-level cap (MR-01)",
-        );
-      }
-      for (const row of rows) {
-        const list = sourcesByUser.get(row.userId) ?? [];
-        list.push({ id: row.id, content: row.content, trustLevel: row.trustLevel as "system" | "learned" | "external" });
-        sourcesByUser.set(row.userId, list);
-      }
-    }
-
-    // Build the cheap-model seam ONCE (reused across users — the prompt is per-source-text).
-    const build = createUserRepresentationSeam({
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-      apiKey,
-      maxOutputTokens: 1024,
-      clock,
-      logger: reprLogger,
-      agentId,
-      ...cronCustomModelOpt(container.config.providers?.entries?.[resolved.provider], resolved.provider, resolved.modelId),
-    });
-
-    let anyError = false;
-    // REVISE-01/OBS-01: sum the counts-only revision totals across all per-user builds for ONE
-    // daemon-side learning:user_model_revised emit (mirrors FORGET-06). COUNTS ONLY (no body — SEC-01).
-    let superseded = 0;
-    let corroborated = 0;
-    let inserted = 0;
-    const reprStartMs = clock.now();
-    for (const [userId, sources] of sourcesByUser) {
-      const result = await runUserRepresentationBuild({
-        agentId,
-        tenantId: reprTenantId,
-        userId,
-        config: {
-          enabled: userReprConfig.enabled,
-          maxEntriesPerRun: userReprConfig.maxEntriesPerRun,
-          // Per-build INPUT bounds (forwarded; the job also defaults them when absent).
-          maxSourceMemories: userReprConfig.maxSourceMemories,
-          maxSourceChars: userReprConfig.maxSourceChars,
-        },
-        userRepresentationStore, // injected from setup-memory — the port TYPE only.
-        // The scoped read seam: this user's high-trust sources (the job runs external-exclude + redaction).
-        readSources: () => Promise.resolve({ ok: true as const, value: sources }),
-        clock,
-        logger: reprLogger,
-        eventBus: container.eventBus,
-        build,
-      });
-      if (!result.ok) {
-        anyError = true;
-        reprLogger.error({ agentId, userId, err: result.error, hint: "User representation build failed for user -- will retry next cycle", errorKind: "internal" as const }, "User representation build error");
-      } else {
-        superseded += result.value.superseded;
-        corroborated += result.value.corroborated;
-        inserted += result.value.inserted;
-      }
-    }
-
-    // REVISE-01/OBS-01: the daemon-side learning:user_model_revised emit (PLAIN — never ?. — so
-    // EMIT_REGEX sees it) + an INFO completion line. COUNTS ONLY (no body/entryType/source ids — SEC-01).
-    const reprDurationMs = clock.now() - reprStartMs;
-    reprLogger.info(
-      { agentId, superseded, corroborated, inserted, durationMs: reprDurationMs },
-      "User representation revision summary",
-    );
-    container.eventBus.emit("learning:user_model_revised", {
-      agentId,
-      superseded,
-      corroborated,
-      inserted,
-      durationMs: reprDurationMs,
-      timestamp: clock.now(),
-    });
-
-    payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
-    return true;
-  }
+  const { container, logger, clock, agents, tenantId, relationshipStore, memoryApi } = ctx;
 
   // NOTE: the __ONLINE_TUNING__ bandit sentinel was DELETED in Phase 224 (v2.31) — the UCB
   // tuned-alpha bandit is gone; recall scoring is the fixed config.rag.scoring alphas.

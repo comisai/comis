@@ -165,185 +165,28 @@ describe("handleMemoryCronSentinel", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  it("short-circuits reasoning ok and runs nothing when the agent has it disabled (opt-in gate)", async () => {
-    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } } });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__MEMORY_REASONING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("runs runMemoryReasoning with BOTH stores + the built seam when reasoning is enabled", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__MEMORY_REASONING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunMemoryReasoning).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryReasoning.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.consolidationStore).toBe(ctx.consolidationStore);
-    expect(arg.tripleStore).toBe(ctx.tripleStore);
-    expect(arg.reason).toBe(mockReasonSeam);
-    expect(mockCreateReasoningSeam).toHaveBeenCalledOnce();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("skips reasoning with an error when an enabled agent has no API key (no key value used)", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
-      apiKey: undefined,
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_REASONING__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-
-  it("still handles the consolidation sentinel (the extraction preserved both branches)", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    const onComplete = vi.fn();
-    const handled = await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(handled).toBe(true);
-    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.consolidationStore).toBe(ctx.consolidationStore);
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  // -------------------------------------------------------------------------
-  // CR-01: R6 capabilityClass / hasCapableModelOverride are THREADED into the
-  // consolidation deps so the abstain path is reachable in production. Before
-  // the fix neither field was passed and every consumer hit its default
-  // ("frontier"/false) → "capable", so a small/nano model still ran the merge
-  // LLM call. These pin the deps the daemon actually constructs.
-  // -------------------------------------------------------------------------
-  it("CR-01: a SMALL cron/memory model threads capabilityClass='small' + no override into the consolidation deps (abstain reachable)", async () => {
-    // The cron model resolves to a local/ollama provider → small.
-    mockResolveOperationModel.mockReturnValue({
-      provider: "ollama",
-      modelId: "ollama:qwen3.6:35b",
-      model: "ollama:qwen3.6:35b",
-      timeoutMs: 60_000,
-      source: "default",
-    } as any);
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.capabilityClass).toBe("small");
-    expect(arg.hasCapableModelOverride).toBe(false);
-  });
-
-  it("CR-01: a FRONTIER cron/memory model threads capabilityClass='frontier' (behavior-neutral)", async () => {
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.capabilityClass).toBe("frontier");
-    expect(arg.hasCapableModelOverride).toBe(false);
-  });
-
-  it("CR-01: an operator capabilityClass override on the cron provider threads hasCapableModelOverride=true", async () => {
-    mockResolveOperationModel.mockReturnValue({
-      provider: "ollama",
-      modelId: "ollama:qwen3.6:35b",
-      model: "ollama:qwen3.6:35b",
-      timeoutMs: 60_000,
-      source: "default",
-    } as any);
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    // Pin a capable class on the cron provider's capabilities (the operator
-    // "stronger cheap model for the memory pipeline" override).
-    (ctx.container as any).config.providers.entries.ollama = { capabilities: { capabilityClass: "mid" } };
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.capabilityClass).toBe("mid");
-    expect(arg.hasCapableModelOverride).toBe(true);
-  });
-
-  it("warns + errors when a memory-cron sentinel fires without an agentId", async () => {
-    const ctx = makeCtx();
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_REASONING__", { agentId: undefined, onComplete }, ctx);
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
-  });
-
-  // -------------------------------------------------------------------------
-  // KEYLESS-CRON (live-found 2026-06-13, qwen3.6:35b run): the main completion
-  // path resolves keyless local providers (ollama / lm-studio) via
-  // KEYLESS_PROVIDER_TYPES, but the cost-cron gate blindly required an API key
-  // and SILENTLY SKIPPED — disabling the entire LTM-learning layer
-  // (consolidation/reasoning/user-representation/review) on local-model
-  // deployments, with a MISLEADING "Set OLLAMA_API_KEY" hint (Ollama is keyless).
-  // The fix mirrors credential-resolver.ts: keyless providers proceed with the
-  // KEYLESS_API_KEY_SENTINEL instead of being skipped.
-  // -------------------------------------------------------------------------
-  it("KEYLESS: an ollama agent with NO API key STILL runs consolidation (keyless sentinel, not skipped)", async () => {
-    mockResolveOperationModel.mockReturnValue({
-      provider: "ollama",
-      modelId: "ollama:qwen3.6:35b",
-      model: "ollama:qwen3.6:35b",
-      timeoutMs: 60_000,
-      source: "default",
-    } as any);
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryConsolidation: { enabled: true } } },
-      apiKey: undefined, // NO key in the secret store — keyless local provider
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.apiKey).toBe("ollama-no-auth");
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("KEYLESS: an ollama agent with NO API key STILL runs the user-representation build", async () => {
-    mockResolveOperationModel.mockReturnValue({
-      provider: "ollama", modelId: "ollama:qwen3.6:35b", model: "ollama:qwen3.6:35b", timeoutMs: 60_000, source: "default",
-    } as any);
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "ollama", memoryUserRepresentation: { enabled: true } } },
-      apiKey: undefined,
-      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
-    });
-    // The user-rep handler requires the write surface (injected from setup-memory).
-    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn() };
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockRunUserRepresentationBuild).toHaveBeenCalled();
-  });
-
-  it("KEYLESS-guard: a NON-keyless (anthropic) agent with NO API key STILL skips (real misconfig fails loud)", async () => {
-    // The keyless allowance must NOT mask a genuine missing-key misconfiguration.
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: undefined,
-    });
-    const onComplete = vi.fn();
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete }, ctx);
-    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
-  });
+  // Phase 225 FOLD §3.2: the standalone __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+  // __USER_REPRESENTATION__ intercepts were REMOVED (their work folds into __REFLECT__, Plan 04;
+  // their scheduler registrations are gone too). A stray sentinel must NO LONGER be handled here —
+  // it falls through (the WIRE leaf does not handle them either, so `handled` is false) and the
+  // consolidation/reasoning/user-rep jobs are NEVER invoked.
+  it.each(["__MEMORY_CONSOLIDATION__", "__MEMORY_REASONING__", "__USER_REPRESENTATION__"])(
+    "no longer handles the removed %s sentinel (folded into __REFLECT__) — falls through, runs no job",
+    async (sentinel) => {
+      const ctx = makeCtx({
+        agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true }, memoryReasoning: { enabled: true }, memoryUserRepresentation: { enabled: true } } },
+        apiKey: "test-key",
+        inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
+      });
+      (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn() };
+      const onComplete = vi.fn();
+      const handled = await handleMemoryCronSentinel(sentinel, { agentId: "agent-1", onComplete }, ctx);
+      expect(handled).toBe(false); // not handled here, and not by the WIRE leaf → falls through
+      expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
+      expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+      expect(mockRunUserRepresentationBuild).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // (The __ONLINE_TUNING__ sentinel tests were removed in Phase 224 — the UCB recall bandit
@@ -672,98 +515,5 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(mockCreateUsefulnessJudgeSeam).not.toHaveBeenCalled();
     expect(recordUsage).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// OBS-01/OBS-02 (Phase 203 Plan 05): the daemon-side learning:* emits +
-// config forwarding for user-model REVISION (__USER_REPRESENTATION__) and
-// GENERALIZATION (__MEMORY_CONSOLIDATION__). Mirrors the FORGET-06 daemon-emit
-// precedent (learning:memory_demoted/evicted): the job RETURNS counts in its
-// .value; the handler emits a PLAIN counts-only learning:* event + an INFO
-// completion line. COUNTS ONLY — no profile/memory body, entryType, or id ever
-// crosses the bus (§2.7 / SEC-01 / T-203-leak). PLAIN emit (never ?.) so the
-// EMIT_REGEX arch gate sees it (T-203-emit-evasion).
-// ---------------------------------------------------------------------------
-describe("handleMemoryCronSentinel — OBS-01/02 learning:* daemon emit + config forward (Phase 203)", () => {
-  it("REVISE/OBS-01: emits learning:user_model_revised (superseded/corroborated/inserted COUNTS only) from the user-rep build result", async () => {
-    mockRunUserRepresentationBuild.mockResolvedValue({
-      ok: true as const,
-      value: { built: 5, written: 4, blocked: 0, superseded: 2, corroborated: 1, inserted: 1, durationMs: 13 },
-    });
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
-      apiKey: "test-key",
-      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
-    });
-    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
-    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
-    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
-    expect(emit).toHaveBeenCalledWith(
-      "learning:user_model_revised",
-      expect.objectContaining({ agentId: "agent-1", superseded: 2, corroborated: 1, inserted: 1 }),
-    );
-    // Counts only — the payload carries no profile content/entryType/source ids.
-    const payload = emit.mock.calls.find((c) => c[0] === "learning:user_model_revised")![1] as Record<string, unknown>;
-    expect(Object.keys(payload).sort()).toEqual(["agentId", "corroborated", "durationMs", "inserted", "superseded", "timestamp"]);
-  });
-
-  it("REVISE: a 0-revision build still emits learning:user_model_revised with all-zero counts (Defer != Retry — benign)", async () => {
-    // historyCap forwarding lives at the STORE constructor (setup-memory), not the job config —
-    // the revise() trim is a store concern (Plan 02 constructor option). Here we pin the benign
-    // zero-count emit so a no-op revision run is still observable (not a silent gap).
-    mockRunUserRepresentationBuild.mockResolvedValue({
-      ok: true as const,
-      value: { built: 0, written: 0, blocked: 0, superseded: 0, corroborated: 0, inserted: 0, durationMs: 2 },
-    });
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryUserRepresentation: { enabled: true } } },
-      apiKey: "test-key",
-      inspectRows: [{ id: "m1", userId: "u1", content: "fact", trustLevel: "learned", source: { sessionKey: "s1" } }],
-    });
-    (ctx as any).userRepresentationStore = { upsert: vi.fn(), read: vi.fn(), revise: vi.fn(), asOf: vi.fn() };
-    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
-    await handleMemoryCronSentinel("__USER_REPRESENTATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
-    expect(emit).toHaveBeenCalledWith(
-      "learning:user_model_revised",
-      expect.objectContaining({ agentId: "agent-1", superseded: 0, corroborated: 0, inserted: 0 }),
-    );
-  });
-
-  it("GENERAL/OBS-01: emits learning:memory_generalized (generalized/clustersConsidered COUNTS only) from the consolidation result", async () => {
-    mockRunMemoryConsolidation.mockResolvedValue({
-      ok: true as const,
-      value: { generalized: 2, clustersConsidered: 5, durationMs: 21 },
-    });
-    const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    const emit = (ctx.container as any).eventBus.emit as ReturnType<typeof vi.fn>;
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
-    expect(emit).toHaveBeenCalledWith(
-      "learning:memory_generalized",
-      expect.objectContaining({ agentId: "agent-1", generalized: 2, clustersConsidered: 5 }),
-    );
-    // Counts only — the payload carries no memory body/source ids.
-    const payload = emit.mock.calls.find((c) => c[0] === "learning:memory_generalized")![1] as Record<string, unknown>;
-    expect(Object.keys(payload).sort()).toEqual(["agentId", "clustersConsidered", "durationMs", "generalized", "timestamp"]);
-  });
-
-  it("GENERAL: forwards the full memoryConsolidation config (incl. generalize) into runMemoryConsolidation", async () => {
-    const ctx = makeCtx({
-      agents: {
-        "agent-1": {
-          name: "Agent 1",
-          provider: "anthropic",
-          memoryConsolidation: { enabled: true, generalize: { enabled: true, minDistinctContexts: 3 } },
-        },
-      },
-      apiKey: "test-key",
-    });
-    await handleMemoryCronSentinel("__MEMORY_CONSOLIDATION__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
-    expect(mockRunMemoryConsolidation).toHaveBeenCalled();
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as { config: Record<string, unknown> };
-    expect(arg.config).toEqual(expect.objectContaining({ generalize: { enabled: true, minDistinctContexts: 3 } }));
   });
 });

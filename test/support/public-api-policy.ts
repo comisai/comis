@@ -164,10 +164,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
-      // Consolidation job Deps. runMemoryConsolidation is consumed by the
-      // daemon (setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
-      // but it is called with an inline object, so the named Deps SHAPE type has no
-      // production consumer — baseline orphan (mirror MemoryReviewDeps).
+      // Consolidation job. Phase 225 FOLD §3.2 RE-ORPHANED runMemoryConsolidation: the
+      // daemon __MEMORY_CONSOLIDATION__ sentinel intercept was REMOVED (its work folds into
+      // the ONE __REFLECT__ cron, Plan 04), so the export lost its production consumer. This
+      // is a TRANSITIONAL orphan — Plan 05 DELETES the job file + this export together (the
+      // job BODY is intentionally kept this plan for Plan 05's delete). MemoryConsolidationDeps
+      // (the SHAPE) was already a baseline orphan (called with an inline object).
+      "runMemoryConsolidation",
       "MemoryConsolidationDeps",
       // Offline triple-extraction job.
       // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
@@ -183,35 +186,38 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // Offline reasoning job. runMemoryReasoning
-      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch,
-      // so it SHRANK out of this baseline (no longer an orphan). createReasoningSeam
-      // (the daemon-injected reason() seam factory) is likewise consumed by the
-      // dispatch — no entry needed. The Deps/Config/Stats/Result SHAPE types + the
-      // ReasoningOutput seam-output type are referenced via inline objects only (the
-      // dispatch + the gated bench construct them structurally / import them
-      // same-package) — baseline orphans (mirror MemoryTripleExtractionDeps).
-      // ReasoningSeamDeps is the createReasoningSeam input shape — the daemon
-      // calls it with an inline object, so the TYPE itself has no cross-package importer.
+      // Offline reasoning job. Phase 225 FOLD §3.2 RE-ORPHANED runMemoryReasoning: the daemon
+      // __MEMORY_REASONING__ sentinel intercept was REMOVED (folds into __REFLECT__, Plan 04),
+      // so it lost its production consumer — a TRANSITIONAL orphan (Plan 05 deletes the job +
+      // this export together; the BODY is kept this plan for Plan 05's delete). createReasoningSeam
+      // is STILL consumed (the WIRE leaf imports it) — no entry. The Deps/Config/Stats/Result SHAPE
+      // types + the ReasoningOutput seam-output type are referenced via inline objects only (the
+      // gated bench constructs them structurally / imports them same-package) — baseline orphans
+      // (mirror MemoryTripleExtractionDeps). ReasoningSeamDeps is the createReasoningSeam input
+      // shape — called with an inline object, so the TYPE itself has no cross-package importer.
+      "runMemoryReasoning",
       "MemoryReasoningDeps",
       "MemoryReasoningConfig",
       "MemoryReasoningStats",
       "MemoryReasoningResult",
       "ReasoningOutput",
       "ReasoningSeamDeps",
-      // Offline per-user representation builder.
-      // runUserRepresentationBuild is now CONSUMED by the daemon __USER_REPRESENTATION__
-      // cron-sentinel dispatch, so it SHRANK out of this baseline (no longer an
-      // orphan). createUserRepresentationSeam (the daemon-injected build() seam factory) is
-      // consumed by the dispatch too. buildUserRepresentationPrompt + parseUserRepresentationOutput
-      // are imported by createUserRepresentationSeam via the RELATIVE same-package path (the prompt
-      // stays agent-internal), so their @comis/agent index re-exports have no cross-package importer
-      // — baseline orphans (mirror DEDUCTIVE_PROMPT/parseDeductiveResult being relative-only). The
-      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
-      // SourceMemory read-shape are referenced via inline objects only (the dispatch + the gated
-      // bench construct them structurally) — baseline orphans (mirror MemoryReasoningDeps).
+      // Offline per-user representation builder. Phase 225 FOLD §3.2 RE-ORPHANED
+      // runUserRepresentationBuild + createUserRepresentationSeam: the daemon __USER_REPRESENTATION__
+      // cron-sentinel intercept was REMOVED (the per-user PROFILE is now built by the ONE __REFLECT__
+      // cron's kind:"profile" pass — the source build sets sourceTrustExternal from the per-memory
+      // trustLevel, the OLD layer-1 firewall; Plan 04), so both lost their production consumer. These
+      // are TRANSITIONAL orphans — Plan 05 DELETES the job + seam + these exports together (the BODIES
+      // are kept this plan for Plan 05's delete). buildUserRepresentationPrompt +
+      // parseUserRepresentationOutput are imported by createUserRepresentationSeam via the RELATIVE
+      // same-package path (the prompt stays agent-internal) — baseline orphans (mirror
+      // DEDUCTIVE_PROMPT/parseDeductiveResult being relative-only). The Deps/Config/Stats/Result SHAPE
+      // types + the Candidate/BuildOutput seam-output types + the SourceMemory read-shape are
+      // referenced via inline objects only — baseline orphans (mirror MemoryReasoningDeps).
       // UserRepresentationSeamDeps (the createUserRepresentationSeam input shape) is called with an
       // inline object, so the TYPE itself has no cross-package importer (mirror ReasoningSeamDeps).
+      "runUserRepresentationBuild",
+      "createUserRepresentationSeam",
       "buildUserRepresentationPrompt",
       "parseUserRepresentationOutput",
       "MemoryUserRepresentationDeps",

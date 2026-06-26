@@ -571,9 +571,11 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13.4. Memory consolidation cron — the opt-in gate
-  // OFF by default: a default-config agent registers NO consolidation job; an
-  // operator-enabled agent registers __MEMORY_CONSOLIDATION__ (default 30 3 * * *).
+  // 13.4. (Phase 225 FOLD §3.2) The standalone __MEMORY_CONSOLIDATION__ /
+  // __MEMORY_REASONING__ / __USER_REPRESENTATION__ cron registrations were REMOVED
+  // — their work folds into the ONE __REFLECT__ cron (Plan 04). Even with the
+  // per-agent cost subtrees ENABLED + the kill switch ON, NONE of the three
+  // registers (the I1 model: gone, not run beside __REFLECT__).
   // -------------------------------------------------------------------------
 
   /** A cron-scheduler stub that supports the registration path (getJobs/addJob). */
@@ -589,7 +591,7 @@ describe("setupSchedulers", () => {
     return { addJob, getJobs };
   }
 
-  it("registers NO consolidation cron for a default (consolidation-off) agent", async () => {
+  it("registers NONE of the 3 folded crons (__MEMORY_CONSOLIDATION__/__MEMORY_REASONING__/__USER_REPRESENTATION__) even when enabled + kill switch on", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -597,147 +599,22 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryConsolidation undefined => default OFF (the cost gate).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    // No __MEMORY_CONSOLIDATION__ job is ever added.
-    const consolidationAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__MEMORY_CONSOLIDATION__",
-    );
-    expect(consolidationAdds.length).toBe(0);
-  });
-
-  it("registers the __MEMORY_CONSOLIDATION__ cron (default 30 3 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // All three explicitly ENABLED — they STILL must not register (folded into __REFLECT__).
         memoryConsolidation: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const consolidationAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
-    expect(consolidationAdd).toBeDefined();
-    expect(consolidationAdd.id).toBe("memory-consolidation-agent-1");
-    expect(consolidationAdd.name).toBe("Memory consolidation");
-    // Default schedule runs AFTER memory-review's 0 2 so review-minted memories
-    // are consolidation candidates the same night.
-    expect(consolidationAdd.schedule).toEqual({ kind: "cron", expr: "30 3 * * *" });
-    expect(consolidationAdd.sessionTarget).toBe("isolated");
-    expect(consolidationAdd.sessionStrategy).toBe("fresh");
-  });
-
-  it("honors a custom consolidation schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryConsolidation: { enabled: true, schedule: "15 4 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const consolidationAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
-    expect(consolidationAdd?.schedule).toEqual({ kind: "cron", expr: "15 4 * * 0" });
-  });
-
-  // -------------------------------------------------------------------------
-  // 13.4b. Memory reasoning cron — the opt-in gate
-  // OFF by default: a default-config agent registers NO reasoning job; an
-  // operator-enabled agent registers __MEMORY_REASONING__ (default 0 4 * * *,
-  // AFTER consolidation's 30 3 so reasoning runs over freshly-consolidated
-  // observations). Mirrors the consolidation gate 1:1.
-  // -------------------------------------------------------------------------
-
-  it("registers NO reasoning cron for a default (reasoning-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryReasoning undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    // No __MEMORY_REASONING__ job is ever added.
-    const reasoningAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__MEMORY_REASONING__",
-    );
-    expect(reasoningAdds.length).toBe(0);
-  });
-
-  it("registers the __MEMORY_REASONING__ cron (default 0 4 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
         memoryReasoning: { enabled: true },
+        memoryUserRepresentation: { enabled: true },
       },
     };
+    const deps = createMinimalDeps({ agents });
+    (deps.container as any).config.memory = { costFeatures: { enabled: true } }; // kill switch ON
 
     const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
+    await setupSchedulers(deps);
 
-    const reasoningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
-    expect(reasoningAdd).toBeDefined();
-    expect(reasoningAdd.id).toBe("memory-reasoning-agent-1");
-    expect(reasoningAdd.name).toBe("Memory reasoning");
-    // Default schedule runs AFTER consolidation's 30 3 so reasoning works over
-    // freshly-consolidated observations the same night.
-    expect(reasoningAdd.schedule).toEqual({ kind: "cron", expr: "0 4 * * *" });
-    expect(reasoningAdd.sessionTarget).toBe("isolated");
-    expect(reasoningAdd.sessionStrategy).toBe("fresh");
-    expect(reasoningAdd.payload).toEqual({ kind: "system_event", text: "__MEMORY_REASONING__" });
-  });
-
-  it("honors a custom reasoning schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryReasoning: { enabled: true, schedule: "45 5 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const reasoningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
-    expect(reasoningAdd?.schedule).toEqual({ kind: "cron", expr: "45 5 * * 0" });
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    expect(added).not.toContain("__MEMORY_CONSOLIDATION__");
+    expect(added).not.toContain("__MEMORY_REASONING__");
+    expect(added).not.toContain("__USER_REPRESENTATION__");
   });
 
   // -------------------------------------------------------------------------
@@ -1018,11 +895,12 @@ describe("setupSchedulers", () => {
     return deps;
   }
 
+  // Phase 225 FOLD §3.2: __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+  // __USER_REPRESENTATION__ are NO LONGER registered (folded into __REFLECT__, Plan 04) —
+  // dropped from the kill-switch set. The cost crons still gated by the switch are the
+  // memory-review sweep + the usefulness judge.
   const COST_CRON_SENTINELS = [
     "__MEMORY_REVIEW__",
-    "__MEMORY_CONSOLIDATION__",
-    "__MEMORY_REASONING__",
-    "__USER_REPRESENTATION__",
     "__USEFULNESS_JUDGE__",
   ] as const;
 
