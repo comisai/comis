@@ -811,6 +811,45 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     expect(p.ok).toBe(false);
     expect(d.ok).toBe(false);
   });
+
+  // SKILL-04 (the never-run A→B loop, live-2026-06-26): a REFLECTED skill doc is
+  // admitted with a NON-EMPTY topicKey (the reflection engine names a doc
+  // `skill-<first16hex(topicKey)>` and admits it WITH that topicKey — REFLECT-06).
+  // The reuse loop holds only the skill NAME (ATTR-01), so promoteByName /
+  // demoteByName MUST resolve the row by `(tenant, agent, name)` — NOT by
+  // re-deriving the id with a hardcoded `topicKey:''`. Pre-fix promoteByName
+  // hashed `(tenant, agent, 'skill', '', name)`, which MISSES a row admitted with
+  // a non-empty topicKey → `changed:false` and the row never promotes — so the
+  // entire reflect→reuse→promote loop was silently dead on its real input (it only
+  // ever passed for hand-authored docs whose topicKey happened to be ''). The
+  // name is UNIQUE per (tenant, agent) (the same get() resolves by), so a
+  // name-keyed transition is the authoritative reconciliation.
+  it("SKILL-04: promoteByName promotes a doc admitted with a NON-EMPTY topicKey (the reflection-engine shape)", async () => {
+    // Admit exactly as the reflection job does: a non-empty topicKey + proofCount 1.
+    const admitted = await store.admit(
+      makeInput({ name: "skill-abc123def456", topicKey: "abc123def456", proofCount: 1 }),
+      SCOPE_A,
+    );
+    expect(admitted.ok).toBe(true);
+    const before = await store.get("skill-abc123def456", SCOPE_A);
+    expect(before.ok && before.value?.state).toBe("candidate");
+    expect(before.ok && before.value?.topicKey).toBe("abc123def456");
+
+    // threshold 1 ⇒ proof_count 1 + 1 = 2 >= 1 ⇒ candidate→active AND a real row move.
+    const r = await store.promoteByName("skill-abc123def456", { ...SCOPE_A, now: 2_000 }, 1);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.value.changed).toBe(true); // RED pre-fix: hardcoded topicKey:'' misses → false
+
+    const after = await store.get("skill-abc123def456", SCOPE_A);
+    expect(after.ok && after.value?.state).toBe("active"); // the row ACTUALLY moved
+    expect(after.ok && after.value?.proofCount).toBe(2); // proof_count incremented (not a no-op)
+
+    // demoteByName must ALSO resolve the same non-empty-topicKey row by name.
+    const d = await store.demoteByName("skill-abc123def456", { ...SCOPE_A, now: 3_000 });
+    expect(d.ok && d.value.changed).toBe(true); // RED pre-fix: misses the row → false
+    const afterDemote = await store.get("skill-abc123def456", SCOPE_A);
+    expect(afterDemote.ok && afterDemote.value?.state).toBe("stale");
+  });
 });
 
 describe("createSqliteMentalModelStore — error handling (catch branches)", () => {
