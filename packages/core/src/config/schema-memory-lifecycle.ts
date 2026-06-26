@@ -4,7 +4,7 @@
  *
  * The CRON knob for the periodic, KEYLESS memory-lifecycle sweep — the
  * hysteresis-banded tier promote/demote + usefulness-aware eviction pass. ON by
- * default (opt-out), like {@link MemoryOnlineTuningConfigSchema} — but SCAFFOLD-
+ * default (opt-out), like {@link LearningForgettingConfigSchema} — but SCAFFOLD-
  * DORMANT (see below): even on, it evicts/demotes NOTHING. Like that schema this
  * sweep is KEYLESS: the cron dispatch makes NO model call and needs NO API key
  * (it reads the already-accrued FEED/decay signals, computes strengths/tiers, and

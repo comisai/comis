@@ -45,7 +45,6 @@ export type {
 export type {
   MemoryLifecyclePort,
   MemoryLifecycleScope,
-  MemoryTier,
   LifecycleSweepReport,
 } from "./memory-lifecycle.js";
 export type {

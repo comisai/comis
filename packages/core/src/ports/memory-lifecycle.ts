@@ -9,7 +9,7 @@ import type { Result } from "@comis/shared";
  * (`failure_count >= failureEvictionFloor`). Tier promote/demote moves remain a
  * deferred step (`promoted`/`demoted` stay 0).
  *
- * This is a NEW port — like TunedAlphaStore / MemoryUsefulnessStore /
+ * This is a NEW port — like MemoryUsefulnessStore /
  * UserRepresentationStore / TripleStorePort it deliberately does NOT widen the
  * security-reviewed `MemoryPort` (store/search/delete). New capabilities arrive
  * as their own segregated port. The sole adapter is in @comis/memory (it owns the
@@ -32,10 +32,9 @@ import type { Result } from "@comis/shared";
  * is NON-DESTRUCTIVE by design (the `evicted_at` marker — mirror `consolidated_at` —
  * never a hard DELETE of the raw row), and REVERSIBLE via {@link unevict}.
  *
- * The method returns `Promise<Result<…, Error>>` (the TunedAlphaStore Result
- * posture). This file is type-only (mirrors tuned-alpha-store.ts /
- * user-representation-store.ts): no zod, no @comis/memory import, no runtime value
- * exports.
+ * The method returns `Promise<Result<…, Error>>` (the MemoryUsefulnessStore Result
+ * posture). This file is type-only (mirrors user-representation-store.ts): no zod,
+ * no @comis/memory import, no runtime value exports.
  */
 
 /**

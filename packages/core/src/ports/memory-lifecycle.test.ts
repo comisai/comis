@@ -33,7 +33,6 @@ import type {
 import type {
   MemoryLifecyclePort as PublicMemoryLifecyclePort,
   MemoryLifecycleScope as PublicMemoryLifecycleScope,
-  MemoryTier as PublicMemoryTier,
   LifecycleSweepReport as PublicLifecycleSweepReport,
 } from "../index.js";
 
@@ -195,7 +194,6 @@ describe("MemoryLifecyclePort — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     expectTypeOf<PublicMemoryLifecyclePort>().toEqualTypeOf<MemoryLifecyclePort>();
     expectTypeOf<PublicMemoryLifecycleScope>().toEqualTypeOf<MemoryLifecycleScope>();
-    expectTypeOf<PublicMemoryTier>().toEqualTypeOf<MemoryTier>();
     expectTypeOf<PublicLifecycleSweepReport>().toEqualTypeOf<LifecycleSweepReport>();
 
     // A downstream consumer can name the port type from the public surface.

@@ -47,7 +47,6 @@ export type {
   ReviseOutcome,
   MemoryLifecyclePort,
   MemoryLifecycleScope,
-  MemoryTier,
   LifecycleSweepReport,
   RelationshipStore,
   RelationshipScope,
