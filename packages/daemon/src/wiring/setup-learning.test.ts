@@ -549,12 +549,30 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     const ids = us.recordUsage.mock.calls.map((c) => c[0]).flat();
     expect(ids.sort()).toEqual(["m1", "m2"]);
     // The reward write is scoped to the resolved (tenant, agent); intent omitted →
-    // the global '' bucket (the verdict carries no intent; the bandit reads per-intent).
+    // the global '' bucket (the verdict carries no intent).
     const scope = us.recordUsage.mock.calls[0]![2];
     expect(scope.agentId).toBe(AGENT);
     expect(scope.tenantId).toBe("tenant-x");
     // No failure accrual on a success.
     expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("HIGH-2 no-regression: the RANK-01 recordUsage/recordFailure reward write SURVIVES the Phase-224 bandit deletion (the FORGET-02 failure_count source)", async () => {
+    // Phase 224 deleted the UCB recall bandit (the learner/perIntent/exploration sub-fields,
+    // the per-intent apply, and the __ONLINE_TUNING__ cron) but KEPT learningTuning.enabled +
+    // the reward write it gates. This pins that contract: with learningTuning.enabled ON, a
+    // SUCCESS still rewards (recordUsage) and a FAILURE still accrues failure_count (recordFailure).
+    const success = wireRewardSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["k1"] }),
+    );
+    await driveTrajectory(success.bus, SESSION_KEY, TRACE);
+    expect(success.us.recordUsage, "RANK-01 success reward still fires post-bandit-deletion").toHaveBeenCalledTimes(1);
+
+    const failure = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["k1"] }),
+    );
+    await driveTrajectory(failure.bus, SESSION_KEY, TRACE);
+    expect(failure.us.recordFailure, "FORGET-02 failure_count accrual still fires post-bandit-deletion").toHaveBeenCalled();
   });
 
   it("FAILURE verdict with a DETERMINISTIC source (pipeline) → recordFailure once (1 deterministic satisfies the gate)", async () => {

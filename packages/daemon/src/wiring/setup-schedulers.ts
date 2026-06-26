@@ -104,8 +104,9 @@ export async function setupSchedulers(deps: {
   // Master cost-feature kill switch (opt-out posture). When the operator sets
   // memory.costFeatures.enabled:false, EVERY LLM cost-bearing memory cron is force-disabled at
   // its registration site below — regardless of the agent's own per-feature opt-in. The gated
-  // set is the SIX cost crons: memoryReview, memoryConsolidation, memoryReasoning,
-  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. NOT gated: the $0
+  // set is the FIVE cost crons: memoryReview, memoryConsolidation, memoryReasoning,
+  // memoryUserRepresentation, memoryUsefulnessJudge. (memoryOnlineTuning — the bandit cron —
+  // was deleted in Phase 224.) NOT gated: the $0
   // keyless memoryLifecycle sweep, and the socialModeling cron (which has its OWN privacy
   // sign-off gate and stays independent). Default true (schema default) ⇒ byte-identical
   // registration. Read defensively (`!== false`) so an unexpectedly-absent block fails OPEN to
@@ -183,8 +184,8 @@ export async function setupSchedulers(deps: {
           if (!job.deliveryTarget) {
             // system_event jobs STILL emit scheduler:job_result (live finding
             // 2026-06-11): the memory crons (review / consolidation /
-            // reasoning / user-representation / usefulness-judge /
-            // online-tuning) are deliveryTarget-less __SENTINEL__ jobs whose
+            // reasoning / user-representation / usefulness-judge) are
+            // deliveryTarget-less __SENTINEL__ jobs whose
             // actual WORK rides the scheduler:job_result listener
             // (setup-channels-credentials). The old return-before-emit made
             // every memory cron complete "ok" nightly while doing NOTHING.
@@ -549,45 +550,13 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Online-tuning bandit cron job --
-    // OPT-IN, OFF by default. Unlike the usefulness judge this bandit is DETERMINISTIC +
-    // KEYLESS (no LLM call, no API key — the sentinel dispatch makes NO model resolution),
-    // so enabling it is a behavior opt-in, not a cost opt-in. Registered ONLY when the
-    // operator sets memoryOnlineTuning.enabled; a default agent registers NO job →
-    // byte-identical with the config absent. Default schedule 0 8 * * * runs AFTER the
-    // judge's 0 7 so the FEED signal it reads is fully settled. Job options mirror the
-    // judge/reasoning/userrep job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in. (Although this
-    // bandit is keyless/deterministic, it is in the operator-facing cost-feature set, so the
-    // kill switch disables it alongside the LLM crons for a single, predictable off-switch.)
-    const memoryOnlineTuningConfig = agentConfig.memoryOnlineTuning;
-    if (costFeaturesEnabled && memoryOnlineTuningConfig?.enabled) {
-      const memOnlineTuningJobId = `memory-online-tuning-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memOnlineTuningJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memOnlineTuningJobId,
-          name: "Memory online tuning",
-          agentId,
-          schedule: { kind: "cron", expr: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" },
-          payload: { kind: "system_event", text: "__ONLINE_TUNING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" }, "Registered memory online tuning cron job");
-      }
-    }
+    // (The online-tuning bandit cron — __ONLINE_TUNING__, gated by memoryOnlineTuning.enabled
+    // — was DELETED in Phase 224. The UCB recall bandit is gone; recall scoring is the fixed
+    // config.rag.scoring alphas, with no offline tuned-alpha write job.)
 
     // -- Memory lifecycle cron job --
-    // OPT-IN, OFF by default. Like the online-tuning bandit (NOT the LLM crons) this
-    // sweep is DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel dispatch
-    // makes NO model resolution), so enabling it is a behavior opt-in, not a cost opt-in.
+    // OPT-IN, OFF by default. A DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel
+    // dispatch makes NO model resolution) sweep, so enabling it is a behavior opt-in, not a cost opt-in.
     // Registered ONLY when the operator sets memoryLifecycle.enabled; a default agent
     // registers NO job → byte-identical with the config absent. Default schedule 0 9 * * *
     // runs AFTER online-tuning's 0 8 so the FEED + tuned alphas it reads have settled. Job

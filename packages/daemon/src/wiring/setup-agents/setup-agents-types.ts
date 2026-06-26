@@ -159,13 +159,6 @@ export interface SingleAgentDeps {
    *  dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
    *  no read, no push, byte-identical prompt. */
   relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Tuned-alpha store. Threaded into each per-agent createPiExecutor
-   *  (the executor recall read path -> prompt-assembly's buildScoringAlphas overlay; the four learned
-   *  non-trust alphas, the trust weight stays config-sourced — belt #2). Built in setup-memory on the
-   *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until BOTH the recall-side
-   *  gate (`rag.onlineTuning.enabled`) AND the OFFLINE bandit cron (`memoryOnlineTuning.enabled`) are on;
-   *  absent ⇒ no read, byte-identical recall. */
-  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
    *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
    *  (append-after-platform, materialized read-only). The segregated `MentalModelStorePort`

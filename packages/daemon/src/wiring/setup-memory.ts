@@ -34,7 +34,6 @@ import {
   createSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore,
   createSqliteRelationshipStore,
-  createSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore, createSqliteMentalModelStore,
   type MemoryApi,
@@ -180,9 +179,6 @@ export interface MemoryResult {
    *  the shared `db` (no model/IO cost). Feedback loop dormant until `rag.feedback.enabled` (default OFF);
    *  the write-back subscriber is wired separately. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Tuned-alpha store. SOLE `TunedAlphaStore` adapter; shared `db`, no model/IO cost. Dormant
-   *  until BOTH `rag.onlineTuning.enabled` (read) AND `memoryOnlineTuning.enabled` (keyless write). */
-  tunedAlphaStore: import("@comis/core").TunedAlphaStore;
   /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; shared `db`,
    *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
    *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
@@ -575,18 +571,8 @@ export async function setupMemory(deps: {
   // (it depends on a recall-attribution bus event not yet declared at this point).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-bis. Tuned-alpha store. Built on the SAME
-  // shared `db` handle the memory adapter owns — NOT a second Database — so the
-  // tuned_alpha table and the memories table share one connection and the (tenant, agent)
-  // isolation scope is consistent. Always constructed (no model/IO cost, like the
-  // usefulness store); it stays dormant until BOTH the recall-side gate
-  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read) AND the offline
-  // KEYLESS bandit cron (`agents.<id>.memoryOnlineTuning.enabled` — the __ONLINE_TUNING__
-  // write) are on. This is the composition-root join: the daemon builds the @comis/memory
-  // adapter here and threads the port TYPE into BOTH the recall read path (setup-agents-*
-  // -> createPiExecutor -> prompt-assembly's buildScoringAlphas) AND the __ONLINE_TUNING__
-  // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
-  const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
+  // 6.5.2d-bis. (The tuned-alpha store was DELETED in Phase 224 — the UCB recall bandit is
+  // gone; recall scoring is the fixed config.rag.scoring alphas, no tuned_alpha read/write.)
   // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
   // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE MentalModelStorePort adapter; agent↛memory cut — the daemon injects it into the __REFLECT__ cron. DORMANT until learningSkills.enabled.
@@ -784,7 +770,6 @@ export async function setupMemory(deps: {
     relationshipStore,
     consolidationStore,
     usefulnessStore,
-    tunedAlphaStore,
     outcomeStore,
     learnedSkillStore,
     recordOutboundMessage,

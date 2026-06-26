@@ -16,10 +16,11 @@
  * (today's default bare config), it emits NOTHING. It never logs a secret/key —
  * only feature names and a count.
  *
- * Scope of "cost-bearing" mirrors the kill switch exactly: the six crons
+ * Scope of "cost-bearing" mirrors the kill switch exactly: the five crons
  * (memoryReview, memoryConsolidation, memoryReasoning, memoryUserRepresentation,
- * memoryUsefulnessJudge, memoryOnlineTuning) and the query-time dialectic tool
- * (`memory_ask`). The $0 keyless memoryLifecycle sweep and the privacy-gated
+ * memoryUsefulnessJudge) and the query-time dialectic tool
+ * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224.)
+ * The $0 keyless memoryLifecycle sweep and the privacy-gated
  * socialModeling cron are NOT cost features here (lifecycle is keyless; social
  * has its own privacy gate), so neither triggers the notice.
  *
@@ -35,7 +36,6 @@ interface CostFeatureAgentSlice {
   memoryReasoning?: { enabled?: boolean };
   memoryUserRepresentation?: { enabled?: boolean };
   memoryUsefulnessJudge?: { enabled?: boolean };
-  memoryOnlineTuning?: { enabled?: boolean };
   dialectic?: { enabled?: boolean };
 }
 
@@ -51,7 +51,6 @@ const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; la
   { key: "memoryReasoning", label: "memoryReasoning (cron)" },
   { key: "memoryUserRepresentation", label: "memoryUserRepresentation (cron)" },
   { key: "memoryUsefulnessJudge", label: "memoryUsefulnessJudge (cron)" },
-  { key: "memoryOnlineTuning", label: "memoryOnlineTuning (cron)" },
   { key: "dialectic", label: "dialectic / memory_ask (query-time tool)" },
 ];
 

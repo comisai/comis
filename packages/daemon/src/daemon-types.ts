@@ -445,12 +445,6 @@ export interface BootContext {
    *  offline builder writes rows AND the operator enables the social-modeling dual gate (default-OFF +
    *  sign-off-gated). */
   relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
-  /** Tuned-alpha store — threaded into setupAgents (the executor
-   *  recall read path -> prompt-assembly's buildScoringAlphas overlay) AND the OFFLINE bandit cron
-   *  (setup-channels -> the __ONLINE_TUNING__ sentinel). Built in setup-memory on the shared db;
-   *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
-   *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
-  tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
   /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
    *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
    *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */

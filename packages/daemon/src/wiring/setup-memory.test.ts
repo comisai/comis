@@ -169,10 +169,6 @@ const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
   upsert: vi.fn(async () => ({ ok: true, value: undefined })),
   read: vi.fn(async () => ({ ok: true, value: [] })),
 })));
-const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: undefined })),
-})));
 // Outcome-signal store factory (Verified Learning WS1) — mocked so setupMemory wires it
 // (createSqliteOutcomeStore + wireLearningOutcome) without a real DB. Without the mock entry the
 // @comis/memory factory is undefined and EVERY setup call throws `createSqliteOutcomeStore is not
@@ -229,7 +225,6 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
   createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
-  createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
   createSqliteMentalModelStore: mockCreateSqliteMentalModelStore,
@@ -1226,27 +1221,8 @@ describe("setupMemory", () => {
     expect(result.usefulnessStore).toBeDefined();
   });
 
-  it("builds the tuned-alpha store on the SAME shared db handle and returns it", async () => {
-    const container = createMinimalContainer(); // all-default config (online tuning OFF)
-    const setupMemory = await getSetupMemory();
-
-    const result = await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-
-    // Built UNCONDITIONALLY (no model/IO cost; it stays dormant until BOTH the recall-side
-    // gate rag.onlineTuning.enabled AND the bandit cron memoryOnlineTuning.enabled are on).
-    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledOnce();
-    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so
-    // the (tenant, agent) scope is consistent with the memory rows / feedback signal it tunes over.
-    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb }),
-    );
-    expect(result.tunedAlphaStore).toBeDefined();
-  });
+  // (The tuned-alpha store construction test was removed in Phase 224 — the UCB recall bandit
+  // store was deleted; setup-memory no longer builds or returns a tunedAlphaStore.)
 
   it("builds the memory-lifecycle sweep store on the SAME shared db handle and returns it", async () => {
     const container = createMinimalContainer(); // all-default config (lifecycle cron OFF)

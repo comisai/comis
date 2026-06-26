@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
@@ -76,19 +76,16 @@ export interface MemoryCronContext {
   userRepresentationStore?: UserRepresentationStore;
   /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
   relationshipStore?: RelationshipStore;
-  /** The tuned-alpha upsert write the KEYLESS bandit drives (__ONLINE_TUNING__). */
-  tunedAlphaStore?: TunedAlphaStore;
-  /** The per-memory usefulness store: the READ surface (`readUsefulness`) the
-   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over, AND the WRITE
-   *  surface (`recordUsage`) the __USEFULNESS_JUDGE__ sentinel records its verdict through. */
+  /** The per-memory usefulness store: the WRITE surface (`recordUsage`) the
+   *  __USEFULNESS_JUDGE__ sentinel records its verdict through. (The __ONLINE_TUNING__
+   *  bandit read was deleted in Phase 224 — the recall bandit is gone.) */
   usefulnessStore?: MemoryUsefulnessStore;
   /** The DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
    *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
    *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
   memoryLifecycleStore?: MemoryLifecyclePort;
   /** The `inspect` read surface the __USER_REPRESENTATION__ / __SOCIAL_MODELING__
-   *  (grouped by channelId) / __ONLINE_TUNING__ (the bounded candidate-id set) /
-   *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
+   *  (grouped by channelId) / __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
    *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
   memoryApi?: MemoryApi;
   /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,

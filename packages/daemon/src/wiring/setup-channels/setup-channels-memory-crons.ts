@@ -4,7 +4,7 @@
  * to keep that leaf under the 600L setup-channels cap. The LLM-backed sentinels
  * (__MEMORY_CONSOLIDATION__, __MEMORY_REASONING__, __USER_REPRESENTATION__,
  * __SOCIAL_MODELING__) resolve a cheap "cron" model + an API key (by NAME, never logged);
- * the KEYLESS __ONLINE_TUNING__ sentinel resolves none. The sibling-hosted sentinels
+ * (the KEYLESS __ONLINE_TUNING__ bandit sentinel was deleted in Phase 224). The sibling-hosted sentinels
  * (__USEFULNESS_JUDGE__, __MEMORY_TRIPLE_EXTRACTION__ WS7 + the KEYLESS __MEMORY_LIFECYCLE__
  * FORGET-01/06 sweep) live in setup-channels-memory-crons-wire.ts (the 600L dir cap); the
  * fall-through delegates there.
@@ -19,23 +19,13 @@
 
 import { parseFormattedSessionKey } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint } from "./setup-channels-cron-credential.js";
-import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
+import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, type UserRepresentationSourceMemory, type RelationshipSourceMemory } from "@comis/agent";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 import { cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import { handleWireMemoryCronSentinel } from "./setup-channels-memory-crons-wire.js";
 import type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
 
 export type { MemoryCronPayload, MemoryCronContext } from "./setup-channels-memory-crons-types.js";
-
-/**
- * The per-intent tuned-alpha buckets the online-tuning bandit iterates when
- * `learningTuning.perIntent` is on (RANK-02): the GLOBAL '' bucket + the four deterministic
- * `classifyIntent` intents (`factual`/`temporal`/`preference`/`enumeration` — @comis/agent's
- * closed `Intent` union). Kept as a local closed list (the agent's `Intent` type is not on the
- * barrel and a TYPE cannot be iterated at runtime); a NEW intent on the agent side must be added
- * here too. The recall apply-site classifies live via `classifyIntent(query)`.
- */
-const TUNING_INTENT_BUCKETS = ["", "factual", "temporal", "preference", "enumeration"] as const;
 
 /**
  * Handle an LLM-backed memory-cron sentinel (`__MEMORY_CONSOLIDATION__` /
@@ -48,7 +38,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -337,113 +327,8 @@ export async function handleMemoryCronSentinel(
     return true;
   }
 
-  // -- Online-tuning bandit sentinel intercept --
-  // The OFFLINE tuned-alpha bandit — DETERMINISTIC + KEYLESS (no model/key/build seam; it deletes
-  // the LLM crons' work). Gate: memoryOnlineTuning.enabled (cron) AND learningTuning.enabled
-  // (RANK-02/03: per-intent + bandit/nudge). When learning is on it iterates the intent buckets,
-  // selecting the learner by config; off → the legacy single-bucket nudge (byte-identical). The
-  // job is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site).
-  if (resultText === "__ONLINE_TUNING__") {
-    const { agentId } = payload;
-    if (!agentId) {
-      logger.warn({ hint: "Online tuning job fired without agentId", errorKind: "config" as const }, "Skipping online tuning -- no agentId");
-      payload.onComplete?.({ status: "error", error: "No agentId for online tuning" });
-      return true;
-    }
-
-    const agentConfig = agents[agentId];
-    const cfg = agentConfig?.memoryOnlineTuning;
-    if (!cfg?.enabled) {
-      // The opt-in gate: a disabled (or default-config) agent does NOTHING — short-circuit ok
-      // so the scheduler records a clean run (mirror the reasoning/user-rep gate). Byte-identical.
-      logger.debug({ agentId }, "Online tuning disabled for agent, skipping");
-      payload.onComplete?.({ status: "ok" });
-      return true;
-    }
-
-    // The write store + the FEED read surface MUST both be present (injected from setup-memory).
-    // Absent => cannot run the bandit — surface a clean error rather than silently no-op.
-    if (!tunedAlphaStore || !usefulnessStore) {
-      logger.warn({ agentId, hint: "tunedAlphaStore/usefulnessStore not injected -- cannot run the bandit", errorKind: "config" as const }, "Skipping online tuning -- tuned-alpha/usefulness surface not wired");
-      payload.onComplete?.({ status: "error", error: "tuned-alpha/usefulness surface not wired" });
-      return true;
-    }
-
-    // NO cheap-model resolution, NO provider entry, NO secret/key lookup, NO offline build
-    // seam here — the bandit is deterministic + keyless (the binding constraint). It costs
-    // nothing in LLM spend (the deletion vs the LLM-backed sentinels above).
-
-    const tuningTenantId = tenantId ?? container.config.tenantId ?? "default";
-    const tuningLogger = logger.child({ agentId, submodule: "online-tuning" });
-    // The static rag.scoring baseline (the four non-trust alphas) the bandit starts from when no
-    // tuned row exists yet. NEVER the trust weight (the ship-gate — trust stays config-sourced).
-    const scoring = agentConfig?.rag?.scoring;
-    const configScoring = {
-      recencyAlpha: scoring?.recencyAlpha ?? 0.2,
-      temporalAlpha: scoring?.temporalAlpha ?? 0.2,
-      proofAlpha: scoring?.proofAlpha ?? 0.1,
-      usefulnessAlpha: scoring?.usefulnessAlpha ?? 0.1,
-    };
-    const maxSourceMemories = cfg.maxSourceMemories ?? 200;
-
-    // The per-intent FEED-read seam scoped to (tenant, agent, intent) over a bounded recent
-    // candidate-id set (the daemon's existing memory read surface; maxSourceMemories bounds it).
-    // Omitted intent → the global '' bucket (byte-identical legacy read). A read failure is
-    // non-fatal in the job — the bandit keeps the ranker's current weights.
-    const makeReadUsefulness = (intent?: string) =>
-      async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
-        const ids = memoryApi
-          ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
-          : [];
-        return usefulnessStore.readUsefulness(ids, {
-          tenantId: tuningTenantId,
-          agentId,
-          ...(intent !== undefined ? { intent } : {}),
-        });
-      };
-
-    // RANK-02/03 gate composition (resolved decision #3): `memoryOnlineTuning.enabled` runs the
-    // cron (already checked above); `learningTuning.enabled` SELECTS the bandit + per-intent +
-    // outcome-reward behavior. When OFF → the LEGACY single-bucket nudge (byte-identical). When
-    // ON → per-intent runs (perIntent) selecting bandit-vs-nudge by `learner`.
-    const learningTuning = agentConfig?.learningTuning;
-    const runFor = (intent?: string) =>
-      runOnlineTuning({
-        agentId,
-        tenantId: tuningTenantId,
-        config: {
-          enabled: cfg.enabled,
-          maxSourceMemories,
-          ...(learningTuning?.enabled ? { learner: learningTuning.learner, exploration: learningTuning.exploration } : {}),
-          ...(intent !== undefined ? { intent } : {}),
-        },
-        // Injected from setup-memory (the composition-root join) — the port TYPE only.
-        tunedAlphaStore,
-        readUsefulness: makeReadUsefulness(intent) as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
-        configScoring,
-        clock,
-        logger: tuningLogger,
-        eventBus: container.eventBus,
-      });
-
-    let anyTuningError = false;
-    if (learningTuning?.enabled && learningTuning?.perIntent) {
-      // Per-intent: the global '' bucket + the closed deterministic intents (mirrors the agent's
-      // classifyIntent union). Each bucket tunes its own (tenant, agent, intent) vector.
-      for (const intent of TUNING_INTENT_BUCKETS) {
-        const r = await runFor(intent);
-        if (!r.ok) anyTuningError = true;
-      }
-    } else {
-      // The LEGACY single-bucket path (learningTuning off, or on-but-not-per-intent): the global
-      // '' bucket only — byte-identical to the pre-Plan-06 behaviour when learningTuning is off.
-      const r = await runFor(undefined);
-      if (!r.ok) anyTuningError = true;
-    }
-
-    payload.onComplete?.({ status: anyTuningError ? "error" : "ok", error: anyTuningError ? "one or more online-tuning intent runs failed" : undefined });
-    return true;
-  }
+  // NOTE: the __ONLINE_TUNING__ bandit sentinel was DELETED in Phase 224 (v2.31) — the UCB
+  // tuned-alpha bandit is gone; recall scoring is the fixed config.rag.scoring alphas.
 
   // NOTE: the __MEMORY_LIFECYCLE__ sentinel (FORGET-01/06 — soft eviction + the
   // learning:memory_* daemon emits) lives in the sibling setup-channels-memory-crons-wire.ts

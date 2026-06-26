@@ -41,7 +41,6 @@ vi.mock("@comis/agent", () => ({
   createUserRepresentationSeam: vi.fn(),
   runRelationshipBuild: vi.fn(),
   createRelationshipSeam: vi.fn(),
-  runOnlineTuning: vi.fn(),
   resolveModelProfile: vi.fn(() => ({ capabilityClass: "frontier" })),
 }));
 

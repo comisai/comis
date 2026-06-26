@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -229,21 +229,16 @@ export interface ChannelsDeps {
    *  missing thread silently disables the offline-builder write path. Absent => the
    *  relationship sentinel cannot run (the cron is off-by-default + sign-off-gated anyway). */
   relationshipStore?: RelationshipStore;
-  /** Tuned-alpha store — forwarded to the cron path so the
-   *  opt-in __ONLINE_TUNING__ bandit sentinel runs runOnlineTuning's tuned-vector upsert. Built
-   *  in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut).
-   *  Threaded the full daemon → registry → credentials chain — a missing thread silently disables
-   *  the bandit write (the field-plumbing lesson). Absent => off-by-default, never reached. */
-  tunedAlphaStore?: TunedAlphaStore;
   /** Memory-lifecycle sweep store — forwarded to the cron path so
    *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
    *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
    *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness READ surface — forwarded to the cron path so
-   *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it. Built in setup-memory
-   *  on the shared db handle; injected as the port TYPE (agent↛memory cut). */
+  /** Recall-utility usefulness store — forwarded to the cron path so the __USEFULNESS_JUDGE__
+   *  sentinel records its verdict through it (`recordUsage`). Built in setup-memory on the shared
+   *  db handle; injected as the port TYPE (agent↛memory cut). (The __ONLINE_TUNING__ bandit FEED
+   *  read was deleted in Phase 224.) */
   usefulnessStore?: MemoryUsefulnessStore;
   /** Outcome-signal store (WS1) — forwarded to the __REFLECT__ cron path (runReflection
    *  fail-closed success gate). Built in setup-memory; port TYPE only (agent↛memory cut). */
@@ -429,7 +424,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     tripleStore: deps.tripleStore,
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
-    tunedAlphaStore: deps.tunedAlphaStore,
     memoryLifecycleStore: deps.memoryLifecycleStore,
     usefulnessStore: deps.usefulnessStore,
     // v2.31 Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →

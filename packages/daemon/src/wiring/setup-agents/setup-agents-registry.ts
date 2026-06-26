@@ -213,10 +213,6 @@ export async function setupAgents(deps: {
    *  createPiExecutor like userRepresentationStore (the recall LLM-free `<channel_relationships>`
    *  injection read path). Built in setup-memory on the shared db. */
   relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Tuned-alpha store. Threaded into each per-agent createPiExecutor
-   *  like relationshipStore (the recall buildScoringAlphas tuned-vector read path). Built in
-   *  setup-memory on the shared db. */
-  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   learnedSkillStore?: import("@comis/core").MentalModelStorePort; // v2.26 SURFACE-01/03: forwarded into each SingleAgentDeps -> the getPromptSkillsXml surface seam; segregated port TYPE (agent↛memory cut); default-OFF
   learnedSkillSurfaceRegistry?: import("./learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01: shared per-agent surface registry; each agent registers its refresh closure so the promote/demote loop re-refreshes it (next-session pickup)
   /** Delivery mirror port for session mirroring injection */
@@ -464,7 +460,7 @@ export async function setupAgents(deps: {
     pinnedStore: deps.pinnedStore,
     provenanceStore: deps.provenanceStore,
     userRepresentationStore: deps.userRepresentationStore,
-    relationshipStore: deps.relationshipStore, tunedAlphaStore: deps.tunedAlphaStore,
+    relationshipStore: deps.relationshipStore,
     learnedSkillStore: deps.learnedSkillStore, learnedSkillSurfaceRegistry: deps.learnedSkillSurfaceRegistry,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,

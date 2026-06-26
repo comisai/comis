@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
@@ -92,13 +92,6 @@ export interface CronEventListenerDeps {
    *  no-op. Absent => the relationship sentinel cannot run, but the cron is off-by-default
    *  AND sign-off-gated so a default-config agent never reaches it. */
   relationshipStore?: RelationshipStore;
-  /** Tuned-alpha store — the __ONLINE_TUNING__ bandit sentinel's
-   *  per-(tenant, agent) tuned-4-alpha-vector upsert write path. Built in setup-memory on the
-   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the bandit a silent no-op
-   *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
-  tunedAlphaStore?: TunedAlphaStore;
   /** Memory-lifecycle sweep store — the KEYLESS
    *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
@@ -106,9 +99,10 @@ export interface CronEventListenerDeps {
    *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
    *  cron is off-by-default so a default-config agent never reaches it. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness READ surface — the
-   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
-   *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
+  /** Recall-utility usefulness store — the __USEFULNESS_JUDGE__ sentinel records its
+   *  verdict through it (`recordUsage`). Built in setup-memory on the shared db handle;
+   *  injected as the port TYPE (agent↛memory cut). (The __ONLINE_TUNING__ bandit FEED read
+   *  was deleted in Phase 224.) */
   usefulnessStore?: MemoryUsefulnessStore;
   outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
   learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
@@ -240,7 +234,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tripleStore: deps.tripleStore,
       userRepresentationStore: deps.userRepresentationStore,
       relationshipStore: deps.relationshipStore,
-      tunedAlphaStore: deps.tunedAlphaStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
       usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,

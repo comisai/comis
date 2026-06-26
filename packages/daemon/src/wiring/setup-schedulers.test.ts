@@ -254,7 +254,7 @@ describe("setupSchedulers", () => {
   // -------------------------------------------------------------------------
   // 5b. deliveryTarget-less system_event jobs still emit scheduler:job_result
   // (live finding 2026-06-11): the memory crons (review/consolidation/
-  // reasoning/user-representation/usefulness-judge/online-tuning) are
+  // reasoning/user-representation/usefulness-judge) are
   // registered as deliveryTarget-less __SENTINEL__ system_event jobs whose
   // WORK rides the scheduler:job_result listener. The old short-circuit
   // returned BEFORE the emit, so every memory cron completed "ok" nightly
@@ -898,91 +898,15 @@ describe("setupSchedulers", () => {
     expect(judgeAdd?.schedule).toEqual({ kind: "cron", expr: "30 8 * * 0" });
   });
 
-  // -------------------------------------------------------------------------
-  // __ONLINE_TUNING__ cron registration. OFF by
-  // default. Registered ONLY when the operator sets memoryOnlineTuning.enabled; a
-  // default agent registers NO job → byte-identical with the config absent. Default
-  // 0 8 * * * runs AFTER the judge's 0 7 so the FEED signal is fully settled. The
-  // sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the judge.
-  // -------------------------------------------------------------------------
-
-  it("registers NO __ONLINE_TUNING__ cron for a default (tuning-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryOnlineTuning undefined => default OFF (the opt-in gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__ONLINE_TUNING__",
-    );
-    expect(tuningAdds.length).toBe(0);
-  });
-
-  it("registers the __ONLINE_TUNING__ cron (default 0 8 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryOnlineTuning: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
-    expect(tuningAdd).toBeDefined();
-    expect(tuningAdd.id).toBe("memory-online-tuning-agent-1");
-    expect(tuningAdd.name).toBe("Memory online tuning");
-    // Default schedule runs AFTER the judge's 0 7 so the FEED signal is fully settled.
-    expect(tuningAdd.schedule).toEqual({ kind: "cron", expr: "0 8 * * *" });
-    expect(tuningAdd.sessionTarget).toBe("isolated");
-    expect(tuningAdd.sessionStrategy).toBe("fresh");
-    expect(tuningAdd.payload).toEqual({ kind: "system_event", text: "__ONLINE_TUNING__" });
-  });
-
-  it("honors a custom online-tuning schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryOnlineTuning: { enabled: true, schedule: "30 9 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
-    expect(tuningAdd?.schedule).toEqual({ kind: "cron", expr: "30 9 * * 0" });
-  });
+  // (The __ONLINE_TUNING__ cron-registration tests were removed in Phase 224 — the UCB recall
+  // bandit + its cron were deleted; recall scoring is the fixed config.rag.scoring alphas.)
 
   // -------------------------------------------------------------------------
   // __MEMORY_LIFECYCLE__ cron registration. OFF
   // by default. Registered ONLY when the operator sets memoryLifecycle.enabled; a
   // default agent registers NO job → byte-identical with the config absent. Default
-  // 0 9 * * * runs AFTER online-tuning's 0 8. Like the bandit (NOT the LLM crons)
-  // the sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the
-  // online-tuning block. Even when enabled the sweep is DORMANT (evicts/demotes 0).
+  // 0 9 * * *. The sentinel dispatch is KEYLESS (no model/key). Even when enabled the
+  // sweep is DORMANT (evicts/demotes 0).
   // -------------------------------------------------------------------------
 
   it("registers NO __MEMORY_LIFECYCLE__ cron for a default (lifecycle-off) agent", async () => {
@@ -1027,7 +951,7 @@ describe("setupSchedulers", () => {
     expect(lifecycleAdd).toBeDefined();
     expect(lifecycleAdd.id).toBe("memory-lifecycle-agent-1");
     expect(lifecycleAdd.name).toBe("Memory lifecycle");
-    // Default schedule runs AFTER online-tuning's 0 8.
+    // Default schedule 0 9 * * *.
     expect(lifecycleAdd.schedule).toEqual({ kind: "cron", expr: "0 9 * * *" });
     expect(lifecycleAdd.sessionTarget).toBe("isolated");
     expect(lifecycleAdd.sessionStrategy).toBe("fresh");
@@ -1062,7 +986,8 @@ describe("setupSchedulers", () => {
   // LLM cost-bearing memory CRON is force-disabled at the registration site —
   // even for an agent whose per-agent feature is explicitly enabled. The gated
   // set is: memoryReview, memoryConsolidation, memoryReasoning,
-  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. The
+  // memoryUserRepresentation, memoryUsefulnessJudge. (memoryOnlineTuning — the bandit
+  // cron — was deleted in Phase 224.) The
   // $0 keyless memoryLifecycle sweep and the privacy-gated socialModeling cron
   // are NOT gated by this switch (lifecycle is keyless; social has its OWN
   // privacy sign-off gate). When the switch is on (the default) registration is
@@ -1081,7 +1006,6 @@ describe("setupSchedulers", () => {
       memoryReasoning: { enabled: true },
       memoryUserRepresentation: { enabled: true },
       memoryUsefulnessJudge: { enabled: true },
-      memoryOnlineTuning: { enabled: true },
       memoryLifecycle: { enabled: true },
       socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
     };
@@ -1100,7 +1024,6 @@ describe("setupSchedulers", () => {
     "__MEMORY_REASONING__",
     "__USER_REPRESENTATION__",
     "__USEFULNESS_JUDGE__",
-    "__ONLINE_TUNING__",
   ] as const;
 
   it("force-disables EVERY cost-bearing memory cron when memory.costFeatures.enabled is false (even per-agent-enabled)", async () => {
@@ -1136,7 +1059,6 @@ describe("setupSchedulers", () => {
       memoryReasoning: { enabled: true, schedule: "0 4 * * *" },
       memoryUserRepresentation: { enabled: true, schedule: "0 5 * * *" },
       memoryUsefulnessJudge: { enabled: true, schedule: "0 7 * * *" },
-      memoryOnlineTuning: { enabled: true, schedule: "0 8 * * *" },
     };
   }
 
