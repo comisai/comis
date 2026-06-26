@@ -239,7 +239,8 @@ describe("handleWireMemoryCronSentinel", () => {
   it("__REFLECT__ enabled → reflects ALL 3 kinds (one engine, looped) injecting the per-kind prompt/source, re-emits the SUMMED learning:skill_* counts", async () => {
     const bundle = makeReflectionBundle();
     const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learningSkills: { enabled: true, minConfidence: 0.7 } } },
+      // Phase 226: the collapsed learning block — reflect.minConfidence (0.6) + reflect.maxDocsPerRun (25).
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6, maxDocsPerRun: 25 } } } },
       apiKey: "test-key",
       reflection: bundle,
     });
@@ -275,9 +276,10 @@ describe("handleWireMemoryCronSentinel", () => {
     // No validation adapter / approval gate on the reflect path (the synthesis-only belt is gone).
     expect(skillArg.validationAdapter).toBeUndefined();
     expect(skillArg.approvalGate).toBeUndefined();
-    // The config the daemon passed: the per-run DoS ceiling (no learningSkills key for it).
-    expect((skillArg.config as { maxDocsPerRun: number }).maxDocsPerRun).toBe(10);
-    expect((skillArg.config as { minConfidence: number }).minConfidence).toBe(0.7);
+    // The config the daemon passed: Phase 226 wires the per-run DoS ceiling + the floor from
+    // the collapsed learning.reflect block (maxDocsPerRun was a hardcoded 10, now config-driven 25).
+    expect((skillArg.config as { maxDocsPerRun: number }).maxDocsPerRun).toBe(25);
+    expect((skillArg.config as { minConfidence: number }).minConfidence).toBe(0.6);
     // The PER-KIND source build (skill outcomes / profile+topic memories) — called once per kind.
     expect(bundle!.buildSourceTrajectories).toHaveBeenCalledTimes(3);
     const builtKinds = (bundle!.buildSourceTrajectories as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort();
@@ -310,7 +312,7 @@ describe("handleWireMemoryCronSentinel", () => {
     // Every kind admits nothing for the uncorroborated reason → the SUMMED verdict is uncorroborated.
     mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0 } });
     const ctx = makeCtx({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learningSkills: { enabled: true, minConfidence: 0.7 } } },
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
       apiKey: "test-key",
       reflection: makeReflectionBundle(),
     });
@@ -327,7 +329,7 @@ describe("handleWireMemoryCronSentinel", () => {
   });
 
   it("__REFLECT__ errors (no run) when the reflection bundle is not wired", async () => {
-    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1", learningSkills: { enabled: true } } } }); // no reflection bundle
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1", learning: { enabled: true } } } }); // no reflection bundle
     const onComplete = vi.fn();
     const handled = await handleWireMemoryCronSentinel("__REFLECT__", { agentId: "agent-1", onComplete }, ctx);
     expect(handled).toBe(true);

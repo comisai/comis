@@ -51,13 +51,14 @@ describe("memory-job config defaults match documented intent (anti-drift, WIRE-0
     });
   }
 
-  it("names memory.costFeatures.enabled as the REAL gate (default true = opt-out), not the per-feature flag", () => {
-    // The master kill switch — its default-true (opt-out) posture is what makes the six
-    // cost jobs "registered by default"; flipping it OFF force-disables them all at the
-    // cron registration site. The per-feature `enabled: true` only governs "registered WHEN
-    // the master switch is on", so this is the default that the reconciled comments cite.
+  it("names memory.enabled as the REAL gate (default true = opt-out), not the per-feature flag", () => {
+    // The master kill switch (renamed from memory.costFeatures.enabled to memory.enabled in
+    // Phase 226) — its default-true (opt-out) posture is what makes the cost jobs "registered by
+    // default"; flipping it OFF force-disables them all at the cron registration site. The
+    // per-feature `enabled: true` only governs "registered WHEN the master switch is on", so this
+    // is the default that the reconciled comments cite.
     const memory = MemoryConfigSchema.parse({});
-    expect(memory.costFeatures.enabled, "the master cost-feature switch defaults ON (opt-out)").toBe(true);
+    expect(memory.enabled, "the master cost-feature switch defaults ON (opt-out)").toBe(true);
   });
 
   it("defaults the Verified-Learning features ON (opt-out) — no lone OFF feature; the master kill switch is the gate", () => {

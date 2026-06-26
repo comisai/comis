@@ -1245,56 +1245,90 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "enabled": true,
-      "eviction": {
-        "enabled": true,
+      "forget": {
         "failureEvictionFloor": 3,
-        "strengthThreshold": 0.2
+        "highProofFloor": 5,
+        "maxDormantDays": 90
       },
-      "failurePenalty": 0.5
+      "reflect": {
+        "maxDocsPerRun": 25,
+        "minConfidence": 0.6,
+        "promoteAtProofCount": 3,
+        "schedule": "0 3 * * *"
+      }
     },
     "immutable": true,
-    "path": "agents.learningForgetting",
+    "path": "agents.learning",
     "type": "object"
   },
   {
     "default": true,
     "immutable": true,
-    "path": "agents.learningForgetting.enabled",
+    "path": "agents.learning.enabled",
     "type": "boolean"
   },
   {
     "default": {
-      "enabled": true,
       "failureEvictionFloor": 3,
-      "strengthThreshold": 0.2
+      "highProofFloor": 5,
+      "maxDormantDays": 90
     },
     "immutable": true,
-    "path": "agents.learningForgetting.eviction",
+    "path": "agents.learning.forget",
     "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningForgetting.eviction.enabled",
-    "type": "boolean"
   },
   {
     "default": 3,
     "immutable": true,
-    "path": "agents.learningForgetting.eviction.failureEvictionFloor",
+    "path": "agents.learning.forget.failureEvictionFloor",
     "type": "integer"
   },
   {
-    "default": 0.2,
+    "default": 5,
     "immutable": true,
-    "path": "agents.learningForgetting.eviction.strengthThreshold",
+    "path": "agents.learning.forget.highProofFloor",
+    "type": "integer"
+  },
+  {
+    "default": 90,
+    "immutable": true,
+    "path": "agents.learning.forget.maxDormantDays",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "maxDocsPerRun": 25,
+      "minConfidence": 0.6,
+      "promoteAtProofCount": 3,
+      "schedule": "0 3 * * *"
+    },
+    "immutable": true,
+    "path": "agents.learning.reflect",
+    "type": "object"
+  },
+  {
+    "default": 25,
+    "immutable": true,
+    "path": "agents.learning.reflect.maxDocsPerRun",
+    "type": "integer"
+  },
+  {
+    "default": 0.6,
+    "immutable": true,
+    "path": "agents.learning.reflect.minConfidence",
     "type": "number"
   },
   {
-    "default": 0.5,
+    "default": 3,
     "immutable": true,
-    "path": "agents.learningForgetting.failurePenalty",
-    "type": "number"
+    "path": "agents.learning.reflect.promoteAtProofCount",
+    "type": "integer"
+  },
+  {
+    "default": "0 3 * * *",
+    "immutable": true,
+    "path": "agents.learning.reflect.schedule",
+    "type": "string"
   },
   {
     "default": {
@@ -1415,89 +1449,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": {
-      "approval": {
-        "requireForMutating": true
-      },
-      "autoAdmitReadOnly": true,
-      "enabled": true,
-      "minConfidence": 0.7,
-      "promoteAtProofCount": 3,
-      "validation": {
-        "requireReproduction": true
-      }
-    },
-    "immutable": true,
-    "path": "agents.learningSkills",
-    "type": "object"
-  },
-  {
-    "default": {
-      "requireForMutating": true
-    },
-    "immutable": true,
-    "path": "agents.learningSkills.approval",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.approval.requireForMutating",
-    "type": "boolean"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.autoAdmitReadOnly",
-    "type": "boolean"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 0.7,
-    "immutable": true,
-    "path": "agents.learningSkills.minConfidence",
-    "type": "number"
-  },
-  {
-    "default": 3,
-    "immutable": true,
-    "path": "agents.learningSkills.promoteAtProofCount",
-    "type": "integer"
-  },
-  {
-    "default": {
-      "requireReproduction": true
-    },
-    "immutable": true,
-    "path": "agents.learningSkills.validation",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.validation.requireReproduction",
-    "type": "boolean"
-  },
-  {
-    "default": {
-      "enabled": true
-    },
-    "immutable": true,
-    "path": "agents.learningTuning",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningTuning.enabled",
-    "type": "boolean"
-  },
-  {
     "default": 100000,
     "immutable": true,
     "path": "agents.maxContextChars",
@@ -1522,24 +1473,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "durableCap": 1000,
       "enabled": true,
-      "ephemeralCap": 500,
-      "epsilonPrune": 0.05,
-      "maxDormantDays": 90,
-      "schedule": "0 9 * * *",
-      "thetaDemote": 0.3,
-      "thetaPromote": 0.7
+      "schedule": "0 9 * * *"
     },
     "immutable": true,
     "path": "agents.memoryLifecycle",
     "type": "object"
-  },
-  {
-    "default": 1000,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.durableCap",
-    "type": "integer"
   },
   {
     "default": true,
@@ -1548,40 +1487,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 500,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.ephemeralCap",
-    "type": "integer"
-  },
-  {
-    "default": 0.05,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.epsilonPrune",
-    "type": "number"
-  },
-  {
-    "default": 90,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.maxDormantDays",
-    "type": "integer"
-  },
-  {
     "default": "0 9 * * *",
     "immutable": true,
     "path": "agents.memoryLifecycle.schedule",
     "type": "string"
-  },
-  {
-    "default": 0.3,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.thetaDemote",
-    "type": "number"
-  },
-  {
-    "default": 0.7,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.thetaPromote",
-    "type": "number"
   },
   {
     "default": {
@@ -7178,47 +7087,49 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
     "type": "integer"
   },
   {
-    "default": {
-      "enabled": true
-    },
-    "immutable": false,
-    "path": "memory.costFeatures",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "memory.costFeatures.enabled",
-    "type": "boolean"
-  },
-  {
     "default": "memory.db",
     "immutable": false,
     "path": "memory.dbPath",
     "type": "string"
   },
   {
+    "default": true,
+    "immutable": false,
+    "path": "memory.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "embeddingDimensions": 1536,
+      "embeddingModel": "text-embedding-3-small",
+      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    },
+    "immutable": false,
+    "path": "memory.recall",
+    "type": "object"
+  },
+  {
     "default": 1536,
     "immutable": false,
-    "path": "memory.embeddingDimensions",
+    "path": "memory.recall.embeddingDimensions",
     "type": "integer"
   },
   {
     "default": "text-embedding-3-small",
     "immutable": false,
-    "path": "memory.embeddingModel",
+    "path": "memory.recall.embeddingModel",
+    "type": "string"
+  },
+  {
+    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+    "immutable": false,
+    "path": "memory.recall.rerankerModel",
     "type": "string"
   },
   {
     "default": "auto",
     "immutable": false,
     "path": "memory.rerankerGpu",
-    "type": "string"
-  },
-  {
-    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
-    "immutable": false,
-    "path": "memory.rerankerModel",
     "type": "string"
   },
   {
@@ -8516,14 +8427,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "enabled": true,
           "maxActiveCaches": 20
         },
-        "learningForgetting": {
+        "learning": {
           "enabled": true,
-          "eviction": {
-            "enabled": true,
+          "forget": {
             "failureEvictionFloor": 3,
-            "strengthThreshold": 0.2
+            "highProofFloor": 5,
+            "maxDormantDays": 90
           },
-          "failurePenalty": 0.5
+          "reflect": {
+            "maxDocsPerRun": 25,
+            "minConfidence": 0.6,
+            "promoteAtProofCount": 3,
+            "schedule": "0 3 * * *"
+          }
         },
         "learningOutcome": {
           "correction": {
@@ -8550,33 +8466,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "pipeline"
           ]
         },
-        "learningSkills": {
-          "approval": {
-            "requireForMutating": true
-          },
-          "autoAdmitReadOnly": true,
-          "enabled": true,
-          "minConfidence": 0.7,
-          "promoteAtProofCount": 3,
-          "validation": {
-            "requireReproduction": true
-          }
-        },
-        "learningTuning": {
-          "enabled": true
-        },
         "maxContextChars": 100000,
         "maxSteps": 150,
         "maxToolResultChars": 50000,
         "memoryLifecycle": {
-          "durableCap": 1000,
           "enabled": true,
-          "ephemeralCap": 500,
-          "epsilonPrune": 0.05,
-          "maxDormantDays": 90,
-          "schedule": "0 9 * * *",
-          "thetaDemote": 0.3,
-          "thetaPromote": 0.7
+          "schedule": "0 9 * * *"
         },
         "memoryReview": {
           "autoTags": [],
@@ -13154,14 +13049,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "targetSize": 500,
         "threshold": 1000
       },
-      "costFeatures": {
-        "enabled": true
-      },
       "dbPath": "memory.db",
-      "embeddingDimensions": 1536,
-      "embeddingModel": "text-embedding-3-small",
+      "enabled": true,
+      "recall": {
+        "embeddingDimensions": 1536,
+        "embeddingModel": "text-embedding-3-small",
+        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+      },
       "rerankerGpu": "auto",
-      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
       "rerankerModelsDir": "models",
       "rerankerThreads": 4,
       "retention": {
@@ -13202,47 +13097,49 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": {
-      "enabled": true
-    },
-    "immutable": false,
-    "path": "memory.costFeatures",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "memory.costFeatures.enabled",
-    "type": "boolean"
-  },
-  {
     "default": "memory.db",
     "immutable": false,
     "path": "memory.dbPath",
     "type": "string"
   },
   {
+    "default": true,
+    "immutable": false,
+    "path": "memory.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "embeddingDimensions": 1536,
+      "embeddingModel": "text-embedding-3-small",
+      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    },
+    "immutable": false,
+    "path": "memory.recall",
+    "type": "object"
+  },
+  {
     "default": 1536,
     "immutable": false,
-    "path": "memory.embeddingDimensions",
+    "path": "memory.recall.embeddingDimensions",
     "type": "integer"
   },
   {
     "default": "text-embedding-3-small",
     "immutable": false,
-    "path": "memory.embeddingModel",
+    "path": "memory.recall.embeddingModel",
+    "type": "string"
+  },
+  {
+    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+    "immutable": false,
+    "path": "memory.recall.rerankerModel",
     "type": "string"
   },
   {
     "default": "auto",
     "immutable": false,
     "path": "memory.rerankerGpu",
-    "type": "string"
-  },
-  {
-    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
-    "immutable": false,
-    "path": "memory.rerankerModel",
     "type": "string"
   },
   {
@@ -17416,65 +17313,106 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "language": {
       "type": "string"
     },
-    "learningForgetting": {
+    "learning": {
       "additionalProperties": false,
       "default": {
         "enabled": true,
-        "eviction": {
-          "enabled": true,
+        "forget": {
           "failureEvictionFloor": 3,
-          "strengthThreshold": 0.2
+          "highProofFloor": 5,
+          "maxDormantDays": 90
         },
-        "failurePenalty": 0.5
+        "reflect": {
+          "maxDocsPerRun": 25,
+          "minConfidence": 0.6,
+          "promoteAtProofCount": 3,
+          "schedule": "0 3 * * *"
+        }
       },
       "properties": {
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "eviction": {
+        "forget": {
           "additionalProperties": false,
           "default": {
-            "enabled": true,
             "failureEvictionFloor": 3,
-            "strengthThreshold": 0.2
+            "highProofFloor": 5,
+            "maxDormantDays": 90
           },
           "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
             "failureEvictionFloor": {
               "default": 3,
               "maximum": 9007199254740991,
               "minimum": 1,
               "type": "integer"
             },
-            "strengthThreshold": {
-              "default": 0.2,
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
+            "highProofFloor": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxDormantDays": {
+              "default": 90,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           "required": [
-            "enabled",
-            "strengthThreshold",
-            "failureEvictionFloor"
+            "maxDormantDays",
+            "failureEvictionFloor",
+            "highProofFloor"
           ],
           "type": "object"
         },
-        "failurePenalty": {
-          "default": 0.5,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
+        "reflect": {
+          "additionalProperties": false,
+          "default": {
+            "maxDocsPerRun": 25,
+            "minConfidence": 0.6,
+            "promoteAtProofCount": 3,
+            "schedule": "0 3 * * *"
+          },
+          "properties": {
+            "maxDocsPerRun": {
+              "default": 25,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "minConfidence": {
+              "default": 0.6,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "promoteAtProofCount": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "schedule": {
+              "default": "0 3 * * *",
+              "type": "string"
+            }
+          },
+          "required": [
+            "schedule",
+            "minConfidence",
+            "promoteAtProofCount",
+            "maxDocsPerRun"
+          ],
+          "type": "object"
         }
       },
       "required": [
         "enabled",
-        "eviction",
-        "failurePenalty"
+        "reflect",
+        "forget"
       ],
       "type": "object"
     },
@@ -17620,100 +17558,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
-    "learningSkills": {
-      "additionalProperties": false,
-      "default": {
-        "approval": {
-          "requireForMutating": true
-        },
-        "autoAdmitReadOnly": true,
-        "enabled": true,
-        "minConfidence": 0.7,
-        "promoteAtProofCount": 3,
-        "validation": {
-          "requireReproduction": true
-        }
-      },
-      "properties": {
-        "approval": {
-          "additionalProperties": false,
-          "default": {
-            "requireForMutating": true
-          },
-          "properties": {
-            "requireForMutating": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "requireForMutating"
-          ],
-          "type": "object"
-        },
-        "autoAdmitReadOnly": {
-          "default": true,
-          "type": "boolean"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "minConfidence": {
-          "default": 0.7,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "promoteAtProofCount": {
-          "default": 3,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "validation": {
-          "additionalProperties": false,
-          "default": {
-            "requireReproduction": true
-          },
-          "properties": {
-            "requireReproduction": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "requireReproduction"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "enabled",
-        "validation",
-        "autoAdmitReadOnly",
-        "approval",
-        "minConfidence",
-        "promoteAtProofCount"
-      ],
-      "type": "object"
-    },
-    "learningTuning": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled"
-      ],
-      "type": "object"
-    },
     "maxContextChars": {
       "default": 100000,
       "exclusiveMinimum": 0,
@@ -17740,70 +17584,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "memoryLifecycle": {
       "additionalProperties": false,
       "default": {
-        "durableCap": 1000,
         "enabled": true,
-        "ephemeralCap": 500,
-        "epsilonPrune": 0.05,
-        "maxDormantDays": 90,
-        "schedule": "0 9 * * *",
-        "thetaDemote": 0.3,
-        "thetaPromote": 0.7
+        "schedule": "0 9 * * *"
       },
       "properties": {
-        "durableCap": {
-          "default": 1000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "ephemeralCap": {
-          "default": 500,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "epsilonPrune": {
-          "default": 0.05,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "maxDormantDays": {
-          "default": 90,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
         "schedule": {
           "default": "0 9 * * *",
           "type": "string"
-        },
-        "thetaDemote": {
-          "default": 0.3,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "thetaPromote": {
-          "default": 0.7,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
         }
       },
       "required": [
         "enabled",
-        "schedule",
-        "thetaPromote",
-        "thetaDemote",
-        "durableCap",
-        "ephemeralCap",
-        "epsilonPrune",
-        "maxDormantDays"
+        "schedule"
       ],
       "type": "object"
     },
@@ -20462,9 +20258,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "dialectic",
     "memoryUsefulnessJudge",
     "learningOutcome",
-    "learningTuning",
-    "learningForgetting",
-    "learningSkills",
+    "learning",
     "memoryTripleExtraction",
     "memoryLifecycle"
   ],
@@ -25212,35 +25006,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
       ],
       "type": "object"
     },
-    "costFeatures": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled"
-      ],
-      "type": "object"
-    },
     "dbPath": {
       "default": "memory.db",
       "type": "string"
     },
-    "embeddingDimensions": {
-      "default": 1536,
-      "exclusiveMinimum": 0,
-      "maximum": 9007199254740991,
-      "type": "integer"
+    "enabled": {
+      "default": true,
+      "type": "boolean"
     },
-    "embeddingModel": {
-      "default": "text-embedding-3-small",
-      "type": "string"
+    "recall": {
+      "additionalProperties": false,
+      "default": {
+        "embeddingDimensions": 1536,
+        "embeddingModel": "text-embedding-3-small",
+        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+      },
+      "properties": {
+        "embeddingDimensions": {
+          "default": 1536,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "embeddingModel": {
+          "default": "text-embedding-3-small",
+          "type": "string"
+        },
+        "rerankerModel": {
+          "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          "type": "string"
+        }
+      },
+      "required": [
+        "embeddingModel",
+        "embeddingDimensions",
+        "rerankerModel"
+      ],
+      "type": "object"
     },
     "rerankerGpu": {
       "default": "auto",
@@ -25251,10 +25053,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
         "vulkan",
         "false"
       ],
-      "type": "string"
-    },
-    "rerankerModel": {
-      "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
       "type": "string"
     },
     "rerankerModelsDir": {
@@ -25291,17 +25089,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
     }
   },
   "required": [
+    "enabled",
     "dbPath",
     "walMode",
-    "embeddingModel",
-    "embeddingDimensions",
+    "recall",
     "compaction",
     "retention",
-    "rerankerModel",
     "rerankerModelsDir",
     "rerankerGpu",
-    "rerankerThreads",
-    "costFeatures"
+    "rerankerThreads"
   ],
   "type": "object"
 }"
@@ -28551,65 +28347,106 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "language": {
             "type": "string"
           },
-          "learningForgetting": {
+          "learning": {
             "additionalProperties": false,
             "default": {
               "enabled": true,
-              "eviction": {
-                "enabled": true,
+              "forget": {
                 "failureEvictionFloor": 3,
-                "strengthThreshold": 0.2
+                "highProofFloor": 5,
+                "maxDormantDays": 90
               },
-              "failurePenalty": 0.5
+              "reflect": {
+                "maxDocsPerRun": 25,
+                "minConfidence": 0.6,
+                "promoteAtProofCount": 3,
+                "schedule": "0 3 * * *"
+              }
             },
             "properties": {
               "enabled": {
                 "default": true,
                 "type": "boolean"
               },
-              "eviction": {
+              "forget": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": true,
                   "failureEvictionFloor": 3,
-                  "strengthThreshold": 0.2
+                  "highProofFloor": 5,
+                  "maxDormantDays": 90
                 },
                 "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
                   "failureEvictionFloor": {
                     "default": 3,
                     "maximum": 9007199254740991,
                     "minimum": 1,
                     "type": "integer"
                   },
-                  "strengthThreshold": {
-                    "default": 0.2,
-                    "maximum": 1,
-                    "minimum": 0,
-                    "type": "number"
+                  "highProofFloor": {
+                    "default": 5,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxDormantDays": {
+                    "default": 90,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
                   }
                 },
                 "required": [
-                  "enabled",
-                  "strengthThreshold",
-                  "failureEvictionFloor"
+                  "maxDormantDays",
+                  "failureEvictionFloor",
+                  "highProofFloor"
                 ],
                 "type": "object"
               },
-              "failurePenalty": {
-                "default": 0.5,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
+              "reflect": {
+                "additionalProperties": false,
+                "default": {
+                  "maxDocsPerRun": 25,
+                  "minConfidence": 0.6,
+                  "promoteAtProofCount": 3,
+                  "schedule": "0 3 * * *"
+                },
+                "properties": {
+                  "maxDocsPerRun": {
+                    "default": 25,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "minConfidence": {
+                    "default": 0.6,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "promoteAtProofCount": {
+                    "default": 3,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "schedule": {
+                    "default": "0 3 * * *",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "schedule",
+                  "minConfidence",
+                  "promoteAtProofCount",
+                  "maxDocsPerRun"
+                ],
+                "type": "object"
               }
             },
             "required": [
               "enabled",
-              "eviction",
-              "failurePenalty"
+              "reflect",
+              "forget"
             ],
             "type": "object"
           },
@@ -28755,100 +28592,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
-          "learningSkills": {
-            "additionalProperties": false,
-            "default": {
-              "approval": {
-                "requireForMutating": true
-              },
-              "autoAdmitReadOnly": true,
-              "enabled": true,
-              "minConfidence": 0.7,
-              "promoteAtProofCount": 3,
-              "validation": {
-                "requireReproduction": true
-              }
-            },
-            "properties": {
-              "approval": {
-                "additionalProperties": false,
-                "default": {
-                  "requireForMutating": true
-                },
-                "properties": {
-                  "requireForMutating": {
-                    "default": true,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "requireForMutating"
-                ],
-                "type": "object"
-              },
-              "autoAdmitReadOnly": {
-                "default": true,
-                "type": "boolean"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "minConfidence": {
-                "default": 0.7,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "promoteAtProofCount": {
-                "default": 3,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "validation": {
-                "additionalProperties": false,
-                "default": {
-                  "requireReproduction": true
-                },
-                "properties": {
-                  "requireReproduction": {
-                    "default": true,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "requireReproduction"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "enabled",
-              "validation",
-              "autoAdmitReadOnly",
-              "approval",
-              "minConfidence",
-              "promoteAtProofCount"
-            ],
-            "type": "object"
-          },
-          "learningTuning": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "enabled"
-            ],
-            "type": "object"
-          },
           "maxContextChars": {
             "default": 100000,
             "exclusiveMinimum": 0,
@@ -28875,70 +28618,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "memoryLifecycle": {
             "additionalProperties": false,
             "default": {
-              "durableCap": 1000,
               "enabled": true,
-              "ephemeralCap": 500,
-              "epsilonPrune": 0.05,
-              "maxDormantDays": 90,
-              "schedule": "0 9 * * *",
-              "thetaDemote": 0.3,
-              "thetaPromote": 0.7
+              "schedule": "0 9 * * *"
             },
             "properties": {
-              "durableCap": {
-                "default": 1000,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
               "enabled": {
                 "default": true,
                 "type": "boolean"
               },
-              "ephemeralCap": {
-                "default": 500,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "epsilonPrune": {
-                "default": 0.05,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "maxDormantDays": {
-                "default": 90,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
               "schedule": {
                 "default": "0 9 * * *",
                 "type": "string"
-              },
-              "thetaDemote": {
-                "default": 0.3,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "thetaPromote": {
-                "default": 0.7,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
               }
             },
             "required": [
               "enabled",
-              "schedule",
-              "thetaPromote",
-              "thetaDemote",
-              "durableCap",
-              "ephemeralCap",
-              "epsilonPrune",
-              "maxDormantDays"
+              "schedule"
             ],
             "type": "object"
           },
@@ -31597,9 +31292,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "dialectic",
           "memoryUsefulnessJudge",
           "learningOutcome",
-          "learningTuning",
-          "learningForgetting",
-          "learningSkills",
+          "learning",
           "memoryTripleExtraction",
           "memoryLifecycle"
         ],
@@ -31708,14 +31401,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "maxActiveCaches": 20
           },
-          "learningForgetting": {
+          "learning": {
             "enabled": true,
-            "eviction": {
-              "enabled": true,
+            "forget": {
               "failureEvictionFloor": 3,
-              "strengthThreshold": 0.2
+              "highProofFloor": 5,
+              "maxDormantDays": 90
             },
-            "failurePenalty": 0.5
+            "reflect": {
+              "maxDocsPerRun": 25,
+              "minConfidence": 0.6,
+              "promoteAtProofCount": 3,
+              "schedule": "0 3 * * *"
+            }
           },
           "learningOutcome": {
             "correction": {
@@ -31742,33 +31440,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "pipeline"
             ]
           },
-          "learningSkills": {
-            "approval": {
-              "requireForMutating": true
-            },
-            "autoAdmitReadOnly": true,
-            "enabled": true,
-            "minConfidence": 0.7,
-            "promoteAtProofCount": 3,
-            "validation": {
-              "requireReproduction": true
-            }
-          },
-          "learningTuning": {
-            "enabled": true
-          },
           "maxContextChars": 100000,
           "maxSteps": 150,
           "maxToolResultChars": 50000,
           "memoryLifecycle": {
-            "durableCap": 1000,
             "enabled": true,
-            "ephemeralCap": 500,
-            "epsilonPrune": 0.05,
-            "maxDormantDays": 90,
-            "schedule": "0 9 * * *",
-            "thetaDemote": 0.3,
-            "thetaPromote": 0.7
+            "schedule": "0 9 * * *"
           },
           "memoryReview": {
             "autoTags": [],
@@ -37727,14 +37404,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "targetSize": 500,
           "threshold": 1000
         },
-        "costFeatures": {
-          "enabled": true
-        },
         "dbPath": "memory.db",
-        "embeddingDimensions": 1536,
-        "embeddingModel": "text-embedding-3-small",
+        "enabled": true,
+        "recall": {
+          "embeddingDimensions": 1536,
+          "embeddingModel": "text-embedding-3-small",
+          "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+        },
         "rerankerGpu": "auto",
-        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
         "rerankerModelsDir": "models",
         "rerankerThreads": 4,
         "retention": {
@@ -37775,35 +37452,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
-        "costFeatures": {
-          "additionalProperties": false,
-          "default": {
-            "enabled": true
-          },
-          "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "enabled"
-          ],
-          "type": "object"
-        },
         "dbPath": {
           "default": "memory.db",
           "type": "string"
         },
-        "embeddingDimensions": {
-          "default": 1536,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
+        "enabled": {
+          "default": true,
+          "type": "boolean"
         },
-        "embeddingModel": {
-          "default": "text-embedding-3-small",
-          "type": "string"
+        "recall": {
+          "additionalProperties": false,
+          "default": {
+            "embeddingDimensions": 1536,
+            "embeddingModel": "text-embedding-3-small",
+            "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+          },
+          "properties": {
+            "embeddingDimensions": {
+              "default": 1536,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "embeddingModel": {
+              "default": "text-embedding-3-small",
+              "type": "string"
+            },
+            "rerankerModel": {
+              "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+              "type": "string"
+            }
+          },
+          "required": [
+            "embeddingModel",
+            "embeddingDimensions",
+            "rerankerModel"
+          ],
+          "type": "object"
         },
         "rerankerGpu": {
           "default": "auto",
@@ -37814,10 +37499,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "vulkan",
             "false"
           ],
-          "type": "string"
-        },
-        "rerankerModel": {
-          "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
           "type": "string"
         },
         "rerankerModelsDir": {
@@ -37854,17 +37535,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         }
       },
       "required": [
+        "enabled",
         "dbPath",
         "walMode",
-        "embeddingModel",
-        "embeddingDimensions",
+        "recall",
         "compaction",
         "retention",
-        "rerankerModel",
         "rerankerModelsDir",
         "rerankerGpu",
-        "rerankerThreads",
-        "costFeatures"
+        "rerankerThreads"
       ],
       "type": "object"
     },

@@ -309,8 +309,8 @@ integrations:
         memory: {
           dbPath: "/var/comis/memory.db",
           walMode: true,
-          embeddingModel: "text-embedding-3-small",
-          embeddingDimensions: 1536,
+          // Phase 226: the recall keepers nest under memory.recall.
+          recall: { embeddingModel: "text-embedding-3-small", embeddingDimensions: 1536 },
           compaction: { enabled: true, threshold: 500, targetSize: 250 },
           retention: { maxAgeDays: 90 },
         },

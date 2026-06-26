@@ -377,7 +377,9 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
         "agent-1": {
           name: "Agent 1",
           memoryLifecycle: { enabled: true },
-          learningForgetting: { enabled: true, eviction: { enabled: true, strengthThreshold: 0.2 }, failurePenalty: 0.5 },
+          // Phase 226: the collapsed learning block gates eviction (the deleted strengthThreshold/
+          // failurePenalty decay knobs are gone; learning.enabled drives evictionEnabled).
+          learning: { enabled: true },
         },
       },
       memoryLifecycleStore: { runLifecycleSweep: sweep },
@@ -391,18 +393,18 @@ describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__", () => {
     expect(Object.keys(evictPayload).sort()).toEqual(["agentId", "count", "timestamp"]);
   });
 
-  it("FORGET-06: threads learningForgetting.eviction policy (evictionEnabled + failureEvictionFloor) into the sweep scope", async () => {
-    // POST-224-02: the FadeMem strength-decay disjunct + its strengthThreshold/failurePenalty
-    // knobs are deleted; the override threads ONLY the master gate + the corroborated-failure
-    // floor (the reachable wrongness-eviction path). The config keys still parse (collapse = 226)
-    // but are no longer forwarded into the sweep.
+  it("FORGET-06: threads the collapsed learning.forget policy (evictionEnabled + failureEvictionFloor) into the sweep scope", async () => {
+    // Phase 226 (POST-224-02): the FadeMem strength-decay disjunct + its strengthThreshold/
+    // failurePenalty knobs are deleted; the former learningForgetting block collapsed into
+    // learning.forget. The override threads the master gate (learning.enabled → evictionEnabled)
+    // + the corroborated-failure floor (learning.forget.failureEvictionFloor — the reachable path).
     const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 1 } }));
     const ctx = makeCtx({
       agents: {
         "agent-1": {
           name: "Agent 1",
           memoryLifecycle: { enabled: true },
-          learningForgetting: { enabled: true, eviction: { enabled: true, failureEvictionFloor: 4 } },
+          learning: { enabled: true, forget: { failureEvictionFloor: 4 } },
         },
       },
       memoryLifecycleStore: { runLifecycleSweep: sweep },

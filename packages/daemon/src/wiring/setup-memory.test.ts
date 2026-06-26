@@ -257,8 +257,13 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
     config: {
       memory: {
         dbPath: "/test/memory.db",
-        embeddingDimensions: 768,
-        rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        // Phase 226: the recall keepers (embeddingDimensions/rerankerModel) nest under memory.recall.
+        recall: {
+          embeddingModel: "text-embedding-3-small",
+          embeddingDimensions: 768,
+          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          ...overrides.recall,
+        },
         rerankerModelsDir: "models",
         rerankerGpu: "auto",
         rerankerThreads: 4,
@@ -452,7 +457,7 @@ describe("setupMemory", () => {
   // 5. Uses provider dimensions to adjust memoryConfig
   // -------------------------------------------------------------------------
 
-  it("uses provider dimensions to adjust memoryConfig.embeddingDimensions", async () => {
+  it("uses provider dimensions to adjust memoryConfig.recall.embeddingDimensions", async () => {
     const container = createMinimalContainer({
       embedding: { enabled: true, provider: "local", cache: { maxEntries: 100 } },
     });
@@ -465,9 +470,10 @@ describe("setupMemory", () => {
       timers: testTimers,
     });
 
-    // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384)
+    // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384),
+    // nested under memory.recall (Phase 226).
     const adapterArgs = mockSqliteMemoryAdapter.mock.calls[0];
-    expect(adapterArgs[0].embeddingDimensions).toBe(384);
+    expect(adapterArgs[0].recall.embeddingDimensions).toBe(384);
   });
 
   // -------------------------------------------------------------------------
@@ -1011,8 +1017,9 @@ describe("setupMemory", () => {
   it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
     // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
     // absent without calling the probe or computing safePath (the structurally-off path).
+    // Phase 226: the reranker model lives under memory.recall.
     const container = createMinimalContainer({
-      memory: { rerankerModel: undefined },
+      recall: { rerankerModel: undefined },
     });
     const setupMemory = await getSetupMemory();
 
@@ -1366,8 +1373,12 @@ describe("setupMemory recall-counter wiring", () => {
       config: {
         memory: {
           dbPath: "/test/memory.db",
-          embeddingDimensions: 768,
-          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          // Phase 226: the recall keepers nest under memory.recall.
+          recall: {
+            embeddingModel: "text-embedding-3-small",
+            embeddingDimensions: 768,
+            rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          },
           rerankerModelsDir: "models",
           rerankerGpu: "auto",
           rerankerThreads: 4,

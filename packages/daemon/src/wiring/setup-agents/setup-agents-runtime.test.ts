@@ -75,7 +75,7 @@ describe("setupSingleAgent learned-skill surface wiring", () => {
     expect(depsBlock).toContain("learnedSkills: learnedSurface.current");
   });
 
-  it("WR-03/WR-01: builds the surface via wireAgentLearnedSkillSurface, gated on learningSkills × cost + registered for re-refresh", () => {
+  it("WR-03/WR-01: builds the surface via wireAgentLearnedSkillSurface, gated on learning.enabled × cost + registered for re-refresh", () => {
     const fnStart = source.indexOf("export async function setupSingleAgent(");
     const fnBody = source.slice(fnStart);
     // The cache is built via the gated helper (NOT the ungated createLearnedSkillSurfaceCache).
@@ -83,9 +83,9 @@ describe("setupSingleAgent learned-skill surface wiring", () => {
     expect(fnBody).not.toContain("createLearnedSkillSurfaceCache({"); // ungated form is gone
     const callStart = fnBody.indexOf("wireAgentLearnedSkillSurface({");
     const callWindow = fnBody.slice(callStart, callStart + 420);
-    // WR-03 gate: learningSkills.enabled AND the master cost switch.
-    expect(callWindow).toContain("effectiveConfig.learningSkills?.enabled === true");
-    expect(callWindow).toContain("memory?.costFeatures?.enabled !== false");
+    // WR-03 gate (Phase 226): the collapsed learning.enabled AND the renamed master cost switch.
+    expect(callWindow).toContain("effectiveConfig.learning?.enabled === true");
+    expect(callWindow).toContain("memory?.enabled !== false");
     // Threaded store + resolved (tenant, agent) scope.
     expect(callWindow).toContain("learnedSkillStore: deps.learnedSkillStore");
     expect(callWindow).toContain("tenantId: container.config.tenantId");

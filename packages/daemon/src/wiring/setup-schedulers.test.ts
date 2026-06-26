@@ -606,7 +606,7 @@ describe("setupSchedulers", () => {
       },
     };
     const deps = createMinimalDeps({ agents });
-    (deps.container as any).config.memory = { costFeatures: { enabled: true } }; // kill switch ON
+    (deps.container as any).config.memory = { enabled: true }; // master kill switch ON (Phase 226)
 
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(deps);
@@ -888,10 +888,10 @@ describe("setupSchedulers", () => {
     };
   }
 
-  /** A deps object whose container carries an explicit memory.costFeatures.enabled. */
+  /** A deps object whose container carries an explicit memory.enabled (the Phase 226 master kill switch). */
   function depsWithCostSwitch(agents: Record<string, any>, costFeaturesEnabled: boolean) {
     const deps = createMinimalDeps({ agents });
-    (deps.container as any).config.memory = { costFeatures: { enabled: costFeaturesEnabled } };
+    (deps.container as any).config.memory = { enabled: costFeaturesEnabled };
     return deps;
   }
 
@@ -1353,7 +1353,7 @@ describe("setupSchedulers", () => {
     expect(deadAdds.length, "the dead procedural-synthesis cron must never be registered").toBe(0);
   });
 
-  it("REFLECT-01: registers the __REFLECT__ cron (reflect-<agentId>, 30 9 * * *) for an opted-in agent", async () => {
+  it("REFLECT-01: registers the __REFLECT__ cron (reflect-<agentId>, 0 3 * * *) for an opted-in agent", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -1361,7 +1361,7 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
       },
     };
     const setupSchedulers = await getSetupSchedulers();
@@ -1374,7 +1374,7 @@ describe("setupSchedulers", () => {
     expect(reflectAdd.id).toBe("reflect-agent-1");
     expect(reflectAdd.name).toBe("Reflection");
     expect(reflectAdd.payload.text).toBe("__REFLECT__");
-    expect(reflectAdd.schedule).toEqual({ kind: "cron", expr: "30 9 * * *" });
+    expect(reflectAdd.schedule).toEqual({ kind: "cron", expr: "0 3 * * *" });
     expect(reflectAdd.sessionTarget).toBe("isolated");
     expect(reflectAdd.sessionStrategy).toBe("fresh");
     // The dead sentinel/jobId is gone (no alias, no double-registration).
@@ -1390,7 +1390,7 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
       },
     };
     await setupSchedulers(depsWithCostSwitch(agents, false));
