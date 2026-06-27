@@ -19,10 +19,14 @@ pkill -9 -f "^node .*daemon\.js" 2>/dev/null; sleep 2
 # IMPORTANT: the session dir is default/<chatId>/ — NOT default/telegram/. Replacing memory.db clears the
 # LCD (prior-conversation replay); a bare jsonl rm is not enough (runbook §5).
 sudo -u comis bash -c "
-  rm -rf '$DATA/workspace/sessions/default/$CHATID'
-  # Also clear sub-agent session dirs (sub-agent@*) — they survive a chatId-only wipe and pollute
-  # session.search + fleet activeChannels with prior-run sub-agents (F-OBS-1, 30uc-20260624 UC-04/07).
-  rm -rf '$DATA'/workspace/sessions/default/sub-agent* '$DATA'/workspace/sessions/*/sub-agent*
+  # KIT-2 (dispatch-learning-20260627): wipe ALL default/* session dirs, NOT just default/<CHATID>.
+  # A chatId-only wipe leaves STALE per-chat / cron@ / sub-agent dirs from prior (possibly different-config)
+  # runs — they pollute (a) fleet activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
+  # showed gpt-5.x modelIds while THIS run's config was anthropic — a phantom 'chimera'), and (c) re-prime a
+  # multi-sender test's session (a different sender's prior-run refusals reload from its surviving JSONL).
+  # clean-restart is a from-scratch tool (memory.db is wiped globally below), so wiping every default session
+  # is the correct slate. (Targeted single-session severs use session.reset_conversation, not this script.)
+  rm -rf '$DATA'/workspace/sessions/default/* '$DATA'/workspace/sessions/*/sub-agent*
   rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm
   # NOT just *.log — fleet's activeChannels/activeAgents enumerate session-index.<date>.jsonl
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a

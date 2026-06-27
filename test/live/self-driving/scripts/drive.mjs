@@ -28,6 +28,12 @@ if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
   process.exit(2);
 }
 const DATA = dataArg || process.env.DATA || '/home/comis/.comis';
+// FROMUSER (env) — drive a chat as a DIFFERENT sender than the chatId. The session/trajectory stays
+// keyed by chatId, but the inbound message author is FROMUSER. Lets one trusted sender drive N distinct
+// chat-SESSIONS (reflection anti-domination cardinality is distinct (sessionId, sender) — so two chats
+// from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
+// pollution / no per-sender priming). Default: fromUserId == chatId (v2 behavior). (dispatch-learning-20260627)
+const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
 const base = emu.apiRoot;
 
@@ -36,7 +42,7 @@ const getOutbound = async (after, waitMs) =>
 const inject = async (t) =>
   (await fetch(`${base}/control/chats/${chatId}/messages`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fromUserId: Number(chatId), text: t }),
+    body: JSON.stringify({ fromUserId: fromUser, text: t }),
   })).json();
 
 // v2: a message is PROGRESS (not the final answer) if it's a tool/announce/checklist/plan line.
