@@ -55,15 +55,17 @@ PATH** — prefix everything with `node packages/cli/dist/cli.js`.
 
 **1. Connect the workload's MCP server (LIVE — no restart):**
 ```bash
+# ⚠ --args is VARIADIC (space-separated). Do NOT comma-join "path,workload" — the CLI passes it as a
+#   SINGLE arg and node fails with "Cannot find module '…/mcp-server.mjs,workload'" (verified live).
 node packages/cli/dist/cli.js mcp connect th-sim \
   --transport stdio --command node \
-  --args "/home/comis/sim/bin/mcp-server.mjs,threat-hunting"
+  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting
 node packages/cli/dist/cli.js mcp list             # th-sim → connected, 12 tools
 node packages/cli/dist/cli.js mcp status th-sim    # the discovered tool names
 ```
-Pass the world knobs as env on the server if needed — declaratively in `config.yaml`
-(`integrations.mcp.servers.th-sim.env: { SIM_SEED: "42", SIM_VARIANT: "A" }`) or by re-running `mcp connect`
-with a different `--args` workload. (`mcp connect` persists; `mcp disconnect th-sim` removes it.)
+The MCP server takes an optional **3rd arg = the variant** (A/B/C): `--args …/mcp-server.mjs threat-hunting B`
+rotates the surface facts for the transfer/reuse step — no config-env needed. (`mcp connect` persists to
+config; `mcp disconnect th-sim` removes it. The server runs **unsandboxed** and does no disk writes.)
 
 **2. Let the agent discover the workload's skill:** add the workload dir to the agent's
 `skills.discoveryPaths` (it scans for `SKILL.md`) via the rig's config patcher (`scripts/cfg-patch.mjs`),
@@ -122,12 +124,12 @@ node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count
 #   reflect-run.mjs already printed reflect:funnel.admissionOutcome = admitted (content-free, INV-6)
 ```
 
-**4. Reuse on a ROTATED variant (the transfer + promote step)** — reconnect the server on `SIM_VARIANT=B`
+**4. Reuse on a ROTATED variant (the transfer + promote step)** — reconnect the server on variant B
 (every hash/IP/domain rotates; only a *behavioral* learned skill still works), then drive a FRESH session:
 ```bash
 node packages/cli/dist/cli.js mcp disconnect th-sim
 node packages/cli/dist/cli.js mcp connect th-sim --transport stdio --command node \
-  --args "/home/comis/sim/bin/mcp-server.mjs,threat-hunting"   # config env SIM_VARIANT=B, or set it on the server
+  --args /home/comis/sim/bin/mcp-server.mjs threat-hunting B    # 3rd arg = variant (surface rotation)
 node /root/drive.mjs "$CHATID" "New SOC alert just came in — work it on the console and resolve it."
 ```
 The fresh session surfaces the learned skill (`memory:skill_used` / `used_skill_ids`), a successful reuse
@@ -172,6 +174,28 @@ node packages/cli/dist/cli.js mcp disconnect th-sim
 
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
+
+## Live-run findings (package-delivery on the VPS, 2026-06-27 — don't re-discover)
+- **`mcp connect --args` is VARIADIC (space-separated), not comma-joined.** `--args "path,workload"` is passed
+  as ONE arg → the child node throws `Cannot find module '…/mcp-server.mjs,workload'` → `mcp list` shows the
+  server `error`/`Connection closed (-32000)`. Correct: `--args /abs/mcp-server.mjs <workload> [variant]`. (The
+  `--args` examples in the product MCP docs, `docs/skills/mcp.mdx` / `docs/reference/cli.mdx`, use the comma
+  form — likely wrong for the variadic CLI; flag if you touch them.)
+- **Verified working end-to-end:** after the fix, Comis connected `depot-sim` (8 tools discovered) and the live
+  agent invoked `mcp__depot-sim--accept_package` / `--move` / `--deliver` (each executing in ~4-5ms). The MCP
+  bridge round-trips correctly. The local single-session agent drive delivered cleanly (4 moves, par,
+  `efficient:true`).
+- **Drive into a FRESH or freshly-reset session.** The agent continues the session's prior CONVERSATION — if
+  that session already holds another scenario's context (e.g. a threat-hunting drive), the delivery turn gets
+  contaminated (the agent answered the old thread and treated the delivery as "background noise"). Use a clean
+  session: `comis sessions reset <key> --yes` (clears conversation only; keep memories) or a fresh allowed
+  sender. NOTE: `channels.<ch>.allowFrom` may restrict which sender ids are accepted — a non-allowed sender is
+  silently dropped ("Sender blocked by allowFrom filter"); add yours or reuse an allowed one.
+- **One MCP server process serves ALL Comis sessions.** Workloads that key the current episode on the
+  process-global `ctx.lastTrip`/`ctx.lastCase` (e.g. package-delivery) assume **sequential** drives (one
+  delivery at a time — the normal self-driving flow). Concurrent sessions hitting the same server can clobber
+  each other's "current trip." For concurrent use, thread the explicit id returned by the `open_*`/`accept_*`
+  act (the threat-hunting pattern), or run one server per concurrent caller.
 
 ## Gotchas
 - **stdout is the MCP wire** — handlers/log must never `console.log` to stdout (use `ctx.log` → stderr).

@@ -26,6 +26,7 @@ tools** — figuring out *where the recipient is* and the *best way to get there
 4. When you're at their office, `deliver`.
 
 ## Notes
-- You can only `move` to a location listed in your current `exits`; `take_elevator` only works from an elevator landing.
+- You can only `move` to a location listed in your current `exits`.
+- To change floors, ride the elevator — but `take_elevator` only works while you are standing **on an elevator landing** (a location named `elevator-<floor>`). If you're somewhere else (e.g. the lobby or a hallway), `move` onto the adjacent landing first, then `take_elevator`.
 - Delivering when you're not at the recipient's office fails. Getting there in fewer moves is better than wandering.
 - Keep track of where you've been and what you've found so you don't retrace your steps.

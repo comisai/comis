@@ -83,7 +83,15 @@ export const handlers = {
     };
     ctx.cases.set(id, trip);
     ctx.lastTrip = id;
-    return { trip: id, recipient, startedAt: trip.location, note: "Find the recipient and deliver. The lobby has a directory; offices have nameplates." };
+    const startNode = node(ctx, trip.location);
+    return {
+      trip: id,
+      recipient,
+      startedAt: trip.location,
+      floor: startNode.floor,
+      exits: startNode.exits,
+      note: "Find the recipient and deliver. The lobby has a directory; offices have nameplates.",
+    };
   },
 
   move(args, ctx) {
@@ -104,7 +112,12 @@ export const handlers = {
     const t = getTrip(ctx);
     const n = node(ctx, t.location);
     if (n.type !== "elevator") {
-      return { moved: false, error: "You can only take the elevator from an elevator landing.", location: t.location };
+      return {
+        moved: false,
+        error: `You can only take the elevator from an elevator landing — you are at ${t.location}. Move to an adjacent elevator landing (a location named elevator-<floor>) first.`,
+        location: t.location,
+        exits: n.exits,
+      };
     }
     const floor = Number(args.floor);
     const target = `elevator-${floor}`;

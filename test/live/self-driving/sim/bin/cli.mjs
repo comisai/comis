@@ -9,10 +9,29 @@
 //   node sim/bin/cli.mjs <workload> <tool> --key val ...    # call one function, print JSON
 //   node sim/bin/cli.mjs --workloads                        # list all workloads
 
-import { readdirSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadWorkload, SIM_ROOT } from "../shared/registry.mjs";
 import { coerce } from "../shared/world.mjs";
+
+// --state <file>: persist the mutable episode state (cases/trip) across separate CLI
+// calls, so an interactive driver can run a multi-step episode without a long-lived
+// process. The world itself is deterministic from seed+variant, so only the case
+// store is persisted. Mismatched seed/variant is refused (would corrupt the episode).
+function restoreState(ctx, path) {
+  if (!existsSync(path)) return;
+  const s = JSON.parse(readFileSync(path, "utf8"));
+  if (s.seed !== ctx.seed || s.variant !== ctx.variant) {
+    process.stderr.write(`[sim] WARNING: state seed/variant (${s.seed}/${s.variant}) != current (${ctx.seed}/${ctx.variant}); ignoring stale state\n`);
+    return;
+  }
+  ctx.cases = new Map(s.cases || []);
+  ctx.lastTrip = s.lastTrip ?? null;
+  ctx.caseCounter = s.caseCounter ?? 0;
+}
+function saveState(ctx, path) {
+  writeFileSync(path, JSON.stringify({ seed: ctx.seed, variant: ctx.variant, caseCounter: ctx.caseCounter, lastTrip: ctx.lastTrip, cases: [...ctx.cases.entries()] }));
+}
 
 const argv = process.argv.slice(2);
 
@@ -67,6 +86,14 @@ if (cmd === "--list" || cmd === "-l" || cmd === undefined) {
       kind: t.kind || "act",
       terminal: !!t.terminal,
       description: t.description,
+      params:
+        t.inputSchema && t.inputSchema.properties
+          ? Object.entries(t.inputSchema.properties).map(([k, v]) => ({
+              name: k,
+              type: v.type,
+              required: (t.inputSchema.required || []).includes(k),
+            }))
+          : [],
     })),
   });
   process.exit(0);
@@ -84,8 +111,13 @@ if (cmd === "--selftest") {
 
 // Otherwise: call one tool with --flags.
 const args = parseFlags(argv.slice(2));
+const statePath = args.state;
+delete args.state;
+if (statePath) restoreState(wl.ctx, statePath);
 try {
-  print(wl.call(cmd, args));
+  const result = wl.call(cmd, args);
+  if (statePath) saveState(wl.ctx, statePath);
+  print(result);
 } catch (err) {
   print({ error: err && err.message ? err.message : String(err) });
   process.exit(1);

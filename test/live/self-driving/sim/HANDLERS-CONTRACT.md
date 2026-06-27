@@ -97,7 +97,11 @@ export function selftest({ call, ctx }) {
 - **Pure + sync handlers**, plain-JSON returns. No network, no disk writes, no `Math.random`/`Date.now`
   (use `ctx.rng`; pass any timestamps as world data) — keeps episodes reproducible.
 - **Never print to stdout** from a handler (stdout is the MCP protocol channel) — use `ctx.log`.
-- Act tools default `case` to `ctx.lastCase` so the agent needn't thread the id perfectly.
+- Act tools default `case` to `ctx.lastCase` so the agent needn't thread the id perfectly. CAVEAT: one MCP
+  server process serves ALL Comis sessions, and `ctx.lastCase`/`ctx.cases` are process-global — defaulting to
+  `lastCase` is safe only for **sequential** drives (the normal self-driving flow). If concurrent sessions may
+  hit the same server, have the agent thread the explicit id returned by `open_*`/`accept_*` on every call
+  rather than relying on `lastCase`.
 - The grader compares the agent's recorded findings/acts against `ctx.world.truth` — make success require the
   *behavioral* insight, and make a shortcut (act only on the rotating IOC / ignore the baseline / trust the
   loudest source) **fail**. That gap is what the engine learns to close.
