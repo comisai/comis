@@ -197,6 +197,15 @@ one for the exemplar.)
   each other's "current trip." For concurrent use, thread the explicit id returned by the `open_*`/`accept_*`
   act (the threat-hunting pattern), or run one server per concurrent caller.
 
+## Phase A findings — all-14 capable-agent drive (each use case driven from its skill alone)
+Fixes landed (test-first, selftest-guarded):
+- **`--state` CLI dropped non-trivial case fields** → `Map`/`Set` (`decisions`/`escalations`/`designs`/`sampledHives`) came back as `{}` → `.set/.get/.add is not a function`; and it **never persisted `lastCase`** (only `lastTrip`), so `lastCase`-keyed workloads (icu/cs/tutoring) lost their open case every call and fragmented into one-case-per-call. Both fixed in `bin/cli.mjs` (rehydrate Maps/Sets; persist `lastCase`). *(CLI debug-path only — real MCP holds a live in-process Map.)*
+- **threat-hunting** grader required the literal "pivot" token → a correct MITRE/behavioral finding scored `failure`. Now matches the behavioral identification (`pivot|lateral|t1021|off-hours`), gated by correct entity + containment.
+- **icu-clinical** discriminator-gate state was process-global `ctx` → never resolved over `--state`, and leaked across concurrent sessions over MCP. Moved into the case (per-episode, persisted, isolated).
+- **wildfire-command** `assign_crew` silently recorded a ground crew sent into a blow-up zone (irreversible, sank the grade even after reassigning). Now **refuses** unsafe ground assignments (not recorded) so posture can be probed safely.
+- **customer-success / tutoring** "you don't need to thread the case id" is now true (FIX-A) — handlers already default to `lastCase`; the `--state` persistence gap was the only cause of fragmentation.
+- **market-making / grid-operator** keep episode state on process-global `ctx` (book/PnL/reserve/strategy), not in a case. They **win over the real long-lived MCP transport** (and `--selftest`), but are NOT drivable over the per-call `--state` CLI and are not isolated for *same-workload* concurrent sessions. Drive them over the MCP server (real Comis) or `--selftest`; "different use cases in parallel" is unaffected (separate server processes). *(Ideal future fix: move their state into an ensured case like `customer-success`.)*
+
 ## Gotchas
 - **stdout is the MCP wire** — handlers/log must never `console.log` to stdout (use `ctx.log` → stderr).
 - **mechanics, not strategy** — if you find a `SKILL.md` revealing the answer/playbook, that's a bug; fix it

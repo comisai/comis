@@ -91,19 +91,29 @@ export const handlers = {
     if (!c) return { error: "no open incident — call open_incident first" };
     const zone = String(args.zone);
     const type = resourceType(ctx, args.resource);
-    c.assignments.push({ resource: args.resource, type, zone, task: args.task || "" });
-
     const inDanger = ctx.world.truth.dangerZones.map(norm).includes(norm(zone));
     const z = zoneById(ctx, zone);
-    // Honest safety posture, derived from the observable terrain/spread for that zone —
-    // a real ops chief would get this from the division. It does NOT name the fire type.
-    let posture = "within normal engagement parameters";
+
+    // REFUSE to commit a GROUND resource into a blow-up / danger zone — a real ops chief
+    // would never send crews there, so the assignment is REJECTED (not silently recorded).
+    // This lets the agent learn the safety posture WITHOUT an irreversible bad commit.
+    // (Live-run D3 fix: probing an unsafe zone with a ground crew used to record it
+    // permanently and sink the grade even after reassigning to a safe zone.)
     if (inDanger && GROUND_TYPES.has(type)) {
-      posture =
-        "UNSAFE — this zone aligns with the wind/slope and lies in the head's path; flame length and spotting here exceed safe direct engagement. Ground crews here have no good safety zone / escape route.";
-    } else if (inDanger) {
-      posture = "high-intensity zone — acceptable for aircraft, not for ground crews on the line";
+      return {
+        assigned: false,
+        refused: true,
+        resource: args.resource,
+        zone,
+        zoneRole: z ? z.role : "unknown zone",
+        safety:
+          "UNSAFE — this zone aligns with the wind/slope and lies in the head's path; flame length and spotting exceed safe direct engagement, with no good safety zone / escape route. The assignment was REFUSED. Keep ground crews out; use aircraft here.",
+      };
     }
+
+    c.assignments.push({ resource: args.resource, type, zone, task: args.task || "" });
+    let posture = "within normal engagement parameters";
+    if (inDanger) posture = "high-intensity zone — acceptable for aircraft, not for ground crews on the line";
     return {
       assigned: { resource: args.resource, type, zone, task: args.task || "" },
       zoneRole: z ? z.role : "unknown zone",
@@ -209,6 +219,22 @@ export function selftest({ call, ctx }) {
   call("assign_crew", { incident: inc2, resource: "C1", zone: headZone, task: "hit the head directly" });
   const bad = call("declare_contained", { incident: inc2, note: "going direct" });
 
-  const pass = good.outcome === "success" && bad.outcome === "failure";
-  return { pass, golden: good.outcome, naive: bad.outcome, detail: pass ? "ok" : { good, bad } };
+  // --- D3 regression guard: an UNSAFE ground probe is refused (not recorded), so an
+  //     otherwise-correct plan still SUCCEEDS after probing the danger zone. ---
+  const inc3 = call("open_incident", { summary: "probe then commit safely" }).incident;
+  call("set_tactic", { incident: inc3, tactic: T.correctTactic, containment_line: T.containmentAnchor });
+  const dz = (T.dangerZones && T.dangerZones[0]) || null;
+  let probeRefused = true;
+  if (dz) {
+    const probe = call("assign_crew", { incident: inc3, resource: "C1", zone: dz, task: "probe" });
+    probeRefused = probe.refused === true && !probe.assigned;
+  }
+  call("assign_crew", { incident: inc3, resource: "C1", zone: T.safeWorkZones[0], task: "build line on the anchor" });
+  for (const z of T.expectedAirZones) call("order_air", { incident: inc3, aircraft: "T1", zone: z });
+  for (const z of T.evacRequiredZones) call("issue_evac", { incident: inc3, zone: z, level: "order" });
+  const probed = call("declare_contained", { incident: inc3, note: "line held after probe" });
+
+  const pass =
+    good.outcome === "success" && bad.outcome === "failure" && probeRefused && probed.outcome === "success";
+  return { pass, golden: good.outcome, naive: bad.outcome, probeRefused, afterProbe: probed.outcome, detail: pass ? "ok" : { good, bad, probed } };
 }

@@ -108,7 +108,13 @@ export const handlers = {
     if (!c) return ctx.grade("failure", { score: 0, rationale: "closed with no open case" });
     const T = ctx.world.truth;
 
-    const namedTtp = c.findings.some((f) => String(f.ttp || "").toLowerCase().includes("pivot") || String(f.ttp || "").toLowerCase() === T.ttp);
+    // Accept the BEHAVIORAL identification of the off-hours lateral pivot — not a single
+    // literal token. A correct analyst may phrase it as MITRE codes (T1021 lateral
+    // movement) or prose ("off-hours admin pivot", "lateral movement to the file server").
+    // The other gates (right entity + contained-real + not-benign) prevent false positives,
+    // so a permissive behavioral match here is safe and fair. (Live-run D1 fix: a MITRE-coded
+    // finding used to score `failure` for word choice.)
+    const namedTtp = c.findings.some((f) => /pivot|lateral|t1021|off.?hours/i.test(String(f.ttp || "")) || String(f.ttp || "").toLowerCase() === T.ttp);
     const namedActor = c.findings.some((f) =>
       [T.compromisedAccount, T.compromisedHost, T.pivotHost].includes(String(f.entity))
     );
@@ -141,12 +147,18 @@ export function selftest({ call }) {
   call("contain_host", { case: c, host: "FS-01", reason: "active pivot target" });
   const good = call("close_case", { case: c, verdict: "confirmed off-hours admin pivot via a.chen" });
 
+  // D1 regression guard: a MITRE/behavioral finding (NO literal "pivot" word) must ALSO grade success.
+  const c3 = call("open_investigation", { summary: "off-hours FS-01 access" }).case;
+  call("raise_finding", { case: c3, entity: "FS-01", ttp: "T1021 lateral movement (WS-21->FS-01, off-hours); T1005 collection", confidence: 0.9 });
+  call("contain_host", { case: c3, host: "WS-21", reason: "compromised admin host" });
+  const behavioral = call("close_case", { case: c3, verdict: "lateral movement off-hours" });
+
   // Naive analyst: chases the rotating IOC alert, contains the benign VPN host WS-07.
   const c2 = call("open_investigation", { summary: "chase the IOC alert" }).case;
   call("raise_finding", { case: c2, entity: "WS-07", ttp: "c2-beacon", confidence: 0.8 });
   call("contain_host", { case: c2, host: "WS-07", reason: "newly-registered domain" });
   const bad = call("close_case", { case: c2, verdict: "malware on WS-07" });
 
-  const pass = good.outcome === "success" && bad.outcome === "failure";
-  return { pass, golden: good.outcome, naive: bad.outcome, detail: pass ? "ok" : { good, bad } };
+  const pass = good.outcome === "success" && behavioral.outcome === "success" && bad.outcome === "failure";
+  return { pass, golden: good.outcome, behavioral: behavioral.outcome, naive: bad.outcome, detail: pass ? "ok" : { good, behavioral, bad } };
 }

@@ -19,7 +19,7 @@ fire and deciding *what plan the conditions call for* is your job.
 **Act (consequential):**
 - `open_incident { summary }` — open the incident record; returns an `incident` id. Do this first.
 - `set_tactic { incident, tactic, containment_line }` — set your suppression tactic and where you anchor the containment line.
-- `assign_crew { incident, resource, zone, task }` — put a crew/engine/dozer to work in a zone. The tool reports the safety posture of that assignment.
+- `assign_crew { incident, resource, zone, task }` — put a crew/engine/dozer to work in a zone. The tool reports the safety posture; a **ground** crew sent into an unsafe (blow-up) zone is **refused** (not committed), so you can read the posture without endangering anyone — move them to a safe zone or use aircraft instead.
 - `order_air { incident, aircraft, zone }` — order an air tanker or helicopter onto a zone.
 - `issue_evac { incident, zone, level }` — order an evacuation for a zone with people/structures at risk.
 - `declare_contained { incident, note }` — declare the fire contained and end the period. This returns the graded result.

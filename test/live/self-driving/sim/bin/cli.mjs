@@ -26,11 +26,52 @@ function restoreState(ctx, path) {
     return;
   }
   ctx.cases = new Map(s.cases || []);
+  // Rehydrate per-case Map fields. JSON round-trips Maps to plain objects, so a
+  // reloaded case would have `decisions`/`escalations` as `{}` and the handler's
+  // `r.decisions.set(...)` would throw. (In the live MCP transport the case store is
+  // a long-lived in-process Map and never hits this path; the --state CLI debug path
+  // does.) Convert the object form back to a Map so cross-call --state works.
+  for (const [, r] of ctx.cases) {
+    if (r && typeof r === "object") {
+      if (r.decisions && !(r.decisions instanceof Map)) r.decisions = new Map(Object.entries(r.decisions));
+      if (r.escalations && !(r.escalations instanceof Map)) r.escalations = new Map(Object.entries(r.escalations));
+      // lab-research campaigns hold a `designs` Map; without this rehydration the
+      // handler's `c.designs.get(...)` throws "c.designs.get is not a function" on any
+      // campaign reloaded from --state (only the first queue_run in a fresh process,
+      // when the campaign is still a live Map, worked).
+      if (r.designs && !(r.designs instanceof Map)) r.designs = new Map(Object.entries(r.designs));
+      // precision-apiary holds a `sampledHives` Set (which hives have a fresh sample).
+      // A Set stringifies to a bare `{}` (its contents are lost on write), so saveState
+      // emits it as an array; here we rebuild the Set. Without this, the handler's
+      // `r.sampledHives.add(...)` throws "s.sampledHives.add is not a function" on the
+      // SECOND inspect_hive/schedule_inspection reloaded from --state (the first call,
+      // when the field is still a live Set, worked).
+      if (r.sampledHives && !(r.sampledHives instanceof Set)) {
+        r.sampledHives = new Set(Array.isArray(r.sampledHives) ? r.sampledHives : Object.keys(r.sampledHives));
+      }
+    }
+  }
   ctx.lastTrip = s.lastTrip ?? null;
+  ctx.lastCase = s.lastCase ?? null; // workloads use either lastTrip OR lastCase; persist both
   ctx.caseCounter = s.caseCounter ?? 0;
 }
 function saveState(ctx, path) {
-  writeFileSync(path, JSON.stringify({ seed: ctx.seed, variant: ctx.variant, caseCounter: ctx.caseCounter, lastTrip: ctx.lastTrip, cases: [...ctx.cases.entries()] }));
+  // Serialize per-case Map fields to plain objects so they survive JSON (a raw Map
+  // stringifies to `{}`, silently dropping every decision). restoreState rehydrates them.
+  const cases = [...ctx.cases.entries()].map(([k, r]) => {
+    if (r && typeof r === "object") {
+      const o = { ...r };
+      if (r.decisions instanceof Map) o.decisions = Object.fromEntries(r.decisions);
+      if (r.escalations instanceof Map) o.escalations = Object.fromEntries(r.escalations);
+      if (r.designs instanceof Map) o.designs = Object.fromEntries(r.designs);
+      // A Set stringifies to `{}` (contents lost); emit it as an array so its members
+      // survive the write. restoreState rebuilds the Set.
+      if (r.sampledHives instanceof Set) o.sampledHives = [...r.sampledHives];
+      return [k, o];
+    }
+    return [k, r];
+  });
+  writeFileSync(path, JSON.stringify({ seed: ctx.seed, variant: ctx.variant, caseCounter: ctx.caseCounter, lastTrip: ctx.lastTrip, lastCase: ctx.lastCase, cases }));
 }
 
 const argv = process.argv.slice(2);

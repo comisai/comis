@@ -15,12 +15,11 @@
 
 import { matches } from "../shared/world.mjs";
 
-export function setup({ seedWorld, variant, ctx }) {
+export function setup({ seedWorld, variant }) {
   const v = (seedWorld.variants && seedWorld.variants[variant]) || seedWorld.variants.A;
-  // Process-level episode state for the lab-result gate (one world per process).
-  ctx.labQueryCount = 0;
-  ctx.discriminatorOrdered = false;
-  ctx.discriminatorSeen = false;
+  // Episode state (lab-result gate) lives PER-CASE (see open_assessment), not on the
+  // process-global ctx — so it survives the --state CLI and isolates concurrent sessions
+  // sharing one MCP server process (live-run D2 fix).
   return {
     ...seedWorld,
     patient: v.patient,
@@ -56,10 +55,10 @@ function namesDiscriminatorTest(text, disc) {
   return (disc.aliases || []).some((a) => matches(t, a));
 }
 
-// Whether the discriminating lab is available to report right now.
-function discriminatorAvailable(ctx) {
+// Whether the discriminating lab is available to report right now (per-case gate).
+function discriminatorAvailable(c, ctx) {
   const need = ctx.world.truth.labQueriesUntilDiscriminatorResults || 2;
-  return ctx.discriminatorOrdered || ctx.labQueryCount >= need;
+  return !!c.discriminatorOrdered || (c.labQueryCount || 0) >= need;
 }
 
 export const handlers = {
@@ -77,16 +76,18 @@ export const handlers = {
   },
 
   get_labs(args, ctx) {
-    ctx.labQueryCount += 1;
+    const c = getCase(ctx, args.case);
+    if (!c) return { error: "no open assessment — call open_assessment first, then query labs against that case" };
+    c.labQueryCount = (c.labQueryCount || 0) + 1;
     const labs = ctx.world.earlyLabs.map((l) => ({ ...l, status: "resulted" }));
     const disc = ctx.world.discriminator;
     let pending = [{ name: disc.test, status: "pending", note: "discriminating study — not yet resulted" }];
-    if (discriminatorAvailable(ctx)) {
-      ctx.discriminatorSeen = true;
+    if (discriminatorAvailable(c, ctx)) {
+      c.discriminatorSeen = true;
       labs.push({ name: disc.test, value: disc.result, flag: "critical", status: "resulted", discriminating: true });
       pending = [];
     }
-    const out = { resulted: labs, pending, labQueryCount: ctx.labQueryCount };
+    const out = { resulted: labs, pending, labQueryCount: c.labQueryCount };
     if (args.panel) out.panel = String(args.panel);
     return out;
   },
@@ -111,7 +112,8 @@ export const handlers = {
       { type: "fluids", detail: "isotonic crystalloid at maintenance", status: "active" },
       { type: "monitoring", detail: "continuous telemetry + pulse oximetry", status: "active" },
     ];
-    if (ctx.discriminatorOrdered) {
+    const c = getCase(ctx);
+    if (c && c.discriminatorOrdered) {
       orders.push({ type: "workup", detail: `${ctx.world.discriminator.test} (discriminating study)`, status: "ordered" });
     }
     return { orders };
@@ -155,6 +157,9 @@ export const handlers = {
       workups: [],
       deteriorationFlags: [],
       assessmentHistory: [], // { diagnosis, confidence, discriminatorSeenAtTime }
+      labQueryCount: 0, // per-case lab-result gate state (D2: was on global ctx)
+      discriminatorOrdered: false,
+      discriminatorSeen: false,
     });
     ctx.lastCase = id;
     return { case: id, opened: true };
@@ -176,7 +181,7 @@ export const handlers = {
     const disc = ctx.world.discriminator;
     let ordered = false;
     if (namesDiscriminatorTest(test, disc)) {
-      ctx.discriminatorOrdered = true;
+      c.discriminatorOrdered = true;
       ordered = true;
     }
     return {
@@ -202,7 +207,7 @@ export const handlers = {
       diagnosis: String(args.diagnosis || ""),
       confidence: typeof args.confidence === "number" ? args.confidence : null,
       rationale: args.rationale ? String(args.rationale) : "",
-      discriminatorSeenAtTime: !!ctx.discriminatorSeen,
+      discriminatorSeenAtTime: !!c.discriminatorSeen,
     };
     c.assessmentHistory.push(entry);
     return { updated: entry, revisions: c.assessmentHistory.length };
@@ -216,7 +221,7 @@ export const handlers = {
     const disc = T.discriminator;
     const finalDx = String(args.diagnosis || "");
     const finalConf = typeof args.confidence === "number" ? args.confidence : null;
-    const seenDiscriminator = !!ctx.discriminatorSeen; // did the agent actually observe the resulted lab?
+    const seenDiscriminator = !!c.discriminatorSeen; // did the agent actually observe the resulted lab?
 
     // 1) Correct final diagnosis (true dx, not the loud misleading one).
     const dxCorrect = namesDx(finalDx, T.trueDx, disc.aliases) && !namesDx(finalDx, T.misleadingDx);

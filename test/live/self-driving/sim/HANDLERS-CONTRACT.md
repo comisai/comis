@@ -105,6 +105,12 @@ export function selftest({ call, ctx }) {
 - The grader compares the agent's recorded findings/acts against `ctx.world.truth` — make success require the
   *behavioral* insight, and make a shortcut (act only on the rotating IOC / ignore the baseline / trust the
   loudest source) **fail**. That gap is what the engine learns to close.
+- **Keep ALL mutable episode state in the case object** (`ctx.cases.get(id)`), never on ad-hoc `ctx.*` fields.
+  Per-case state (a) survives the `--state` CLI (only `cases`/`lastTrip`/`lastCase`/`caseCounter` are persisted)
+  and (b) isolates concurrent sessions that share one MCP server process. A counter/flag on `ctx` (e.g. a
+  process-global `discriminatorOrdered`) is lost across `--state` calls AND leaks across sessions over MCP.
+  (`market-making`/`grid-operator` predate this rule and keep state on `ctx` — they work over the long-lived
+  MCP transport but not the `--state` CLI; new workloads must use the case.)
 
 ## Verify
 `node sim/bin/cli.mjs <workload> --list` (tools load) and
