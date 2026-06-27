@@ -32,12 +32,12 @@ import {
   resolveOperationModel,
   resolveProviderFamily,
   runReflection,
+  classifyReflectOutcome,
   createLlmReflectionAdapter,
   REFLECT_PROMPT,
   PROFILE_REFLECT_PROMPT,
   TOPIC_REFLECT_PROMPT,
   type ReflectionSourceTrajectory,
-  type ReflectAdmissionOutcome,
 } from "@comis/agent";
 import type { MemoryCronContext, MemoryCronPayload } from "./setup-channels-memory-crons-types.js";
 
@@ -234,15 +234,16 @@ export async function handleWireMemoryCronSentinel(
     // OBS-1: content-free source telemetry summed across kinds for the funnel emit.
     let sumSourceTrajectoryCount = 0;
     let sumSourceChars = 0;
-    // The acute "why 0 admitted" verdict (IN-03): `admitted` is STICKY (once any kind
-    // admitted, the summed verdict stays "admitted"); otherwise it is LAST-non-admitted-wins —
-    // each later non-admitting kind overwrites the field below, so the LAST kind's reason
-    // surfaces. Diagnostic field only (counts-only telemetry) — this only affects which
-    // benign/diagnostic reason shows when multiple kinds admit nothing for different reasons.
-    // Each kind's runReflection already computes untrusted_origin / rejected_name_length from its
-    // own SELECT/admit counts, so a kind that drops everything for untrusted origin (or rejects a
-    // name over-cap) propagates that verdict here without a summed re-classify.
-    let admissionOutcome: ReflectAdmissionOutcome = "no_successes";
+    // OBS-4b (reflect-obs-20260627): the aggregate "why 0 admitted" verdict is RE-CLASSIFIED from the
+    // SUMMED counts AFTER the loop (classifyReflectOutcome) — NOT last-kind-wins. The old fold let a
+    // later kind's `no_successes` overwrite an earlier kind's meaningful `uncorroborated`, surfacing a
+    // verdict that contradicted its own `selected` count (selected:2 alongside no_successes) and
+    // misdirected the operator to "nothing to learn from" instead of "successes under-merged →
+    // investigate the topicKey". Re-classifying from the same summed counts the funnel emits makes the
+    // verdict consistent-by-construction with its counts (the funnel's documented "Mapped from the
+    // SUMMED reflect result" intent). `emptyReflections` is summed so a corroborated-but-empty kind
+    // aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`.
+    let sumEmptyReflections = 0;
 
     for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
       // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
@@ -296,20 +297,29 @@ export async function handleWireMemoryCronSentinel(
         sumNameLengthRejections += v.nameLengthRejections;
         sumSourceTrajectoryCount += v.sourceTrajectoryCount;
         sumSourceChars += v.totalSourceChars;
+        sumEmptyReflections += v.emptyReflections;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
         reflectLogger.info({ agentId, reflectKind: kind, selected: v.selected, admitted: v.admitted, maxTopicCardinality: v.maxTopicCardinality, skipped: v.skipped, admissionOutcome: v.admissionOutcome }, "Reflection (kind) complete");
-        // The acute verdict: "admitted" is sticky; otherwise the LAST non-admitted kind's
-        // reason wins (each later non-admitting kind overwrites — IN-03).
-        if (v.admissionOutcome === "admitted") admissionOutcome = "admitted";
-        else if (admissionOutcome !== "admitted") admissionOutcome = v.admissionOutcome;
       } else {
         anyError = true;
         firstError ??= r.error;
         reflectLogger.error({ agentId, reflectKind: kind, err: r.error, hint: "Reflection failed for kind -- will retry next cycle", errorKind: "internal" as const }, "Reflection error");
       }
     }
+
+    // OBS-4b: the aggregate verdict, re-classified from the SUMMED counts (consistent-by-construction
+    // with the counts the funnel emits below) — `admitted` if any kind admitted, else the most-acute
+    // count-derived reason (uncorroborated / untrusted_origin / empty_reflection / … / no_successes).
+    const admissionOutcome = classifyReflectOutcome({
+      selected: sumSelected,
+      maxTopicCardinality: maxCardinality,
+      admitted: sumAdmitted,
+      emptyReflections: sumEmptyReflections,
+      untrustedDrops: sumUntrustedDrops,
+      nameLengthRejections: sumNameLengthRejections,
+    });
 
     // OBS-01: ONE DAEMON-SIDE telemetry emit + completion line, SUMMED across the 3 kinds.
     // Counts ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default the

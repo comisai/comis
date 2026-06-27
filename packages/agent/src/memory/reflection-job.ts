@@ -236,6 +236,14 @@ export interface RunReflectionResult {
   /** How many corroborated topics were SKIPPED (empty reflection or rejected validation). */
   skipped: number;
   /**
+   * OBS-4b (reflect-obs-20260627): how many corroborated topics reflected to EMPTY content
+   * (the empty-content guard declined). Returned (not just internal) so the daemon can SUM it
+   * across kinds and re-classify the aggregate verdict from the summed counts via
+   * {@link classifyReflectOutcome} — a corroborated-but-empty kind aggregates to `empty_reflection`,
+   * not a mis-attributed `rejected_validation`. Counts only.
+   */
+  emptyReflections: number;
+  /**
    * Phase 226 (D5 salvage): how many `success` sources were dropped at SELECT for an
    * untrusted origin (FOLD-04 axis 1) or external-trust source (axis 2). Counts only.
    * Lets the daemon emit `untrusted_origin` when this is the acute reason nothing seeded.
@@ -464,7 +472,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
     logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
@@ -524,7 +532,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------

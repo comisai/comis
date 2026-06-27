@@ -19,10 +19,14 @@ const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], indu
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // REFLECT-01: the reflection job + adapter the __REFLECT__ handler injects/calls.
-const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, untrustedDrops: 0, nameLengthRejections: 0 } })));
+const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
 const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: vi.fn() })));
 
-vi.mock("@comis/agent", () => ({
+vi.mock("@comis/agent", async (importOriginal) => ({
+  // Use the REAL module as the base so PURE helpers (classifyReflectOutcome — the wire's aggregate
+  // verdict classifier, reflect-obs-20260627 OBS-4b) come from source, NOT a drift-prone re-stub
+  // (the green-mock-vs-real-contract anti-pattern). Only the LLM/key-touching exports are overridden.
+  ...(await importOriginal<typeof import("@comis/agent")>()),
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: vi.fn(() => "anthropic"),
   createReasoningSeam: mockCreateReasoningSeam,
@@ -76,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockResolveOperationModel.mockReturnValue({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" } as any);
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, untrustedDrops: 0, nameLengthRejections: 0 } });
+  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
   mockCreateLlmReflectionAdapter.mockReturnValue({ reflect: vi.fn() });
 });
 
@@ -219,7 +223,7 @@ describe("handleWireMemoryCronSentinel", () => {
 
   it("__REFLECT__ surfaces the uncorroborated funnel verdict (why 0 admitted) when ALL kinds admit nothing", async () => {
     // Every kind admits nothing for the uncorroborated reason → the SUMMED verdict is uncorroborated.
-    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
       apiKey: "test-key",
@@ -235,6 +239,31 @@ describe("handleWireMemoryCronSentinel", () => {
     const synth = emitCalls.find((c) => c[0] === "reflect:admitted")?.[1] as { count: number };
     expect(synth.count).toBe(0);
     expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("__REFLECT__ aggregate verdict is the MEANINGFUL per-kind reason, not the LAST kind's no_successes (mixed kinds)", async () => {
+    // Live reflect-obs-20260627: the SKILL kind selected 2 successes but they under-merged on the
+    // deterministic topicKey (maxCardinality 1 → uncorroborated); the PROFILE + TOPIC kinds had no
+    // successes. The old last-non-admitted-kind-wins fold made the SUMMED verdict `no_successes` —
+    // self-contradictory next to `selected:2`, and it misdirects the operator to "nothing to learn
+    // from" instead of "there WAS signal that under-merged → investigate the topicKey". The aggregate
+    // MUST be `uncorroborated` (re-classified from the SUMMED counts, the funnel's documented intent).
+    mockRunReflection
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 2, admitted: 0, maxTopicCardinality: 1, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
+      apiKey: "test-key",
+      reflection: makeReflectionBundle(),
+    });
+    await handleWireMemoryCronSentinel("__REFLECT__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
+    const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const funnel = emitCalls.find((c) => c[0] === "reflect:funnel")?.[1] as { admissionOutcome: string; synthesized: number; admitted: number };
+    expect(funnel.synthesized).toBe(2); // sum selected — there WAS trusted-origin signal this run
+    expect(funnel.admitted).toBe(0);
+    // The aggregate verdict matches its own counts (selected:2, card:1) — NOT the last kind's no_successes.
+    expect(funnel.admissionOutcome).toBe("uncorroborated");
   });
 
   it("__REFLECT__ errors (no run) when the reflection bundle is not wired", async () => {
