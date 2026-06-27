@@ -152,3 +152,43 @@ drive these FIRST. The **reflection LLM call** that admits a doc (REFL-3/4 + INV
   This is content-quality/LLM-yield (telemetry honest = NOT a false success), not a mechanism/security failure. Use
   a RICH, distinctive, fabrication-free transcript if you need a grounded admit; don't expect a clean grounded skill
   from a 1-line "write a file" task.
+
+## reflect-obs LIVE-RUN lessons (reflect-obs-20260627 — the `feat/reflect-obs` obs surface; don't re-discover)
+- **The aggregate `admissionOutcome` was LAST-KIND-WINS (FIXED this run, FIX-1).** A reflection runs 3 kinds
+  (skill/profile/topic); the SUMMED funnel verdict used to take the LAST non-admitted kind's outcome, so a skill
+  kind that was `uncorroborated` (selected≥1, card 1) or `empty_reflection` (card≥2, LLM empty) got OVERWRITTEN by
+  the trailing profile/topic `no_successes` — surfacing a verdict that CONTRADICTS its own `selected`/`src` counts
+  (e.g. `selected:2` with `no_successes`) and misdirects the operator. Fix: re-classify the aggregate from the
+  SUMMED counts via `classifyReflectOutcome` (consistent-by-construction). Now `cron.runs`/`learning_health`/the
+  funnel show `uncorroborated`/`empty_reflection`/`untrusted_origin`/`admitted` correctly. If you see a verdict that
+  disagrees with its own counts, that regressed.
+- **INV-5 untrusted-origin MUST use the `external` trust tier (or an UNMAPPED sender), NOT `"user"`.** `deriveTrustedOrigin`
+  (`setup-channels-skill-synthesis-deps.ts`) returns `tier !== "external"` — so `user`/`admin`/any-non-external IS a
+  TRUSTED origin (a real channel interaction). Only `external` (or unmapped → `defaultTrustLevel:"external"`) is
+  untrusted. Setting `senderTrustMap:{id:"user"}` and expecting `untrusted_origin` is a FALSE-FAIL (it correctly
+  ADMITS — user is trusted). For the INV-5 oracle, map the senders to `"external"` (or remove them from
+  senderTrustMap so they default to external) → `selected:0, untrustedDrops≥2, outcome:untrusted_origin, no-grow`.
+- **The `explain` learning block is at `report.learning` (TOP-LEVEL), NOT `report.signals.learning`.** `toIncidentSignals`
+  builds an internal `IncidentSignals.learning`, but `assembleIncidentReport` MAPS it onto the report's top-level
+  `learning` field (and `report.signals` is not exposed). Querying `j.signals.learning` returns `undefined` = a
+  FALSE-FAIL. OBS-4a oracle: `comis explain <S> --offline --format json` → `.learning.{skillsUsed,skillsPromoted}`.
+- **Poll for the EXACT `"Reflection complete (all kinds)"` line — `"Reflection.*complete"` FALSE-matches the dispatch.**
+  The `__REFLECT__` sentinel is fire-and-forget: `cron.run` returns immediately and the scheduler logs `"Job completed"`
+  (durationMs ~15, jobName "Reflection") within ~1s — a loose `grep "Reflection.*complete"` matches THAT, not the
+  ~20s async reflection. Grep the literal `"Reflection complete (all kinds)"` (the SUMMED daemon emit) for the verdict.
+- **OBS-2/6b cron.runs jobId match (de-risked):** the Reflection cron id IS `reflect-<agentId>` (`reflect-default`),
+  which equals the jobId `recordReflectFunnelRun` writes → `cron.runs jobName "Reflection"` resolves the funnel run.
+  If a future rename breaks that equality, cron.runs goes silently empty (the built-but-not-wired risk).
+- **Seeding a grounded skill for the reuse→promote + OBS-4a chain** (since SYNTH-YIELD makes a reflected admit flaky):
+  `INSERT INTO mental_models (...kind='skill', state='candidate', proof_count=promoteAtProofCount-1, mutating=0,
+  trust_level='learned', pinned=0...)` via better-sqlite3 (NOT null: `source_who`); restart (boot surface-refresh
+  materializes `<workspace>/.learned-skills/<name>/SKILL.md` + logs `surfacedCount` at INFO); drive a task that points
+  at the playbook → the agent `read`s the SKILL.md → `skill.prompt_invoked` + `used_skill_ids` → a success reuse →
+  `proof_count++` candidate→active + `learning.skill_promoted`. Then `explain` shows `skillsUsed`+`skillsPromoted`.
+- **`clean-restart.sh WIPE_CRONS=1` now also wipes `execution.jsonl`** (KIT-1 this run) — without it a "from-scratch"
+  daemon inherits the prior session's `cron.runs` history (a stale `reflect: admitted` record on a wiped memory.db),
+  masking E-5 (cron.runs empty on a fresh daemon). NOTE it still wipes only `sessions/default/$CHATID` — a 2nd
+  corroboration sender (e.g. 678314279) keeps its session dir across clean-restarts (benign; re-drive fresh).
+- **F-OBS-EXPLAIN-RPC is RESOLVED by OBS-5:** `obs.explain` RPC is admin-trust-only BY DESIGN; the deny now names the
+  route ("operators use `comis explain`, which assembles offline") and the CLI (no `--offline`) prints "obs.explain is
+  admin-trust-only — report assembled offline" + still returns the report. The operator route works; not a bug.

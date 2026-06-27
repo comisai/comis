@@ -31,7 +31,12 @@ sudo -u comis bash -c "
   rm -rf '$DATA'/graph-runs/* '$DATA'/subagent-results/*
   # Optional (WIPE_CRONS=1): clear the persisted cron store so a from-scratch run inherits NO stale crons
   # from a prior (different-dist) daemon. The daemon re-registers its current cron set from config on boot.
-  if [ '$WIPE_CRONS' = '1' ]; then rm -f '$DATA'/workspace*/.scheduler/cron-jobs.json '$DATA'/workspace*/.scheduler/cron-jobs.json.bak '$DATA'/workspace*/.scheduler/cron-jobs.json.lock; fi
+  # ALSO wipe execution.jsonl — the ExecutionTracker's per-job run HISTORY persists there (NOT in memory.db),
+  # so without this a "from-scratch" daemon inherits a prior session's cron.runs history. This bit the
+  # reflect-obs run 2026-06-27: a stale `reflect: outcome=admitted …` record from a previous daemon showed
+  # up in `cron.runs jobName "Reflection"` on a freshly-wiped memory.db (mental_models=0), masking E-5
+  # (cron.runs empty on a fresh daemon) and muddying a from-scratch OBS-2/6b reflection-run proof.
+  if [ '$WIPE_CRONS' = '1' ]; then rm -f '$DATA'/workspace*/.scheduler/cron-jobs.json '$DATA'/workspace*/.scheduler/cron-jobs.json.bak '$DATA'/workspace*/.scheduler/cron-jobs.json.lock '$DATA'/workspace*/.scheduler/execution.jsonl; fi
   # The SUPERVISOR's stdout capture lives at \$HOME/comis-m1.log (NOT under \$DATA/logs), so the rm above
   # never touched it → it accumulated 14k+ lines across boots and the boot-grep below showed cumulative
   # 'N Comis daemon started', masking the current boot (the pm2 stale-log trap; M2 run 2026-06-24). Truncate
