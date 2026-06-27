@@ -166,6 +166,39 @@ describe("createSqliteOutcomeStore", () => {
       expect(rowCount(TRAJ, "tenant_a", AGENT_A)).toBe(1);
       expect(rowCount(TRAJ, "tenant_b", AGENT_A)).toBe(1);
     });
+
+    it("MERGES colliding attribution rows so a same-millisecond recall + skill credit don't drop each other", async () => {
+      // Two DISTINCT per-turn attribution carriers for the SAME turn that collide on the conflict
+      // tuple (same trajectory/source/observedAt) but carry DIFFERENT columns — the recall carrier
+      // (recalled_ids, from memory:recall_used) and the skill carrier (used_skill_ids, from
+      // memory:skill_used). Both are written source:"explicit"/outcome:"unknown" at post-execution,
+      // so when their observedAt lands in the same millisecond they collide. The old DO NOTHING
+      // silently DROPPED the second — losing one credit (the intermittent ~1/3 reuse-credit miss on
+      // any turn that BOTH recalled memory AND reused a skill). They must MERGE, not drop.
+      await store.observe(makeObs({ source: "explicit", outcome: "unknown", confidence: 0, observedAt: 5_000, recalledIds: ["mem-1"] }));
+      await store.observe(makeObs({ source: "explicit", outcome: "unknown", confidence: 0, observedAt: 5_000, usedSkillIds: ["skill-x"] }));
+      // Still ONE row for the tuple (a merge, not a duplicate).
+      expect(rowCount()).toBe(1);
+      // resolve() must surface BOTH columns — neither credit was dropped.
+      const r = await store.resolve(TRAJ, { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.value.recalledIds).toContain("mem-1");
+        expect(r.value.usedSkillIds).toContain("skill-x");
+      }
+    });
+
+    it("preserves the FIRST attribution column when a later same-tuple carrier has none (COALESCE keeps, never nulls)", async () => {
+      // Skill carrier lands first; a later same-ms recall carrier (no used_skill_ids) must NOT null it.
+      await store.observe(makeObs({ source: "explicit", outcome: "unknown", confidence: 0, observedAt: 6_000, usedSkillIds: ["skill-y"] }));
+      await store.observe(makeObs({ source: "explicit", outcome: "unknown", confidence: 0, observedAt: 6_000, recalledIds: ["mem-2"] }));
+      const r = await store.resolve(TRAJ, { tenantId: TENANT_A, agentId: AGENT_A });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.value.usedSkillIds).toContain("skill-y");
+        expect(r.value.recalledIds).toContain("mem-2");
+      }
+    });
   });
 
   describe("resolve() — precedence-first fusion + fail-closed unknown + attribution", () => {
