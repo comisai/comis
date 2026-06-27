@@ -29,6 +29,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import { ObsSpendSnapshotContract, stripInternalFields } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
@@ -69,7 +70,7 @@ export function bindObsSpendHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     [ObsSpendSnapshotContract.method]: async (rawParams) => {
       // H1: admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       // stripInternalFields BEFORE contract parse — `_trustLevel` (and any smuggled
       // field) cannot reach the parsed params or the result.

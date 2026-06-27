@@ -19,7 +19,7 @@ const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], indu
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" })));
 // REFLECT-01: the reflection job + adapter the __REFLECT__ handler injects/calls.
-const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
+const mockRunReflection = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })));
 const mockCreateLlmReflectionAdapter = vi.hoisted(() => vi.fn(() => ({ reflect: vi.fn() })));
 
 vi.mock("@comis/agent", async (importOriginal) => ({
@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockResolveOperationModel.mockReturnValue({ provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku", timeoutMs: 60_000, source: "default" } as any);
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
-  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+  mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "admitted" as const, selected: 2, admitted: 1, maxTopicCardinality: 2, distinctTopicKeys: 1, skipped: 1, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
   mockCreateLlmReflectionAdapter.mockReturnValue({ reflect: vi.fn() });
 });
 
@@ -223,7 +223,7 @@ describe("handleWireMemoryCronSentinel", () => {
 
   it("__REFLECT__ surfaces the uncorroborated funnel verdict (why 0 admitted) when ALL kinds admit nothing", async () => {
     // Every kind admits nothing for the uncorroborated reason → the SUMMED verdict is uncorroborated.
-    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+    mockRunReflection.mockResolvedValue({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 1, admitted: 0, maxTopicCardinality: 1, distinctTopicKeys: 1, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
       apiKey: "test-key",
@@ -249,9 +249,9 @@ describe("handleWireMemoryCronSentinel", () => {
     // from" instead of "there WAS signal that under-merged → investigate the topicKey". The aggregate
     // MUST be `uncorroborated` (re-classified from the SUMMED counts, the funnel's documented intent).
     mockRunReflection
-      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 2, admitted: 0, maxTopicCardinality: 1, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
-      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
-      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "uncorroborated" as const, selected: 2, admitted: 0, maxTopicCardinality: 1, distinctTopicKeys: 2, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } })
+      .mockResolvedValueOnce({ ok: true as const, value: { admissionOutcome: "no_successes" as const, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0 } });
     const ctx = makeCtx({
       agents: { "agent-1": { name: "Agent 1", provider: "anthropic", learning: { enabled: true, reflect: { minConfidence: 0.6 } } } },
       apiKey: "test-key",
@@ -259,9 +259,12 @@ describe("handleWireMemoryCronSentinel", () => {
     });
     await handleWireMemoryCronSentinel("__REFLECT__", { agentId: "agent-1", onComplete: vi.fn() }, ctx);
     const emitCalls = (ctx.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
-    const funnel = emitCalls.find((c) => c[0] === "reflect:funnel")?.[1] as { admissionOutcome: string; synthesized: number; admitted: number };
+    const funnel = emitCalls.find((c) => c[0] === "reflect:funnel")?.[1] as { admissionOutcome: string; synthesized: number; admitted: number; distinctTopicKeys: number };
     expect(funnel.synthesized).toBe(2); // sum selected — there WAS trusted-origin signal this run
     expect(funnel.admitted).toBe(0);
+    // OBS-7: the under-merge discriminator summed across kinds (skill 2 + no_successes 0 + no_successes 0).
+    // synthesized:2 + distinctTopicKeys:2 + maxCard:1 = 2 successes that landed on 2 separate topics.
+    expect(funnel.distinctTopicKeys).toBe(2);
     // The aggregate verdict matches its own counts (selected:2, card:1) — NOT the last kind's no_successes.
     expect(funnel.admissionOutcome).toBe("uncorroborated");
   });

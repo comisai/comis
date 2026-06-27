@@ -16,6 +16,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import {
   isImmutableConfigPath,
   AppConfigSchema,
@@ -61,7 +62,7 @@ export function bindConfigExportHandlers(
       // Admin trust check (same as config.patch)
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config apply");
+        throw new AuthorizationError("Admin access required for config apply");
       }
 
       // Rate limit check -- reuse the SAME patchBucket so apply+patch share the limit
@@ -259,7 +260,7 @@ export function bindConfigExportHandlers(
       const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config rollback");
+        throw new AuthorizationError("Admin access required for config rollback");
       }
       if (!deps.configGitManager) {
         throw new Error("Config versioning not available");
@@ -305,7 +306,7 @@ export function bindConfigExportHandlers(
       const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config garbage collection");
+        throw new AuthorizationError("Admin access required for config garbage collection");
       }
       if (!deps.configGitManager) {
         throw new Error("Config versioning not available");
@@ -350,7 +351,7 @@ export function bindConfigExportHandlers(
       const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for gateway restart");
+        throw new AuthorizationError("Admin access required for gateway restart");
       }
       const userParams = stripInternalFields(rawParams);
       GatewayRestartContract.request.parse(userParams);

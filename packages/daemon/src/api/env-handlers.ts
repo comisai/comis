@@ -33,6 +33,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   matchesSecretPattern,
   EnvSetContract,
@@ -117,7 +118,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for env.set");
+        throw new AuthorizationError("Admin access required for env.set");
       }
 
       // Rate limit check (BEFORE contract.request.parse for fail-fast).
@@ -269,7 +270,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for env.list");
+        throw new AuthorizationError("Admin access required for env.list");
       }
 
       // Rate limit check

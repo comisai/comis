@@ -20,6 +20,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import {
   isImmutableConfigPath,
   deepMerge,
@@ -73,7 +74,7 @@ export function bindConfigWriteHandlers(
     [ConfigPatchContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config modification");
+        throw new AuthorizationError("Admin access required for config modification");
       }
 
       // Single-writer guard: integrations.mcp.servers is managed

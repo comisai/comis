@@ -25,6 +25,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import { ObsAuditQueryContract, stripInternalFields } from "@comis/core";
 import type { AuditQueryParams } from "@comis/memory";
 import type { RpcHandler } from "../types.js";
@@ -45,7 +46,7 @@ export function bindObsAuditHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     [ObsAuditQueryContract.method]: async (rawParams) => {
       // H1: admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       // stripInternalFields BEFORE contract parse — `_trustLevel` cannot be
       // smuggled into the parsed params (or the result).

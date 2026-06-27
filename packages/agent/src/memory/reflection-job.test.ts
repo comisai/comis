@@ -393,6 +393,45 @@ describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, 
     expect(res.value.admitted).toBe(1);
   });
 
+  it("OBS-7 distinctTopicKeys — under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
+    // UNDER-MERGE: 2 trusted successes from distinct senders but on DIFFERENT topics → 2 groups,
+    // each cardinality 1 → uncorroborated. distinctTopicKeys:2 + maxTopicCardinality:1 is the
+    // discriminator that says "there WAS corroborating signal but it didn't merge" (the
+    // LLM-tag-fallback trigger) — distinct from a genuine single-source.
+    const underMerge = await runReflection(
+      makeDeps(
+        [
+          traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app to production" }),
+          traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "rotate the database backup key" }),
+        ],
+        {},
+        {},
+      ),
+    );
+    expect(underMerge.ok).toBe(true);
+    if (!underMerge.ok) throw new Error("expected ok");
+    expect(underMerge.value.selected).toBe(2);
+    expect(underMerge.value.distinctTopicKeys).toBe(2); // 2 separate topicKeys
+    expect(underMerge.value.maxTopicCardinality).toBe(1); // neither corroborated
+    expect(underMerge.value.admissionOutcome).toBe("uncorroborated");
+
+    // CORROBORATED: same 2 senders on the SAME topic → 1 group, cardinality 2 → 1 distinct topicKey.
+    const corroborated = await runReflection(
+      makeDeps(
+        [
+          traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app to production" }),
+          traj({ trajectoryId: "b", sessionId: "s2", sender: "u2", signature: "app deploy to production please" }),
+        ],
+        {},
+        {},
+      ),
+    );
+    expect(corroborated.ok).toBe(true);
+    if (!corroborated.ok) throw new Error("expected ok");
+    expect(corroborated.value.distinctTopicKeys).toBe(1); // merged into ONE topic
+    expect(corroborated.value.maxTopicCardinality).toBe(2);
+  });
+
   it("an empty topicKey (ungroupable signature) is skipped — never corroborates", async () => {
     const mocks: Partial<Mocks> = {};
     // A stopword-only signature normalizes to "" → ungroupable, even with 2 distinct senders.

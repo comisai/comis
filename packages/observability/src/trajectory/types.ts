@@ -91,6 +91,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   // online-tuning bandit was deleted; recall is fixed-RRF.)
   "learning.memory_demoted",
   "learning.memory_evicted",
+  "learning.memory_failure_attributed", // OBS-4b: corroborated-failure accrual (the eviction-causation precursor)
   // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry, RENAMED
   // from the old synthesis-funnel types. reflect.admitted = admitted-doc count; reflect.funnel
   // = synthesized/validated/admitted + maxClusterCardinality + the admissionOutcome closed-enum

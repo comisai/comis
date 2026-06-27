@@ -345,9 +345,41 @@ export function reflectFunnelEventToRow(
       admissionOutcome: payload.admissionOutcome,
       admitted: payload.admitted,
       maxClusterCardinality: payload.maxClusterCardinality,
+      // OBS-7: the under-merge discriminator (admitted=0 with distinctTopicKeys>1 & maxClusterCardinality<2
+      // = successes that didn't merge → topicKey under-merge, not a genuine single-source).
+      distinctTopicKeys: payload.distinctTopicKeys,
       untrustedDrops: payload.untrustedDrops,
       sourceTrajectoryCount: payload.sourceTrajectoryCount,
       totalSourceChars: payload.totalSourceChars,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
+ * OBS-2b (reflect-obs-20260627): map a `learning:lifecycle_swept` event → a flat DiagnosticRow under
+ * `category:"memory_lifecycle"`, so the fleet lens surfaces the daemon-wide FORGET posture (is the
+ * sweep evicting/demoting?) as a queryable finding — the parity of reflectFunnelEventToRow for the
+ * forget half. Severity ALWAYS `"info"`: a sweep that evicted N corroborated-wrong / demoted N stale
+ * memories — or evicted nothing (no eviction-candidates) — is healthy maintenance, not an alert (it
+ * must NOT inflate the fleet degrade count, the BENIGN/IN-01 discipline). The `details` JSON carries
+ * the run COUNTS ONLY (§2.7 / SEC-01 — the event is content-free; never a memory id/body).
+ */
+export function lifecycleSweptEventToRow(
+  payload: EventMap["learning:lifecycle_swept"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "memory_lifecycle",
+    severity: "info",
+    agentId: payload.agentId,
+    message: "learning:lifecycle_swept",
+    details: JSON.stringify({
+      signal: "lifecycle_sweep",
+      scanned: payload.scanned,
+      promoted: payload.promoted,
+      demoted: payload.demoted,
+      evicted: payload.evicted,
     }),
     traceId: undefined,
   };
@@ -711,6 +743,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // Content-free (the reflect:funnel event is counts + the closed admissionOutcome enum only).
   eventBus.on("reflect:funnel", (payload) => {
     diagnosticBuffer.push(reflectFunnelEventToRow(payload));
+  });
+  // OBS-2b (reflect-obs-20260627): the forget-sweep summary → a memory_lifecycle row, so the fleet
+  // lens surfaces the daemon-wide forget posture (is the sweep evicting/demoting?) cross-session —
+  // parity with the reflection funnel above. Content-free (counts only).
+  eventBus.on("learning:lifecycle_swept", (payload) => {
+    diagnosticBuffer.push(lifecycleSweptEventToRow(payload));
   });
   // OBS-01 (Phase 180): the two multilingual signals → health_signal rows (same
   // diagnosticBuffer). Dark until the emit sites land (180-08); subscribed here

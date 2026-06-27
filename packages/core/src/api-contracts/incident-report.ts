@@ -329,6 +329,11 @@ export const IncidentReportSchema = z.object({
       // (present only when a promote/demote fired this session; schemaVersion stays 1).
       skillsPromoted: z.number().optional(),
       skillsDemoted: z.number().optional(),
+      // OBS-4b (reflect-obs-20260627): memories that accrued a CORROBORATED failure this session
+      // (count only) — the eviction-causation precursor (`learning.memory_failure_attributed`), so
+      // "is this session pushing a memory toward eviction" is one `explain` field. Optional + additive
+      // (present only when >0; schemaVersion stays 1).
+      failuresAttributed: z.number().optional(),
       // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
       // were DELETED with their 0-emit events (the user-rep revision + generalization paths
       // folded into the reflection engine in Phase 225). The block stays counts/ids-only.
@@ -772,6 +777,8 @@ export interface IncidentSignals {
     skillsPromoted?: number;
     /** OBS-4: count of skills demoted this session (`learning.skill_demoted`). */
     skillsDemoted?: number;
+    /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`) — eviction precursor. */
+    failuresAttributed?: number;
   };
 }
 

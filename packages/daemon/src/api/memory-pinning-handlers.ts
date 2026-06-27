@@ -9,6 +9,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   MemoryPinContract,
   MemoryUnpinContract,
@@ -35,7 +36,7 @@ export function createMemoryPinningHandlers(
     [MemoryPinContract.method]: async (rawParams) => {
       // Admin gate FIRST — before stripInternalFields (which strips _trustLevel).
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required for memory pin");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required for memory pin");
 
       const start = systemNowMs();
       const p = MemoryPinContract.request.parse(stripInternalFields(rawParams));
@@ -84,7 +85,7 @@ export function createMemoryPinningHandlers(
     [MemoryUnpinContract.method]: async (rawParams) => {
       // Admin gate FIRST — before stripInternalFields (which strips _trustLevel).
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required for memory unpin");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required for memory unpin");
 
       const start = systemNowMs();
       const p = MemoryUnpinContract.request.parse(stripInternalFields(rawParams));

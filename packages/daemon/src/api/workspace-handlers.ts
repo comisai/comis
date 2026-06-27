@@ -32,6 +32,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   safePath,
   // Workspace helpers from @comis/core.
@@ -109,7 +110,7 @@ function validateAgent(deps: WorkspaceHandlerDeps, agentId: unknown): asserts ag
 
 function requireAdmin(params: Record<string, unknown>): void {
   if (params._trustLevel !== "admin") {
-    throw new Error("Admin access required for workspace file writes");
+    throw new AuthorizationError("Admin access required for workspace file writes");
   }
 }
 

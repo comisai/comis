@@ -717,6 +717,32 @@ export interface AgentEvents {
    */
   "learning:memory_demoted": { agentId: string; count: number; timestamp: number };
   "learning:memory_evicted": { agentId: string; count: number; timestamp: number };
+  /**
+   * OBS-2b (reflect-obs-20260627): the once-per-run lifecycle/forget sweep SUMMARY — the parity
+   * event for the forget half of learning (reflection has `reflect:funnel`; the forget sweep had
+   * only the per-category demoted/evicted counts above, invisible to `cron.runs`/fleet/`explain`).
+   * Carries the run breakdown so `cron.runs jobName "Memory lifecycle"` answers "what did the sweep
+   * do" (scanned/evicted/demoted) in one call instead of a `db.mjs` `evicted_at` poll, and the fleet
+   * lens rolls a `memory_lifecycle` finding. Counts ONLY — never an id-list/body (§2.7 / SEC-01).
+   */
+  "learning:lifecycle_swept": {
+    agentId: string;
+    scanned: number;
+    promoted: number;
+    demoted: number;
+    evicted: number;
+    timestamp: number;
+  };
+  /**
+   * OBS-4b (reflect-obs-20260627): N memories accrued a CORROBORATED failure (failure_count++) this
+   * resolve — the eviction-causation PRECURSOR. Eviction needs `failure_count >= failureEvictionFloor`,
+   * but the accrual itself was previously invisible (only the DB column changed over time + a DEBUG
+   * line), so "why did/didn't this memory evict" had no event trail (you had to SEED failure_count to
+   * test eviction). This event makes the corroborated-failure accrual diagnosable from `comis explain`
+   * (bridged) so the path toward eviction is reconstructable. Count ONLY — never a memory id-list/body
+   * (§2.7 / SEC-01); the accrual is already FORGET-03 corroboration-gated (≥2 independent sessions).
+   */
+  "learning:memory_failure_attributed": { agentId: string; count: number; timestamp: number };
 
   /**
    * GENQ-01: a memory-generation pass produced output whose quality diverged from its

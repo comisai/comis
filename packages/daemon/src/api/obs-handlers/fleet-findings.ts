@@ -122,6 +122,9 @@ export function buildFindings(
   // OBS-3b (hindsight-reflection-20260626): the windowed `learning_health` rows (the reflection
   // funnel). Defaulted `[]` so the pre-OBS-3b callers/tests stay byte-identical.
   learningHealth: readonly DiagnosticRow[] = [],
+  // OBS-2b (reflect-obs-20260627): the windowed `memory_lifecycle` rows (the forget sweep). Defaulted
+  // `[]` so the pre-OBS-2b callers/tests stay byte-identical.
+  memoryLifecycle: readonly DiagnosticRow[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
 
@@ -491,6 +494,26 @@ export function buildFindings(
       detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
       count: learningHealth.length,
       hint: 'run `cron.runs jobName "Reflection"` for the per-run funnel; admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge — `comis explain` the reflection run',
+    });
+  }
+
+  // OBS-2b (reflect-obs-20260627): the dedicated memory_lifecycle finding — the forget sweep rolled up
+  // over the window (the parity of learning_health for the forget half). Counts ONLY (summed evicted/
+  // demoted across the window's sweeps; every details field parsed defensively). A sweep that evicted
+  // nothing (no eviction-candidates) is NOT a fault — healthy maintenance — so the hint says so.
+  if (memoryLifecycle.length > 0) {
+    let evictedSum = 0;
+    let demotedSum = 0;
+    for (const row of memoryLifecycle) {
+      const d = parseDetailsObject(row.details);
+      if (typeof d.evicted === "number") evictedSum += d.evicted;
+      if (typeof d.demoted === "number") demotedSum += d.demoted;
+    }
+    findings.push({
+      code: "memory_lifecycle",
+      detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
+      count: memoryLifecycle.length,
+      hint: 'run `cron.runs jobName "Memory lifecycle"` for the per-sweep counts; evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the INV-4 exemptions (pinned/high-proof/system survive).',
     });
   }
 

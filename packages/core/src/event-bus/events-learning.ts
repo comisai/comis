@@ -112,6 +112,14 @@ export interface LearningEvents {
     /** The largest distinct (session,sender) corroboration size (1 = single instance → not admissible). */
     maxClusterCardinality: number;
     /**
+     * OBS-7 (reflect-obs-20260627): how many DISTINCT topicKey groups the selected sources formed —
+     * the under-merge DISCRIMINATOR. `synthesized:2, distinctTopicKeys:2, maxClusterCardinality:1` =
+     * 2 successes that landed on 2 SEPARATE topics (under-merge → LLM-tag-fallback trigger), vs
+     * `distinctTopicKeys:1, maxClusterCardinality:2` = genuinely corroborated. Answers "admitted=0
+     * DESPITE corroboration?" from ONE field. Content-free (a count, like `maxClusterCardinality`).
+     */
+    distinctTopicKeys: number;
+    /**
      * OBS-1 (hindsight-reflection-20260626): success sources DROPPED at SELECT for an untrusted origin
      * / external-trust source (count only). The MAGNITUDE behind an `untrusted_origin` verdict — the
      * enum says WHICH, this says HOW MANY, so `comis explain` answers "is untrusted-origin a one-off or

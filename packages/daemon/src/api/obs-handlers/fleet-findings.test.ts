@@ -1111,3 +1111,45 @@ describe("buildFindings — OBS-3b learning_health (reflection funnel rollup)", 
     expect(JSON.stringify(lh)).not.toContain("procedure");
   });
 });
+
+describe("buildFindings — OBS-2b memory_lifecycle (forget sweep rollup)", () => {
+  function lifecycleRow(ts: number, fields: { evicted?: number; demoted?: number }): DiagnosticRow {
+    return {
+      timestamp: ts,
+      category: "memory_lifecycle",
+      severity: "info",
+      agentId: "default",
+      message: "learning:lifecycle_swept",
+      details: JSON.stringify({
+        signal: "lifecycle_sweep",
+        scanned: 6,
+        promoted: 0,
+        demoted: fields.demoted ?? 0,
+        evicted: fields.evicted ?? 0,
+      }),
+    };
+  }
+
+  it("emits a memory_lifecycle finding: sweep count + summed evicted/demoted", () => {
+    const findings = buildFindings([], [], [], [], [lifecycleRow(1_000, { evicted: 1, demoted: 0 }), lifecycleRow(2_000, { evicted: 2, demoted: 1 })]);
+    const ml = findings.filter((f) => f.code === "memory_lifecycle");
+    expect(ml).toHaveLength(1);
+    expect(ml[0]!.count).toBe(2); // 2 sweeps in the window
+    expect(ml[0]!.detail).toContain("evicted=3"); // 1 + 2
+    expect(ml[0]!.detail).toContain("demoted=1");
+  });
+
+  it("no memory_lifecycle finding when there are no sweep rows (back-compat with pre-OBS-2b callers)", () => {
+    expect(buildFindings([], [], [], []).some((f) => f.code === "memory_lifecycle")).toBe(false);
+  });
+
+  it("never echoes a memory body even if smuggled into details (content-free / H1)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "memory_lifecycle", severity: "info", message: "learning:lifecycle_swept",
+      details: JSON.stringify({ evicted: 1, body: "the secret memory content", id: "memory-deadbeef" }),
+    };
+    const ml = buildFindings([], [], [], [], [row]).filter((f) => f.code === "memory_lifecycle");
+    expect(JSON.stringify(ml)).not.toContain("secret memory content");
+    expect(JSON.stringify(ml)).not.toContain("deadbeef");
+  });
+});

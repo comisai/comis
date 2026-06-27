@@ -8,6 +8,7 @@ import {
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   reflectFunnelEventToRow,
+  lifecycleSweptEventToRow,
   mcpReconnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
@@ -597,6 +598,7 @@ describe("reflectFunnelEventToRow", () => {
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      distinctTopicKeys: 1,
       untrustedDrops: 0,
       nameLengthRejections: 0,
       skipped: 0,
@@ -616,8 +618,35 @@ describe("reflectFunnelEventToRow", () => {
     expect(d.admitted).toBe(1);
     expect(d.untrustedDrops).toBe(0);
     expect(d.sourceTrajectoryCount).toBe(2);
+    expect(d.distinctTopicKeys).toBe(1); // OBS-7 under-merge discriminator rides the persisted row
     // INV-6 / H1: counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
+  });
+});
+
+describe("lifecycleSweptEventToRow (OBS-2b — forget sweep → memory_lifecycle)", () => {
+  it("maps a learning:lifecycle_swept payload to a memory_lifecycle row (info severity, content-free counts)", () => {
+    const row = lifecycleSweptEventToRow({
+      agentId: "default",
+      scanned: 6,
+      promoted: 0,
+      demoted: 1,
+      evicted: 2,
+      timestamp: 7777,
+    });
+    expect(row.timestamp).toBe(7777);
+    expect(row.category).toBe("memory_lifecycle");
+    // INFO: a sweep (even one that evicted nothing) is healthy maintenance, not a degrade alert.
+    expect(row.severity).toBe("info");
+    expect(row.agentId).toBe("default");
+    expect(row.message).toBe("learning:lifecycle_swept");
+    const d = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(d.signal).toBe("lifecycle_sweep");
+    expect(d.scanned).toBe(6);
+    expect(d.evicted).toBe(2);
+    expect(d.demoted).toBe(1);
+    // INV-6 / H1: counts only — never a memory id/body.
+    expect(row.details).not.toMatch(/content|body|memory-[a-f0-9]/);
   });
 });
 

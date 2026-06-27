@@ -50,6 +50,7 @@ export async function recordReflectFunnelRun(
     admissionOutcome: string;
     admitted: number;
     maxClusterCardinality: number;
+    distinctTopicKeys: number;
     untrustedDrops: number;
     sourceTrajectoryCount: number;
     totalSourceChars: number;
@@ -57,11 +58,35 @@ export async function recordReflectFunnelRun(
   nowMs: number,
 ): Promise<void> {
   if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
+  // OBS-7: `topics=N` (distinctTopicKeys) + maxCard makes under-merge readable on `cron.runs`:
+  // admitted=0 with topics>1 & maxCard=1 = successes that didn't merge (vs topics=1 maxCard>=2 = corroborated).
   const summary =
     `reflect: outcome=${funnel.admissionOutcome} admitted=${funnel.admitted}` +
-    ` maxCard=${funnel.maxClusterCardinality} untrustedDrops=${funnel.untrustedDrops}` +
+    ` maxCard=${funnel.maxClusterCardinality} topics=${funnel.distinctTopicKeys} untrustedDrops=${funnel.untrustedDrops}` +
     ` src=${funnel.sourceTrajectoryCount}traj/${funnel.totalSourceChars}ch`;
   await tracker.record({ ts: nowMs, jobId: `reflect-${funnel.agentId}`, status: "ok", durationMs: 0, summary });
+}
+
+/**
+ * OBS-2b (reflect-obs-20260627): record a completed `__MEMORY_LIFECYCLE__` sweep to the firing agent's
+ * execution tracker, so `cron.runs jobName "Memory lifecycle"` surfaces the sweep result (scanned/
+ * evicted/demoted/promoted) — instead of a `db.mjs` `evicted_at` poll. The parity recorder for the
+ * forget half of learning (reflection has recordReflectFunnelRun). `jobId` mirrors the lifecycle cron's
+ * id (`memory-lifecycle-<agentId>`) so `resolveJobByName(scheduler,"Memory lifecycle")` resolves to this
+ * history. Content-free: counts ONLY (INV-6). Recorded off the content-free `learning:lifecycle_swept`
+ * event (the sentinel is fire-and-forget, so executeJob can't await the sweep). `durationMs` is 0 (the
+ * event carries no duration; the counts + ts are the value).
+ */
+export async function recordLifecycleRun(
+  tracker: ExecutionTracker | undefined,
+  swept: { agentId: string; scanned: number; promoted: number; demoted: number; evicted: number },
+  nowMs: number,
+): Promise<void> {
+  if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
+  const summary =
+    `lifecycle: scanned=${swept.scanned} evicted=${swept.evicted}` +
+    ` demoted=${swept.demoted} promoted=${swept.promoted}`;
+  await tracker.record({ ts: nowMs, jobId: `memory-lifecycle-${swept.agentId}`, status: "ok", durationMs: 0, summary });
 }
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import * as fs from "node:fs/promises";
@@ -535,6 +560,13 @@ export async function setupSchedulers(deps: {
   // for all agents (it resolves the agent's tracker per event); the record is non-fatal/best-effort.
   container.eventBus.on("reflect:funnel", (funnel) => {
     void recordReflectFunnelRun(executionTrackers.get(funnel.agentId), funnel, systemNowMs());
+  });
+  // OBS-2b (reflect-obs-20260627): the parity recorder for the forget sweep — fold each completed
+  // __MEMORY_LIFECYCLE__ run onto the firing agent's cron run history, so `cron.runs jobName "Memory
+  // lifecycle"` answers "what did the sweep evict/demote" in one call (was a db.mjs evicted_at poll).
+  // Recorded off the content-free `learning:lifecycle_swept` event (the sentinel is fire-and-forget).
+  container.eventBus.on("learning:lifecycle_swept", (swept) => {
+    void recordLifecycleRun(executionTrackers.get(swept.agentId), swept, systemNowMs());
   });
 
   // OUTCOME-09 boot posture: `learningOutcome` (Verified Learning WS1) is NOT a cron — it is the

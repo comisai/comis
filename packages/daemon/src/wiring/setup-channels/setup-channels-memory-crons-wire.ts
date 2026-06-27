@@ -125,6 +125,10 @@ export async function handleWireMemoryCronSentinel(
       );
       container.eventBus.emit("learning:memory_demoted", { agentId, count: r.demoted, timestamp: clock.now() });
       container.eventBus.emit("learning:memory_evicted", { agentId, count: r.evicted, timestamp: clock.now() });
+      // OBS-2b (reflect-obs-20260627): the once-per-run forget-sweep SUMMARY — parity with reflect:funnel
+      // so `cron.runs jobName "Memory lifecycle"` + the fleet lens answer "what did forget do" in one call
+      // (was a db.mjs evicted_at poll). Counts ONLY (§2.7 / SEC-01).
+      container.eventBus.emit("learning:lifecycle_swept", { agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted, timestamp: clock.now() });
     }
     payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
     return true;
@@ -244,6 +248,9 @@ export async function handleWireMemoryCronSentinel(
     // SUMMED reflect result" intent). `emptyReflections` is summed so a corroborated-but-empty kind
     // aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`.
     let sumEmptyReflections = 0;
+    // OBS-7 (reflect-obs-20260627): distinct topicKey groups across the kinds — the under-merge
+    // discriminator (selected>1 + distinctTopicKeys>1 + maxCardinality<2 = successes that didn't merge).
+    let sumDistinctTopicKeys = 0;
 
     for (const { kind, systemPrompt, source, groupKey } of reflectKinds) {
       // CLOSED-GRAPH CUT: the per-kind @comis/agent reflect adapter (wraps the UNTRUSTED
@@ -298,6 +305,7 @@ export async function handleWireMemoryCronSentinel(
         sumSourceTrajectoryCount += v.sourceTrajectoryCount;
         sumSourceChars += v.totalSourceChars;
         sumEmptyReflections += v.emptyReflections;
+        sumDistinctTopicKeys += v.distinctTopicKeys;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
@@ -329,7 +337,7 @@ export async function handleWireMemoryCronSentinel(
     // nameLengthRejections / skipped + the source counts now ALSO ride the content-free bus payload (they
     // are COUNTS, like admitted/synthesized — INV-6 forbids bodies, not counts), so `comis explain`
     // answers "HOW MANY untrusted dropped / was the source empty" without a daemon.log grep.
-    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
+    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, distinctTopicKeys: sumDistinctTopicKeys, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
     // The `reflect:admitted.count` contract is "how many were ADMITTED this run"
     // (events-learning.ts) — emit the SUMMED admitted across skill+profile+topic.
     container.eventBus.emit("reflect:admitted", { agentId, count: sumAdmitted, timestamp: clock.now() });
@@ -347,6 +355,9 @@ export async function handleWireMemoryCronSentinel(
       validated: sumAdmitted,
       admitted: sumAdmitted,
       maxClusterCardinality: maxCardinality,
+      // OBS-7: distinct topicKey groups — the under-merge discriminator (paired with synthesized +
+      // maxClusterCardinality: synthesized>1 & distinctTopicKeys>1 & maxClusterCardinality<2 = under-merge).
+      distinctTopicKeys: sumDistinctTopicKeys,
       // OBS-1: the funnel MAGNITUDES alongside the verdict (counts only). untrustedDrops is the
       // count behind an `untrusted_origin` verdict; sourceTrajectoryCount/totalSourceChars
       // distinguish an empty-source wiring gap from an LLM-yield (real text in, junk doc out).

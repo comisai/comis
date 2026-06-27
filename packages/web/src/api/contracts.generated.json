@@ -8272,6 +8272,9 @@
             },
             "skillsDemoted": {
               "type": "number"
+            },
+            "failuresAttributed": {
+              "type": "number"
             }
           },
           "required": [

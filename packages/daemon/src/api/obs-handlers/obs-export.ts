@@ -16,6 +16,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import {
   ObsResetContract,
   ObsResetTableContract,
@@ -38,7 +39,7 @@ export function bindObsExportHandlers(deps: ObsHandlerDeps): Record<string, RpcH
     // -----------------------------------------------------------------------
     [ObsResetContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const userParams = stripInternalFields(rawParams);
       ObsResetContract.request.parse(userParams);
@@ -78,7 +79,7 @@ export function bindObsExportHandlers(deps: ObsHandlerDeps): Record<string, RpcH
     // -----------------------------------------------------------------------
     [ObsResetTableContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       // Bespoke pre-Zod guard preserves the legacy error format
       // ("Invalid table: ${table}. Valid: ${list}") which is more

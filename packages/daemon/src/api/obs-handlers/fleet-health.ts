@@ -45,6 +45,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
 import {
   ObsFleetHealthContract,
@@ -473,7 +474,7 @@ export function bindFleetHealthHandlers(deps: ObsHandlerDeps): Record<string, Rp
     [ObsFleetHealthContract.method]: async (rawParams) => {
       // H1: admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       // stripInternalFields BEFORE contract parse — `_trustLevel` cannot be
       // smuggled into the parsed params or the report.

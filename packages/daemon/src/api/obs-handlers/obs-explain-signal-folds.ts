@@ -74,6 +74,8 @@ export interface LearningFoldState {
   skillsPromoted: number;
   /** OBS-4: skill demotions summed this session (`learning.skill_demoted`). Counts only. */
   skillsDemoted: number;
+  /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
+  failuresAttributed: number;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -86,6 +88,7 @@ export function emptyLearningFold(): LearningFoldState {
     synthesisAbstained: false,
     skillsPromoted: 0,
     skillsDemoted: 0,
+    failuresAttributed: 0,
   };
 }
 
@@ -174,6 +177,19 @@ export function accumulateSkillTransitionRecord(
   readAbstainSignal(state, data);
 }
 
+/**
+ * Fold one `learning.memory_failure_attributed` record's `data` into the state (mutating; OBS-4b,
+ * COUNTS ONLY). `data.count` is the number of memories that accrued a CORROBORATED failure this
+ * resolve (the eviction-causation precursor — eviction needs failure_count >= floor); bump
+ * `failuresAttributed` + `count`. A non-numeric `count` is read as 0 (SEC-01).
+ */
+export function accumulateMemoryFailureRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  state.count += 1;
+  const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
+  state.failuresAttributed += n;
+  readAbstainSignal(state, data);
+}
+
 // Phase 226 SIMPLIFY-04: accumulateSkillValidatedRecord (the sandbox-validation fold —
 // sandbox deleted in 223), accumulateUserModelRevisedRecord + accumulateMemoryGeneralizedRecord
 // (the user-rep revision + generalization folds — folded into reflection in 225) were DELETED
@@ -207,6 +223,8 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     // OBS-4: additive — present only when a promote/demote fired this session (keeps schemaVersion 1).
     ...(state.skillsPromoted > 0 ? { skillsPromoted: state.skillsPromoted } : {}),
     ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
+    // OBS-4b: additive — present only when a corroborated failure accrued this session.
+    ...(state.failuresAttributed > 0 ? { failuresAttributed: state.failuresAttributed } : {}),
   };
 }
 

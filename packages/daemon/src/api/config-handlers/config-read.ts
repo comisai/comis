@@ -13,6 +13,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import {
   getConfigSchema,
   getConfigSections,
@@ -38,7 +39,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
     [ConfigReadContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config read");
+        throw new AuthorizationError("Admin access required for config read");
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigReadContract.request.parse(userParams);
@@ -74,7 +75,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
     [ConfigSchemaContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config schema");
+        throw new AuthorizationError("Admin access required for config schema");
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigSchemaContract.request.parse(userParams);
@@ -94,7 +95,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
     [ConfigHistoryContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config history");
+        throw new AuthorizationError("Admin access required for config history");
       }
       const userParams = stripInternalFields(rawParams);
       // history accepts section as a contract field plus limit. The contract
@@ -132,7 +133,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
     [ConfigDiffContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for config diff");
+        throw new AuthorizationError("Admin access required for config diff");
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigDiffContract.request.parse(userParams);
@@ -166,7 +167,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
     [GatewayStatusContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for gateway status");
+        throw new AuthorizationError("Admin access required for gateway status");
       }
       const userParams = stripInternalFields(rawParams);
       GatewayStatusContract.request.parse(userParams);

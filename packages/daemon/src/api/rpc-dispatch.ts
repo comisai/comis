@@ -18,7 +18,7 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
-import { PreconditionError, ValidationError } from "./errors.js";
+import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
 import {
   RequiredToolsUnreachableError,
   API_CONTRACTS_ORDERED,
@@ -154,19 +154,23 @@ const BINARY_PARAM_KEYS = ["source", "image", "video", "audio", "file"] as const
  * unmatched cases fall through to `error/internal`.
  *
  * The legacy message-pattern (substring-match) fallbacks were deleted.
- * Handlers that still `throw new Error("Admin access required" |
- * "immutable" | ...)` will now classify as `internal`/`error` until they
- * are migrated to `throw new PreconditionError(...)` /
- * `throw new ValidationError(...)`. The typed-error migration of the
- * remaining bare-Error handlers in packages/daemon/src/api/ is deferred.
- * The deletion is intentional — keeping the substring fallbacks was the BC
- * shim; the migration is incremental hardening.
+ * OBS-10 (reflect-obs-20260627): the admin-trust denials — every `throw new Error(
+ * "Admin access required …")` across the ~26 control-plane handlers — were migrated to
+ * `throw new AuthorizationError(...)`, so an operator's wrong-trust call classifies as
+ * `auth`/`warn` instead of `internal`/`error` (it was reading as a fleet ERROR + tripping
+ * operator alerts though the gate fired correctly). The remaining bare-Error handlers
+ * ("immutable" preconditions, etc.) still classify as `internal`/`error` until migrated
+ * to `PreconditionError`/`ValidationError` — that migration is incremental hardening. The
+ * substring-fallback deletion is intentional; typed errors are the sanctioned path.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   // Typed errors: instanceof checks. Add new typed classes here as
   // handlers migrate; do NOT re-introduce substring-match fallbacks.
   if (err instanceof PreconditionError) return { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" };
   if (err instanceof ValidationError) return { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" };
+  // OBS-10 (reflect-obs-20260627): an admin-trust denial is an EXPECTED authorization refusal, not an
+  // internal/handler fault — warn/auth, so an operator's wrong-trust call doesn't read as a fleet ERROR.
+  if (err instanceof AuthorizationError) return { errorKind: "auth", hint: "Caller lacks admin trust for this control-plane method; use an admin-scoped token or the documented operator route (e.g. `comis explain` assembles obs reports offline)", level: "warn" };
   // RequiredToolsUnreachableError is a caller-side validation failure (caller passed
   // invalid required_tools). Classify as validation/warn — NOT internal/error.
   if (err instanceof RequiredToolsUnreachableError) return { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" };

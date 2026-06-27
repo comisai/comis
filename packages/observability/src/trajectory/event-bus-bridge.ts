@@ -192,6 +192,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // the UCB online-tuning bandit was deleted; recall is fixed-RRF.)
   "learning:memory_demoted": "learning.memory_demoted",
   "learning:memory_evicted": "learning.memory_evicted",
+  "learning:memory_failure_attributed": "learning.memory_failure_attributed",
 
   // REFLECT (v2.31, Phase 226 SIMPLIFY-04): the reflection-run funnel telemetry,
   // RENAMED from the old synthesis-funnel events to reflect:admitted / reflect:funnel.

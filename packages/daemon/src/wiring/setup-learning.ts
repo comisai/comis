@@ -433,6 +433,18 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           timestamp: deps.clock.now(),
         });
 
+        // OBS-4b (reflect-obs-20260627): when corroborated failures accrued (failure_count++) this
+        // resolve, emit the eviction-causation precursor (count only, bridged for comis explain) so
+        // "why did/didn't this memory evict" has an event trail — not just a DB column that changes
+        // over time. The accrual is already FORGET-03 corroboration-gated above.
+        if (failureAccrued > 0) {
+          deps.eventBus.emit("learning:memory_failure_attributed", {
+            agentId: scope.agentId,
+            count: failureAccrued,
+            timestamp: deps.clock.now(),
+          });
+        }
+
         // OBS-01/02: one INFO completion line per resolve with durationMs + the
         // running coverage gauge + the corroborating `sources` (counts/ids only).
         deps.logger.info(

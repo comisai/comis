@@ -29,7 +29,7 @@ import {
   applyMediaRecord,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord,
@@ -332,6 +332,8 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // (skillsUsed) this surfaces "used skill X → promoted N" on the per-session learning block.
     case "learning.skill_promoted": accumulateSkillTransitionRecord(acc.learning, data, "promoted"); return;
     case "learning.skill_demoted": accumulateSkillTransitionRecord(acc.learning, data, "demoted"); return;
+    // OBS-4b: the corroborated-failure accrual (eviction-causation precursor) → the learning block.
+    case "learning.memory_failure_attributed": accumulateMemoryFailureRecord(acc.learning, data); return;
     case "execution.tool_schema_unsupported":
       // GBNF-02 (175): the strip-retry self-heal record (LAST wins — terminal
       // repair state). Content-free fold (see obs-explain-signal-folds.ts).

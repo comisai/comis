@@ -1470,7 +1470,7 @@ describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2
     };
     await recordReflectFunnelRun(
       tracker as never,
-      { agentId: "default", admissionOutcome: "admitted", admitted: 1, maxClusterCardinality: 2, untrustedDrops: 0, sourceTrajectoryCount: 2, totalSourceChars: 480 },
+      { agentId: "default", admissionOutcome: "admitted", admitted: 1, maxClusterCardinality: 2, distinctTopicKeys: 1, untrustedDrops: 0, sourceTrajectoryCount: 2, totalSourceChars: 480 },
       1717171717,
     );
     expect(recorded).toHaveLength(1);
@@ -1482,6 +1482,8 @@ describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2
     expect(e.summary).toContain("outcome=admitted");
     expect(e.summary).toContain("untrustedDrops=0");
     expect(e.summary).toContain("src=2traj/480ch");
+    // OBS-7: the under-merge discriminator on the run record (topics=1 + maxCard=2 = corroborated).
+    expect(e.summary).toContain("topics=1");
     // INV-6: counts + the closed enum only — never a reflected doc body.
     expect(e.summary).not.toMatch(/procedure|markdown|##|rm -rf/);
   });
@@ -1492,7 +1494,7 @@ describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2
     const tracker = { record: async (e: Record<string, unknown>) => { recorded.push(e); }, getHistory: async () => [], checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }) };
     await recordReflectFunnelRun(
       tracker as never,
-      { agentId: "a1", admissionOutcome: "untrusted_origin", admitted: 0, maxClusterCardinality: 0, untrustedDrops: 2, sourceTrajectoryCount: 2, totalSourceChars: 0 },
+      { agentId: "a1", admissionOutcome: "untrusted_origin", admitted: 0, maxClusterCardinality: 0, distinctTopicKeys: 0, untrustedDrops: 2, sourceTrajectoryCount: 2, totalSourceChars: 0 },
       9,
     );
     const e = recorded[0] as { summary: string };
@@ -1505,7 +1507,43 @@ describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2
   it("is a no-op (never throws) when the firing agent has no execution tracker", async () => {
     const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
     await expect(
-      recordReflectFunnelRun(undefined, { agentId: "x", admissionOutcome: "no_successes", admitted: 0, maxClusterCardinality: 0, untrustedDrops: 0, sourceTrajectoryCount: 0, totalSourceChars: 0 }, 1),
+      recordReflectFunnelRun(undefined, { agentId: "x", admissionOutcome: "no_successes", admitted: 0, maxClusterCardinality: 0, distinctTopicKeys: 0, untrustedDrops: 0, sourceTrajectoryCount: 0, totalSourceChars: 0 }, 1),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("recordLifecycleRun — forget sweep folded onto cron history (OBS-2b)", () => {
+  it("records a CONTENT-FREE sweep summary under the memory-lifecycle-<agentId> jobId so cron.runs surfaces it", async () => {
+    const { recordLifecycleRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = {
+      record: async (e: Record<string, unknown>) => { recorded.push(e); },
+      getHistory: async () => [],
+      checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }),
+    };
+    await recordLifecycleRun(
+      tracker as never,
+      { agentId: "default", scanned: 6, promoted: 0, demoted: 1, evicted: 2 },
+      42,
+    );
+    expect(recorded).toHaveLength(1);
+    const e = recorded[0] as { jobId: string; status: string; summary: string; ts: number };
+    // jobId mirrors the lifecycle cron id → resolveJobByName(scheduler,"Memory lifecycle") resolves it.
+    expect(e.jobId).toBe("memory-lifecycle-default");
+    expect(e.status).toBe("ok");
+    expect(e.ts).toBe(42);
+    // The sweep counts — answers "what did forget evict/demote" without a db.mjs evicted_at poll.
+    expect(e.summary).toContain("scanned=6");
+    expect(e.summary).toContain("evicted=2");
+    expect(e.summary).toContain("demoted=1");
+    // INV-6: counts only — never a memory id/body/content.
+    expect(e.summary).not.toMatch(/content|body|##|memory-[a-f0-9]{8}/);
+  });
+
+  it("is a no-op (never throws) when the firing agent has no execution tracker", async () => {
+    const { recordLifecycleRun } = await import("./setup-schedulers.js");
+    await expect(
+      recordLifecycleRun(undefined, { agentId: "x", scanned: 0, promoted: 0, demoted: 0, evicted: 0 }, 1),
     ).resolves.toBeUndefined();
   });
 });

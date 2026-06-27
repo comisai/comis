@@ -12,6 +12,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   MemoryPortabilityExportContract,
   MemoryPortabilityImportContract,
@@ -43,7 +44,7 @@ export function createMemoryPortabilityHandlers(
       // Admin gate FIRST — before stripInternalFields (which strips _trustLevel).
       const exportTrustLevel = rawParams._trustLevel as string | undefined;
       if (exportTrustLevel !== "admin") {
-        throw new Error("Admin access required for memory export");
+        throw new AuthorizationError("Admin access required for memory export");
       }
 
       const exportUserParams = stripInternalFields(rawParams);
@@ -136,7 +137,7 @@ export function createMemoryPortabilityHandlers(
       // Admin gate FIRST — before stripInternalFields (which strips _trustLevel).
       const importTrustLevel = rawParams._trustLevel as string | undefined;
       if (importTrustLevel !== "admin") {
-        throw new Error("Admin access required for memory import");
+        throw new AuthorizationError("Admin access required for memory import");
       }
 
       const importUserParams = stripInternalFields(rawParams);

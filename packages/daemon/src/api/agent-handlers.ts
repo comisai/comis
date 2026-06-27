@@ -15,6 +15,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   PerAgentConfigSchema,
   AgentsCreateContract,
@@ -83,7 +84,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     [AgentsCreateContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for agent creation");
+        throw new AuthorizationError("Admin access required for agent creation");
       }
 
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error
@@ -297,7 +298,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     [AgentsUpdateContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for agent modification");
+        throw new AuthorizationError("Admin access required for agent modification");
       }
 
       const agentId = rawParams.agentId as string | undefined;
@@ -494,7 +495,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     [AgentsDeleteContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for agent deletion");
+        throw new AuthorizationError("Admin access required for agent deletion");
       }
 
       const agentId = rawParams.agentId as string | undefined;
@@ -558,7 +559,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     [AgentsSuspendContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for agent suspension");
+        throw new AuthorizationError("Admin access required for agent suspension");
       }
 
       const agentId = rawParams.agentId as string | undefined;
@@ -587,7 +588,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     [AgentsResumeContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for agent resumption");
+        throw new AuthorizationError("Admin access required for agent resumption");
       }
 
       const agentId = rawParams.agentId as string | undefined;

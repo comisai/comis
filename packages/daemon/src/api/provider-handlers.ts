@@ -17,6 +17,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   ProviderEntrySchema,
   ProvidersListContract,
@@ -196,7 +197,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersListContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider listing");
+        throw new AuthorizationError("Admin access required for provider listing");
       }
       const userParams = stripInternalFields(rawParams);
       ProvidersListContract.request.parse(userParams);
@@ -222,7 +223,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersGetContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider retrieval");
+        throw new AuthorizationError("Admin access required for provider retrieval");
       }
 
       const providerId = rawParams.providerId as string | undefined;
@@ -270,7 +271,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersCreateContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider creation");
+        throw new AuthorizationError("Admin access required for provider creation");
       }
 
       const providerId = rawParams.providerId as string | undefined;
@@ -360,7 +361,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersUpdateContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider modification");
+        throw new AuthorizationError("Admin access required for provider modification");
       }
 
       const providerId = rawParams.providerId as string | undefined;
@@ -435,7 +436,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersDeleteContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider deletion");
+        throw new AuthorizationError("Admin access required for provider deletion");
       }
 
       const providerId = rawParams.providerId as string | undefined;
@@ -489,7 +490,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersEnableContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider enable");
+        throw new AuthorizationError("Admin access required for provider enable");
       }
 
       const providerId = rawParams.providerId as string | undefined;
@@ -533,7 +534,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
     [ProvidersDisableContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for provider disable");
+        throw new AuthorizationError("Admin access required for provider disable");
       }
 
       const providerId = rawParams.providerId as string | undefined;

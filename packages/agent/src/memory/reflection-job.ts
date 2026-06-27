@@ -233,6 +233,15 @@ export interface RunReflectionResult {
   admitted: number;
   /** The largest distinct-(sessionId, sender) cardinality across the topic groups (anti-domination telemetry). */
   maxTopicCardinality: number;
+  /**
+   * OBS-7 (reflect-obs-20260627): how many DISTINCT topicKey groups the selected sources formed.
+   * The under-merge DISCRIMINATOR paired with `selected` + `maxTopicCardinality`: `selected:2,
+   * distinctTopicKeys:2, maxTopicCardinality:1` = 2 successes that landed on 2 SEPARATE topicKeys
+   * (under-merge → the LLM-tag-fallback trigger), vs `distinctTopicKeys:1, maxTopicCardinality:2` =
+   * genuinely corroborated. Answers "admitted=0 DESPITE corroboration?" from ONE field instead of
+   * reasoning from the max alone. Content-free (a count, like `selected`/`maxTopicCardinality`).
+   */
+  distinctTopicKeys: number;
   /** How many corroborated topics were SKIPPED (empty reflection or rejected validation). */
   skipped: number;
   /**
@@ -472,7 +481,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
     logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
@@ -532,7 +541,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, distinctTopicKeys: groups.size, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +776,11 @@ function logRunComplete(
       admissionOutcome, // RC-4: the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,
     },
-    "reflection run complete",
+    // OBS-9 (reflect-obs-20260627): distinct per-kind JOB-layer message so a grep for the canonical
+    // aggregate "Reflection complete (all kinds)" (the wire's summed daemon emit) is unambiguous — the
+    // 4 reflection completion lines are now distinct: "reflection selection complete" (agent select),
+    // "reflection kind computed (job)" (this, agent per-kind), "Reflection (kind) complete" (wire
+    // per-kind), "Reflection complete (all kinds)" (wire aggregate — THE summary line to grep).
+    "reflection kind computed (job)",
   );
 }

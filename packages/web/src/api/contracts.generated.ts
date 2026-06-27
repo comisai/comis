@@ -8394,6 +8394,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             },
             "skillsDemoted": {
               "type": "number"
+            },
+            "failuresAttributed": {
+              "type": "number"
             }
           },
           "required": [

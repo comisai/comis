@@ -21,6 +21,7 @@ import {
   accumulateSkillInvokedRecord,
   accumulateReflectFunnelRecord,
   accumulateSkillTransitionRecord,
+  accumulateMemoryFailureRecord,
   buildLearningSignal,
 } from "./obs-explain-signal-folds.js";
 
@@ -51,6 +52,22 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillsPromoted).toBe(1);
     // skillsDemoted is additive — omitted when none fired (no schema bloat for the common case).
     expect(sig!.skillsDemoted).toBeUndefined();
+  });
+
+  it("OBS-4b: a learning.memory_failure_attributed record ⇒ failuresAttributed count (eviction precursor); non-numeric → 0", () => {
+    const state = emptyLearningFold();
+    accumulateMemoryFailureRecord(state, { count: 2 });
+    accumulateMemoryFailureRecord(state, { count: "bogus" }); // non-numeric → +0 (SEC-01)
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    expect(sig!.failuresAttributed).toBe(2);
+  });
+
+  it("OBS-4b: failuresAttributed is additive — omitted when none accrued (no schema bloat)", () => {
+    const state = emptyLearningFold();
+    accumulateLearningRecord(state, { outcome: "success", source: "tool" });
+    const sig = buildLearningSignal(state);
+    expect(sig!.failuresAttributed).toBeUndefined();
   });
 
   it("OBS-4: a learning.skill_demoted record ⇒ skillsDemoted count; a non-numeric count reads as 0", () => {

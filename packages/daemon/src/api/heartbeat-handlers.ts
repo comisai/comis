@@ -19,6 +19,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   HeartbeatStatesContract,
   HeartbeatGetContract,
@@ -157,7 +158,7 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
       // Bespoke pre-Zod validation FIRST (preserves user-friendly error messages).
       const trustLevel = rawParams?._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for heartbeat configuration");
+        throw new AuthorizationError("Admin access required for heartbeat configuration");
       }
 
       const agentId = (rawParams?.agentId ?? rawParams?._agentId) as string | undefined;
@@ -259,7 +260,7 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
       // Bespoke pre-Zod validation FIRST.
       const trustLevel = rawParams?._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for heartbeat trigger");
+        throw new AuthorizationError("Admin access required for heartbeat trigger");
       }
 
       const agentId = (rawParams?.agentId ?? rawParams?._agentId) as string | undefined;
