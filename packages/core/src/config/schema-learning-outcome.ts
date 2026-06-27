@@ -72,8 +72,10 @@ export const LearningOutcomeConfigSchema = z.strictObject({
   correction: z.strictObject({ enabled: z.boolean().default(true) }).default(() => ({ enabled: true })),
   /** Confidence floor [0,1] a resolved outcome must clear before learning is derived. */
   minConfidenceToLearn: z.number().min(0).max(1).default(0.6),
-  /** Age-based prune horizon (days) for the append-only ledger. Positive integer. */
-  retentionDays: z.number().int().positive().default(30),
+  /** Age-based prune horizon (days) for the append-only outcome ledger (anti-DoS). Positive integer.
+   *  Default 90 (best-out-of-box: a larger outcome corpus for reflection to learn from — keep a
+   *  quarter of history, storage cost ignored; was 30). Still a finite anti-DoS horizon. */
+  retentionDays: z.number().int().positive().default(90),
 });
 
 export type LearningOutcomeConfig = z.infer<typeof LearningOutcomeConfigSchema>;

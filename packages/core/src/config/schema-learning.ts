@@ -47,12 +47,12 @@ import { z } from "zod";
  * - enabled: the SINGLE master gate for the whole learning layer (default TRUE /
  *   opt-out). Force-disabled when the top-level `memory.enabled: false`.
  * - reflect: the reflection-cron sub-policy (its own `.default()`):
- *   - schedule: the `__REFLECT__` cron expression (default daily at 03:00 UTC).
+ *   - schedule: the `__REFLECT__` cron expression (default every 3 hours — best-out-of-box).
  *   - minConfidence: the reflection-side confidence floor [0,1] (default 0.6).
  *   - promoteAtProofCount: verified-success count at which a doc promotes to active.
- *   - maxDocsPerRun: per-run cost bound on admitted reflection docs (finite cap).
+ *   - maxDocsPerRun: per-run admitted-doc cap (finite DoS bound; default 100).
  * - forget: the forgetting sub-policy (its own `.default()`):
- *   - maxDormantDays: dormancy window (days) past which the lifecycle sweep evicts.
+ *   - maxDormantDays: dormancy window (days) past which the lifecycle sweep evicts (default 365).
  *   - failureEvictionFloor: corroborated-`failure_count` floor at/above which a
  *     NON-EXEMPT memory is soft-evicted (FORGET-02; each increment corroboration-gated).
  *   - highProofFloor: the INV-4 high-proof exemption — a memory at/above this proof
@@ -65,22 +65,28 @@ export const LearningConfigSchema = z.strictObject({
   /** Reflection-cron sub-policy. Has its own `.default()` so a partial config fills it in. */
   reflect: z
     .strictObject({
-      /** The `__REFLECT__` cron expression. Default: daily at 03:00 UTC. */
-      schedule: z.string().default("0 3 * * *"),
+      /** The `__REFLECT__` cron expression. Default: every 3 hours — best-out-of-box near-real-time
+       *  learning (a skill corroborated mid-day is usable within hours, not next-night); cost-ignored
+       *  per the opt-out posture. Was daily 03:00 UTC. (NB: the cron literal is set on the field
+       *  default below — not written here, since the `*` `/` `3` sequence would close this block comment.) */
+      schedule: z.string().default("0 */3 * * *"),
       /** Reflection-side confidence floor [0,1]. Default 0.6. SEPARATE from
        *  learningOutcome.minConfidenceToLearn (the outcome-resolution floor — M-2). */
       minConfidence: z.number().min(0).max(1).default(0.6),
       /** Verified-success count at which a reflection doc promotes to active. Positive integer. */
       promoteAtProofCount: z.number().int().positive().default(3),
-      /** Per-run cost bound on admitted reflection docs (a finite CostBounds cap). Positive integer. */
-      maxDocsPerRun: z.number().int().positive().default(25),
+      /** Per-run admitted-doc cap (a finite DoS bound — kept finite for safety even with cost ignored).
+       *  Default 100 (best-out-of-box: don't artificially throttle a burst of corroborated learning; was 25). */
+      maxDocsPerRun: z.number().int().positive().default(100),
     })
-    .default(() => ({ schedule: "0 3 * * *", minConfidence: 0.6, promoteAtProofCount: 3, maxDocsPerRun: 25 })),
+    .default(() => ({ schedule: "0 */3 * * *", minConfidence: 0.6, promoteAtProofCount: 3, maxDocsPerRun: 100 })),
   /** Forgetting sub-policy. Has its own `.default()` so a partial config fills it in. */
   forget: z
     .strictObject({
-      /** Dormancy window (days): the lifecycle sweep evicts a row dormant longer than this. Default 90. */
-      maxDormantDays: z.number().int().positive().default(90),
+      /** Dormancy window (days): the lifecycle sweep evicts a row dormant longer than this. Default 365
+       *  (best-out-of-box: remember ~a year — forget far less aggressively, storage cost ignored; was 90).
+       *  Anti-poison failure-eviction (below) is UNAFFECTED — this only delays pure-disuse forgetting. */
+      maxDormantDays: z.number().int().positive().default(365),
       /** Corroborated-`failure_count` floor at/above which a NON-EXEMPT memory is soft-evicted
        *  (FORGET-02; each increment is corroboration-gated). Positive integer. Default 3. */
       failureEvictionFloor: z.number().int().min(1).default(3),
@@ -88,7 +94,7 @@ export const LearningConfigSchema = z.strictObject({
        *  eviction (a poisoner cannot evict a well-corroborated memory). Positive integer. Default 5. */
       highProofFloor: z.number().int().positive().default(5),
     })
-    .default(() => ({ maxDormantDays: 90, failureEvictionFloor: 3, highProofFloor: 5 })),
+    .default(() => ({ maxDormantDays: 365, failureEvictionFloor: 3, highProofFloor: 5 })),
 });
 
 export type LearningConfig = z.infer<typeof LearningConfigSchema>;

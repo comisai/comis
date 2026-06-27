@@ -1248,13 +1248,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "forget": {
         "failureEvictionFloor": 3,
         "highProofFloor": 5,
-        "maxDormantDays": 90
+        "maxDormantDays": 365
       },
       "reflect": {
-        "maxDocsPerRun": 25,
+        "maxDocsPerRun": 100,
         "minConfidence": 0.6,
         "promoteAtProofCount": 3,
-        "schedule": "0 3 * * *"
+        "schedule": "0 */3 * * *"
       }
     },
     "immutable": true,
@@ -1271,7 +1271,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": {
       "failureEvictionFloor": 3,
       "highProofFloor": 5,
-      "maxDormantDays": 90
+      "maxDormantDays": 365
     },
     "immutable": true,
     "path": "agents.learning.forget",
@@ -1290,24 +1290,24 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": 90,
+    "default": 365,
     "immutable": true,
     "path": "agents.learning.forget.maxDormantDays",
     "type": "integer"
   },
   {
     "default": {
-      "maxDocsPerRun": 25,
+      "maxDocsPerRun": 100,
       "minConfidence": 0.6,
       "promoteAtProofCount": 3,
-      "schedule": "0 3 * * *"
+      "schedule": "0 */3 * * *"
     },
     "immutable": true,
     "path": "agents.learning.reflect",
     "type": "object"
   },
   {
-    "default": 25,
+    "default": 100,
     "immutable": true,
     "path": "agents.learning.reflect.maxDocsPerRun",
     "type": "integer"
@@ -1325,7 +1325,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
-    "default": "0 3 * * *",
+    "default": "0 */3 * * *",
     "immutable": true,
     "path": "agents.learning.reflect.schedule",
     "type": "string"
@@ -1350,7 +1350,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
           "âœ…"
         ]
       },
-      "retentionDays": 30,
+      "retentionDays": 90,
       "sources": [
         "tool",
         "pipeline"
@@ -1434,7 +1434,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": 30,
+    "default": 90,
     "immutable": true,
     "path": "agents.learningOutcome.retentionDays",
     "type": "integer"
@@ -1497,8 +1497,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "autoTags": [],
       "dedupThreshold": 0.85,
       "enabled": true,
-      "maxReviewTokens": 4096,
-      "maxSessionsPerRun": 10,
+      "maxReviewTokens": 16384,
+      "maxSessionsPerRun": 50,
       "minMessages": 5,
       "schedule": "0 2 * * *"
     },
@@ -1525,13 +1525,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 4096,
+    "default": 16384,
     "immutable": true,
     "path": "agents.memoryReview.maxReviewTokens",
     "type": "integer"
   },
   {
-    "default": 10,
+    "default": 50,
     "immutable": true,
     "path": "agents.memoryReview.maxSessionsPerRun",
     "type": "integer"
@@ -8329,13 +8329,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "forget": {
             "failureEvictionFloor": 3,
             "highProofFloor": 5,
-            "maxDormantDays": 90
+            "maxDormantDays": 365
           },
           "reflect": {
-            "maxDocsPerRun": 25,
+            "maxDocsPerRun": 100,
             "minConfidence": 0.6,
             "promoteAtProofCount": 3,
-            "schedule": "0 3 * * *"
+            "schedule": "0 */3 * * *"
           }
         },
         "learningOutcome": {
@@ -8357,7 +8357,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
               "âœ…"
             ]
           },
-          "retentionDays": 30,
+          "retentionDays": 90,
           "sources": [
             "tool",
             "pipeline"
@@ -8374,8 +8374,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "autoTags": [],
           "dedupThreshold": 0.85,
           "enabled": true,
-          "maxReviewTokens": 4096,
-          "maxSessionsPerRun": 10,
+          "maxReviewTokens": 16384,
+          "maxSessionsPerRun": 50,
           "minMessages": 5,
           "schedule": "0 2 * * *"
         },
@@ -17206,13 +17206,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "forget": {
           "failureEvictionFloor": 3,
           "highProofFloor": 5,
-          "maxDormantDays": 90
+          "maxDormantDays": 365
         },
         "reflect": {
-          "maxDocsPerRun": 25,
+          "maxDocsPerRun": 100,
           "minConfidence": 0.6,
           "promoteAtProofCount": 3,
-          "schedule": "0 3 * * *"
+          "schedule": "0 */3 * * *"
         }
       },
       "properties": {
@@ -17225,7 +17225,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": {
             "failureEvictionFloor": 3,
             "highProofFloor": 5,
-            "maxDormantDays": 90
+            "maxDormantDays": 365
           },
           "properties": {
             "failureEvictionFloor": {
@@ -17241,7 +17241,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "type": "integer"
             },
             "maxDormantDays": {
-              "default": 90,
+              "default": 365,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -17257,14 +17257,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "reflect": {
           "additionalProperties": false,
           "default": {
-            "maxDocsPerRun": 25,
+            "maxDocsPerRun": 100,
             "minConfidence": 0.6,
             "promoteAtProofCount": 3,
-            "schedule": "0 3 * * *"
+            "schedule": "0 */3 * * *"
           },
           "properties": {
             "maxDocsPerRun": {
-              "default": 25,
+              "default": 100,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -17282,7 +17282,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "type": "integer"
             },
             "schedule": {
-              "default": "0 3 * * *",
+              "default": "0 */3 * * *",
               "type": "string"
             }
           },
@@ -17323,7 +17323,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "âœ…"
           ]
         },
-        "retentionDays": 30,
+        "retentionDays": 90,
         "sources": [
           "tool",
           "pipeline"
@@ -17413,7 +17413,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "retentionDays": {
-          "default": 30,
+          "default": 90,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -17495,8 +17495,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "autoTags": [],
         "dedupThreshold": 0.85,
         "enabled": true,
-        "maxReviewTokens": 4096,
-        "maxSessionsPerRun": 10,
+        "maxReviewTokens": 16384,
+        "maxSessionsPerRun": 50,
         "minMessages": 5,
         "schedule": "0 2 * * *"
       },
@@ -17519,13 +17519,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "boolean"
         },
         "maxReviewTokens": {
-          "default": 4096,
+          "default": 16384,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
         },
         "maxSessionsPerRun": {
-          "default": 10,
+          "default": 50,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -28127,13 +28127,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "forget": {
                 "failureEvictionFloor": 3,
                 "highProofFloor": 5,
-                "maxDormantDays": 90
+                "maxDormantDays": 365
               },
               "reflect": {
-                "maxDocsPerRun": 25,
+                "maxDocsPerRun": 100,
                 "minConfidence": 0.6,
                 "promoteAtProofCount": 3,
-                "schedule": "0 3 * * *"
+                "schedule": "0 */3 * * *"
               }
             },
             "properties": {
@@ -28146,7 +28146,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": {
                   "failureEvictionFloor": 3,
                   "highProofFloor": 5,
-                  "maxDormantDays": 90
+                  "maxDormantDays": 365
                 },
                 "properties": {
                   "failureEvictionFloor": {
@@ -28162,7 +28162,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "type": "integer"
                   },
                   "maxDormantDays": {
-                    "default": 90,
+                    "default": 365,
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
@@ -28178,14 +28178,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "reflect": {
                 "additionalProperties": false,
                 "default": {
-                  "maxDocsPerRun": 25,
+                  "maxDocsPerRun": 100,
                   "minConfidence": 0.6,
                   "promoteAtProofCount": 3,
-                  "schedule": "0 3 * * *"
+                  "schedule": "0 */3 * * *"
                 },
                 "properties": {
                   "maxDocsPerRun": {
-                    "default": 25,
+                    "default": 100,
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991,
                     "type": "integer"
@@ -28203,7 +28203,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "type": "integer"
                   },
                   "schedule": {
-                    "default": "0 3 * * *",
+                    "default": "0 */3 * * *",
                     "type": "string"
                   }
                 },
@@ -28244,7 +28244,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "âœ…"
                 ]
               },
-              "retentionDays": 30,
+              "retentionDays": 90,
               "sources": [
                 "tool",
                 "pipeline"
@@ -28334,7 +28334,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "retentionDays": {
-                "default": 30,
+                "default": 90,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
@@ -28416,8 +28416,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "autoTags": [],
               "dedupThreshold": 0.85,
               "enabled": true,
-              "maxReviewTokens": 4096,
-              "maxSessionsPerRun": 10,
+              "maxReviewTokens": 16384,
+              "maxSessionsPerRun": 50,
               "minMessages": 5,
               "schedule": "0 2 * * *"
             },
@@ -28440,13 +28440,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "boolean"
               },
               "maxReviewTokens": {
-                "default": 4096,
+                "default": 16384,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
               },
               "maxSessionsPerRun": {
-                "default": 10,
+                "default": 50,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
@@ -31066,13 +31066,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "forget": {
               "failureEvictionFloor": 3,
               "highProofFloor": 5,
-              "maxDormantDays": 90
+              "maxDormantDays": 365
             },
             "reflect": {
-              "maxDocsPerRun": 25,
+              "maxDocsPerRun": 100,
               "minConfidence": 0.6,
               "promoteAtProofCount": 3,
-              "schedule": "0 3 * * *"
+              "schedule": "0 */3 * * *"
             }
           },
           "learningOutcome": {
@@ -31094,7 +31094,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "âœ…"
               ]
             },
-            "retentionDays": 30,
+            "retentionDays": 90,
             "sources": [
               "tool",
               "pipeline"
@@ -31111,8 +31111,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "autoTags": [],
             "dedupThreshold": 0.85,
             "enabled": true,
-            "maxReviewTokens": 4096,
-            "maxSessionsPerRun": 10,
+            "maxReviewTokens": 16384,
+            "maxSessionsPerRun": 50,
             "minMessages": 5,
             "schedule": "0 2 * * *"
           },

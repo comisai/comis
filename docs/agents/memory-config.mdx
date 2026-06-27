@@ -115,8 +115,8 @@ agents:
       enabled: true
       schedule: "0 2 * * *"
       minMessages: 5
-      maxSessionsPerRun: 10
-      maxReviewTokens: 4096
+      maxSessionsPerRun: 50            # best-out-of-box: broader consolidation coverage per run (was 10)
+      maxReviewTokens: 16384           # best-out-of-box: richer consolidation per session (was 4096)
 
     memoryLifecycle:                 # the FORGET sweep cron — TRIMMED to enable + schedule
       enabled: true
@@ -128,12 +128,12 @@ agents:
     learning:
       enabled: true                  # ONE master gate for the WHOLE learning layer (opt-out; force-disabled by memory.enabled: false)
       reflect:                       # the one __REFLECT__ cron (skill + profile + topic in one pass)
-        schedule: "0 3 * * *"        # daily at 03:00 UTC
+        schedule: "0 */3 * * *"      # best-out-of-box: every 3 hours (near-real-time learning; was daily 03:00)
         minConfidence: 0.6           # reflection-side confidence floor [0..1]
         promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
-        maxDocsPerRun: 25            # cost bound — max docs admitted per run
+        maxDocsPerRun: 100           # finite DoS bound — best-out-of-box raised (don't throttle learning; was 25)
       forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
-        maxDormantDays: 90           # dormancy window past which the sweep evicts
+        maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less; was 90)
         failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
         highProofFloor: 5            # high-proof exemption — a memory at/above this proof count is never failure-evicted
 ```

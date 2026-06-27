@@ -37,13 +37,14 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer (design 
     expect(LearningConfigSchema.parse({})).toEqual({
       enabled: true,
       reflect: {
-        schedule: "0 3 * * *",
+        // best-out-of-box (reflect-obs-20260627): every-3h cadence + raised doc cap (cost-ignored).
+        schedule: "0 */3 * * *",
         minConfidence: 0.6,
         promoteAtProofCount: 3,
-        maxDocsPerRun: 25,
+        maxDocsPerRun: 100,
       },
       forget: {
-        maxDormantDays: 90,
+        maxDormantDays: 365, // best-out-of-box: remember ~a year (forget less aggressively)
         failureEvictionFloor: 3,
         highProofFloor: 5,
       },
@@ -55,12 +56,12 @@ describe("LearningConfigSchema — the collapsed ~10-key learning layer (design 
     expect(parsed.enabled).toBe(false);
     // SIMPLIFY-05: one flag force-disables the whole layer, but the nested defaults still fill.
     expect(parsed.reflect).toEqual({
-      schedule: "0 3 * * *",
+      schedule: "0 */3 * * *",
       minConfidence: 0.6,
       promoteAtProofCount: 3,
-      maxDocsPerRun: 25,
+      maxDocsPerRun: 100,
     });
-    expect(parsed.forget).toEqual({ maxDormantDays: 90, failureEvictionFloor: 3, highProofFloor: 5 });
+    expect(parsed.forget).toEqual({ maxDormantDays: 365, failureEvictionFloor: 3, highProofFloor: 5 });
   });
 
   it("is strict — a smuggled/unknown knob throws at parse (z.strictObject, SEC-01 / D-01a)", () => {

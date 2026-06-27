@@ -514,7 +514,7 @@ export async function setupSchedulers(deps: {
     // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
     // operator sets learning.enabled AND the master cost kill switch is on; a default agent
     // registers NO job → byte-identical with the config absent. The schedule comes from
-    // learning.reflect.schedule (Phase 226 — was a hardcoded 30 9; default 0 3 * * *). Job
+    // learning.reflect.schedule (Phase 226 — was a hardcoded 30 9; default every 3h `0 */3 * * *`). Job
     // options mirror the other memory crons 1:1 (isolated / next-heartbeat / no forward-to-main /
     // fresh). The __REFLECT__ sentinel (setup-channels-memory-crons-wire.ts) re-checks the knob +
     // injects the @comis/memory mental-model store + the trusted-origin source into runReflection,
