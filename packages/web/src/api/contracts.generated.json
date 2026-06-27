@@ -8266,6 +8266,12 @@
             },
             "synthesisAbstained": {
               "type": "boolean"
+            },
+            "skillsPromoted": {
+              "type": "number"
+            },
+            "skillsDemoted": {
+              "type": "number"
             }
           },
           "required": [
