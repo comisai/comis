@@ -1,0 +1,97 @@
+{
+  "server": "relief-sim",
+  "title": "Relief Logistics Coordination Console (simulated crisis response)",
+  "tools": [
+    {
+      "name": "get_crises",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List active crises with their affected areas and the routes that serve them (route status here is the last-cached value and may be stale).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "route_status",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the CURRENT condition of a route (open/blocked/flooded) with its capacity and last-checked time. The authoritative live status for that route.",
+      "inputSchema": { "type": "object", "properties": { "route": { "type": "string" } }, "required": ["route"] }
+    },
+    {
+      "name": "field_reports",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List on-the-ground field reports for an area or route. Each report carries the id of the source that filed it. `filter` matches any field substring.",
+      "inputSchema": { "type": "object", "properties": { "filter": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "report_source",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the reliability profile of a field-report source (trust tier, verification status, past accuracy). Not every source is trustworthy.",
+      "inputSchema": { "type": "object", "properties": { "source": { "type": "string" } }, "required": ["source"] }
+    },
+    {
+      "name": "inventory",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the relief supplies currently available at the staging warehouse (item, quantity, unit).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "needs_assessment",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the assessed needs per affected area (population, urgency, items required). The real ground-truth demand.",
+      "inputSchema": { "type": "object", "properties": { "area": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "list_routes",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List every route id known to the network with its endpoints (use route_status for live condition).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "open_operation",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open a relief operation. Returns an operation id used by the actions that follow. Do this first.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "prioritize",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record the area you are prioritizing for this operation and why.",
+      "inputSchema": { "type": "object", "properties": { "op": { "type": "string" }, "area": { "type": "string" }, "reason": { "type": "string" } }, "required": ["area"] }
+    },
+    {
+      "name": "reroute",
+      "kind": "act",
+      "terminal": false,
+      "description": "Select the route this operation will dispatch on (use it to choose an alternate when the planned route is impassable).",
+      "inputSchema": { "type": "object", "properties": { "op": { "type": "string" }, "route": { "type": "string" }, "reason": { "type": "string" } }, "required": ["route"] }
+    },
+    {
+      "name": "allocate",
+      "kind": "act",
+      "terminal": false,
+      "description": "Allocate supplies from inventory to an area for this operation (area, item, quantity).",
+      "inputSchema": { "type": "object", "properties": { "op": { "type": "string" }, "area": { "type": "string" }, "item": { "type": "string" }, "quantity": { "type": "number" } }, "required": ["area", "item", "quantity"] }
+    },
+    {
+      "name": "dispatch_convoy",
+      "kind": "act",
+      "terminal": false,
+      "description": "Dispatch a convoy carrying the allocated supplies along a route to an area. The convoy can only travel the route you give it.",
+      "inputSchema": { "type": "object", "properties": { "op": { "type": "string" }, "route": { "type": "string" }, "area": { "type": "string" } }, "required": ["route", "area"] }
+    },
+    {
+      "name": "confirm_delivery",
+      "kind": "act",
+      "terminal": true,
+      "description": "Close the operation and confirm whether aid reached the people. Returns the graded outcome.",
+      "inputSchema": { "type": "object", "properties": { "op": { "type": "string" }, "note": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

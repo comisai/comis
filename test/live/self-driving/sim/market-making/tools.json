@@ -1,0 +1,90 @@
+{
+  "server": "mm-sim",
+  "title": "Algorithmic Market-Making Desk (simulated)",
+  "tools": [
+    {
+      "name": "get_quote",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the current top-of-book mid, bid, and ask for the traded symbol, plus the current episode step.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_orderbook",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the current order book depth (bids/asks with size) around the mid.",
+      "inputSchema": { "type": "object", "properties": { "levels": { "type": "number" } }, "required": [] }
+    },
+    {
+      "name": "get_position",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return your current net inventory (signed units), the stated max inventory limit, and your live working quotes.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_pnl",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return your running realized + unrealized PnL proxy and a risk-adjusted figure (PnL penalized for inventory risk).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "regime_signals",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return observable microstructure diagnostics for the most recent window: short-horizon return autocorrelation, realized volatility, and order-flow imbalance. These describe behavior; they do NOT name a regime.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_fills",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the fills you have received so far (each fill changes your net inventory).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "volatility",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the realized volatility series so far (one value per elapsed step).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "set_strategy",
+      "kind": "act",
+      "terminal": false,
+      "description": "Set your active market-making strategy. Accepts a `mode` string. Recorded with the step at which you set it.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "mode": { "type": "string" } }, "required": ["mode"] }
+    },
+    {
+      "name": "post_quote",
+      "kind": "act",
+      "terminal": false,
+      "description": "Post a two-sided quote (bid/ask price + size). Advances the market one step; you may receive fills that move your inventory according to the live regime.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "bid": { "type": "number" }, "ask": { "type": "number" }, "size": { "type": "number" } }, "required": [] }
+    },
+    {
+      "name": "cancel_quote",
+      "kind": "act",
+      "terminal": false,
+      "description": "Cancel your live working quotes (stand aside). Advances the market one step with no new fills for you.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "hedge",
+      "kind": "act",
+      "terminal": false,
+      "description": "Trade `qty` units (signed: negative to sell down a long, positive to cover a short) at the current mid to reduce net inventory. Does not advance the market.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "qty": { "type": "number" } }, "required": ["qty"] }
+    },
+    {
+      "name": "settle",
+      "kind": "act",
+      "terminal": true,
+      "description": "Close the trading session and book the result. Returns the graded outcome.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

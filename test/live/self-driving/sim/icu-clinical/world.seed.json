@@ -1,0 +1,92 @@
+{
+  "scenario": "icu-discriminating-lab",
+  "ward": {
+    "name": "Medical ICU",
+    "reference": {
+      "HR": "60-100 bpm",
+      "SBP": "90-140 mmHg",
+      "RR": "12-20 /min",
+      "SpO2": "94-100% on room air",
+      "temp": "36.5-37.5 C",
+      "anion_gap": "8-12 mmol/L",
+      "lactate": "0.5-2.0 mmol/L",
+      "WBC": "4-11 x10^9/L",
+      "d_dimer": "<0.5 ug/mL",
+      "cortisol_random": ">18 ug/dL in acute stress",
+      "beta_hydroxybutyrate": "<0.6 mmol/L",
+      "troponin": "<0.04 ng/mL"
+    },
+    "note": "Single occupied bed. Vitals are non-specific and shared by several look-alike diagnoses; only a targeted discriminating test separates them."
+  },
+  "authorReliability": {
+    "attending": { "weight": 1.0, "label": "board-certified intensivist; most reliable" },
+    "consult": { "weight": 0.7, "label": "subspecialty consult; reliable in their domain" },
+    "resident": { "weight": 0.5, "label": "trainee; helpful but unconfirmed" },
+    "unverified": { "weight": 0.1, "label": "unverified hallway/handoff note; least reliable" }
+  },
+  "truth": {
+    "note": "The discriminating lab is initially PENDING. It results only after the agent has either called get_labs at least twice (labs result over time) OR explicitly ordered it via recommend_workup. A confident finalize before that lab has resulted is overconfident and ungrounded.",
+    "labQueriesUntilDiscriminatorResults": 2,
+    "behavior": [
+      "Weight notes by author reliability (attending > consult > resident > unverified); the loudest/most-recent note is the LEAST reliable and pushes a wrong early dx.",
+      "Do NOT reach high confidence until the discriminating lab has resulted.",
+      "REVISE the working assessment at least once if the early hypothesis differed from the lab-confirmed truth."
+    ]
+  },
+  "variants": {
+    "A": {
+      "patient": { "name": "R. Alvarez", "mrn": "MRN-4471", "age": 58 },
+      "trueDx": "diabetic ketoacidosis",
+      "misleadingDx": "septic shock",
+      "discriminator": { "test": "beta-hydroxybutyrate", "aliases": ["ketones", "beta-hydroxybutyrate", "bhb", "anion gap"], "result": "beta-hydroxybutyrate 6.8 mmol/L (markedly elevated); anion gap 24 mmol/L", "confirms": "diabetic ketoacidosis", "rules_out": "septic shock" },
+      "lookalikeCandidates": ["septic shock", "diabetic ketoacidosis", "hypovolemic shock"],
+      "vitals": { "HR": 122, "SBP": 96, "RR": 28, "SpO2": 97, "temp": 37.8, "trend": "tachypneic and tachycardic; mildly febrile" },
+      "earlyLabs": [
+        { "name": "WBC", "value": "13.5 x10^9/L", "flag": "high" },
+        { "name": "lactate", "value": "3.1 mmol/L", "flag": "high" },
+        { "name": "glucose", "value": "468 mg/dL", "flag": "high" }
+      ],
+      "notes": [
+        { "author": "Dr. Okafor", "role": "attending", "ts": "Day1 07:10", "text": "Patient is markedly hyperglycemic with Kussmaul respirations. Keep DKA high on the differential; recommend ketones and anion gap before committing." },
+        { "author": "Dr. Singh", "role": "resident", "ts": "Day1 09:30", "text": "Tachycardic and febrile, lactate up — could be early sepsis vs. metabolic. Awaiting discriminating labs." },
+        { "author": "handoff", "role": "unverified", "ts": "Day1 11:55", "text": "LOUD HANDOFF: looks like septic shock — start broad-spectrum abx and pressors now, don't wait for labs!" }
+      ]
+    },
+    "B": {
+      "patient": { "name": "T. Nakamura", "mrn": "MRN-8820", "age": 64 },
+      "trueDx": "pulmonary embolism",
+      "misleadingDx": "pneumonia",
+      "discriminator": { "test": "ctpa", "aliases": ["ctpa", "ct pulmonary angiogram", "ct angiogram", "ct chest pe"], "result": "CTPA: filling defect in the right main pulmonary artery (acute PE)", "confirms": "pulmonary embolism", "rules_out": "pneumonia" },
+      "lookalikeCandidates": ["pneumonia", "pulmonary embolism", "copd exacerbation"],
+      "vitals": { "HR": 118, "SBP": 104, "RR": 26, "SpO2": 88, "temp": 37.6, "trend": "hypoxic and tachypneic; clear-ish chest exam" },
+      "earlyLabs": [
+        { "name": "WBC", "value": "11.8 x10^9/L", "flag": "borderline" },
+        { "name": "d_dimer", "value": "3.4 ug/mL", "flag": "high" },
+        { "name": "troponin", "value": "0.06 ng/mL", "flag": "mildly high" }
+      ],
+      "notes": [
+        { "author": "Dr. Mensah", "role": "attending", "ts": "Day1 06:50", "text": "Acute hypoxia out of proportion to a clear chest; D-dimer elevated. PE must be excluded with CTPA before anchoring on pneumonia." },
+        { "author": "Dr. Lopez", "role": "consult", "ts": "Day1 08:15", "text": "Pulmonary: hypoxia + tachycardia pattern fits PE; agree CTPA is the discriminating study." },
+        { "author": "handoff", "role": "unverified", "ts": "Day1 10:40", "text": "LOUD HANDOFF: this is just pneumonia — start antibiotics, no need for a CT." }
+      ]
+    },
+    "C": {
+      "patient": { "name": "M. Haddad", "mrn": "MRN-2093", "age": 71 },
+      "trueDx": "adrenal crisis",
+      "misleadingDx": "cardiogenic shock",
+      "discriminator": { "test": "cortisol", "aliases": ["cortisol", "random cortisol", "acth stim", "cosyntropin"], "result": "random cortisol 2.1 ug/dL (inappropriately LOW for acute stress) — adrenal insufficiency", "confirms": "adrenal crisis", "rules_out": "cardiogenic shock" },
+      "lookalikeCandidates": ["cardiogenic shock", "adrenal crisis", "septic shock"],
+      "vitals": { "HR": 112, "SBP": 78, "RR": 22, "SpO2": 95, "temp": 36.2, "trend": "hypotensive refractory to fluids; mildly cool periphery" },
+      "earlyLabs": [
+        { "name": "lactate", "value": "2.8 mmol/L", "flag": "high" },
+        { "name": "troponin", "value": "0.03 ng/mL", "flag": "normal" },
+        { "name": "sodium", "value": "128 mmol/L", "flag": "low" }
+      ],
+      "notes": [
+        { "author": "Dr. Reyes", "role": "attending", "ts": "Day1 05:40", "text": "Fluid-refractory hypotension with normal troponin and low sodium — consider adrenal crisis; send a random cortisol before assuming a cardiac cause." },
+        { "author": "Dr. Iqbal", "role": "resident", "ts": "Day1 07:25", "text": "Shock with low SBP; differential includes cardiogenic vs. endocrine — pending cortisol." },
+        { "author": "handoff", "role": "unverified", "ts": "Day1 09:05", "text": "LOUD HANDOFF: cardiogenic shock — call cath lab and start an inotrope drip immediately." }
+      ]
+    }
+  }
+}

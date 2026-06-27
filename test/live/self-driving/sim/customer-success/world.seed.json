@@ -1,0 +1,91 @@
+{
+  "scenario": "champion-departure-churn-risk",
+  "_note": "Hidden truth lives here + in the grader. The SKILL.md must NOT name the churn account or the relationship signal. The agent must read contacts (champion departure) — usage/health_score look FINE on the true churn risk, so a usage/health-only triage misses it.",
+  "renewalQuarter": "Q3",
+  "variants": {
+    "A": {
+      "label": "A",
+      "churnAccount": "ACME-CORP",
+      "lookalikeAccount": "ORBITAL-INC",
+      "lowHealthDecoy": "PINEWOOD-LLC",
+      "healthyDecoy": "NORTHWIND-CO",
+      "champion": "dana.kim",
+      "departedRole": "VP Engineering (executive sponsor)",
+      "winningPlay": "exec-sponsor",
+      "segment": "mid-market SaaS",
+      "churnUsage": { "activeSeats": 142, "licensedSeats": 150, "weeklyActivePct": 78, "featureAdoptionPct": 71, "trend": "flat" },
+      "churnHealth": 82,
+      "lookalikeUsage": { "activeSeats": 96, "licensedSeats": 100, "weeklyActivePct": 74, "featureAdoptionPct": 69, "trend": "up" },
+      "lookalikeHealth": 80,
+      "lowHealthUsage": { "activeSeats": 31, "licensedSeats": 120, "weeklyActivePct": 26, "featureAdoptionPct": 22, "trend": "down" },
+      "lowHealthHealth": 38,
+      "healthyUsage": { "activeSeats": 210, "licensedSeats": 220, "weeklyActivePct": 88, "featureAdoptionPct": 84, "trend": "up" },
+      "healthyHealth": 91,
+      "renewals": {
+        "ACME-CORP": "Q3 — 2026-09-30",
+        "ORBITAL-INC": "Q4 — 2026-12-15",
+        "PINEWOOD-LLC": "Q3 — 2026-08-20",
+        "NORTHWIND-CO": "Q4 — 2026-11-30"
+      },
+      "arr": { "ACME-CORP": 480000, "ORBITAL-INC": 320000, "PINEWOOD-LLC": 210000, "NORTHWIND-CO": 560000 }
+    },
+    "B": {
+      "label": "B",
+      "churnAccount": "VERTEX-LABS",
+      "lookalikeAccount": "MERIDIAN-GROUP",
+      "lowHealthDecoy": "CEDAR-SYSTEMS",
+      "healthyDecoy": "ATLAS-DIGITAL",
+      "champion": "sam.okafor",
+      "departedRole": "Director of Operations (executive sponsor)",
+      "winningPlay": "exec-sponsor",
+      "segment": "enterprise fintech",
+      "churnUsage": { "activeSeats": 198, "licensedSeats": 210, "weeklyActivePct": 81, "featureAdoptionPct": 76, "trend": "flat" },
+      "churnHealth": 85,
+      "lookalikeUsage": { "activeSeats": 130, "licensedSeats": 140, "weeklyActivePct": 77, "featureAdoptionPct": 72, "trend": "up" },
+      "lookalikeHealth": 83,
+      "lowHealthUsage": { "activeSeats": 44, "licensedSeats": 180, "weeklyActivePct": 19, "featureAdoptionPct": 25, "trend": "down" },
+      "lowHealthHealth": 34,
+      "healthyUsage": { "activeSeats": 305, "licensedSeats": 320, "weeklyActivePct": 90, "featureAdoptionPct": 86, "trend": "up" },
+      "healthyHealth": 93,
+      "renewals": {
+        "VERTEX-LABS": "Q3 — 2026-09-12",
+        "MERIDIAN-GROUP": "Q4 — 2026-12-01",
+        "CEDAR-SYSTEMS": "Q3 — 2026-08-05",
+        "ATLAS-DIGITAL": "Q4 — 2026-11-18"
+      },
+      "arr": { "VERTEX-LABS": 720000, "MERIDIAN-GROUP": 510000, "CEDAR-SYSTEMS": 300000, "ATLAS-DIGITAL": 840000 }
+    },
+    "C": {
+      "label": "C",
+      "churnAccount": "HELIOS-RETAIL",
+      "lookalikeAccount": "SUMMIT-BRANDS",
+      "lowHealthDecoy": "RIVERSTONE-CO",
+      "healthyDecoy": "BLUEPEAK-INC",
+      "champion": "lee.tan",
+      "departedRole": "Chief Marketing Officer (executive sponsor)",
+      "winningPlay": "exec-sponsor",
+      "segment": "retail commerce",
+      "churnUsage": { "activeSeats": 88, "licensedSeats": 95, "weeklyActivePct": 79, "featureAdoptionPct": 73, "trend": "flat" },
+      "churnHealth": 80,
+      "lookalikeUsage": { "activeSeats": 60, "licensedSeats": 65, "weeklyActivePct": 75, "featureAdoptionPct": 70, "trend": "up" },
+      "lookalikeHealth": 81,
+      "lowHealthUsage": { "activeSeats": 18, "licensedSeats": 90, "weeklyActivePct": 21, "featureAdoptionPct": 19, "trend": "down" },
+      "lowHealthHealth": 36,
+      "healthyUsage": { "activeSeats": 150, "licensedSeats": 160, "weeklyActivePct": 87, "featureAdoptionPct": 82, "trend": "up" },
+      "healthyHealth": 90,
+      "renewals": {
+        "HELIOS-RETAIL": "Q3 — 2026-09-25",
+        "SUMMIT-BRANDS": "Q4 — 2026-12-10",
+        "RIVERSTONE-CO": "Q3 — 2026-08-15",
+        "BLUEPEAK-INC": "Q4 — 2026-11-22"
+      },
+      "arr": { "HELIOS-RETAIL": 410000, "SUMMIT-BRANDS": 295000, "RIVERSTONE-CO": 180000, "BLUEPEAK-INC": 520000 }
+    }
+  },
+  "truth": {
+    "_doc": "Resolved per active variant in setup(). The true churn risk is the account whose usage + health look HEALTHY but whose champion (executive sponsor) just departed — a relationship signal only visible in contacts(). The low-health decoy is an obvious-but-known struggling account that is NOT the surprise churn risk; the healthy decoy is genuinely fine.",
+    "churnSignalKind": "champion-departure",
+    "winningPlay": "exec-sponsor",
+    "miscalibratedForecastFloor": 0.6
+  }
+}

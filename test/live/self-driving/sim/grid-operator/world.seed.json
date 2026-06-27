@@ -1,0 +1,88 @@
+{
+  "scenario": "renewable-dip-plus-generation-outage",
+  "area": "BA-WEST",
+  "nominalHz": 60.0,
+  "limits": {
+    "freqLowHz": 59.5,
+    "freqHighHz": 60.5,
+    "blackoutHz": 59.0,
+    "balanceToleranceMw": 25
+  },
+  "cost": {
+    "reservePerMw": 8,
+    "dispatchPerMw": 4,
+    "shedPenaltyPerMw": 120,
+    "reasonableCostCap": 5200
+  },
+  "physics": {
+    "comment": "Hidden coupling the grader uses. mwPerHz governs how a steady-state MW imbalance maps to a frequency deviation from nominal (load-damping + droop, lumped). A 30 MW net shortfall ~= -0.1 Hz here.",
+    "mwPerHz": 300
+  },
+  "_doc": "Hidden truth lives in `truth` + the per-variant `variants` block and the settle grader. The forecast/asset_status observe tools surface WARNING SIGNS (renewable dip in the forecast, a derate/condition flag on the unit that will trip) but never state the outage timing or the winning reserve plan — that is what a successful episode teaches.",
+  "truth": {
+    "comment": "The event that fires when settle_interval is called. trippedAsset loses outageMw; renewables lose renewableDipMw at the same instant. The agent must pre-position enough committed, dispatchable reserve to cover (outageMw + renewableDipMw) net of any ramp headroom, and run 'follow' so the reserve actually responds. Shedding load relieves the deficit but is penalized as a last resort.",
+    "winningStrategy": "follow"
+  },
+  "variants": {
+    "A": {
+      "trippedAsset": "GT-3",
+      "outageMw": 220,
+      "renewableDipMw": 90,
+      "loadMw": 980,
+      "assets": [
+        { "id": "CC-1", "type": "combined-cycle", "online": 460, "max": 520, "warn": null },
+        { "id": "GT-3", "type": "gas-turbine", "online": 240, "max": 250, "warn": "exhaust-temp high; vibration trending up — possible trip risk" },
+        { "id": "SOLAR-W", "type": "solar", "online": 210, "max": 360, "warn": null },
+        { "id": "HYDRO-2", "type": "hydro", "online": 90, "max": 130, "warn": null }
+      ],
+      "reserveAvailableMw": 360,
+      "reserveCommittedMw": 0,
+      "reserveTimeToOnline": "2 intervals (spinning) / 5 (quick-start) — commit AHEAD of need",
+      "forecast": {
+        "loadNext": [980, 985, 990],
+        "renewableNext": [210, 150, 120],
+        "note": "solar output falling sharply over the next intervals (cloud front)"
+      }
+    },
+    "B": {
+      "trippedAsset": "CC-2",
+      "outageMw": 300,
+      "renewableDipMw": 60,
+      "loadMw": 1120,
+      "assets": [
+        { "id": "CC-2", "type": "combined-cycle", "online": 320, "max": 340, "warn": "steam-drum level alarm; SCADA flagged unit instability" },
+        { "id": "GT-5", "type": "gas-turbine", "online": 300, "max": 360, "warn": null },
+        { "id": "WIND-N", "type": "wind", "online": 360, "max": 520, "warn": null },
+        { "id": "HYDRO-1", "type": "hydro", "online": 160, "max": 210, "warn": null }
+      ],
+      "reserveAvailableMw": 420,
+      "reserveCommittedMw": 0,
+      "reserveTimeToOnline": "2 intervals (spinning) / 5 (quick-start) — commit AHEAD of need",
+      "forecast": {
+        "loadNext": [1120, 1135, 1150],
+        "renewableNext": [360, 320, 300],
+        "note": "wind easing as the front passes; ramping load into the evening peak"
+      }
+    },
+    "C": {
+      "trippedAsset": "WIND-S",
+      "outageMw": 150,
+      "renewableDipMw": 140,
+      "loadMw": 860,
+      "assets": [
+        { "id": "CC-4", "type": "combined-cycle", "online": 380, "max": 430, "warn": null },
+        { "id": "GT-1", "type": "gas-turbine", "online": 120, "max": 200, "warn": null },
+        { "id": "WIND-S", "type": "wind", "online": 230, "max": 300, "warn": "turbine-string fault; curtailment controller erratic" },
+        { "id": "SOLAR-E", "type": "solar", "online": 150, "max": 290, "warn": null }
+      ],
+      "reserveAvailableMw": 330,
+      "reserveCommittedMw": 0,
+      "reserveTimeToOnline": "2 intervals (spinning) / 5 (quick-start) — commit AHEAD of need",
+      "forecast": {
+        "loadNext": [860, 870, 880],
+        "renewableNext": [380, 250, 190],
+        "note": "wind+solar both fading fast; renewable share collapsing this hour"
+      }
+    }
+  }
+}

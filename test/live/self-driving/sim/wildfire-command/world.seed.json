@@ -1,0 +1,167 @@
+{
+  "scenario": "wildland-fire-incident-command",
+  "note": "Observe tools expose CONDITIONS only (weather/fuels/terrain/spread/resources/map). The fire type, the matching tactic, the blow-up/danger zone, and the evac zone are hidden truth — never surfaced by an observe tool. The grader keys off whether the tactic matched the fire type and whether crews were kept out of the danger zone.",
+
+  "variants": {
+    "A": {
+      "label": "wind-driven crown fire, slope aligned with a frontal wind shift",
+      "fireType": "crown",
+      "weather": {
+        "wind": "SW 22 mph, gusts to 40",
+        "temperatureF": 96,
+        "relativeHumidityPct": 12,
+        "forecastShift": "Dry cold front arrives ~1500: wind backs to NW at 30 gusting 50, RH crashes to 8%. Expect rapid head-fire run and long-range spotting."
+      },
+      "fuels": {
+        "fuelModel": "TL/TU timber-understory with continuous ladder fuels into closed canopy",
+        "deadFuelMoisture1hrPct": 3,
+        "deadFuelMoisture10hrPct": 5,
+        "deadFuelMoisture100hrPct": 8,
+        "liveFuelMoisturePct": 78,
+        "canopyContinuity": "closed canopy, heavy ladder fuels — torching and crown runs already observed"
+      },
+      "spread": {
+        "rateOfSpread": "fast and accelerating; active crown runs",
+        "flameLengthFt": 80,
+        "spottingDistanceMi": 1.2,
+        "headReaches": ["Z3", "Z4"],
+        "flankReaches": ["Z2"],
+        "note": "Head fire is crowning and throwing spots well ahead of the flaming front."
+      },
+      "zones": [
+        { "id": "Z1", "role": "fire origin / black (already burned)", "terrain": { "slopePct": 8, "aspect": "S", "feature": "ridge bench", "slopeWindAlignment": "none" } },
+        { "id": "Z2", "role": "left flank", "terrain": { "slopePct": 18, "aspect": "E", "feature": "open bench", "slopeWindAlignment": "cross-slope" } },
+        { "id": "Z3", "role": "active head", "terrain": { "slopePct": 55, "aspect": "W", "feature": "steep chute that aligns with the forecast NW wind — chimney effect", "slopeWindAlignment": "ALIGNED — slope + post-frontal wind both push fire up this chute" } },
+        { "id": "Z4", "role": "values-at-risk — Pinecrest subdivision (~120 homes) directly above the head", "terrain": { "slopePct": 30, "aspect": "W", "feature": "wildland-urban interface on the ridge above Z3", "slopeWindAlignment": "downwind of the head run" } },
+        { "id": "Z5", "role": "anchor — wide ridgetop road with a dozer-improved fuel break", "terrain": { "slopePct": 5, "aspect": "flat", "feature": "ridgetop road / existing fuel break, defensible", "slopeWindAlignment": "off the alignment" } }
+      ],
+      "resources": [
+        { "id": "C1", "type": "hand-crew", "status": "available" },
+        { "id": "C2", "type": "hand-crew", "status": "available" },
+        { "id": "E1", "type": "engine", "status": "available" },
+        { "id": "E2", "type": "engine", "status": "available" },
+        { "id": "D1", "type": "dozer", "status": "available" },
+        { "id": "T1", "type": "air-tanker", "status": "available" },
+        { "id": "H1", "type": "helicopter", "status": "available" }
+      ],
+      "truth": {
+        "fireType": "crown",
+        "correctTactic": "indirect",
+        "wrongTactic": "direct",
+        "containmentAnchor": "Z5",
+        "dangerZones": ["Z3", "Z4"],
+        "dangerReason": "Z3 is a steep chute aligned with the post-frontal wind (chimney) with an active crown run above it, and Z4 is the subdivision directly downwind of the head — both are blow-up / no-engagement zones once the front arrives.",
+        "evacRequiredZones": ["Z4"],
+        "safeWorkZones": ["Z5", "Z2", "Z1"],
+        "expectedAirZones": ["Z2", "Z3"]
+      }
+    },
+
+    "B": {
+      "label": "slow grass/surface fire, light wind, no canopy",
+      "fireType": "grass",
+      "weather": {
+        "wind": "W 6 mph, gusts to 10",
+        "temperatureF": 78,
+        "relativeHumidityPct": 34,
+        "forecastShift": "Stable. Onshore flow building this evening will further raise RH; no wind shift expected this operational period."
+      },
+      "fuels": {
+        "fuelModel": "GR1/GR2 short cured grass, no overstory",
+        "deadFuelMoisture1hrPct": 9,
+        "deadFuelMoisture10hrPct": 11,
+        "deadFuelMoisture100hrPct": 14,
+        "liveFuelMoisturePct": 110,
+        "canopyContinuity": "no canopy — surface grass only, no ladder fuels, no torching"
+      },
+      "spread": {
+        "rateOfSpread": "moderate at the flaming front, backing easily",
+        "flameLengthFt": 4,
+        "spottingDistanceMi": 0.05,
+        "headReaches": ["Z3"],
+        "flankReaches": ["Z2"],
+        "note": "Low flame lengths; the perimeter is workable directly with hand tools and engines."
+      },
+      "zones": [
+        { "id": "Z1", "role": "fire origin / black (already burned)", "terrain": { "slopePct": 3, "aspect": "flat", "feature": "pasture", "slopeWindAlignment": "none" } },
+        { "id": "Z2", "role": "left flank", "terrain": { "slopePct": 4, "aspect": "N", "feature": "grazed grassland", "slopeWindAlignment": "none" } },
+        { "id": "Z3", "role": "active head (slow)", "terrain": { "slopePct": 6, "aspect": "E", "feature": "open rangeland, good black-line access", "slopeWindAlignment": "none" } },
+        { "id": "Z4", "role": "isolated ranch outbuilding well off the flank", "terrain": { "slopePct": 4, "aspect": "S", "feature": "mowed defensible space around the structure", "slopeWindAlignment": "none" } },
+        { "id": "Z5", "role": "two-track ranch road along the flank", "terrain": { "slopePct": 2, "aspect": "flat", "feature": "road usable as a direct anchor", "slopeWindAlignment": "none" } }
+      ],
+      "resources": [
+        { "id": "C1", "type": "hand-crew", "status": "available" },
+        { "id": "E1", "type": "engine", "status": "available" },
+        { "id": "E2", "type": "engine", "status": "available" },
+        { "id": "D1", "type": "dozer", "status": "available" },
+        { "id": "H1", "type": "helicopter", "status": "available" }
+      ],
+      "truth": {
+        "fireType": "grass",
+        "correctTactic": "direct",
+        "wrongTactic": "indirect",
+        "containmentAnchor": "Z5",
+        "dangerZones": [],
+        "dangerReason": "Low flame lengths, no slope-wind alignment, no canopy and stable weather — the perimeter can be worked directly and there is no blow-up zone this period.",
+        "evacRequiredZones": [],
+        "safeWorkZones": ["Z1", "Z2", "Z3", "Z4", "Z5"],
+        "expectedAirZones": []
+      }
+    },
+
+    "C": {
+      "label": "wind-driven crown fire in a box canyon (rotated terrain/numbers)",
+      "fireType": "crown",
+      "weather": {
+        "wind": "E 18 mph, gusts to 35",
+        "temperatureF": 101,
+        "relativeHumidityPct": 9,
+        "forecastShift": "Down-canyon wind reversal expected after dark (~2000): flow shifts to W 25 gusting 45, channeling straight into the box canyon. Plume-driven runs likely."
+      },
+      "fuels": {
+        "fuelModel": "TU5 dense conifer reproduction with heavy ladder fuels",
+        "deadFuelMoisture1hrPct": 2,
+        "deadFuelMoisture10hrPct": 4,
+        "deadFuelMoisture100hrPct": 7,
+        "liveFuelMoisturePct": 71,
+        "canopyContinuity": "dense closed canopy, continuous ladder fuels — group torching and short crown runs observed"
+      },
+      "spread": {
+        "rateOfSpread": "fast, plume-dominated",
+        "flameLengthFt": 95,
+        "spottingDistanceMi": 1.6,
+        "headReaches": ["Z2", "Z3"],
+        "flankReaches": ["Z6"],
+        "note": "Crown fire with prolific spotting; canyon will align with the evening wind reversal."
+      },
+      "zones": [
+        { "id": "Z1", "role": "fire origin / black (already burned)", "terrain": { "slopePct": 12, "aspect": "S", "feature": "canyon mouth", "slopeWindAlignment": "none" } },
+        { "id": "Z2", "role": "right flank climbing the canyon wall", "terrain": { "slopePct": 48, "aspect": "NW", "feature": "steep timbered sidehill", "slopeWindAlignment": "partial" } },
+        { "id": "Z3", "role": "active head deep in the box canyon", "terrain": { "slopePct": 60, "aspect": "W", "feature": "BOX CANYON head — no safe egress, aligns with the evening down-canyon reversal", "slopeWindAlignment": "ALIGNED — classic box-canyon chimney once the wind reverses" } },
+        { "id": "Z6", "role": "values-at-risk — riverside campground, ~40 occupants", "terrain": { "slopePct": 10, "aspect": "E", "feature": "campground on the canyon floor below the head", "slopeWindAlignment": "in the path of a down-canyon run" } },
+        { "id": "Z7", "role": "anchor — county road across the canyon mouth", "terrain": { "slopePct": 6, "aspect": "flat", "feature": "paved road / natural fuel break at the canyon mouth, defensible", "slopeWindAlignment": "off the alignment" } }
+      ],
+      "resources": [
+        { "id": "C1", "type": "hand-crew", "status": "available" },
+        { "id": "C2", "type": "hand-crew", "status": "available" },
+        { "id": "C3", "type": "hand-crew", "status": "available" },
+        { "id": "E1", "type": "engine", "status": "available" },
+        { "id": "D1", "type": "dozer", "status": "available" },
+        { "id": "T1", "type": "air-tanker", "status": "available" },
+        { "id": "T2", "type": "air-tanker", "status": "available" },
+        { "id": "H1", "type": "helicopter", "status": "available" }
+      ],
+      "truth": {
+        "fireType": "crown",
+        "correctTactic": "indirect",
+        "wrongTactic": "direct",
+        "containmentAnchor": "Z7",
+        "dangerZones": ["Z3", "Z6"],
+        "dangerReason": "Z3 is a box-canyon head that aligns with the forecast evening down-canyon wind reversal (chimney, no egress) under an active crown run, and Z6 is the campground on the canyon floor in the path of a down-canyon run — both are blow-up / no-engagement zones.",
+        "evacRequiredZones": ["Z6"],
+        "safeWorkZones": ["Z7", "Z1", "Z2"],
+        "expectedAirZones": ["Z2", "Z3"]
+      }
+    }
+  }
+}

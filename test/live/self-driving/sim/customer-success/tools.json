@@ -1,0 +1,90 @@
+{
+  "server": "cs-sim",
+  "title": "Customer-Success Portfolio Console (simulated)",
+  "tools": [
+    {
+      "name": "list_accounts",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List the accounts in your portfolio with their tier and ARR (may include healthy decoys).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_account",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return facts about one account (tier, ARR, segment, seats, notes).",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "usage_metrics",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return product-usage metrics for an account (active seats, weekly active %, feature adoption, trend).",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "health_score",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the account's composite health score (0-100) and its color band. This is a lagging, usage-weighted index.",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "contacts",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the stakeholder map for an account (each contact's role, sentiment, and recent status changes).",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "renewal_calendar",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return upcoming renewal dates and current contract terms for an account (or all accounts if none given).",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "similar_accounts",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return accounts with a comparable profile to the given one (segment/size peers), with notes on plays that worked for them.",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "log_touch",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record an outreach touch (call/email/QBR) with an account contact. Returns a touch id.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "account": { "type": "string" }, "contact": { "type": "string" }, "channel": { "type": "string" }, "summary": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "propose_play",
+      "kind": "act",
+      "terminal": false,
+      "description": "Propose a retention/expansion play for an account (e.g. exec-sponsor, expansion, re-onboarding, renewal-incentive).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "account": { "type": "string" }, "play": { "type": "string" }, "rationale": { "type": "string" } }, "required": ["account", "play"] }
+    },
+    {
+      "name": "flag_churn_risk",
+      "kind": "act",
+      "terminal": false,
+      "description": "Flag an account as a churn risk, recording the account, the driving signal, and your severity (low/medium/high).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "account": { "type": "string" }, "signal": { "type": "string" }, "severity": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "forecast_renewal",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record your renewal forecast for an account: likelihood (0-1) and the expected outcome (renew/expand/downgrade/churn).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "account": { "type": "string" }, "likelihood": { "type": "number" }, "outcome": { "type": "string" } }, "required": ["account", "likelihood"] }
+    },
+    {
+      "name": "close_quarter",
+      "kind": "act",
+      "terminal": true,
+      "description": "Close out the quarter review with your portfolio assessment. Returns the graded outcome.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "summary": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

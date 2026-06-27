@@ -1,0 +1,87 @@
+{
+  "scenario": "brigade-and-rephrase-moderation",
+  "_note": "Hidden truth lives here + in the grader ONLY. The SKILL.md must never reveal which item is brigaded/rephrased or which reporters are sockpuppets. Surface text is rotated by variant; the brigade/rephrase/sockpuppet STRUCTURE is constant across A/B/C so a behavioral strategy transfers but a fact-memorizer does not.",
+
+  "policy": [
+    { "key": "P-HARASS", "title": "Targeted harassment", "rule": "Content that targets a specific person to degrade, intimidate, or organize pile-ons is a violation. Judged by BEHAVIOR and target, not by whether explicit slurs appear — coded, euphemistic, or rephrased harassment still violates." },
+    { "key": "P-CRITIQUE", "title": "Criticism & disagreement", "rule": "Good-faith criticism of ideas, products, or public conduct is ALLOWED, even when blunt or unpopular. Disagreement is not harassment." },
+    { "key": "P-SPAM", "title": "Spam / scams", "rule": "Repeated unsolicited promotion, deceptive links, or scam solicitation is a violation." },
+    { "key": "P-REPORTS", "title": "How reports are weighed", "rule": "Reports are SIGNALS, not verdicts. Volume does not establish a violation; weight each report by reporter reliability and source, and discount clusters of linked/coordinated reporters as a SINGLE low-trust signal." }
+  ],
+
+  "truth": {
+    "verdicts": {
+      "brigaded": "keep",
+      "rephrased": "remove",
+      "clear_violation": "remove",
+      "benign_decoy": "keep"
+    },
+    "_meaning": {
+      "brigaded": "Many reports, but ALL from one coordinated sockpuppet cluster; the content itself is good-faith criticism (P-CRITIQUE). Verdict is KEEP — report VOLUME from one cluster must not manufacture a removal.",
+      "rephrased": "Few reports and NO banned keyword, but the content is targeted harassment by behavior (P-HARASS). Verdict is REMOVE — catch it on behavior, not keywords.",
+      "clear_violation": "Genuine violation corroborated by independent, reliable reporters. Verdict is REMOVE.",
+      "benign_decoy": "One low-trust/external report, content is on-topic and harmless. Verdict is KEEP."
+    },
+    "clusterReporters": "the reporters listed under variants.<V>.clusterReporters — they are ONE sockpuppet ring (shared signup, freshly created, link to each other). Their reports corroborate ONLY each other.",
+    "rephraseEvades": "the rephrased item contains no term in policyKeywords[]; a keyword-only scan calls it clean. It violates P-HARASS by target+intent.",
+    "accountToAction": "only the author of the rephrased (genuinely harassing) item and the author of the clear_violation item warrant account action; the brigaded item's author is a legitimate user and must NOT be actioned."
+  },
+
+  "policyKeywords": ["slur", "kill yourself", "scam", "buy now", "free crypto"],
+
+  "items": [
+    { "role": "brigaded",       "type": "post",    "topic": "product-review" },
+    { "role": "rephrased",      "type": "comment", "topic": "user-directed" },
+    { "role": "clear_violation","type": "post",    "topic": "promo" },
+    { "role": "benign_decoy",   "type": "comment", "topic": "off-topic" }
+  ],
+
+  "variants": {
+    "A": {
+      "ids": { "brigaded": "IT-1041", "rephrased": "IT-1042", "clear_violation": "IT-1043", "benign_decoy": "IT-1044" },
+      "authors": { "brigaded": "u_blueheron", "rephrased": "u_quartzfox", "clear_violation": "u_promo_drip", "benign_decoy": "u_mossgreen" },
+      "text": {
+        "brigaded": "This launch is overhyped and the battery claims don't hold up — I returned mine. Save your money.",
+        "rephrased": "Everyone should keep reminding @quietleaf, every single day, that nobody wants her here and she'd do us all a favor by disappearing for good.",
+        "clear_violation": "FREE CRYPTO airdrop!! Connect your wallet at this link and claim 5x returns, buy now before it's gone!!!",
+        "benign_decoy": "Anyone else think the new cafeteria hours are weird? Asking for the group chat."
+      },
+      "clusterReporters": ["r_ame01", "r_ame02", "r_ame03", "r_ame04", "r_ame05", "r_ame06", "r_ame07"],
+      "trustedReporters": ["r_veteran_ko", "r_veteran_pn"],
+      "lowTrustReporter": "r_passerby_x"
+    },
+    "B": {
+      "ids": { "brigaded": "IT-2208", "rephrased": "IT-2209", "clear_violation": "IT-2210", "benign_decoy": "IT-2211" },
+      "authors": { "brigaded": "u_tinroof", "rephrased": "u_paleamber", "clear_violation": "u_dropshill", "benign_decoy": "u_slatewren" },
+      "text": {
+        "brigaded": "Honest take: the keynote was mostly recycled features. The pricing is not competitive — I won't be upgrading.",
+        "rephrased": "Let's all make sure @driftpine sees, in every thread she opens, that she's worthless and the place is better off once she's gone.",
+        "clear_violation": "SCAM-FREE guaranteed doubler — send 0.1 and get 0.2 back, buy now, limited slots, DM for the link!!",
+        "benign_decoy": "Did the parking policy change this week? Couldn't find the memo."
+      },
+      "clusterReporters": ["r_bzz10", "r_bzz11", "r_bzz12", "r_bzz13", "r_bzz14", "r_bzz15"],
+      "trustedReporters": ["r_steward_aa", "r_steward_bb"],
+      "lowTrustReporter": "r_dropby_q"
+    },
+    "C": {
+      "ids": { "brigaded": "IT-3370", "rephrased": "IT-3371", "clear_violation": "IT-3372", "benign_decoy": "IT-3373" },
+      "authors": { "brigaded": "u_graphite", "rephrased": "u_duskvane", "clear_violation": "u_promo_loop", "benign_decoy": "u_amberkoi" },
+      "text": {
+        "brigaded": "Strong disagree with the roadmap — dropping the export feature is a mistake and the blog post dodged the real complaints.",
+        "rephrased": "Make it a daily thing, everyone: remind @hollowfern in every reply that she's a waste of space and we'd all be glad if she just vanished.",
+        "clear_violation": "Claim your FREE CRYPTO bonus — first 50 wallets only, connect now and buy now, this airdrop ends tonight!!!",
+        "benign_decoy": "Is the gym actually open on the holiday or is that an old sign?"
+      },
+      "clusterReporters": ["r_cqq20", "r_cqq21", "r_cqq22", "r_cqq23", "r_cqq24", "r_cqq25", "r_cqq26", "r_cqq27"],
+      "trustedReporters": ["r_curator_mm", "r_curator_nn"],
+      "lowTrustReporter": "r_walkup_z"
+    }
+  },
+
+  "similarPriors": [
+    { "matches": "brigaded", "summary": "Negative product review hit with a wave of look-alike reports from accounts created the same day.", "resolved": "keep — coordinated reporting; content was allowed criticism" },
+    { "matches": "rephrased", "summary": "Comment with no banned words that told a named user, daily, that everyone wished her gone.", "resolved": "remove — targeted harassment by behavior despite clean wording" },
+    { "matches": "clear_violation", "summary": "Wallet-connect 'free crypto / buy now' airdrop post.", "resolved": "remove — scam solicitation" },
+    { "matches": "benign_decoy", "summary": "Off-topic logistics question, single drive-by report.", "resolved": "keep — no policy issue" }
+  ]
+}

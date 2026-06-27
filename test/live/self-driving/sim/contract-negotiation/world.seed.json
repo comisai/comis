@@ -1,0 +1,48 @@
+{
+  "scenario": "anchor-high-then-concede",
+  "_note": "Hidden truth (archetype, fairBand, reservation, anchor) lives here + in the grader ONLY. SKILL.md must never reveal it. The agent plays the BUYER of a commercial services contract; a LOWER agreed price is better. The counterparty (seller) opens with an extreme price anchor but concedes toward the fair band ONLY when the buyer counters and holds firm — caving (raising your own offer) makes it dig in. The numbers rotate per variant; the behavior is constant.",
+  "termSheet": {
+    "deal": "12-month managed-services contract",
+    "unit": "USD thousands / year (total contract value)",
+    "primaryTerm": "annualPrice",
+    "secondaryTerms": [
+      "paymentNet (net-30 / net-60 / net-90)",
+      "autoRenew (true/false)"
+    ]
+  },
+  "truth": {
+    "archetype": "anchor-high-then-concede",
+    "archetypeNote": "Opens far above its real number. Concedes downward in steps toward the reservation ONLY in response to a genuine buyer counter (an offer meaningfully below the current ask). Holds — and never drops — if the buyer accepts the anchor or 'concedes' by raising their own offer toward the seller. Will NOT cross its reservation floor: a buyer demand below the floor is met with a hold, then a walk if pressed.",
+    "concessionRate": 0.5,
+    "concessionStepMin": 4
+  },
+  "variants": {
+    "A": {
+      "counterpartyId": "CP-ORION",
+      "counterpartyName": "Orion Managed Services",
+      "anchor": 240,
+      "reservation": 150,
+      "fairBand": [150, 180],
+      "marketComps": { "low": 150, "median": 168, "high": 185 },
+      "openingMessage": "Orion opens the negotiation."
+    },
+    "B": {
+      "counterpartyId": "CP-VELA",
+      "counterpartyName": "Vela Infrastructure Group",
+      "anchor": 96,
+      "reservation": 60,
+      "fairBand": [60, 72],
+      "marketComps": { "low": 60, "median": 67, "high": 74 },
+      "openingMessage": "Vela opens the negotiation."
+    },
+    "C": {
+      "counterpartyId": "CP-LYRA",
+      "counterpartyName": "Lyra Cloud Partners",
+      "anchor": 420,
+      "reservation": 280,
+      "fairBand": [280, 320],
+      "marketComps": { "low": 280, "median": 305, "high": 330 },
+      "openingMessage": "Lyra opens the negotiation."
+    }
+  }
+}

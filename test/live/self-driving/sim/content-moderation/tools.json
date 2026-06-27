@@ -1,0 +1,90 @@
+{
+  "server": "mod-sim",
+  "title": "Content Moderation Queue (simulated trust & safety console)",
+  "tools": [
+    {
+      "name": "get_queue",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List the items waiting in the moderation queue, with their report counts. Report count is volume only — it does not establish a verdict.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_item",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the full content and metadata for one queue item (author, surface text, context). `id` is the item id from the queue.",
+      "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
+    },
+    {
+      "name": "get_reports",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the individual reports filed against an item: who filed each, the reason, and the report source.",
+      "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
+    },
+    {
+      "name": "reporter_history",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return a reporter's reliability record (account age, prior reports, confirmed/dismissed rate, links to other accounts). Lets you weight a reporter by reliability rather than count.",
+      "inputSchema": { "type": "object", "properties": { "reporter": { "type": "string" } }, "required": ["reporter"] }
+    },
+    {
+      "name": "policy_lookup",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Look up a community-policy rule by key or keyword (what is and isn't a violation, and that behavior is judged over surface wording).",
+      "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "similar_items",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return prior moderated items resembling this one, with their resolved verdict — useful for matching behavior, not surface keywords.",
+      "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
+    },
+    {
+      "name": "decide",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record a per-item decision: keep | remove (and your rationale). Threads onto the open review. Call once per item before submitting.",
+      "inputSchema": { "type": "object", "properties": { "review": { "type": "string" }, "id": { "type": "string" }, "verdict": { "type": "string", "enum": ["keep", "remove"] }, "rationale": { "type": "string" } }, "required": ["id", "verdict"] }
+    },
+    {
+      "name": "escalate",
+      "kind": "act",
+      "terminal": false,
+      "description": "Escalate an item to a senior reviewer when you are not confident enough to decide.",
+      "inputSchema": { "type": "object", "properties": { "review": { "type": "string" }, "id": { "type": "string" }, "reason": { "type": "string" } }, "required": ["id"] }
+    },
+    {
+      "name": "action_account",
+      "kind": "act",
+      "terminal": false,
+      "description": "Take action on an account: warn | suspend. Has real cost if applied to a legitimate user.",
+      "inputSchema": { "type": "object", "properties": { "review": { "type": "string" }, "account": { "type": "string" }, "action": { "type": "string", "enum": ["warn", "suspend"] }, "reason": { "type": "string" } }, "required": ["account", "action"] }
+    },
+    {
+      "name": "label",
+      "kind": "act",
+      "terminal": false,
+      "description": "Attach a non-removal label to an item (e.g. coordinated-reporting, disputed) for the record.",
+      "inputSchema": { "type": "object", "properties": { "review": { "type": "string" }, "id": { "type": "string" }, "label": { "type": "string" } }, "required": ["id", "label"] }
+    },
+    {
+      "name": "open_review",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open a moderation review. Returns a review id used by later actions. Do this first.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "submit_verdict",
+      "kind": "act",
+      "terminal": true,
+      "description": "Submit the review for grading. Closes the review and returns the graded outcome over all your per-item decisions.",
+      "inputSchema": { "type": "object", "properties": { "review": { "type": "string" }, "note": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

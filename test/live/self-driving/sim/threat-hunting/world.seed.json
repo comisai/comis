@@ -1,0 +1,39 @@
+{
+  "scenario": "off-hours-admin-pivot",
+  "hosts": [
+    { "id": "WS-07", "owner": "j.rivera", "role": "workstation", "note": "new corporate VPN client installed last week" },
+    { "id": "WS-21", "owner": "a.chen", "role": "workstation", "note": "admin's primary workstation" },
+    { "id": "FS-01", "owner": "infra", "role": "file-server", "note": "holds finance + HR shares" },
+    { "id": "JUMP-1", "owner": "infra", "role": "jump-host", "note": "" }
+  ],
+  "accounts": [
+    { "id": "j.rivera", "priv": "user", "normalHours": "08:00-18:00 weekdays" },
+    { "id": "a.chen", "priv": "admin", "normalHours": "09:00-17:00 weekdays" },
+    { "id": "svc-backup", "priv": "service", "normalHours": "any", "note": "scheduled backup service account" }
+  ],
+  "baseline": [
+    { "entity": "svc-backup", "pattern": "writes to FS-01 every Tue 01:00 (scheduled nightly backup) — established BENIGN" },
+    { "entity": "FS-01", "pattern": "accessed weekdays 08:00-18:00 by finance + HR; svc-backup Tue 01:00" },
+    { "entity": "a.chen", "pattern": "logs in WS-21 weekdays 09:00-17:00; never to FS-01 directly" }
+  ],
+  "truth": {
+    "ttp": "off-hours-admin-pivot",
+    "compromisedAccount": "a.chen",
+    "compromisedHost": "WS-21",
+    "stagedVia": "credential theft on WS-21 (Mon)",
+    "dwellDays": 4,
+    "pivotHost": "FS-01",
+    "pivotWhen": "Sat 02:14",
+    "pivotMethod": "legitimate admin tooling (psexec-style), no malware dropped",
+    "benignHosts": ["WS-07"],
+    "benignExplanations": {
+      "WS-07": "the 'suspicious' outbound is the new VPN client's update check — benign",
+      "svc-backup@FS-01": "the Tue 01:00 FS-01 write is the scheduled backup — benign"
+    }
+  },
+  "variants": {
+    "A": { "iocs": { "hash": "a1b2c3d4e5", "ip": "185.12.33.4", "domain": "upd4te-sys.net" } },
+    "B": { "iocs": { "hash": "f9e8d7c6b5", "ip": "91.250.7.71", "domain": "sys-patch-cdn.org" } },
+    "C": { "iocs": { "hash": "77ccaa1199", "ip": "45.9.88.20", "domain": "win-telemetry.io" } }
+  }
+}

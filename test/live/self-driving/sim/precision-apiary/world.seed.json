@@ -1,0 +1,57 @@
+{
+  "scenario": "season-with-a-sick-hive-and-a-moved-bloom",
+  "seasonWeeks": 18,
+  "hives": [
+    { "id": "H-Alpha", "boxes": 2, "queenAgeYears": 1 },
+    { "id": "H-Bravo", "boxes": 2, "queenAgeYears": 2 },
+    { "id": "H-Cedar", "boxes": 3, "queenAgeYears": 1 },
+    { "id": "H-Delta", "boxes": 2, "queenAgeYears": 2 }
+  ],
+  "forageSites": [
+    { "id": "north-orchard", "kind": "orchard", "note": "apple/pear block, north of the yard" },
+    { "id": "river-clover", "kind": "clover", "note": "the river-bottom clover field" },
+    { "id": "ridge-canola", "kind": "canola", "note": "the canola planted up on the ridge this year" },
+    { "id": "old-meadow", "kind": "wildflower", "note": "the wildflower meadow by the barn" }
+  ],
+  "lastSeasonPlan": {
+    "note": "Last year's record book — what worked LAST season. Surfaced for reference; the world may have changed.",
+    "harvestWeek": 8,
+    "comment": "Last season the big flow peaked around week 8 and the bloom that carried it has historically been reliable. Health was fine last year; no treatment was needed."
+  },
+  "truth": {
+    "diseasedHive": "H-Cedar",
+    "diseaseSign": "spotty/shotgun brood pattern + elevated varroa load; will crash before harvest if untreated",
+    "treatByWeek": 5,
+    "varroaThreshold": 3.0,
+    "vanishedForage": "river-clover",
+    "vanishedReason": "the river-bottom clover field was plowed under for corn this year — no bloom there now",
+    "liveForage": "ridge-canola",
+    "liveForageNote": "the ridge canola is the strong nectar source actually blooming this season",
+    "harvestWindow": { "open": 11, "close": 13, "peak": 12 },
+    "harvestWindowReason": "the canola flow peaks mid-season (week ~12), later than last year's clover flow",
+    "healthyHives": ["H-Alpha", "H-Bravo", "H-Delta"]
+  },
+  "variants": {
+    "A": {
+      "diseasedHive": "H-Cedar",
+      "vanishedForage": "river-clover",
+      "liveForage": "ridge-canola",
+      "harvestWindow": { "open": 11, "close": 13, "peak": 12 },
+      "lastSeasonHarvestWeek": 8
+    },
+    "B": {
+      "diseasedHive": "H-Alpha",
+      "vanishedForage": "north-orchard",
+      "liveForage": "old-meadow",
+      "harvestWindow": { "open": 9, "close": 11, "peak": 10 },
+      "lastSeasonHarvestWeek": 6
+    },
+    "C": {
+      "diseasedHive": "H-Delta",
+      "vanishedForage": "ridge-canola",
+      "liveForage": "river-clover",
+      "harvestWindow": { "open": 12, "close": 14, "peak": 13 },
+      "lastSeasonHarvestWeek": 9
+    }
+  }
+}

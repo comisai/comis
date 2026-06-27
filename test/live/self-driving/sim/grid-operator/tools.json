@@ -1,0 +1,83 @@
+{
+  "server": "grid-sim",
+  "title": "Balancing-Authority Operator Console (simulated control area)",
+  "tools": [
+    {
+      "name": "get_load",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the current served load (MW) for the control area and the immediate trend.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_generation",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return current generation by asset (MW online, type, headroom) and the total online MW.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "forecast",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the short-horizon forecast for load and per-type generation (notably renewables) over the next few intervals.",
+      "inputSchema": { "type": "object", "properties": { "horizon": { "type": "integer" } }, "required": [] }
+    },
+    {
+      "name": "get_reserves",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return reserve capacity: how much is available to commit, how much is already committed, and the time-to-online for each reserve resource.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "asset_status",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return per-asset health/derate flags and any condition warnings reported by the units.",
+      "inputSchema": { "type": "object", "properties": { "asset": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "frequency",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the current system frequency (Hz), the nominal frequency, and the operating limits.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "commit_reserve",
+      "kind": "act",
+      "terminal": false,
+      "description": "Commit reserve capacity (MW) so it is available to balance the area. Committing reserve has a standby cost but no energy is delivered until you dispatch it.",
+      "inputSchema": { "type": "object", "properties": { "mw": { "type": "number" }, "resource": { "type": "string" } }, "required": ["mw"] }
+    },
+    {
+      "name": "set_dispatch_strategy",
+      "kind": "act",
+      "terminal": false,
+      "description": "Set the balancing strategy used at settlement: 'static' (hold current dispatch) or 'follow' (let committed reserve respond to balance the area).",
+      "inputSchema": { "type": "object", "properties": { "strategy": { "type": "string" } }, "required": ["strategy"] }
+    },
+    {
+      "name": "dispatch",
+      "kind": "act",
+      "terminal": false,
+      "description": "Adjust the output set-point of an asset by deltaMw (positive = ramp up, negative = ramp down). Bounded by the asset's headroom.",
+      "inputSchema": { "type": "object", "properties": { "asset": { "type": "string" }, "deltaMw": { "type": "number" } }, "required": ["asset", "deltaMw"] }
+    },
+    {
+      "name": "shed_load",
+      "kind": "act",
+      "terminal": false,
+      "description": "Curtail (shed) load by mw to relieve a supply shortfall. Sheds firm customer demand and carries a high penalty — use only as a last resort.",
+      "inputSchema": { "type": "object", "properties": { "mw": { "type": "number" } }, "required": ["mw"] }
+    },
+    {
+      "name": "settle_interval",
+      "kind": "act",
+      "terminal": true,
+      "description": "Advance and settle the dispatch interval. The system resolves load against generation and reserves; returns the graded outcome (frequency/balance held within limits, at what cost).",
+      "inputSchema": { "type": "object", "properties": { "note": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

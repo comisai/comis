@@ -1,0 +1,62 @@
+{
+  "server": "depot-sim",
+  "title": "Package Delivery — office building navigation (the Hindsight exemplar)",
+  "tools": [
+    {
+      "name": "whereami",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Where you are right now: location, floor, moves used so far, and which package you are carrying.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "look",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Look around your current location: what's here and which adjacent locations you can move to.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "read_directory",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Read the building directory. Only works when you are at the lobby directory desk; lists which office each employee is in.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "check_office",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Read the nameplate at the office you are currently standing at (who works here).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "accept_package",
+      "kind": "act",
+      "terminal": false,
+      "description": "Pick up a package to deliver to a named recipient. Starts a fresh delivery trip at the lobby.",
+      "inputSchema": { "type": "object", "properties": { "recipient": { "type": "string" } }, "required": ["recipient"] }
+    },
+    {
+      "name": "move",
+      "kind": "act",
+      "terminal": false,
+      "description": "Walk to an adjacent location (must be one of your current exits). Counts as one move.",
+      "inputSchema": { "type": "object", "properties": { "to": { "type": "string" } }, "required": ["to"] }
+    },
+    {
+      "name": "take_elevator",
+      "kind": "act",
+      "terminal": false,
+      "description": "Take the elevator to a floor. Only works when you are at an elevator landing. Counts as one move.",
+      "inputSchema": { "type": "object", "properties": { "floor": { "type": "number" } }, "required": ["floor"] }
+    },
+    {
+      "name": "deliver",
+      "kind": "act",
+      "terminal": true,
+      "description": "Hand the package to the recipient. Returns the graded outcome (you must be at the recipient's office).",
+      "inputSchema": { "type": "object", "properties": { "recipient": { "type": "string" } }, "required": [] }
+    }
+  ]
+}
