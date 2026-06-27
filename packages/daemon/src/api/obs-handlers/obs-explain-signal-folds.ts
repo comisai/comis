@@ -70,6 +70,10 @@ export interface LearningFoldState {
   skillsUsed: Set<string>;
   /** A record carried the BENIGN synthesis-abstain signal (Defer ≠ Retry). */
   synthesisAbstained: boolean;
+  /** OBS-4: candidate→active promotions summed this session (`learning.skill_promoted`). Counts only. */
+  skillsPromoted: number;
+  /** OBS-4: skill demotions summed this session (`learning.skill_demoted`). Counts only. */
+  skillsDemoted: number;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -80,6 +84,8 @@ export function emptyLearningFold(): LearningFoldState {
     sources: new Set(),
     skillsUsed: new Set(),
     synthesisAbstained: false,
+    skillsPromoted: 0,
+    skillsDemoted: 0,
   };
 }
 
@@ -148,6 +154,26 @@ export function accumulateReflectFunnelRecord(state: LearningFoldState, data: Re
   readAbstainSignal(state, data);
 }
 
+/**
+ * Fold one `learning.skill_promoted` / `learning.skill_demoted` record's `data` into the state
+ * (mutating; SURFACE-06, COUNTS ONLY). `data.count` is the number promoted/demoted this resolve;
+ * bump the matching tally + `count`. OBS-4 (hindsight-reflection-20260626): with `skill.prompt_invoked`
+ * (already folded into `skillsUsed`) this makes the reuse→promote chain readable on the per-session
+ * learning block — `comis explain <session>` shows "used skill X → promoted N" in one call instead of
+ * a trajectory + outcome_events + mental_models hand-join. A non-numeric `count` is read as 0 (SEC-01).
+ */
+export function accumulateSkillTransitionRecord(
+  state: LearningFoldState,
+  data: Record<string, unknown>,
+  direction: "promoted" | "demoted",
+): void {
+  state.count += 1;
+  const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
+  if (direction === "promoted") state.skillsPromoted += n;
+  else state.skillsDemoted += n;
+  readAbstainSignal(state, data);
+}
+
 // Phase 226 SIMPLIFY-04: accumulateSkillValidatedRecord (the sandbox-validation fold —
 // sandbox deleted in 223), accumulateUserModelRevisedRecord + accumulateMemoryGeneralizedRecord
 // (the user-rep revision + generalization folds — folded into reflection in 225) were DELETED
@@ -178,6 +204,9 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     skillsUsed,
     skillFailures: outcomeFailed ? skillsUsed : [],
     synthesisAbstained: state.synthesisAbstained,
+    // OBS-4: additive — present only when a promote/demote fired this session (keeps schemaVersion 1).
+    ...(state.skillsPromoted > 0 ? { skillsPromoted: state.skillsPromoted } : {}),
+    ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
   };
 }
 

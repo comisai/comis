@@ -20,6 +20,7 @@ import {
   accumulateLearningRecord,
   accumulateSkillInvokedRecord,
   accumulateReflectFunnelRecord,
+  accumulateSkillTransitionRecord,
   buildLearningSignal,
 } from "./obs-explain-signal-folds.js";
 
@@ -38,6 +39,27 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect([...(sig!.skillsUsed)].sort()).toEqual(["deploy_canary", "rollback_release"]);
     // A skill-only fold still has no resolved outcome (no outcome record seen).
     expect(sig!.outcomeResolved).toBe(false);
+  });
+
+  it("OBS-4: the reuse→promote chain surfaces — skill.prompt_invoked + learning.skill_promoted ⇒ skillsUsed + skillsPromoted", () => {
+    const state = emptyLearningFold();
+    accumulateSkillInvokedRecord(state, { skillName: "mail-sort-procedure" });
+    accumulateSkillTransitionRecord(state, { count: 1 }, "promoted");
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    expect(sig!.skillsUsed).toEqual(["mail-sort-procedure"]);
+    expect(sig!.skillsPromoted).toBe(1);
+    // skillsDemoted is additive — omitted when none fired (no schema bloat for the common case).
+    expect(sig!.skillsDemoted).toBeUndefined();
+  });
+
+  it("OBS-4: a learning.skill_demoted record ⇒ skillsDemoted count; a non-numeric count reads as 0", () => {
+    const state = emptyLearningFold();
+    accumulateSkillTransitionRecord(state, { count: 2 }, "demoted");
+    accumulateSkillTransitionRecord(state, { count: "bogus" }, "demoted"); // non-numeric → +0 (SEC-01)
+    const sig = buildLearningSignal(state);
+    expect(sig!.skillsDemoted).toBe(2);
+    expect(sig!.skillsPromoted).toBeUndefined();
   });
 
   it("a non-string skillName is dropped (defence-in-depth — never a body smuggled as a name)", () => {

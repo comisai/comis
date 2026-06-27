@@ -112,6 +112,30 @@ export interface LearningEvents {
     /** The largest distinct (session,sender) corroboration size (1 = single instance → not admissible). */
     maxClusterCardinality: number;
     /**
+     * OBS-1 (hindsight-reflection-20260626): success sources DROPPED at SELECT for an untrusted origin
+     * / external-trust source (count only). The MAGNITUDE behind an `untrusted_origin` verdict — the
+     * enum says WHICH, this says HOW MANY, so `comis explain` answers "is untrusted-origin a one-off or
+     * systematic" without a daemon.log grep. Content-free (a count, like `admitted`).
+     */
+    untrustedDrops: number;
+    /** OBS-1: corroborated topics whose reflected doc NAME exceeded MAX_DOC_NAME_LENGTH (count only — never the name). */
+    nameLengthRejections: number;
+    /** OBS-1: corroborated topics SKIPPED (empty reflection or rejected validation) — count only. */
+    skipped: number;
+    /**
+     * OBS-1: the count of source trajectories that ENTERED this run (pre-SELECT input). Paired with
+     * `totalSourceChars` it distinguishes "no sources were built" (count 0 → a wiring gap) from
+     * "sources existed but were dropped/uncorroborated". Content-free (a count).
+     */
+    sourceTrajectoryCount: number;
+    /**
+     * OBS-1: total characters of the SELECTED source transcripts fed to the reflect call (count only,
+     * never the text). The empty-vs-real discriminator: a non-trivial `totalSourceChars` with a junk/
+     * generic admitted doc is an LLM-yield issue (SYNTH-YIELD), NOT an empty-source wiring bug — answers
+     * it from `comis explain` instead of tracing buildSourceTrajectories→getMessages→partsToMessage by hand.
+     */
+    totalSourceChars: number;
+    /**
      * RC-4: the acute reason this run admitted nothing (or `admitted`) — a content-free
      * closed enum so `comis explain` answers "why was 0 admitted" from ONE field. The
      * reflect verdict (classifyReflectOutcome): `no_successes` (no trusted-origin success

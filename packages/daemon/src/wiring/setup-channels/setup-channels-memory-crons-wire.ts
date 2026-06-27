@@ -231,6 +231,9 @@ export async function handleWireMemoryCronSentinel(
     // kinds for the once-per-run INFO line (the per-kind verdict already encodes them — see below).
     let sumUntrustedDrops = 0;
     let sumNameLengthRejections = 0;
+    // OBS-1: content-free source telemetry summed across kinds for the funnel emit.
+    let sumSourceTrajectoryCount = 0;
+    let sumSourceChars = 0;
     // The acute "why 0 admitted" verdict (IN-03): `admitted` is STICKY (once any kind
     // admitted, the summed verdict stays "admitted"); otherwise it is LAST-non-admitted-wins —
     // each later non-admitting kind overwrites the field below, so the LAST kind's reason
@@ -291,6 +294,8 @@ export async function handleWireMemoryCronSentinel(
         sumSkipped += v.skipped;
         sumUntrustedDrops += v.untrustedDrops;
         sumNameLengthRejections += v.nameLengthRejections;
+        sumSourceTrajectoryCount += v.sourceTrajectoryCount;
+        sumSourceChars += v.totalSourceChars;
         maxCardinality = Math.max(maxCardinality, v.maxTopicCardinality);
         // Per-kind INFO completion line (the real counts) so an operator sees each kind's
         // outcome; the SUMMED daemon emit follows the loop. Counts ONLY (§2.7 / SEC-01).
@@ -310,10 +315,11 @@ export async function handleWireMemoryCronSentinel(
     // Counts ONLY — NEVER a doc body / finding (§2.7 / SEC-01). With the disabled default the
     // whole block is unreachable (the no-op short-circuits above). The funnel events are now
     // reflect:* (Phase 226 SIMPLIFY-04 — the synthesis-funnel rename; the forget/outcome events
-    // KEEP their learning:* names, Pitfall 6). untrustedDrops + nameLengthRejections ride the
-    // INFO line (operator grep) — NOT the content-free bus payload (the admissionOutcome enum
-    // encodes them; INV-6 keeps the funnel payload counts + one closed enum only).
-    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
+    // KEEP their learning:* names, Pitfall 6). OBS-1 (hindsight-reflection-20260626): untrustedDrops /
+    // nameLengthRejections / skipped + the source counts now ALSO ride the content-free bus payload (they
+    // are COUNTS, like admitted/synthesized — INV-6 forbids bodies, not counts), so `comis explain`
+    // answers "HOW MANY untrusted dropped / was the source empty" without a daemon.log grep.
+    reflectLogger.info({ agentId, selected: sumSelected, admitted: sumAdmitted, maxTopicCardinality: maxCardinality, skipped: sumSkipped, untrustedDrops: sumUntrustedDrops, nameLengthRejections: sumNameLengthRejections, sourceTrajectoryCount: sumSourceTrajectoryCount, totalSourceChars: sumSourceChars, admissionOutcome, durationMs: clock.now() - reflectStartMs }, "Reflection complete (all kinds)");
     // The `reflect:admitted.count` contract is "how many were ADMITTED this run"
     // (events-learning.ts) — emit the SUMMED admitted across skill+profile+topic.
     container.eventBus.emit("reflect:admitted", { agentId, count: sumAdmitted, timestamp: clock.now() });
@@ -331,6 +337,14 @@ export async function handleWireMemoryCronSentinel(
       validated: sumAdmitted,
       admitted: sumAdmitted,
       maxClusterCardinality: maxCardinality,
+      // OBS-1: the funnel MAGNITUDES alongside the verdict (counts only). untrustedDrops is the
+      // count behind an `untrusted_origin` verdict; sourceTrajectoryCount/totalSourceChars
+      // distinguish an empty-source wiring gap from an LLM-yield (real text in, junk doc out).
+      untrustedDrops: sumUntrustedDrops,
+      nameLengthRejections: sumNameLengthRejections,
+      skipped: sumSkipped,
+      sourceTrajectoryCount: sumSourceTrajectoryCount,
+      totalSourceChars: sumSourceChars,
       // RC-4: the acute "why 0 admitted" verdict — one readable field on the funnel (the reflect
       // enum: no_successes / untrusted_origin / uncorroborated / empty_reflection /
       // rejected_name_length / rejected_validation / admitted).

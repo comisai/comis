@@ -218,6 +218,9 @@ describe("runReflection — SELECT (REFLECT-01, fail-closed)", () => {
     if (!res.ok) throw new Error("expected ok");
     expect(res.value.selected).toBe(2); // only the 2 successes >= minConfidence
     expect(res.value.admitted).toBe(1);
+    // OBS-1: content-free source telemetry — 5 trajectories entered, the 2 selected have text.
+    expect(res.value.sourceTrajectoryCount).toBe(5);
+    expect(res.value.totalSourceChars).toBeGreaterThan(0);
   });
 
   it("returns no_successes when nothing resolves to success", async () => {
@@ -294,6 +297,12 @@ describe("runReflection — trusted-origin SELECT (INV-5/D-04, BOTH directions)"
     expect(res.value.admitted).toBe(0);
     expect(mocks.admit).not.toHaveBeenCalled();
     expect(mocks.reflect).not.toHaveBeenCalled();
+    // OBS-1 discriminator: sources EXISTED (2 inputs) but NONE survived SELECT → 0 chars fed to
+    // reflection. This is how `comis explain` tells an all-untrusted run (sourceTrajectoryCount>0,
+    // totalSourceChars=0, untrustedDrops=2) from an empty-source wiring gap (sourceTrajectoryCount=0).
+    expect(res.value.sourceTrajectoryCount).toBe(2);
+    expect(res.value.totalSourceChars).toBe(0);
+    expect(res.value.untrustedDrops).toBe(2);
   });
 
   it("a SINGLE untrusted-origin success among trusted ones does not corroborate the topic alone", async () => {

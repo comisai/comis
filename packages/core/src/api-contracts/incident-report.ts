@@ -322,6 +322,13 @@ export const IncidentReportSchema = z.object({
       skillsUsed: z.array(z.string()),
       skillFailures: z.array(z.string()),
       synthesisAbstained: z.boolean(),
+      // OBS-4 (hindsight-reflection-20260626): the reuse→promote chain on this session, COUNTS only.
+      // `skillsPromoted`/`skillsDemoted` fold the `learning.skill_promoted`/`learning.skill_demoted`
+      // trajectory records so `comis explain <session>` shows "used skill X → promoted N" in ONE call
+      // instead of a trajectory + outcome_events + mental_models hand-join. Optional + additive
+      // (present only when a promote/demote fired this session; schemaVersion stays 1).
+      skillsPromoted: z.number().optional(),
+      skillsDemoted: z.number().optional(),
       // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
       // were DELETED with their 0-emit events (the user-rep revision + generalization paths
       // folded into the reflection engine in Phase 225). The block stays counts/ids-only.
@@ -761,6 +768,10 @@ export interface IncidentSignals {
     skillsUsed: string[];
     skillFailures: string[];
     synthesisAbstained: boolean;
+    /** OBS-4: count of candidate skills promoted to active this session (`learning.skill_promoted`). */
+    skillsPromoted?: number;
+    /** OBS-4: count of skills demoted this session (`learning.skill_demoted`). */
+    skillsDemoted?: number;
   };
 }
 

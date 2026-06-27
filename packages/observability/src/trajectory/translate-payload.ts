@@ -300,8 +300,8 @@ export function translatePayload(
     case "learning:skill_demoted": // SURFACE-06: counts ONLY (SEC-01)
       // FORGET-06 / REFLECT / SURFACE-06: the soft-eviction / admitted / promoted / demoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
       return { count: payload.count };
-    case "reflect:funnel": // REFLECT (Phase 226, renamed from the old synthesis funnel): the reflection FUNNEL COUNTS + the acute admissionOutcome verdict (RC-4) — never a procedure body/script (SEC-01). Answers "why 0 admitted" from the trajectory in ONE field.
-      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, admissionOutcome: payload.admissionOutcome };
+    case "reflect:funnel": // REFLECT (Phase 226, renamed from the old synthesis funnel): the reflection FUNNEL COUNTS + the acute admissionOutcome verdict (RC-4) — never a procedure body/script (SEC-01). Answers "why 0 admitted" from the trajectory in ONE field. OBS-1: the funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
+      return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
     // Phase 226 SIMPLIFY-04: the 3 vestigial translator cases (sandbox-validation + user-rep-revision
     // + generalization) were DELETED with their 0-emit events (sandbox deleted in 223; the other two
     // folded into the reflection engine in 225).

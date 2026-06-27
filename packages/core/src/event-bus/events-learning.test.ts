@@ -150,6 +150,13 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
+      // OBS-1: the funnel MAGNITUDES (counts only) — answer "how many untrusted dropped / was the
+      // source empty" via the bridged event instead of a daemon.log grep.
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 0,
+      sourceTrajectoryCount: 2,
+      totalSourceChars: 480,
       admissionOutcome: "admitted",
       timestamp: 2,
     };
@@ -159,6 +166,18 @@ describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phas
     const r = handler.mock.calls[0]![0] as EventMap["reflect:funnel"];
     expect(r.maxClusterCardinality).toBe(2);
     expect(r.admissionOutcome).toBe("admitted");
+    // OBS-1: the magnitude counts ride the content-free payload.
+    expect(r.untrustedDrops).toBe(0);
+    expect(r.sourceTrajectoryCount).toBe(2);
+    expect(r.totalSourceChars).toBe(480);
+  });
+
+  it("OBS-1: reflect:funnel SOURCE declares the content-free magnitude counts (reproducible RED)", () => {
+    const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
+    // Counts only — the empty-source-vs-LLM-yield discriminator + the untrusted-drop magnitude.
+    expect(src).toContain("untrustedDrops");
+    expect(src).toContain("sourceTrajectoryCount");
+    expect(src).toContain("totalSourceChars");
   });
 
   it("type safety: @ts-expect-error rejects a body/script/finding field on either telemetry payload", () => {

@@ -247,6 +247,18 @@ export interface RunReflectionResult {
    * Counts only — never the offending name.
    */
   nameLengthRejections: number;
+  /**
+   * OBS-1 (hindsight-reflection-20260626): the count of source trajectories that ENTERED this run
+   * (pre-SELECT input). With `totalSourceChars` it distinguishes "no sources built" (0 → a wiring gap)
+   * from "sources existed but dropped/uncorroborated". Counts only.
+   */
+  sourceTrajectoryCount: number;
+  /**
+   * OBS-1: total characters of the SELECTED source transcripts fed to the reflect call (count only,
+   * never the text). The empty-vs-real discriminator — a non-trivial value with a junk admitted doc is
+   * an LLM-yield issue (SYNTH-YIELD), not an empty-source wiring bug.
+   */
+  totalSourceChars: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,12 +452,19 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     "reflection selection complete",
   );
 
+  // OBS-1: content-free source telemetry for the funnel. `sourceTrajectoryCount` is the pre-SELECT
+  // input size; `totalSourceChars` is the chars of the SELECTED transcripts that actually feed the
+  // reflect call (0 when nothing survived SELECT). Together they let `comis explain` tell an empty-
+  // source wiring gap from an LLM-yield (real text in, junk doc out) without reading the transcript.
+  const sourceTrajectoryCount = sourceTrajectories.length;
+  const totalSourceChars = selected.reduce((n, t) => n + t.text.length, 0);
+
   if (selected.length === 0) {
     // D5 salvage: when nothing survived SELECT, the acute reason is `untrusted_origin` if
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
     logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, untrustedDrops, nameLengthRejections: 0 });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP (replaces clusterSuccesses): Map<topicKey, members[]> via the per-kind
@@ -505,7 +524,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, untrustedDrops, nameLengthRejections });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, skipped, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------

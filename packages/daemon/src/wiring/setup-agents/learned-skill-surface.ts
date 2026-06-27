@@ -242,7 +242,11 @@ export async function refreshLearnedSkillSurface(args: {
   const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
   materializeLearnedSkills(workspaceDir, visible, logger);
   const surfaced = visible.filter(isSurfaceable);
-  logger.debug(
+  // OBS-3 (hindsight-reflection-20260626): INFO, not DEBUG — a once-per-refresh summary so an operator
+  // can see how many learned skills currently surface to the agent WITHOUT setting logLevel:debug
+  // before the incident. Diagnosing SURFACE-RACE ("the learned skill doesn't appear in
+  // <available_skills>") previously needed a DEBUG-level surfacedCount grep + asking the agent.
+  logger.info(
     {
       agentId: scope.agentId,
       submodule: "learned-skill-surface",
