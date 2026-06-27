@@ -46,6 +46,15 @@ export interface DocSection {
 export interface StructuredBody {
   /** The ordered sections of the doc. */
   sections: DocSection[];
+  /**
+   * The corroboration cluster's COMMON-CORE opening-request tokens (the shared procedure,
+   * per-instance specifics dropped — `commonCoreTokens`). Stored so reuse attribution
+   * (`topicMatchedSkillNames`) can credit a SURFACED skill on a turn that instantiates its
+   * procedure WITHOUT the model having to explicitly `read` the SKILL.md. Optional — legacy /
+   * seeded docs omit it (those never auto-credit, only the explicit-read path). NOT rendered
+   * into the `body` markdown (`renderStructuredBody` ignores it).
+   */
+  topicTokens?: string[];
 }
 
 /**

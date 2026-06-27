@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RED stress test for {@link normalizeOpeningRequest} (Phase 223, REFLECT-02) —
- * the SYNTH-EMBED-DEAD guard. This is the milestone's concentrated risk: the
+ * the clustering-replacement guard. This is the milestone's concentrated risk: the
  * deterministic `topicKey` REPLACES embedding-cosine clustering. If two genuinely
  * same-topic sessions worded DIFFERENTLY land on DIFFERENT keys, corroboration
  * never reaches >=2 distinct (session,sender) and `admitted:0` persists forever —
@@ -20,7 +20,14 @@
  *    transcript — it must not leak `"deploy"` verbatim into telemetry.
  */
 import { describe, it, expect } from "vitest";
-import { normalizeOpeningRequest } from "./topic-key.js";
+import {
+  normalizeOpeningRequest,
+  openingRequestTokens,
+  jaccardSimilarity,
+  topicMatchedSkillNames,
+  tokenSetCoverage,
+  commonCoreTokens,
+} from "./topic-key.js";
 
 // A representative executor-injected envelope (envelope-wrapper.ts shape): a
 // `[System context]` preamble carrying a VOLATILE timestamp, then the channel
@@ -35,7 +42,7 @@ function withEnvelope(message: string, clockLabel: string): string {
   ].join("\n");
 }
 
-describe("normalizeOpeningRequest (Phase 223 — the SYNTH-EMBED-DEAD topicKey guard)", () => {
+describe("normalizeOpeningRequest (Phase 223 — the clustering-replacement topicKey guard)", () => {
   it("SAME key for the same topic worded differently (order-insensitive token set)", () => {
     // All three are "deploy the app to production"; "please"/"the"/"to" are stopwords,
     // word ORDER differs. A token-SET hash collapses them; a sequence hash would not.
@@ -97,5 +104,157 @@ describe("normalizeOpeningRequest (Phase 223 — the SYNTH-EMBED-DEAD topicKey g
     expect(normalizeOpeningRequest("please could you the a an")).toBe("");
     // Whitespace/punctuation-only collapses to the same empty key.
     expect(normalizeOpeningRequest("   ...!?   ")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openingRequestTokens + jaccardSimilarity (the under-merge fix primitives). The token
+// SET is the pre-hash form; the Jaccard overlap is what the reflection job merges
+// differently-worded analogues on.
+// ---------------------------------------------------------------------------
+describe("openingRequestTokens", () => {
+  it("returns the sorted, de-duplicated, stopword/envelope-stripped content tokens (the pre-hash set)", () => {
+    expect(openingRequestTokens("Deploy the App to PRODUCTION, please deploy")).toEqual(["app", "deploy", "production"]);
+  });
+  it("is order-insensitive (same set for re-ordered words) and hashes consistently with normalizeOpeningRequest", () => {
+    expect(openingRequestTokens("ship the app")).toEqual(openingRequestTokens("app ship the"));
+    // The exported tokens are exactly what the hash is computed over.
+    const tokens = openingRequestTokens("route via the harbor tunnel");
+    expect(normalizeOpeningRequest("route via the harbor tunnel")).not.toBe(""); // has content tokens
+    expect(tokens.length).toBeGreaterThan(0);
+  });
+  it("returns [] for an empty / stopword-only / punctuation-only request", () => {
+    expect(openingRequestTokens("")).toEqual([]);
+    expect(openingRequestTokens("please could you the a an")).toEqual([]);
+    expect(openingRequestTokens("   ...!?   ")).toEqual([]);
+  });
+});
+
+describe("jaccardSimilarity", () => {
+  it("is 1 for identical token sets and 0 for disjoint sets", () => {
+    expect(jaccardSimilarity(["a", "b", "c"], ["c", "b", "a"])).toBe(1);
+    expect(jaccardSimilarity(["a", "b"], ["c", "d"])).toBe(0);
+  });
+  it("computes |A∩B| / |A∪B| for partial overlap", () => {
+    // {a,b,c} ∩ {b,c,d} = {b,c} (2); ∪ = {a,b,c,d} (4) → 0.5
+    expect(jaccardSimilarity(["a", "b", "c"], ["b", "c", "d"])).toBe(0.5);
+  });
+  it("two empty sets are 0 (ungroupable — never corroborates)", () => {
+    expect(jaccardSimilarity([], [])).toBe(0);
+  });
+  it("rates differently-worded analogous dispatch requests ABOVE 0.5 and unrelated ones BELOW (the merge floor)", () => {
+    const fire = openingRequestTokens("dispatch the closest fire engine across the river during evening rush hour avoiding the bridge");
+    const medic = openingRequestTokens("dispatch the closest medic unit across the river during evening rush hour avoiding the bridge");
+    const sales = openingRequestTokens("summarize the quarterly sales report and email it to the finance team");
+    expect(jaccardSimilarity(fire, medic)).toBeGreaterThanOrEqual(0.5); // analogues merge
+    expect(jaccardSimilarity(fire, sales)).toBeLessThan(0.5); // genuinely different stays separate
+  });
+});
+
+// ---------------------------------------------------------------------------
+// topicMatchedSkillNames (reuse-attribution):
+// credit a SURFACED skill whose stored topic token-set matches the turn — so a
+// skill applied without an explicit `read` still promotes.
+// ---------------------------------------------------------------------------
+describe("tokenSetCoverage", () => {
+  it("is 1 when the turn contains the whole core, regardless of extra turn tokens", () => {
+    expect(tokenSetCoverage(["a", "b", "c"], ["a", "b", "c", "x", "y", "z"])).toBe(1);
+  });
+  it("is the fraction of the CORE present in the turn (asymmetric — not Jaccard)", () => {
+    // core {a,b,c,d}; turn has a,b → 2/4 = 0.5
+    expect(tokenSetCoverage(["a", "b", "c", "d"], ["a", "b", "x"])).toBe(0.5);
+  });
+  it("is 0 for an empty core (an un-grounded skill never auto-credits)", () => {
+    expect(tokenSetCoverage([], ["a", "b"])).toBe(0);
+  });
+});
+
+describe("commonCoreTokens", () => {
+  it("returns the INTERSECTION of the members' token sets (the shared procedure, specifics dropped)", () => {
+    const core = commonCoreTokens([
+      "dispatch the engine across the river at evening rush avoiding the bridge for a fire",
+      "dispatch the medic across the river at evening rush avoiding the bridge for a stroke",
+    ]);
+    // shared procedure survives; per-instance specifics (engine/medic, fire/stroke) drop.
+    expect(core).toContain("dispatch");
+    expect(core).toContain("river");
+    expect(core).toContain("bridge");
+    expect(core).not.toContain("engine");
+    expect(core).not.toContain("medic");
+    expect(core).not.toContain("fire");
+    expect(core).not.toContain("stroke");
+  });
+  it("is [] when members share no content token", () => {
+    expect(commonCoreTokens(["deploy the app", "summarize the report"])).toEqual([]);
+  });
+});
+
+describe("topicMatchedSkillNames", () => {
+  // A skill's stored topicTokens are the CORE (the shared procedure) — what commonCoreTokens yields.
+  const ROUTING_CORE = ["across", "avoiding", "bridge", "dispatch", "evening", "river", "rush"];
+  const surfaced = [
+    { name: "skill-routing", topicTokens: ROUTING_CORE },
+    { name: "skill-legacy", topicTokens: undefined }, // a legacy/seeded doc with no stored topic set
+  ];
+
+  it("credits a surfaced skill whose core the turn CONTAINS (differently-worded, no read needed)", () => {
+    // A differently-worded instance — different unit/incident, but contains the routing core.
+    const matched = topicMatchedSkillNames(
+      "dispatch the nearest engine across the river at evening rush avoiding the bridge for a structure fire",
+      surfaced,
+    );
+    expect(matched).toContain("skill-routing");
+  });
+
+  it("credits a behavioral reuse that covers ~half the core (synonym/framing variation) but NOT an unrelated/different-task turn", () => {
+    // A 10-token behavioral core (a threat-hunting TTP). A genuine reuse worded with synonyms +
+    // different framing covers ~0.5 of it (live: incident-3 landed at exactly 0.50) — it MUST credit.
+    // An unrelated turn (~0) and a similar-but-DIFFERENT TTP (~0.2-0.3) must NOT. Pre-fix (threshold 0.6)
+    // the genuine reuse at 0.5 was MISSED → the learned skill never promoted on a real behavioral instance.
+    const ttp = [
+      { name: "skill-ttp", topicTokens: ["credential", "dwell", "weekend", "pivot", "psexec", "lateral", "lsass", "fileserver", "domainadmin", "contain"] },
+    ];
+    // 5 of 10 core tokens present (0.50) — a genuine reuse described differently.
+    expect(topicMatchedSkillNames("the host showed a credential dump then dwell then a weekend pivot via psexec", ttp)).toContain("skill-ttp");
+    // unrelated turn — ~0 coverage, never credits.
+    expect(topicMatchedSkillNames("please summarize the quarterly sales report and email finance", ttp)).not.toContain("skill-ttp");
+    // a DIFFERENT TTP sharing only a couple generic tokens (~0.2) — must NOT false-credit.
+    expect(topicMatchedSkillNames("a phishing email harvested a credential from a user at business hours", ttp)).not.toContain("skill-ttp");
+  });
+
+  it("does NOT credit on an unrelated turn (core not present)", () => {
+    const matched = topicMatchedSkillNames("summarize the quarterly sales report and email finance", surfaced);
+    expect(matched).not.toContain("skill-routing");
+  });
+
+  it("never false-credits a skill with no stored topicTokens (legacy/seeded docs)", () => {
+    const matched = topicMatchedSkillNames(
+      "dispatch the nearest engine across the river at evening rush avoiding the bridge",
+      surfaced,
+    );
+    expect(matched).not.toContain("skill-legacy");
+  });
+
+  it("returns [] for an empty/ungroupable turn signature", () => {
+    expect(topicMatchedSkillNames("", surfaced)).toEqual([]);
+    expect(topicMatchedSkillNames("please could you the a an", surfaced)).toEqual([]);
+  });
+
+  it("credits a SHORT on-topic turn against a LARGE/verbose core via the absolute-count floor", () => {
+    // A big core distilled from verbose corroborating incidents (behavioral signal + framing).
+    const bigCore = [
+      "lsass", "credential", "dump", "dwell", "weekend", "psexec", "pivot", "fileserver", "domainadmin", "stolen",
+      "lateral", "movement", "campaign", "contain", "sequence", "offhours", "soc", "triage", "host", "verdict",
+      "artifacts", "rotating", "record", "memory", "rely", "change", "week", "test", "account", "tools",
+    ]; // 30 tokens
+    const big = [{ name: "skill-ttp", topicTokens: bigCore }];
+    // A SHORT triage turn: shares ~10 DISTINCTIVE behavioral tokens but only ~0.33 of the 30-token core —
+    // below the 0.5 fraction bar, yet clearly the same TTP. The absolute floor (>=8) must credit it.
+    const shortReuse = "soc triage host lsass credential dump dwell weekend psexec pivot fileserver verdict";
+    expect(topicMatchedSkillNames(shortReuse, big)).toContain("skill-ttp");
+    // An adjacent-but-DIFFERENT security task shares only a few generic tokens (~4-5) — below BOTH bars → no credit.
+    expect(topicMatchedSkillNames("soc triage host phishing email harvested a user credential account", big)).not.toContain("skill-ttp");
+    // Unrelated → no credit.
+    expect(topicMatchedSkillNames("please summarize the quarterly sales report for finance", big)).not.toContain("skill-ttp");
   });
 });

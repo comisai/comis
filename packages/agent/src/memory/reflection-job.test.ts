@@ -218,7 +218,7 @@ describe("runReflection — SELECT (REFLECT-01, fail-closed)", () => {
     if (!res.ok) throw new Error("expected ok");
     expect(res.value.selected).toBe(2); // only the 2 successes >= minConfidence
     expect(res.value.admitted).toBe(1);
-    // OBS-1: content-free source telemetry — 5 trajectories entered, the 2 selected have text.
+    // content-free source telemetry — 5 trajectories entered, the 2 selected have text.
     expect(res.value.sourceTrajectoryCount).toBe(5);
     expect(res.value.totalSourceChars).toBeGreaterThan(0);
   });
@@ -297,7 +297,7 @@ describe("runReflection — trusted-origin SELECT (INV-5/D-04, BOTH directions)"
     expect(res.value.admitted).toBe(0);
     expect(mocks.admit).not.toHaveBeenCalled();
     expect(mocks.reflect).not.toHaveBeenCalled();
-    // OBS-1 discriminator: sources EXISTED (2 inputs) but NONE survived SELECT → 0 chars fed to
+    // source-telemetry discriminator: sources EXISTED (2 inputs) but NONE survived SELECT → 0 chars fed to
     // reflection. This is how `comis explain` tells an all-untrusted run (sourceTrajectoryCount>0,
     // totalSourceChars=0, untrustedDrops=2) from an empty-source wiring gap (sourceTrajectoryCount=0).
     expect(res.value.sourceTrajectoryCount).toBe(2);
@@ -393,7 +393,7 @@ describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, 
     expect(res.value.admitted).toBe(1);
   });
 
-  it("OBS-7 distinctTopicKeys — under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
+  it("distinctTopicKeys — under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
     // UNDER-MERGE: 2 trusted successes from distinct senders but on DIFFERENT topics → 2 groups,
     // each cardinality 1 → uncorroborated. distinctTopicKeys:2 + maxTopicCardinality:1 is the
     // discriminator that says "there WAS corroborating signal but it didn't merge" (the
@@ -526,11 +526,17 @@ describe("runReflection — delta-ops refresh vs fresh synth (REFLECT-04)", () =
     const expected = applyDeltaOps(prior, [
       { op: "replace", id: "steps", section: { id: "steps", heading: "Steps", body: "1. build\n2. test\n3. ship" } },
     ]);
-    expect(admitArg.structuredBody).toEqual(expected);
+    // The SECTIONS are the delta-applied AST (untargeted sections byte-identical).
+    expect(admitArg.structuredBody.sections).toEqual(expected.sections);
+    // a skill doc now ALSO carries the cluster's common-core opening-request tokens for reuse
+    // attribution — the INTERSECTION of the members' signatures
+    // (per-instance specifics drop; here only {app, deploy} are shared across the members). The
+    // sections AST is unchanged.
+    expect(admitArg.structuredBody.topicTokens).toEqual(["app", "deploy"]);
     // Reference identity on the untouched sections (the drift-killer).
     expect(admitArg.structuredBody.sections[0]).toBe(prior.sections[0]);
     expect(admitArg.structuredBody.sections[2]).toBe(prior.sections[2]);
-    // The body column is the rendered AST.
+    // The body column is the rendered AST (renderStructuredBody ignores topicTokens).
     expect(admitArg.body).toBe(renderStructuredBody(expected));
   });
 
@@ -1362,5 +1368,46 @@ describe("runReflection — Phase 225 FOLD-03: kind:topic content-equivalence (t
     if (!res.ok) throw new Error("expected ok");
     expect(mocks.admit).not.toHaveBeenCalled();
     expect(res.value.admitted).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GROUP merge: differently-worded analogues corroborate (the under-merge fix). The
+// token-SET hash requires IDENTICAL token sets, so two genuinely-same-task successes
+// worded differently land on SEPARATE topicKeys → each group card 1 → `uncorroborated`,
+// admitted:0 (the clustering-dead symptom re-lived from the other direction). A
+// deterministic, embedding-free token-overlap (Jaccard) merge of the groups unions the
+// analogues → card 2 → admit, WITHOUT over-merging genuinely-different tasks (low overlap stays separate).
+// ---------------------------------------------------------------------------
+describe("runReflection — analogous-signature merge (under-merge fix)", () => {
+  // Same dispatch task worded two ways: share most content tokens, differ only in the
+  // unit/incident specifics. Pre-fix: 2 distinct token-SET hashes → maxCard 1 → uncorroborated.
+  const SIG_FIRE = "dispatch the closest fire engine across the river during evening rush hour avoiding the bridge";
+  const SIG_MEDIC = "dispatch the closest medic unit across the river during evening rush hour avoiding the bridge";
+  // A genuinely-different task (low token overlap) — must NOT merge with the dispatch ones.
+  const SIG_UNRELATED = "summarize the quarterly sales report and email it to the finance team";
+
+  it("merges two differently-worded-but-analogous signatures into ONE corroborated topic (card 2 → admit)", async () => {
+    const a = traj({ trajectoryId: "t-fire", sessionId: "sess-A", sender: "userA", signature: SIG_FIRE });
+    const b = traj({ trajectoryId: "t-medic", sessionId: "sess-B", sender: "userB", signature: SIG_MEDIC });
+    const res = await runReflection(makeDeps([a, b]));
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // The two analogues now corroborate as ONE topic of cardinality 2 → admit.
+    expect(res.value.maxTopicCardinality).toBe(2);
+    expect(res.value.admitted).toBe(1);
+    expect(res.value.admissionOutcome).toBe("admitted");
+  });
+
+  it("does NOT over-merge two genuinely-different tasks (low overlap stays separate → uncorroborated)", async () => {
+    const a = traj({ trajectoryId: "t-fire", sessionId: "sess-A", sender: "userA", signature: SIG_FIRE });
+    const b = traj({ trajectoryId: "t-sales", sessionId: "sess-B", sender: "userB", signature: SIG_UNRELATED });
+    const res = await runReflection(makeDeps([a, b]));
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("expected ok");
+    // Distinct tasks → NOT merged → no topic reaches cardinality 2.
+    expect(res.value.maxTopicCardinality).toBe(1);
+    expect(res.value.admitted).toBe(0);
+    expect(res.value.admissionOutcome).toBe("uncorroborated");
   });
 });

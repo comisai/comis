@@ -62,7 +62,7 @@ import type {
 } from "@comis/core";
 import { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import { applyDeltaOps, renderStructuredBody } from "@comis/core";
-import { normalizeOpeningRequest } from "./topic-key.js";
+import { normalizeOpeningRequest, openingRequestTokens, jaccardSimilarity, commonCoreTokens } from "./topic-key.js";
 import type { ReflectionAdapter } from "./llm-reflection-adapter.js";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +71,19 @@ import type { ReflectionAdapter } from "./llm-reflection-adapter.js";
 
 /** Max topics reflected (one LLM call each) per run — the DoS ceiling. */
 const DEFAULT_MAX_DOCS_PER_RUN = 10;
+
+/**
+ * The token-set Jaccard floor at/above which two exact-token-SET groups MERGE into
+ * one corroboration cluster. The exact-hash group
+ * key requires IDENTICAL token sets, so differently-worded successes for the SAME
+ * task never corroborate; this floor lets near-identical task signatures (sharing
+ * ≥50% of their unique content tokens) merge — differently-worded analogues reach
+ * the ≥2 gate, while genuinely-different tasks (low overlap) stay separate. Keyless,
+ * deterministic, NO embeddings (the v2.31 collapse removed those deliberately). 0.5
+ * is the collision-maximizing midpoint the topic-key SET decision already favors;
+ * a higher value merges less (more conservative).
+ */
+const DEFAULT_MERGE_SIMILARITY_THRESHOLD = 0.5;
 
 /**
  * The LOW proof-count cap a reflected doc is admitted at, REGARDLESS of
@@ -234,22 +247,21 @@ export interface RunReflectionResult {
   /** The largest distinct-(sessionId, sender) cardinality across the topic groups (anti-domination telemetry). */
   maxTopicCardinality: number;
   /**
-   * OBS-7 (reflect-obs-20260627): how many DISTINCT topicKey groups the selected sources formed.
-   * The under-merge DISCRIMINATOR paired with `selected` + `maxTopicCardinality`: `selected:2,
-   * distinctTopicKeys:2, maxTopicCardinality:1` = 2 successes that landed on 2 SEPARATE topicKeys
-   * (under-merge → the LLM-tag-fallback trigger), vs `distinctTopicKeys:1, maxTopicCardinality:2` =
-   * genuinely corroborated. Answers "admitted=0 DESPITE corroboration?" from ONE field instead of
-   * reasoning from the max alone. Content-free (a count, like `selected`/`maxTopicCardinality`).
+   * How many DISTINCT topicKey groups the selected sources formed. The under-merge DISCRIMINATOR
+   * paired with `selected` + `maxTopicCardinality`: `selected:2, distinctTopicKeys:2,
+   * maxTopicCardinality:1` = 2 successes that landed on 2 SEPARATE topicKeys (under-merge), vs
+   * `distinctTopicKeys:1, maxTopicCardinality:2` = genuinely corroborated. Answers "admitted=0
+   * DESPITE corroboration?" from ONE field instead of reasoning from the max alone. Content-free
+   * (a count, like `selected`/`maxTopicCardinality`).
    */
   distinctTopicKeys: number;
   /** How many corroborated topics were SKIPPED (empty reflection or rejected validation). */
   skipped: number;
   /**
-   * OBS-4b (reflect-obs-20260627): how many corroborated topics reflected to EMPTY content
-   * (the empty-content guard declined). Returned (not just internal) so the daemon can SUM it
-   * across kinds and re-classify the aggregate verdict from the summed counts via
-   * {@link classifyReflectOutcome} — a corroborated-but-empty kind aggregates to `empty_reflection`,
-   * not a mis-attributed `rejected_validation`. Counts only.
+   * How many corroborated topics reflected to EMPTY content (the empty-content guard declined).
+   * Returned (not just internal) so the daemon can SUM it across kinds and re-classify the aggregate
+   * verdict from the summed counts via {@link classifyReflectOutcome} — a corroborated-but-empty kind
+   * aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`. Counts only.
    */
   emptyReflections: number;
   /**
@@ -265,15 +277,15 @@ export interface RunReflectionResult {
    */
   nameLengthRejections: number;
   /**
-   * OBS-1 (hindsight-reflection-20260626): the count of source trajectories that ENTERED this run
-   * (pre-SELECT input). With `totalSourceChars` it distinguishes "no sources built" (0 → a wiring gap)
-   * from "sources existed but dropped/uncorroborated". Counts only.
+   * The count of source trajectories that ENTERED this run (pre-SELECT input). With
+   * `totalSourceChars` it distinguishes "no sources built" (0 → a wiring gap) from "sources existed
+   * but dropped/uncorroborated". Counts only.
    */
   sourceTrajectoryCount: number;
   /**
-   * OBS-1: total characters of the SELECTED source transcripts fed to the reflect call (count only,
-   * never the text). The empty-vs-real discriminator — a non-trivial value with a junk admitted doc is
-   * an LLM-yield issue (SYNTH-YIELD), not an empty-source wiring bug.
+   * Total characters of the SELECTED source transcripts fed to the reflect call (count only, never
+   * the text). The empty-vs-real discriminator — a non-trivial value with a junk admitted doc is an
+   * LLM-yield issue (real text in, low-quality doc out), not an empty-source wiring bug.
    */
   totalSourceChars: number;
 }
@@ -469,10 +481,10 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     "reflection selection complete",
   );
 
-  // OBS-1: content-free source telemetry for the funnel. `sourceTrajectoryCount` is the pre-SELECT
-  // input size; `totalSourceChars` is the chars of the SELECTED transcripts that actually feed the
-  // reflect call (0 when nothing survived SELECT). Together they let `comis explain` tell an empty-
-  // source wiring gap from an LLM-yield (real text in, junk doc out) without reading the transcript.
+  // Content-free source telemetry for the funnel. `sourceTrajectoryCount` is the pre-SELECT input
+  // size; `totalSourceChars` is the chars of the SELECTED transcripts that actually feed the reflect
+  // call (0 when nothing survived SELECT). Together they let `comis explain` tell an empty-source
+  // wiring gap from an LLM-yield (real text in, junk doc out) without reading the transcript.
   const sourceTrajectoryCount = sourceTrajectories.length;
   const totalSourceChars = selected.reduce((n, t) => n + t.text.length, 0);
 
@@ -495,6 +507,43 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     else groups.set(key, [t]);
   }
 
+  // 2b. MERGE: the exact-token-SET group key collides ONLY on identical token sets, so two
+  //     differently-worded successes for the SAME task land on SEPARATE card-1 groups and never
+  //     reach the ≥2 corroboration gate (the under-merge symptom). For the SIGNATURE-based skill grouping
+  //     (the default group function), merge groups whose opening-request token sets are
+  //     highly similar (Jaccard ≥ threshold) into one corroboration cluster — keyless,
+  //     deterministic, NO embeddings. Profile/topic kinds carry a CUSTOM groupKey (raw
+  //     userId / surprisal cluster), which is not signature-similar, so they are left as-is.
+  //     Deterministic: groups are processed in ascending-key order, and each joins the FIRST
+  //     existing cluster it is ≥threshold with (else seeds one) — so a cluster's canonical
+  //     topicKey is its lexicographically-smallest member key (stable across re-runs / re-admits).
+  const useSignatureMerge = deps.groupKey === undefined;
+  let corroborationGroups: Array<[string, ReflectionSourceTrajectory[]]>;
+  if (useSignatureMerge && groups.size > 1) {
+    const clusters: Array<{ key: string; tokens: string[]; members: ReflectionSourceTrajectory[] }> = [];
+    for (const [key, members] of [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      const tokens = openingRequestTokens(members[0].signature);
+      const target = clusters.find((c) => jaccardSimilarity(tokens, c.tokens) >= DEFAULT_MERGE_SIMILARITY_THRESHOLD);
+      if (target) target.members.push(...members);
+      else clusters.push({ key, tokens, members: [...members] });
+    }
+    corroborationGroups = clusters.map((c) => [c.key, c.members] as [string, ReflectionSourceTrajectory[]]);
+    if (clusters.length < groups.size) {
+      logger.debug(
+        {
+          agentId,
+          step: "group" as const,
+          groupsBeforeMerge: groups.size,
+          clustersAfterMerge: clusters.length,
+          hint: "merged differently-worded analogous topics by token-overlap — differently-worded successes now corroborate",
+        },
+        "reflection: merged similar topic groups",
+      );
+    }
+  } else {
+    corroborationGroups = [...groups.entries()];
+  }
+
   // 3. GATE + 4. REFLECT + 5. GUARD/ADMIT. Bound by maxDocsPerRun.
   let admitted = 0;
   let skipped = 0;
@@ -504,7 +553,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let maxTopicCardinality = 0;
   let reflectedTopics = 0;
 
-  for (const [topicKey, members] of groups) {
+  for (const [topicKey, members] of corroborationGroups) {
     const cardinality = distinctSenderCardinality(members);
     maxTopicCardinality = Math.max(maxTopicCardinality, cardinality);
     // INV-2/D-05: a topic needs >=2 distinct (sessionId, sender) to corroborate.
@@ -541,7 +590,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
 
   logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections });
 
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, distinctTopicKeys: groups.size, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------
@@ -619,7 +668,19 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
     return "empty";
   }
 
-  const body = renderStructuredBody(nextBody);
+  // Attach the cluster's COMMON-CORE opening-request tokens (the shared procedure across
+  // the corroborating members) so reuse attribution
+  // (topicMatchedSkillNames) can credit this skill on a later turn that instantiates the
+  // procedure WITHOUT the model explicitly `read`-ing the SKILL.md. Empty core (members
+  // share no content token — only possible off a custom non-signature groupKey) ⇒ omit
+  // (degrades to the explicit-read-only attribution, never a false credit). NOT rendered
+  // into `body` (renderStructuredBody ignores topicTokens).
+  // Only SKILL docs are reuse-attributed by topic-match (topicMatchedSkillNames matches surfaced
+  // SKILLS); profile/topic docs carry a custom non-signature groupKey, so a "common core" of their
+  // members is noise — leave their structuredBody untouched (byte-identical with 225).
+  const coreTokens = kind === "skill" ? commonCoreTokens(members.map((m) => m.signature)) : [];
+  const structuredBody: StructuredBody = coreTokens.length > 0 ? { ...nextBody, topicTokens: coreTokens } : nextBody;
+  const body = renderStructuredBody(structuredBody);
   const description = deriveDescription(nextBody);
 
   // 5b. STATIC GUARD (REFLECT-06): validateLearnedDocBody is ALL the validation an
@@ -663,7 +724,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
   const isExistingDoc = prior !== undefined;
   const supersede = mentalModelStore.supersede;
   if (kind !== "skill" && isExistingDoc && supersede !== undefined) {
-    const supersedeRes = await fromPromise(supersede({ name: docName, body, structuredBody: nextBody }, scope, clock.now()));
+    const supersedeRes = await fromPromise(supersede({ name: docName, body, structuredBody }, scope, clock.now()));
     if (!supersedeRes.ok || !supersedeRes.value.ok) {
       logger.warn(
         { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.supersede faulted — topic skipped (prior doc intact)" },
@@ -692,7 +753,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         name: docName,
         description,
         body,
-        structuredBody: nextBody,
+        structuredBody,
         kind, // Phase 225 FOLD — the threaded doc family (skill default)
         topicKey,
         mutating: false, // advisory doc — never state-mutating (INV-3); read-only auto-surfaces
@@ -776,8 +837,8 @@ function logRunComplete(
       admissionOutcome, // RC-4: the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,
     },
-    // OBS-9 (reflect-obs-20260627): distinct per-kind JOB-layer message so a grep for the canonical
-    // aggregate "Reflection complete (all kinds)" (the wire's summed daemon emit) is unambiguous — the
+    // Distinct per-kind JOB-layer message so a grep for the canonical aggregate "Reflection complete
+    // (all kinds)" (the wire's summed daemon emit) is unambiguous — the
     // 4 reflection completion lines are now distinct: "reflection selection complete" (agent select),
     // "reflection kind computed (job)" (this, agent per-kind), "Reflection (kind) complete" (wire
     // per-kind), "Reflection complete (all kinds)" (wire aggregate — THE summary line to grep).

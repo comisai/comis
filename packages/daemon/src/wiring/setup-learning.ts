@@ -26,6 +26,7 @@ import {
   tryGetContext,
   type TypedEventBus,
   type OutcomeSignalPort,
+  type ResolvedOutcome,
   type MemoryUsefulnessStore,
   type MentalModelStorePort,
   type ClockPort,
@@ -433,10 +434,10 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           timestamp: deps.clock.now(),
         });
 
-        // OBS-4b (reflect-obs-20260627): when corroborated failures accrued (failure_count++) this
-        // resolve, emit the eviction-causation precursor (count only, bridged for comis explain) so
-        // "why did/didn't this memory evict" has an event trail — not just a DB column that changes
-        // over time. The accrual is already FORGET-03 corroboration-gated above.
+        // When corroborated failures accrued (failure_count++) this resolve, emit the
+        // eviction-causation precursor (count only, bridged for comis explain) so "why did/didn't
+        // this memory evict" has an event trail — not just a DB column that changes over time. The
+        // accrual is already FORGET-03 corroboration-gated above.
         if (failureAccrued > 0) {
           deps.eventBus.emit("learning:memory_failure_attributed", {
             agentId: scope.agentId,
@@ -604,6 +605,61 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // Mirrors the post-promote/demote refresh. ----
   deps.eventBus.on("reflect:admitted", (p) => {
     if (p.count > 0) refreshSurface?.(p.agentId);
+  });
+
+  // ---- Correction-driven demote: demote the learned skill a user CORRECTION invalidated. The
+  // correction reader observed a `corrected` soft-failure against the PRIOR trajectory and emitted
+  // `learning:correction_observed`; the normal resolve seam already CONSUMED that trajectory
+  // (markTrajectoryResolved dedup), so the skill demote can ONLY happen here. We re-RESOLVE the prior
+  // trajectory (read-only) to recover its CREDITED skills, then run ONLY the GATED skill-transition
+  // with a `corrected` verdict — NOT the full resolveAndConsume (which would re-run failure-accrual /
+  // re-emit / double-count). Reuses the SAME corroboration tally + decay-aware trend as the
+  // resolve-seam demote, so the anti-flap belt holds: a single correction never stales a well-reused
+  // skill; a corroborated (≥2 distinct (session,sender)) correction flips active/candidate→stale
+  // (KEPT, not deleted — revivable). Gated default-OFF / no-store ⇒ byte-identical no-op. ----
+  deps.eventBus.on("learning:correction_observed", (p) => {
+    const skillStore = deps.learnedSkillStore;
+    if (skillStore === undefined || deps.learningSkillsEnabled?.(p.agentId) !== true) return;
+    void (async (): Promise<void> => {
+      const r = await deps.outcomeStore.resolve(p.trajectoryId, { tenantId: p.tenantId, agentId: p.agentId });
+      // No credited skill on the corrected turn → nothing to demote (fail-closed, non-fatal).
+      if (!r.ok || r.value.usedSkillIds.length === 0) return;
+      // One INFO line per correction that credits ≥1 skill — the re-resolve is OTHERWISE silent until
+      // the 3rd corroborated correction actually demotes (anti-flap), so a single real correction
+      // couldn't be confirmed live. Counts/ids only — the skill COUNT, never the procedure body/id-list
+      // (the §2.7 / SEC-01 firewall). Rare + load-bearing (a user correction feeding the demote gate is
+      // the acute signal), so INFO (not DEBUG) — diagnosability must not depend on logLevel:debug having
+      // been set before the incident.
+      deps.logger.info(
+        {
+          agentId: p.agentId,
+          tenantId: p.tenantId,
+          sessionId: p.sessionId,
+          trajectoryId: p.trajectoryId,
+          creditedSkillCount: r.value.usedSkillIds.length,
+          confidence: p.confidence,
+          step: "correction-demote-reresolve",
+        },
+        "Correction re-resolve: feeding prior trajectory's credited skills to the gated demote",
+      );
+      const scope: OutcomeScope = { tenantId: p.tenantId, agentId: p.agentId, sessionId: p.sessionId, trajectoryId: p.trajectoryId };
+      // An explicit `corrected` verdict carrying the prior turn's credited skills — the demote
+      // branch of applySkillOutcomeTransitions (source:"correction" feeds the corroboration gate).
+      const verdict: ResolvedOutcome = {
+        outcome: "corrected",
+        confidence: p.confidence,
+        sources: ["correction"],
+        recalledIds: [],
+        usedSkillIds: r.value.usedSkillIds,
+      };
+      await applySkillOutcomeTransitions(deps, scope, verdict, {
+        skillStore,
+        threshold: deps.learningSkillsPromoteAt?.(p.agentId) ?? 3,
+        skillFailureCorroborationTally,
+        skillTrend,
+        refreshSurface,
+      });
+    })();
   });
 }
 

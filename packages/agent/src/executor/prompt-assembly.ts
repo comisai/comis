@@ -68,6 +68,7 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
+import { topicMatchedSkillNames } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
@@ -192,6 +193,20 @@ const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefined>();
  *  skill the model invoked. Empty when no visible skills are listed (the
  *  default until learned skills exist), so the attribution path is a no-op. */
 const sessionPromptSkillLocations = new Map<string, ReadonlyMap<string, string>>();
+
+/** Reuse-attribution carrier: per-session, per-TURN set of the learned-skill NAMES whose stored
+ *  common-core (topicTokens) the CURRENT turn instantiates (`topicMatchedSkillNames`). The
+ *  pi-event-bridge UNIONS these into the turn's `usedSkillIds`, so a skill APPLIED from the surfaced
+ *  `<available_skills>` summary / recall — without an explicit `read` of its SKILL.md (the ATTR-01
+ *  path) — still promotes on success. Overwritten every prompt assembly (the same per-turn lifecycle
+ *  as the XML/location snapshots). Empty/no-match ⇒ the no-op default. */
+const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>();
+
+/** Read the per-turn topic-matched learned-skill names for a session. The pi-event-bridge
+ *  calls this when assembling the turn's `usedSkillIds`. Undefined when nothing matched this turn. */
+export function getSessionPromptTopicMatchedSkills(snapshotKey: string): ReadonlyArray<string> | undefined {
+  return sessionPromptTopicMatchedSkills.get(snapshotKey);
+}
 
 /**
  * Parse a frozen `<available_skills>` XML block (the exact shape emitted by
@@ -1278,38 +1293,65 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // so the profile appends after any retrieved sections + temporal guidance.
   if (config.learning?.enabled && deps.mentalModelStore) {
     try {
-      const profiles = await deps.mentalModelStore.list(
-        {
-          tenantId: deps.tenantId ?? sessionKey.tenantId,
-          agentId: agentId ?? config.name,
-        },
-        "profile",
-      );
-      if (profiles.ok) {
+      // ONE list of ALL learning docs (kind omitted) — partitioned below for the
+      // user-profile standing block (kind=profile) AND the reuse-attribution topic-match
+      // (kind=skill). A single list keeps the per-turn store cost to ONE read (the
+      // "list runs once" contract) while serving both consumers.
+      const docs = await deps.mentalModelStore.list({
+        tenantId: deps.tenantId ?? sessionKey.tenantId,
+        agentId: agentId ?? config.name,
+      });
+      if (docs.ok) {
+        // --- user-profile standing block (kind=profile) ---
         // The per-user doc: the profile groupKey is the userId on the doc's topicKey.
         // Select THIS user's doc by `topicKey === userId`. A doc with an EMPTY topicKey
         // is user-agnostic (a single-user agent whose builder set no per-user groupKey)
         // and is shown to any user; a doc carrying a DIFFERENT user's topicKey is NEVER
         // shown (cross-user isolation — no sole-doc fallback that could leak A's profile
         // to B). When userId is itself absent, only an empty-topicKey doc qualifies.
+        const profiles = docs.value.filter((d) => d.kind === "profile");
         const userId = sessionKey.userId;
         const mine =
-          (userId !== undefined ? profiles.value.find((d) => d.topicKey === userId) : undefined) ??
-          profiles.value.find((d) => d.topicKey === "");
+          (userId !== undefined ? profiles.find((d) => d.topicKey === userId) : undefined) ??
+          profiles.find((d) => d.topicKey === "");
         if (mine) {
           const profileBlock = buildProfileBlock(mine);
           if (profileBlock) memorySections.push(profileBlock);
         }
+
+        // --- reuse-attribution by TOPIC MATCH (kind=skill).
+        // Credit any learned skill whose stored common-core (topicTokens) THIS turn instantiates,
+        // so a skill APPLIED from the surfaced `<available_skills>` summary / recall — without an
+        // explicit `read` of its SKILL.md (the ATTR-01 path) — still enters `usedSkillIds` and
+        // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
+        // is unioned into the turn's usedSkillIds by the pi-event-bridge.
+        const skills = docs.value.filter((d) => d.kind === "skill");
+        const matched = topicMatchedSkillNames(
+          msg.text,
+          skills.map((s) => ({ name: s.name, topicTokens: s.structuredBody?.topicTokens })),
+        );
+        sessionPromptTopicMatchedSkills.set(formatSessionKey(sessionKey), matched);
+        // One DEBUG line when a turn TOPIC-CREDITS ≥1 learned skill WITHOUT an explicit read —
+        // otherwise the credit is invisible until a downstream proof bump, so confirming "did
+        // reuse-attribution fire this turn" meant grepping outcome_events. Gated on a non-empty
+        // match (the meaningful, low-volume signal — a no-match turn logs nothing). Counts only,
+        // never the skill body.
+        if (matched.length > 0) {
+          logger.debug(
+            { agentId, step: "skill-topic-match", skillsConsidered: skills.length, matchedCount: matched.length },
+            "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
+          );
+        }
       }
-    } catch (profileErr) {
+    } catch (learningErr) {
       logger.debug(
         {
           agentId,
-          err: profileErr,
-          hint: "user-profile read failed; proceeding without the standing block",
+          err: learningErr,
+          hint: "learning standing-block / skill topic-match read failed; proceeding without",
           errorKind: "dependency" as const,
         },
-        "User-representation standing-block read failed (non-fatal)",
+        "Learning standing-block read failed (non-fatal)",
       );
     }
   }

@@ -112,35 +112,35 @@ export interface LearningEvents {
     /** The largest distinct (session,sender) corroboration size (1 = single instance → not admissible). */
     maxClusterCardinality: number;
     /**
-     * OBS-7 (reflect-obs-20260627): how many DISTINCT topicKey groups the selected sources formed —
-     * the under-merge DISCRIMINATOR. `synthesized:2, distinctTopicKeys:2, maxClusterCardinality:1` =
-     * 2 successes that landed on 2 SEPARATE topics (under-merge → LLM-tag-fallback trigger), vs
-     * `distinctTopicKeys:1, maxClusterCardinality:2` = genuinely corroborated. Answers "admitted=0
-     * DESPITE corroboration?" from ONE field. Content-free (a count, like `maxClusterCardinality`).
+     * How many DISTINCT topicKey groups the selected sources formed — the under-merge
+     * DISCRIMINATOR. `synthesized:2, distinctTopicKeys:2, maxClusterCardinality:1` = 2 successes that
+     * landed on 2 SEPARATE topics (under-merge), vs `distinctTopicKeys:1, maxClusterCardinality:2` =
+     * genuinely corroborated. Answers "admitted=0 DESPITE corroboration?" from ONE field. Content-free
+     * (a count, like `maxClusterCardinality`).
      */
     distinctTopicKeys: number;
     /**
-     * OBS-1 (hindsight-reflection-20260626): success sources DROPPED at SELECT for an untrusted origin
-     * / external-trust source (count only). The MAGNITUDE behind an `untrusted_origin` verdict — the
-     * enum says WHICH, this says HOW MANY, so `comis explain` answers "is untrusted-origin a one-off or
-     * systematic" without a daemon.log grep. Content-free (a count, like `admitted`).
+     * Success sources DROPPED at SELECT for an untrusted origin / external-trust source (count only).
+     * The MAGNITUDE behind an `untrusted_origin` verdict — the enum says WHICH, this says HOW MANY, so
+     * `comis explain` answers "is untrusted-origin a one-off or systematic" without a daemon.log grep.
+     * Content-free (a count, like `admitted`).
      */
     untrustedDrops: number;
-    /** OBS-1: corroborated topics whose reflected doc NAME exceeded MAX_DOC_NAME_LENGTH (count only — never the name). */
+    /** Corroborated topics whose reflected doc NAME exceeded MAX_DOC_NAME_LENGTH (count only — never the name). */
     nameLengthRejections: number;
-    /** OBS-1: corroborated topics SKIPPED (empty reflection or rejected validation) — count only. */
+    /** Corroborated topics SKIPPED (empty reflection or rejected validation) — count only. */
     skipped: number;
     /**
-     * OBS-1: the count of source trajectories that ENTERED this run (pre-SELECT input). Paired with
+     * The count of source trajectories that ENTERED this run (pre-SELECT input). Paired with
      * `totalSourceChars` it distinguishes "no sources were built" (count 0 → a wiring gap) from
      * "sources existed but were dropped/uncorroborated". Content-free (a count).
      */
     sourceTrajectoryCount: number;
     /**
-     * OBS-1: total characters of the SELECTED source transcripts fed to the reflect call (count only,
+     * Total characters of the SELECTED source transcripts fed to the reflect call (count only,
      * never the text). The empty-vs-real discriminator: a non-trivial `totalSourceChars` with a junk/
-     * generic admitted doc is an LLM-yield issue (SYNTH-YIELD), NOT an empty-source wiring bug — answers
-     * it from `comis explain` instead of tracing buildSourceTrajectories→getMessages→partsToMessage by hand.
+     * generic admitted doc is an LLM-yield issue, NOT an empty-source wiring bug — answers it from
+     * `comis explain` instead of tracing buildSourceTrajectories→getMessages→partsToMessage by hand.
      */
     totalSourceChars: number;
     /**
@@ -181,6 +181,26 @@ export interface LearningEvents {
     agentId: string;
     /** How many skills were demoted (active→stale→archived) this resolve (count only). */
     count: number;
+    timestamp: number;
+  };
+
+  /**
+   * Correction-driven demote: a user CORRECTION was observed as a soft-failure of a
+   * PRIOR trajectory (the correction reader, setup-learning-reactions.ts). Carried INTERNALLY on the
+   * daemon bus (NOT bridged to the trajectory — the resulting demote already emits
+   * `learning:skill_demoted`) so `wireLearningOutcome` (which owns the gated skill-transition + its
+   * corroboration/trend state) can RE-RUN the skill transition for that trajectory's credited skills
+   * with a `corrected` verdict → a corroborated correction flips the wrong skill active/candidate→stale
+   * (kept, not deleted). Content-free: ids + a confidence scalar ONLY, never a body (INV-6).
+   */
+  "learning:correction_observed": {
+    agentId: string;
+    tenantId: string;
+    sessionId: string;
+    /** The PRIOR trajectory the correction soft-failed (the verdict turn whose skill should demote). */
+    trajectoryId: string;
+    /** The capped correction confidence (the soft-failure reward). */
+    confidence: number;
     timestamp: number;
   };
 

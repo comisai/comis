@@ -388,6 +388,19 @@ function observeCorrectionNonFatal(
         { agentId: scope.agentId, outcome: "corrected", source: "correction", durationMs: deps.clock.now() - start },
         "Correction outcome observed for prior trajectory",
       );
+      // Signal wireLearningOutcome to RE-RUN the gated skill-transition for THIS prior trajectory's
+      // credited skills with a `corrected` verdict — so a corroborated correction demotes the wrong
+      // skill (active/candidate→stale). The resolve seam dedups the prior trajectory
+      // (markTrajectoryResolved), so the demote can only happen via this dedicated signal, not the
+      // normal resolve path. Content-free (ids + confidence only).
+      deps.eventBus.emit("learning:correction_observed", {
+        agentId: scope.agentId,
+        tenantId: scope.tenantId,
+        sessionId: scope.sessionId,
+        trajectoryId: scope.trajectoryId,
+        confidence,
+        timestamp: deps.clock.now(),
+      });
     })
     .catch((e: unknown) => {
       deps.logger.warn(

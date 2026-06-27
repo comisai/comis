@@ -2030,3 +2030,114 @@ describe("wireLearningOutcome — surface refresh on doc ADMISSION (SURFACE-ADMI
     expect(refresh).not.toHaveBeenCalled();
   });
 });
+
+// Correction-driven demote: a user CORRECTION of a prior verdict must DEMOTE the learned skill that
+// produced it. The correction reader emits `learning:correction_observed` for the PRIOR trajectory;
+// wireLearningOutcome re-resolves it and runs the GATED skill-transition with a `corrected` verdict
+// (the resolve seam already dedup-consumed the trajectory, so this is the ONLY path that can demote
+// it). Reuses the SAME corroboration tally + decay-aware trend (anti-flap).
+describe("wireLearningOutcome — learning:correction_observed → demote the corrected skill", () => {
+  function wireCorrection(over?: {
+    resolveValue?: ResolvedOutcome;
+    learnedSkillStore?: MentalModelStorePort;
+    learningSkillsEnabled?: (id: string) => boolean;
+  }) {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore(over?.resolveValue ?? baseVerdict({ usedSkillIds: ["skill-ttp"] }));
+    const skills = mockLearnedSkillStore();
+    const logger = createMockLogger();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger,
+      learningOutcomeEnabled: () => true,
+      learnedSkillStore: over?.learnedSkillStore ?? skills.store,
+      learningSkillsEnabled: over?.learningSkillsEnabled ?? (() => true),
+      learningSkillsPromoteAt: () => 3,
+    });
+    const corr = (sessionId: string) =>
+      bus.emit("learning:correction_observed", {
+        agentId: AGENT,
+        tenantId: "tenant-x",
+        sessionId,
+        trajectoryId: TRACE,
+        confidence: 0.6,
+        timestamp: NOW,
+      });
+    return { bus, resolve, demoteByName: skills.demoteByName, corr, logger };
+  }
+
+  it("resolves the PRIOR trajectory to recover its credited skills (the listener runs)", async () => {
+    const { resolve, corr } = wireCorrection();
+    corr("sess-A");
+    await flushMicrotasks();
+    expect(resolve).toHaveBeenCalledWith(TRACE, { tenantId: "tenant-x", agentId: AGENT });
+  });
+
+  it("SUSTAINED corroborated corrections DEMOTE the skill, but ≤1 corroborated does NOT (anti-flap belt)", async () => {
+    const { corr, demoteByName } = wireCorrection();
+    // corr 1 (sess-A): 1 session — corroboration not yet met → no trend fold, no demote.
+    corr("sess-A");
+    await flushMicrotasks();
+    // corr 2 (sess-B): 2nd distinct session → corroborated, 1st failure folds → trend still "stable".
+    corr("sess-B");
+    await flushMicrotasks();
+    expect(demoteByName, "a single corroborated correction must NOT stale a well-reused skill (anti-induced-demotion)").not.toHaveBeenCalled();
+    // corr 3 (sess-C): sustained corroborated failure → trend reaches "weakening" → DEMOTE (active/candidate→stale).
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(demoteByName).toHaveBeenCalled();
+    expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("byte-identity: learningSkillsEnabled=false → never resolves / never demotes", async () => {
+    const { resolve, demoteByName, corr } = wireCorrection({ learningSkillsEnabled: () => false });
+    corr("sess-A");
+    corr("sess-B");
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(demoteByName).not.toHaveBeenCalled();
+  });
+
+  it("no credited skill on the corrected turn → nothing to demote (fail-closed)", async () => {
+    const { demoteByName, corr } = wireCorrection({ resolveValue: baseVerdict({ usedSkillIds: [] }) });
+    corr("sess-A");
+    corr("sess-B");
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(demoteByName).not.toHaveBeenCalled();
+  });
+
+  // The correction→demote re-resolve path is otherwise SILENT until the 3rd corroborated correction
+  // actually demotes — so a single real correction can't be confirmed live. One INFO line per
+  // correction that credited ≥1 skill (counts/ids only) makes the path greppable in one look: "did
+  // the correction listener re-resolve + feed the gate?".
+  it("emits a counts-only INFO line when a correction credits ≥1 skill (the path is observable)", async () => {
+    const { corr, logger } = wireCorrection();
+    corr("sess-A");
+    await flushMicrotasks();
+    const infoCalls = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const driftLine = infoCalls.find((c) => (c[0] as { step?: string })?.step === "correction-demote-reresolve");
+    expect(driftLine, "a credited correction must log the re-resolve at INFO").toBeDefined();
+    const fields = driftLine![0] as { creditedSkillCount?: number; trajectoryId?: string; agentId?: string };
+    expect(fields.creditedSkillCount).toBe(1);
+    expect(fields.trajectoryId).toBe(TRACE);
+    expect(fields.agentId).toBe(AGENT);
+    // Counts/ids only — never a procedure body or the skill content (the §2.7 / SEC-01 firewall).
+    expect(JSON.stringify(driftLine)).not.toContain("skill-ttp"); // the id is not logged as content; count is
+  });
+
+  it("does NOT log the re-resolve line when no skill was credited (no noise on non-skill corrections)", async () => {
+    const { corr, logger } = wireCorrection({ resolveValue: baseVerdict({ usedSkillIds: [] }) });
+    corr("sess-A");
+    await flushMicrotasks();
+    const infoCalls = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const driftLine = infoCalls.find((c) => (c[0] as { step?: string })?.step === "correction-demote-reresolve");
+    expect(driftLine).toBeUndefined();
+  });
+});

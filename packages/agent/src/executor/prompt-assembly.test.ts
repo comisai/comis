@@ -897,8 +897,10 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("name is Sam");
       expect(result.dynamicPreamble).toContain("likes terse replies");
       expect(spy.lists(), "the injection is a store.list (deterministic, LLM-free)").toBe(1);
-      // The list is kind-filtered to "profile" (never an unfiltered list).
-      expect(spy.lastKind()).toBe("profile");
+      // The profile block now reads from ONE unfiltered list
+      // (kind omitted) shared with the skill topic-match, filtering kind=profile in-process — so
+      // the list is no longer kind-filtered, but it still runs exactly ONCE (the cost contract above).
+      expect(spy.lastKind()).toBeUndefined();
       // The injection adds NO extra model/recall seam: recall is still constructed once.
       expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
     });
@@ -1021,9 +1023,11 @@ describe("assembleExecutionPrompt", () => {
       expect(skillsXml).toContain("<available_skills>");
       expect(skillsXml).not.toContain("name is Sam");
       expect(skillsXml).not.toContain("likes terse replies");
-      // The list issued for the profile is kind-filtered to "profile" (never "skill"),
-      // so the profile read can never pull a skills-channel doc and vice-versa.
-      expect(spy.lastKind()).toBe("profile");
+      // ONE unfiltered list serves both consumers (profile + reuse-attribution); the
+      // profile/skill sources stay DISJOINT via in-process kind partition (kind=profile vs
+      // kind=skill), proven by the content assertions above (profile facts absent from the
+      // skills XML). The list call itself is no longer kind-filtered.
+      expect(spy.lastKind()).toBeUndefined();
     });
 
     it("non-fatal: a list() err is swallowed → no block, the agent proceeds (no throw)", async () => {
@@ -1072,7 +1076,9 @@ describe("assembleExecutionPrompt", () => {
       const scopeArg = spy.lastScope()!;
       expect(scopeArg.tenantId).toBe("tenant-X");
       expect(scopeArg.agentId).toBe("agent-Z");
-      expect(spy.lastKind()).toBe("profile");
+      // The single shared list is unfiltered (kind omitted) —
+      // partitioned in-process for the profile block + the skill topic-match.
+      expect(spy.lastKind()).toBeUndefined();
     });
   });
 

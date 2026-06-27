@@ -109,6 +109,10 @@ const StructuredBodySchema = z.object({
   sections: z.array(
     z.object({ id: z.string(), heading: z.string(), body: z.string() }),
   ),
+  // The cluster's common-core opening-request tokens for reuse attribution. Optional —
+  // legacy/seeded docs omit it. Kept on parse (a plain z.object strips unknown keys, so it
+  // MUST be declared here to round-trip on read).
+  topicTokens: z.array(z.string()).optional(),
 });
 
 /** Parse a nullable JSON-encoded structured-body AST; undefined on NULL or corrupt data. */
