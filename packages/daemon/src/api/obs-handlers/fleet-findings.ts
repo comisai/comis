@@ -100,10 +100,28 @@ export function pipelineAuthoringAggregateFromRows(
  * hints) and are excluded from the generic rollup so they are not double-reported
  * (mirrors how KNOB-03's dedicated finding sits beside the config_posture rollup).
  */
+/** Defensive `details` JSON parse: malformed / missing → `{}` (digest-only, never throws, never echoes a body). */
+function parseDetailsObject(details: string | undefined): Record<string, unknown> {
+  try {
+    return details ? (JSON.parse(details) as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The closed reflection admission-outcome vocabulary (OBS-3b) — off-vocabulary folds to "unknown". */
+const REFLECT_ADMISSION_OUTCOMES: ReadonlySet<string> = new Set([
+  "admitted", "uncorroborated", "rejected_validation", "rejected_name_length",
+  "untrusted_origin", "empty_reflection", "no_successes",
+]);
+
 export function buildFindings(
   healthSignals: readonly DiagnosticRow[],
   modelHealth: readonly DiagnosticRow[],
   configPosture: readonly DiagnosticRow[],
+  // OBS-3b (hindsight-reflection-20260626): the windowed `learning_health` rows (the reflection
+  // funnel). Defaulted `[]` so the pre-OBS-3b callers/tests stay byte-identical.
+  learningHealth: readonly DiagnosticRow[] = [],
 ): Finding[] {
   const findings: Finding[] = [];
 
@@ -445,6 +463,37 @@ export function buildFindings(
       });
     }
   }
+  // OBS-3b (hindsight-reflection-20260626): dedicated learning_health finding — the reflection funnel
+  // rolled up over the window. The daemon-wide "is reflection learning / why-0-admitted" posture, beside
+  // model_health / config_posture. Counts + the LATEST closed admissionOutcome verdict (standing state,
+  // max-timestamp scan — never assume query order) + summed admitted/untrustedDrops ONLY (the
+  // reflect:funnel event is content-free — never a doc body; every details field parsed defensively). A
+  // non-admit window is NOT a fault (the anti-poison gates working), so the hint says so explicitly.
+  if (learningHealth.length > 0) {
+    let latest = learningHealth[0]!;
+    for (const row of learningHealth) {
+      if (row.timestamp > latest.timestamp) latest = row;
+    }
+    let admittedSum = 0;
+    let untrustedSum = 0;
+    for (const row of learningHealth) {
+      const d = parseDetailsObject(row.details);
+      if (typeof d.admitted === "number") admittedSum += d.admitted;
+      if (typeof d.untrustedDrops === "number") untrustedSum += d.untrustedDrops;
+    }
+    const ld = parseDetailsObject(latest.details);
+    const latestOutcome =
+      typeof ld.admissionOutcome === "string" && REFLECT_ADMISSION_OUTCOMES.has(ld.admissionOutcome)
+        ? ld.admissionOutcome
+        : "unknown";
+    findings.push({
+      code: "learning_health",
+      detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
+      count: learningHealth.length,
+      hint: 'run `cron.runs jobName "Reflection"` for the per-run funnel; admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge — `comis explain` the reflection run',
+    });
+  }
+
   // Deterministic order: highest-count first, then code asc (stable tie-break).
   return findings.sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
 }

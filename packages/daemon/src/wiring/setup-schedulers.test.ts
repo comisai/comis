@@ -1454,3 +1454,58 @@ describe("setupSchedulers", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-2/6b (hindsight-reflection-20260626): the reflect-funnel run recorder.
+// ---------------------------------------------------------------------------
+
+describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2/6b)", () => {
+  it("records a CONTENT-FREE funnel verdict under the reflect-<agentId> jobId so cron.runs surfaces it", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = {
+      record: async (e: Record<string, unknown>) => { recorded.push(e); },
+      getHistory: async () => [],
+      checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }),
+    };
+    await recordReflectFunnelRun(
+      tracker as never,
+      { agentId: "default", admissionOutcome: "admitted", admitted: 1, maxClusterCardinality: 2, untrustedDrops: 0, sourceTrajectoryCount: 2, totalSourceChars: 480 },
+      1717171717,
+    );
+    expect(recorded).toHaveLength(1);
+    const e = recorded[0] as { jobId: string; status: string; summary: string; ts: number };
+    expect(e.jobId).toBe("reflect-default"); // resolveJobByName(scheduler,"Reflection") → this id
+    expect(e.status).toBe("ok");
+    expect(e.ts).toBe(1717171717);
+    // The verdict + magnitudes — answers "why admit/no-admit" without a daemon.log grep.
+    expect(e.summary).toContain("outcome=admitted");
+    expect(e.summary).toContain("untrustedDrops=0");
+    expect(e.summary).toContain("src=2traj/480ch");
+    // INV-6: counts + the closed enum only — never a reflected doc body.
+    expect(e.summary).not.toMatch(/procedure|markdown|##|rm -rf/);
+  });
+
+  it("surfaces an untrusted_origin verdict's magnitude (untrustedDrops) on the run record", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = { record: async (e: Record<string, unknown>) => { recorded.push(e); }, getHistory: async () => [], checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }) };
+    await recordReflectFunnelRun(
+      tracker as never,
+      { agentId: "a1", admissionOutcome: "untrusted_origin", admitted: 0, maxClusterCardinality: 0, untrustedDrops: 2, sourceTrajectoryCount: 2, totalSourceChars: 0 },
+      9,
+    );
+    const e = recorded[0] as { summary: string };
+    expect(e.summary).toContain("outcome=untrusted_origin");
+    expect(e.summary).toContain("untrustedDrops=2");
+    // Empty-vs-real discriminator: inputs existed (2 traj) but 0 chars selected → untrusted-dropped.
+    expect(e.summary).toContain("src=2traj/0ch");
+  });
+
+  it("is a no-op (never throws) when the firing agent has no execution tracker", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    await expect(
+      recordReflectFunnelRun(undefined, { agentId: "x", admissionOutcome: "no_successes", admitted: 0, maxClusterCardinality: 0, untrustedDrops: 0, sourceTrajectoryCount: 0, totalSourceChars: 0 }, 1),
+    ).resolves.toBeUndefined();
+  });
+});

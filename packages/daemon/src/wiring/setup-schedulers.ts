@@ -27,8 +27,42 @@ import {
   resolveHeartbeatSessionKey,
   type CronScheduler,
   type SystemEventQueue,
+  type ExecutionTracker,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+
+/**
+ * OBS-2/6b (hindsight-reflection-20260626): record a completed `__REFLECT__` run to the firing
+ * agent's execution tracker, so `cron.runs jobName "Reflection"` surfaces the reflection funnel
+ * VERDICT (the admissionOutcome + counts) AND the run is POLLABLE — instead of a daemon.log grep.
+ *
+ * WHY here (not the cron executeJob path): the reflect sentinel is a fire-and-forget `system_event`,
+ * so executeJob cannot await the ~22s reflection to record its result. Instead we fold the per-run
+ * record off the content-free `reflect:funnel` event (OBS-1 put the full funnel on it). `jobId` mirrors
+ * the reflect cron's id (`reflect-<agentId>`) so `resolveJobByName(scheduler,"Reflection")` resolves to
+ * this history. Content-free: the summary is the closed admissionOutcome enum + counts ONLY (INV-6 —
+ * never a doc body). `durationMs` is 0 (the event carries no duration; the verdict + ts are the value).
+ */
+export async function recordReflectFunnelRun(
+  tracker: ExecutionTracker | undefined,
+  funnel: {
+    agentId: string;
+    admissionOutcome: string;
+    admitted: number;
+    maxClusterCardinality: number;
+    untrustedDrops: number;
+    sourceTrajectoryCount: number;
+    totalSourceChars: number;
+  },
+  nowMs: number,
+): Promise<void> {
+  if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
+  const summary =
+    `reflect: outcome=${funnel.admissionOutcome} admitted=${funnel.admitted}` +
+    ` maxCard=${funnel.maxClusterCardinality} untrustedDrops=${funnel.untrustedDrops}` +
+    ` src=${funnel.sourceTrajectoryCount}traj/${funnel.totalSourceChars}ch`;
+  await tracker.record({ ts: nowMs, jobId: `reflect-${funnel.agentId}`, status: "ok", durationMs: 0, summary });
+}
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import * as fs from "node:fs/promises";
 import { emitMemoryCostFeatureNotice } from "./setup-memory-cost-notice.js";
@@ -492,6 +526,16 @@ export async function setupSchedulers(deps: {
   // here (not daemon.ts, which is at its 3000-line cap) — the natural cron-wiring seam, with the
   // agents map + config + logger already in scope.
   emitMemoryCostFeatureNotice({ agents, costFeaturesEnabled, logger: schedulerLogger });
+
+  // OBS-2/6b (hindsight-reflection-20260626): fold each completed __REFLECT__ run onto the firing
+  // agent's cron run history, so `cron.runs jobName "Reflection"` answers "why did the last reflection
+  // admit / not-admit" in one call (the funnel verdict + counts) AND the run is pollable — instead of
+  // a daemon.log grep for "Reflection complete". The reflect sentinel is fire-and-forget (system_event),
+  // so we record off the content-free `reflect:funnel` event (recordReflectFunnelRun). One subscriber
+  // for all agents (it resolves the agent's tracker per event); the record is non-fatal/best-effort.
+  container.eventBus.on("reflect:funnel", (funnel) => {
+    void recordReflectFunnelRun(executionTrackers.get(funnel.agentId), funnel, systemNowMs());
+  });
 
   // OUTCOME-09 boot posture: `learningOutcome` (Verified Learning WS1) is NOT a cron — it is the
   // bus-wired observe/resolve subscriber stood up in setup-memory.ts (wireLearningOutcome). It is

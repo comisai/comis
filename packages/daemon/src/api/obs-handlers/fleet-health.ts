@@ -325,6 +325,8 @@ export async function assembleFleetHealthReport(
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
   const configPosture = deps.obsStore?.queryDiagnostics({ category: "config_posture", sinceMs }) ?? [];
+  // OBS-3b (hindsight-reflection-20260626): the reflection funnel rows → the learning_health finding.
+  const learningHealth = deps.obsStore?.queryDiagnostics({ category: "learning_health", sinceMs }) ?? [];
 
   // TELEM-02 — the pre-committed pipeline-authoring decision verdict (gates Phase
   // 174). PURE + deterministic: the windowed pipeline_authoring rows -> the
@@ -335,7 +337,7 @@ export async function assembleFleetHealthReport(
   );
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
-  const allFindings = buildFindings(healthSignals, modelHealth, configPosture);
+  const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth);
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
 

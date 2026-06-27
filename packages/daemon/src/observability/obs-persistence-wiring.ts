@@ -322,6 +322,38 @@ export function healthBudgetExceededEventToRow(
 }
 
 /**
+ * OBS-3b (hindsight-reflection-20260626): map a `reflect:funnel` event → a flat DiagnosticRow under
+ * `category:"learning_health"`, so the Phase-161 fleet lens surfaces the daemon-wide reflection posture
+ * (is learning admitting? why-0-admitted?) as a queryable finding instead of a daemon.log grep. Severity
+ * is ALWAYS `"info"`: a reflection that admitted — OR benignly didn't (no_successes / uncorroborated /
+ * untrusted_origin are the anti-poison gates WORKING) — is healthy posture, not an alert (it must not
+ * inflate the fleet degrade count, the BENIGN_*_REASONS / IN-01 discipline). The `details` JSON carries
+ * the closed `admissionOutcome` enum + the funnel COUNTS ONLY (§2.7 / SEC-01 — the reflect:funnel event
+ * is content-free by construction; never a reflected doc body). Beside model_health / config_posture.
+ */
+export function reflectFunnelEventToRow(
+  payload: EventMap["reflect:funnel"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "learning_health",
+    severity: "info",
+    agentId: payload.agentId,
+    message: "reflect:funnel",
+    details: JSON.stringify({
+      signal: "reflect_funnel",
+      admissionOutcome: payload.admissionOutcome,
+      admitted: payload.admitted,
+      maxClusterCardinality: payload.maxClusterCardinality,
+      untrustedDrops: payload.untrustedDrops,
+      sourceTrajectoryCount: payload.sourceTrajectoryCount,
+      totalSourceChars: payload.totalSourceChars,
+    }),
+    traceId: undefined,
+  };
+}
+
+/**
  * Map a `mcp:server:reconnect_failed` event payload (Phase 160 I1 — MCP
  * reconnect exhaustion) to a flat DiagnosticRow stored under
  * `category:"health_signal"`, `severity:"warning"`. The `details` JSON carries
@@ -673,6 +705,12 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("mcp:server:reconnect_failed", (payload) => {
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
+  });
+  // OBS-3b (hindsight-reflection-20260626): the reflection funnel → a learning_health row, so the
+  // fleet lens surfaces the daemon-wide reflection posture (admit/why-0-admitted) cross-session.
+  // Content-free (the reflect:funnel event is counts + the closed admissionOutcome enum only).
+  eventBus.on("reflect:funnel", (payload) => {
+    diagnosticBuffer.push(reflectFunnelEventToRow(payload));
   });
   // OBS-01 (Phase 180): the two multilingual signals → health_signal rows (same
   // diagnosticBuffer). Dark until the emit sites land (180-08); subscribed here

@@ -7,6 +7,7 @@ import {
   sessionSummaryEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
+  reflectFunnelEventToRow,
   mcpReconnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
@@ -581,6 +582,42 @@ describe("healthBudgetExceededEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details).toEqual({ signal: "alert_budget", kind: "dependency", count: 5, windowMs: 60_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reflectFunnelEventToRow (OBS-3b — reflection funnel → learning_health)
+// ---------------------------------------------------------------------------
+
+describe("reflectFunnelEventToRow", () => {
+  it("maps a reflect:funnel payload to a learning_health row (info severity, content-free counts)", () => {
+    const row = reflectFunnelEventToRow({
+      agentId: "default",
+      synthesized: 2,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 0,
+      sourceTrajectoryCount: 2,
+      totalSourceChars: 480,
+      admissionOutcome: "admitted",
+      timestamp: 4242,
+    });
+    expect(row.timestamp).toBe(4242);
+    expect(row.category).toBe("learning_health");
+    // INFO: a reflection that admitted (or benignly didn't) is healthy posture, not a degrade alert.
+    expect(row.severity).toBe("info");
+    expect(row.agentId).toBe("default");
+    expect(row.message).toBe("reflect:funnel");
+    const d = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(d.admissionOutcome).toBe("admitted");
+    expect(d.admitted).toBe(1);
+    expect(d.untrustedDrops).toBe(0);
+    expect(d.sourceTrajectoryCount).toBe(2);
+    // INV-6 / H1: counts + the closed enum only — never a reflected doc body.
+    expect(row.details).not.toMatch(/procedure|markdown|##/);
   });
 });
 
