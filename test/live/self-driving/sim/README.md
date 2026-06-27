@@ -206,6 +206,33 @@ Fixes landed (test-first, selftest-guarded):
 - **customer-success / tutoring** "you don't need to thread the case id" is now true (FIX-A) — handlers already default to `lastCase`; the `--state` persistence gap was the only cause of fragmentation.
 - **market-making / grid-operator** keep episode state on process-global `ctx` (book/PnL/reserve/strategy), not in a case. They **win over the real long-lived MCP transport** (and `--selftest`), but are NOT drivable over the per-call `--state` CLI and are not isolated for *same-workload* concurrent sessions. Drive them over the MCP server (real Comis) or `--selftest`; "different use cases in parallel" is unaffected (separate server processes). *(Ideal future fix: move their state into an ensured case like `customer-success`.)*
 
+## Phase B/C findings — real Comis learning loop (isolated local keyless daemon, qwen3.6:27b)
+Stood up an isolated daemon (`dataDir` + own gateway/emulator, `provider: ollama` qwen3.6:27b, `memory.enabled` +
+`learning.enabled`) — clean-restart/wipe freely, zero risk to a shared VPS. Proven end-to-end on real v2.31 Comis:
+- **MCP integration**: the daemon connects the sim servers and the agent EXECUTES the tools — `mcp__depot-sim--
+  accept_package/read_directory/move/take_elevator/whereami` all succeeded (real round-trips through Comis's MCP
+  bridge into the sim handlers).
+- **Accumulate (Loop A / REFL-1)**: sim tool turns → `outcome_events` (`source='tool', outcome='success'`) +
+  `memories`. The sim's outcomes flow into the learning engine.
+- **Crons**: the 3 v2.31 learning crons register (`Reflection` / `Memory lifecycle` / `Memory review`).
+- **Reflect gate (INV-2)**: `cron.run Reflection` on a single-source set → `admissionOutcome:"uncorroborated"`
+  (`maxTopicCardinality:1`), `mental_models` stays 0 — the engine correctly refuses to admit from one source,
+  with a content-free verdict.
+- **Parallel no-confusion (Phase C)**: two use cases connected at once (depot-sim + th-sim) expose **namespaced**
+  tools (`mcp:depot-sim/*` vs `mcp:th-sim/*`) from separate server processes — no shared namespace, no shared
+  state ⇒ different use cases cannot confuse tools. (Cross-task *conversation* contamination is a session
+  concern — drive a fresh/reset session, per the Live-run findings above.)
+
+**Config gotchas hit (fixed):** `integrations.mcp.servers` is an ARRAY (`- name: …`), not a map; for a small
+local model set `agents.<id>.capabilityClass: small` (defers the ~75-tool corpus to ~900-token stubs +
+`discover_tools`) and raise the model `contextWindow` (the 8192 fallback can't hold the tool schemas).
+
+**Operator-deferred (model-gated):** the full capable-model **rich-transcript ADMIT → reuse → promote** drive
+needs a model that completes multi-step episodes reliably — a local 27b executes the tools but is too slow/loopy
+to finish, and reflection on thin transcripts under-yields (SYNTH-YIELD). Per the framework convention
+(`../targets/EXAMPLE-verified-learning.md`: "operator-deferred — needs VPS + real keys + a running daemon"),
+run that on the VPS with a capable model. The reflect→admit→reuse engine itself is independently live-verified.
+
 ## Gotchas
 - **stdout is the MCP wire** — handlers/log must never `console.log` to stdout (use `ctx.log` → stderr).
 - **mechanics, not strategy** — if you find a `SKILL.md` revealing the answer/playbook, that's a bug; fix it
