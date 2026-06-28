@@ -159,7 +159,11 @@ describe("SCOPE/BATCH: Dynamic RPC Scope Enforcement & Batch", () => {
   // -------------------------------------------------------------------------
 
   describe("SCOPE: Admin-scoped method rejection with rpc-only token", () => {
-    it("obs.diagnostics rejects rpc-only token", async () => {
+    // obs.diagnostics is the rpc-scoped EXCEPTION among obs.* (OBS-SELF-DEAD): it is
+    // intentionally NOT admin-scoped, so an rpc-only token (and an agent's in-process
+    // obs_query) can read its own scrubbed diagnostics. config.read / gateway.status
+    // below remain admin-only and DO reject the rpc-only token.
+    it("obs.diagnostics ACCEPTS rpc-only token (rpc-scoped; agent self-diagnose)", async () => {
       const response = (await sendJsonRpc(
         rpcWs,
         "obs.diagnostics",
@@ -168,12 +172,12 @@ describe("SCOPE/BATCH: Dynamic RPC Scope Enforcement & Batch", () => {
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
 
-      expect(response).toHaveProperty("error");
-      expect(response).not.toHaveProperty("result");
+      expect(response).toHaveProperty("result");
+      expect(response).not.toHaveProperty("error");
 
-      const error = response.error as Record<string, unknown>;
-      expect(error.code).toBe(-32603);
-      expect((error.message as string).toLowerCase()).toContain("insufficient scope");
+      const result = response.result as Record<string, unknown>;
+      expect(Array.isArray(result.events)).toBe(true);
+      expect(typeof result.counts).toBe("object");
     });
 
     it("config.read rejects rpc-only token", async () => {
@@ -325,7 +329,9 @@ describe("SCOPE/BATCH: Dynamic RPC Scope Enforcement & Batch", () => {
 
     it("batch with rpc-only token rejects admin methods", async () => {
       const requests: JsonRpcRequest[] = [
-        { jsonrpc: "2.0", id: 2000, method: "obs.diagnostics", params: {} },
+        // gateway.status is admin-scoped; obs.diagnostics is rpc-scoped (OBS-SELF-DEAD)
+        // and would NOT be rejected, so use a genuine admin method for this check.
+        { jsonrpc: "2.0", id: 2000, method: "gateway.status", params: {} },
         { jsonrpc: "2.0", id: 2001, method: "memory.search", params: { query: "test" } },
       ];
 
@@ -334,7 +340,7 @@ describe("SCOPE/BATCH: Dynamic RPC Scope Enforcement & Batch", () => {
       expect(Array.isArray(responses)).toBe(true);
       expect(responses.length).toBe(2);
 
-      // obs.diagnostics should be rejected (admin-scoped)
+      // gateway.status should be rejected (admin-scoped)
       const diagResp = responses.find((r) => r.id === 2000);
       expect(diagResp).toBeDefined();
       expect(diagResp!.error).toBeDefined();

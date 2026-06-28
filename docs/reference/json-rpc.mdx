@@ -466,7 +466,7 @@ Gateway server status, process information, and restart.
 
 <Accordion title="obs (16 methods)">
 
-Observability methods for diagnostics, billing estimation, channel activity tracking, message delivery tracing, context engine inspection, prompt cache statistics, and data management. All methods require `admin` scope.
+Observability methods for diagnostics, billing estimation, channel activity tracking, message delivery tracing, context engine inspection, prompt cache statistics, and data management. All methods require `admin` scope **except `obs.diagnostics`, which is `rpc`-scoped** (read-only, scrubbed digests on a single-tenant daemon, so an agent's `obs_query` can self-diagnose its own sessions).
 
 | Method | Scope | Description |
 |--------|-------|-------------|
@@ -482,7 +482,7 @@ Observability methods for diagnostics, billing estimation, channel activity trac
 | `obs.context.pipeline` | `admin` | Get context pipeline state for an agent |
 | `obs.delivery.recent` | `admin` | Recent message delivery traces |
 | `obs.delivery.stats` | `admin` | Aggregate delivery statistics |
-| `obs.diagnostics` | `admin` | Recent diagnostic events with category counts |
+| `obs.diagnostics` | `rpc` | Recent diagnostic events with category counts (self-observable; no admin gate) |
 | `obs.getCacheStats` | `admin` | Get prompt cache statistics |
 | `obs.reset` | `admin` | Reset all observability data (metrics, billing, delivery, channel snapshots) |
 | `obs.reset.table` | `admin` | Reset a specific observability table |
@@ -491,7 +491,7 @@ Observability methods for diagnostics, billing estimation, channel activity trac
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` (self-observable; no in-handler admin gate) |
 | **Parameters** | `{ category?: string, limit?: number, sinceMs?: number }` |
 | **Returns** | `{ events: DiagnosticEvent[], counts: Record<string, number> }` |
 
