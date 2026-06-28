@@ -140,6 +140,10 @@ jobs:
           path: .vitest-reports/
           retention-days: 1
           if-no-files-found: error
+          # vitest writes blobs into the DOT-prefixed `.vitest-reports/`; upload-artifact
+          # v4+ excludes hidden paths by default, so without this the blob is silently
+          # dropped and the upload fails with "No files were found".
+          include-hidden-files: true
 
   # ---------------------------------------------------------------------------
   # coverage — merge the 4 shard blobs and enforce the per-package floors
