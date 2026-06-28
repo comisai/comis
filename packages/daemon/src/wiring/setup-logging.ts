@@ -68,20 +68,32 @@ export function setupLogging(deps: {
         maxFiles: container.config.observability.logRotation.maxFiles,
       }
     : undefined;
-  // B (obs-sweep): when no `daemon.logging` block is configured, DEFAULT the structured log
-  // to a FILE at <dataDir>/logs/daemon.log rather than stdout-only. Without this, a config
-  // omitting daemon.logging writes structured logs to stdout ONLY — silently LOST for any
-  // backgrounded / systemd / `>/dev/null` daemon — yet the docs promise the authoritative log
-  // is always at <dataDir>/logs/daemon.*.log. The audit + session-index sinks already write
-  // under <dataDir>/logs via safePath; this aligns the daemon logger. dataDir is resolved the
-  // same way as daemon.ts (config.dataDir, else COMIS_DATA_DIR, else ~/.comis).
+  // B (obs-sweep): the structured-log filePath must track the RESOLVED data dir. The schema
+  // default (`~/.comis/logs/daemon.log`, schema-daemon.ts) is hardcoded to the DEFAULT home and
+  // does NOT honor a custom COMIS_DATA_DIR / config.dataDir — and the root `daemon` field is
+  // ALWAYS schema-defaulted (schema.ts), so `daemon.logging` is never undefined and that default
+  // path is always in force. Left as-is, a daemon with a custom data dir writes its structured
+  // log to the SHARED ~/.comis/logs — colliding with other instances and NOT landing at
+  // <dataDir>/logs/daemon.*.log as docs/operations/data-directory.mdx promises (proven live: a
+  // <dataDir>-configured daemon wrote 50MB to the real ~/.comis/logs while <dataDir>/logs held
+  // only the audit + session-index sinks, which DO resolve via safePath). Rebase the
+  // un-customized default onto <dataDir>; an EXPLICIT custom filePath is honored verbatim.
+  // dataDir is resolved the same way as daemon.ts (config.dataDir, else COMIS_DATA_DIR, else ~/.comis).
   const resolvedDataDir =
     container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
       : (process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis"));
-  const effectiveLoggingConfig =
-    loggingConfig ?? LoggingConfigSchema.parse({ filePath: safePath(resolvedDataDir, "logs", "daemon.log") });
-  const fileTransport = createFileTransport(effectiveLoggingConfig, configLogLevel, logRotation);
+  const effectiveLoggingConfig = loggingConfig ?? LoggingConfigSchema.parse({});
+  const schemaDefaultLogPath = LoggingConfigSchema.parse({}).filePath;
+  const resolvedLogPath =
+    effectiveLoggingConfig.filePath === schemaDefaultLogPath
+      ? safePath(resolvedDataDir, "logs", "daemon.log")
+      : effectiveLoggingConfig.filePath;
+  const loggingConfigForTransport =
+    resolvedLogPath === effectiveLoggingConfig.filePath
+      ? effectiveLoggingConfig
+      : { ...effectiveLoggingConfig, filePath: resolvedLogPath };
+  const fileTransport = createFileTransport(loggingConfigForTransport, configLogLevel, logRotation);
 
   // 2. Create tracing logger (use config logLevel or default to "debug")
   const rawLogger = _createTracingLogger({
@@ -100,8 +112,8 @@ export function setupLogging(deps: {
   const pm2Detected = isPm2Managed();
   logger.info(
     {
-      structuredLogPath: effectiveLoggingConfig.filePath,
-      defaultedLogPath: !loggingConfig,
+      structuredLogPath: resolvedLogPath,
+      rebasedFromDefault: resolvedLogPath !== effectiveLoggingConfig.filePath,
       pm2Detected,
       stdoutEnabled: !pm2Detected,
     },
