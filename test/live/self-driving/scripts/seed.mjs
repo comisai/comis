@@ -13,6 +13,11 @@
 //                                                          Default proof=2 so ONE successful reuse promotes it
 //                                                          (promoteAtProofCount=3). Body is a generic-but-real SAR
 //                                                          playbook; pass --body=<file> to override (NOT a script — advisory text, INV-3).
+//                                                          For a SKILL kind, writes structured_body.topicTokens (the
+//                                                          production reuse-match core) so the doc is ACTUALLY reuse-credited
+//                                                          on a matching turn — derived from --signature=<text> (the canonical
+//                                                          opening request) or, absent that, the kebab name. Without it the
+//                                                          surfaced doc is skipped (topic-key.ts:246) and never promotes/credits.
 //   seed.mjs failure <memId> <failureCount> [content]   # a `memories` row (if absent) + a `memory_usefulness`
 //                                                          row with failure_count=N, for the eviction/INV-4 gate.
 //                                                          [content] sets the memory body + lets you also set
@@ -26,8 +31,16 @@ import { readFileSync } from "node:fs";
 // COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
 // checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a non-default data dir; VPS
 // default stays ~/.comis/memory.db. (package-delivery-20260628 — seed.mjs was missed in the first pass.)
-const require = createRequire((process.env.COMIS_SRC || "/root/comis-src") + "/packages/daemon/package.json");
+const SRC = process.env.COMIS_SRC || "/root/comis-src";
+const require = createRequire(SRC + "/packages/daemon/package.json");
 const Database = require("better-sqlite3");
+// The PRODUCTION reuse tokenizer (topic-key.ts) — used to compute a seeded skill's
+// structured_body.topicTokens from a canonical signature, EXACTLY as the reflection job does
+// (commonCoreTokens → openingRequestTokens). Without these tokens a seeded skill SURFACES but is
+// NEVER reuse-credited (topic-key.ts:246 skips a doc with no topicTokens), so the reuse→promote
+// AND the memory:skill_used obs oracles silently can't fire — the helper's "is reusable" contract
+// (line 12) was a lie until this. (package-delivery-20260628 IMP-3 live-verify exposed the gap.)
+const { openingRequestTokens } = await import(SRC + "/packages/agent/dist/memory/topic-key.js");
 const dbpath = process.env.COMIS_DB_PATH
   || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + "/memory.db" : (process.env.HOME || "/home/comis") + "/.comis/memory.db");
 
@@ -57,12 +70,25 @@ try {
     const kind = pos[3] ?? "skill";
     const bodyFile = flag("body");
     const body = bodyFile ? readFileSync(bodyFile, "utf8") : DEFAULT_SKILL_BODY;
+    // structured_body.topicTokens (REFLECT-04 / topic-key.ts) — the reuse-match core. ONLY for a
+    // SKILL kind (profile/topic docs carry a non-signature groupKey, so reflection leaves their
+    // structured_body untouched — mirror that). Derived from --signature (the canonical opening
+    // request the skill is reusable for) or the kebab name. A turn whose openingRequestTokens cover
+    // >=0.5 of these (or share >=8) is credited as a reuse → memory:skill_used. The structured_body
+    // AST must carry a non-empty `sections` array or parseStructuredBody() rejects the whole payload
+    // (→ undefined → topicTokens lost), so include one section mirroring the body.
+    const signature = flag("signature") || name.replace(/-/g, " ");
+    const topicTokens = kind === "skill" ? openingRequestTokens(signature) : [];
+    const structuredBody = JSON.stringify({
+      sections: [{ id: "s1", heading: "Procedure", body: body.slice(0, 4000) }],
+      ...(topicTokens.length > 0 ? { topicTokens } : {}),
+    });
     db.prepare(
       `INSERT OR REPLACE INTO mental_models
-       (id, tenant_id, agent_id, kind, topic_key, name, description, body, trust_level, state, proof_count, confidence, strength, mutating, pinned, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).run(`seed-${name}`, tenant, agent, kind, name, name, `Seeded ${kind} doc for the reuse→promote oracle.`, body, "learned", "candidate", proof, 0.7, 1.0, 0, 0, now, now);
-    console.log("SEEDED skill:", JSON.stringify(db.prepare(`SELECT name,kind,state,trust_level,proof_count,mutating FROM mental_models WHERE id=?`).get(`seed-${name}`)));
+       (id, tenant_id, agent_id, kind, topic_key, name, description, body, structured_body, trust_level, state, proof_count, confidence, strength, mutating, pinned, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(`seed-${name}`, tenant, agent, kind, name, name, `Seeded ${kind} doc for the reuse→promote oracle.`, body, structuredBody, "learned", "candidate", proof, 0.7, 1.0, 0, 0, now, now);
+    console.log("SEEDED skill:", JSON.stringify({ ...db.prepare(`SELECT name,kind,state,trust_level,proof_count,mutating FROM mental_models WHERE id=?`).get(`seed-${name}`), topicTokenCount: topicTokens.length, topicTokens }));
   } else if (cmd === "failure") {
     const memId = pos[1];
     const failureCount = Number.parseInt(pos[2] ?? "0", 10);
