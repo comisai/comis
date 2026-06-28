@@ -125,8 +125,9 @@ const DiagnosticCategorySchema = z.enum(["usage", "webhook", "message", "session
 
 /**
  * `obs.diagnostics` — Query diagnostic events by category / time /
- * limit. Admin-only (in-handler `_trustLevel === "admin"` gate;
- * obs-handlers.ts:66-69).
+ * limit. rpc-scoped, NOT admin (see the `scopes` note below): there is no
+ * in-handler admin gate, so an agent's `obs_query` can self-diagnose its own
+ * sessions. Read-only, scrubbed digests on a single-tenant daemon.
  *
  * Request: `{ category?, limit?, sinceMs? }`. `category` is one of
  * `usage` / `webhook` / `message` / `session`; `limit` defaults to

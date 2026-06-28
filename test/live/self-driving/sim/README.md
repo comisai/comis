@@ -227,11 +227,28 @@ Stood up an isolated daemon (`dataDir` + own gateway/emulator, `provider: ollama
 local model set `agents.<id>.capabilityClass: small` (defers the ~75-tool corpus to ~900-token stubs +
 `discover_tools`) and raise the model `contextWindow` (the 8192 fallback can't hold the tool schemas).
 
-**Operator-deferred (model-gated):** the full capable-model **rich-transcript ADMIT → reuse → promote** drive
-needs a model that completes multi-step episodes reliably — a local 27b executes the tools but is too slow/loopy
-to finish, and reflection on thin transcripts under-yields (SYNTH-YIELD). Per the framework convention
-(`../targets/EXAMPLE-verified-learning.md`: "operator-deferred — needs VPS + real keys + a running daemon"),
-run that on the VPS with a capable model. The reflect→admit→reuse engine itself is independently live-verified.
+**Operator-deferred drive — NOW COMPLETED (package-delivery-20260628, VPS + Opus `claude-opus-4-8`).** The full
+capable-model **rich-transcript cold→ADMIT→reuse→promote→TRANSFER** loop is verified end-to-end in ground truth
+(the local 27b was too slow/loopy + under-yielded on thin transcripts — SYNTH-YIELD; a capable model resolves it):
+cold delivery to Priya@3-01 (variant A) → 2nd corroborating sender (byte-identical opening, card 2) → `cron.run
+Reflection` admits a **behavioral** `kind=skill` doc (trust=learned, candidate) — the body is a GENERAL navigation
+playbook ("consult the directory → plan route → verify nameplate → deliver"), recipient name only in `topicTokens`,
+NOT a memorized "go to 3-01" → reuse on variant B (Dana@2-02) bumps `proof 1→2` → reuse on variant C (Marco@3-02)
+bumps `proof 2→3` and flips **candidate→active**. One skill learned on A delivered to 3 rotated recipients/offices
+the stored facts never saw = TRANSFER. So **a capable model produces a grounded, transferable reflected skill** —
+refuting the prior SYNTH-YIELD content-quality worry for this workload. See `runs/package-delivery-20260628/`.
+
+- **Phase-0 PONG contamination (don't re-discover):** the rig's Phase-0 PONG round-trip drives into `CHATID`
+  (678314278); if you then drive the FIRST delivery into that SAME session, the agent treats the delivery as
+  "wandering off" from the PONG ask (it navigated to the office but never called `deliver`, then apologized) —
+  the documented LCD-contamination trap. Drive deliveries into a FRESH session (a clean-restart, or a sender
+  that hasn't done a PONG), OR `session.reset_conversation` between the PONG and the first real drive.
+- **Flaky/high-latency VPS link — background the drive ON the box, then poll** (this run's SSH dropped a 300s
+  foreground `drive.mjs` repeatedly). `nohup node /root/drive.mjs … > /tmp/drive.out 2>&1 &` then poll
+  `/tmp/drive.out` (+ the trajectory) in short ssh calls — the long-running turn survives your ssh dropping.
+- **`deploy-sim.sh` fixed this run:** was `scp -rq` (HANGS on a high-latency link) + `rm $DEST` BEFORE the copy
+  landed (destructive-on-failure → the live sim dir got wiped when scp hung). Now a robust tar-pipe staged in
+  `$DEST.new`, swapped only after a verified extract — mirrors `scripts/deploy-dist.sh`.
 
 ## Gotchas
 - **stdout is the MCP wire** — handlers/log must never `console.log` to stdout (use `ctx.log` → stderr).

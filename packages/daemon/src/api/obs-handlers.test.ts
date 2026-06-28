@@ -129,23 +129,23 @@ describe("createObsHandlers - billing admin guards", () => {
 // Non-billing handlers: admin trust enforcement
 // ---------------------------------------------------------------------------
 
-describe("createObsHandlers - diagnostics admin guard", () => {
-  it("obs.diagnostics rejects without _trustLevel", async () => {
+describe("createObsHandlers - diagnostics is rpc-scoped, no admin gate (OBS-SELF-DEAD self-diagnose)", () => {
+  it("obs.diagnostics succeeds without _trustLevel (rpc-scoped; agent self-diagnose)", async () => {
     const deps = makeDeps();
     const handlers = createObsHandlers(deps);
 
-    await expect(handlers["obs.diagnostics"]!({})).rejects.toThrow(
-      "Admin access required for diagnostics",
-    );
+    const result = await handlers["obs.diagnostics"]!({});
+    expect(result).toHaveProperty("events");
+    expect(result).toHaveProperty("counts");
   });
 
-  it("obs.diagnostics rejects with non-admin _trustLevel", async () => {
+  it("obs.diagnostics succeeds with non-admin _trustLevel", async () => {
     const deps = makeDeps();
     const handlers = createObsHandlers(deps);
 
-    await expect(
-      handlers["obs.diagnostics"]!({ _trustLevel: "user" }),
-    ).rejects.toThrow("Admin access required for diagnostics");
+    const result = await handlers["obs.diagnostics"]!({ _trustLevel: "user" });
+    expect(result).toHaveProperty("events");
+    expect(result).toHaveProperty("counts");
   });
 
   it("obs.diagnostics succeeds with admin _trustLevel", async () => {

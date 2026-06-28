@@ -44,10 +44,12 @@ import Database from "better-sqlite3";
 const memoryConfig: MemoryConfig = {
   dbPath: ":memory:",
   walMode: false,
-  embeddingModel: "test-model",
-  embeddingDimensions: 4,
+  recall: {
+    embeddingModel: "test-model",
+    embeddingDimensions: 4,
+  },
   compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-  retention: { maxAgeDays: 0, maxEntries: 0 },
+  retention: { maxAgeDays: 0 },
 };
 
 const tenantA: SessionKey = {

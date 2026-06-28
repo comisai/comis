@@ -9,8 +9,8 @@
  * caught it because Stage-B is COMIS_LIVE-gated):
  *
  *   - embedding.provider / embedding.local.gpu   → TOP-LEVEL embedding (schema.ts)
- *   - memory.embeddingDimensions                 → TOP-LEVEL memory (schema-memory.ts)
- *   - memory.costFeatures.enabled                → TOP-LEVEL memory
+ *   - memory.recall.embeddingDimensions          → memory.recall (schema-memory.ts)
+ *   - memory.enabled (was costFeatures.enabled)  → TOP-LEVEL memory
  *   - rag.*                                      → agents.default.rag (schema-agent-runtime.ts),
  *     using the REAL RagConfigSchema shapes (schema-agent-prompt.ts):
  *       fts/vector     → rag.lanes.<lane>.weight (these lanes have NO enabled knob;
@@ -28,7 +28,7 @@
  * boot — each ConversationDriver uses a fresh temp dataDir, so the default
  * hf: URI re-downloads into <dataDir>/models on EVERY boot):
  *   - COMIS_LIVE_EMBED_MODEL_PATH    → embedding.local.modelUri
- *   - COMIS_LIVE_RERANKER_MODEL_PATH → memory.rerankerModel
+ *   - COMIS_LIVE_RERANKER_MODEL_PATH → memory.recall.rerankerModel
  * Both are absolute paths to pre-downloaded GGUFs (see test/live/live.env.example).
  *
  * The gateway port is NOT patched here — ConversationDriver._buildPortedConfigPath()
@@ -132,16 +132,17 @@ export function buildMemConfig(opts: MemConfigOpts): string {
     ensureObj(ensureObj(doc, "embedding"), "local")["modelUri"] = embedModelPath;
   }
 
-  // ── memory.* — TOP-LEVEL ──────────────────────────────────────────────────
+  // ── memory.* — TOP-LEVEL (recall knobs nested under memory.recall since
+  //    Phase 226; the master cost gate is memory.enabled, was costFeatures.enabled) ──
   if (opts.embeddingDimensions !== undefined) {
-    ensureObj(doc, "memory")["embeddingDimensions"] = opts.embeddingDimensions;
+    ensureObj(ensureObj(doc, "memory"), "recall")["embeddingDimensions"] = opts.embeddingDimensions;
   }
   if (opts.costFeaturesEnabled !== undefined) {
-    ensureObj(ensureObj(doc, "memory"), "costFeatures")["enabled"] = opts.costFeaturesEnabled;
+    ensureObj(doc, "memory")["enabled"] = opts.costFeaturesEnabled;
   }
   const rerankerModelPath = process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
   if (rerankerModelPath) {
-    ensureObj(doc, "memory")["rerankerModel"] = rerankerModelPath;
+    ensureObj(ensureObj(doc, "memory"), "recall")["rerankerModel"] = rerankerModelPath;
   }
 
   // ── rag — agents.default.rag (RagConfigSchema shapes) ────────────────────

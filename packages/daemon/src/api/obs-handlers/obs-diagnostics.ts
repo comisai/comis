@@ -45,10 +45,13 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     // obs.diagnostics — dual-source: historical SQLite + in-memory
     // -----------------------------------------------------------------------
     [ObsDiagnosticsContract.method]: async (rawParams) => {
-      const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") {
-        throw new AuthorizationError("Admin access required for diagnostics");
-      }
+      // No admin gate: obs.diagnostics is intentionally rpc-scoped (OBS-SELF-DEAD,
+      // observability.ts) so an agent's obs_query can self-diagnose its OWN sessions
+      // (the prior admin gate defeated that — it is in-process, not admin-trust).
+      // Read-only, scrubbed digests on a single-tenant daemon; any authenticated
+      // (rpc-or-higher) caller may read. Authn/scope is enforced at the gateway token
+      // layer, and deny-by-origin is intentionally NOT applied (see
+      // test/architecture/agent-obs-tools-deny-by-origin.test.ts).
 
       // Strip dispatcher-injected internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);

@@ -8,10 +8,10 @@
  * the throwaway config (setup-learning-reactions.ts:651-656,720) AND the reactor
  * is granted trust ≥ `known` (the 0.05 write floor):
  *
- *   GOTCHA C — `someLearningOn` requires `memory.costFeatures.enabled` AND each
+ *   GOTCHA C — `someLearningOn` requires `memory.enabled` AND each
  *     agent's `learningOutcome.enabled` (else `recordOutboundMessage` is
- *     undefined → no ReactionTrajectoryMap binding at all) + `learningSkills`
- *     (else synthesis never runs) + `learningTuning` (the positive reward).
+ *     undefined → no ReactionTrajectoryMap binding at all) + `learning.enabled`
+ *     (Phase 226 collapses learningSkills + learningTuning into this one gate).
  *   GOTCHA D — the DM reactor defaults to `external` trust
  *     (`elevatedReply.defaultTrustLevel ?? "external"`):
  *     `REACTION_BASE_CONFIDENCE 0.6 × trustWeight("external") 0.05 = 0.03 <
@@ -96,7 +96,7 @@ function rawAgentDefault(): Record<string, unknown> {
 
 describe("REACT-03 rig config — the produced YAML stays schema-VALID", () => {
   it("parses through the real AppConfigSchema (a misplaced learning key → loud fail)", () => {
-    // The loud guard: if learningOutcome/learningSkills/learningTuning or
+    // The loud guard: if learningOutcome/learning or
     // elevatedReply land at a wrong path (e.g. under memory, or a typo'd key on
     // a strictObject), AppConfigSchema rejects it — a typo can't silently no-op.
     validConfig();
@@ -104,16 +104,15 @@ describe("REACT-03 rig config — the produced YAML stays schema-VALID", () => {
 });
 
 describe("REACT-03 rig config — GOTCHA C: learning is ENABLED (else the loop is byte-identical-OFF)", () => {
-  it("memory.costFeatures.enabled is EXPLICITLY true (someLearningOn requires it; else recordOutboundMessage is undefined)", () => {
+  it("memory.enabled is EXPLICITLY true (someLearningOn requires it; else recordOutboundMessage is undefined)", () => {
     // RAW-doc presence: the key must be WRITTEN, not just schema-defaulted —
-    // this is the assertion that fails RED on the pre-edit builder.
+    // this is the assertion that fails RED on the pre-edit builder. (Phase 226
+    // renamed the master gate from memory.costFeatures.enabled to memory.enabled.)
     const memory = rawDoc()["memory"] as Record<string, unknown> | undefined;
     expect(memory, "memory block present").toBeDefined();
-    const costFeatures = memory!["costFeatures"] as Record<string, unknown> | undefined;
-    expect(costFeatures, "memory.costFeatures EXPLICITLY present in the rig config").toBeDefined();
-    expect(costFeatures!["enabled"]).toBe(true);
+    expect(memory!["enabled"], "memory.enabled EXPLICITLY present in the rig config").toBe(true);
     // And it validates to true through the real schema.
-    expect(validConfig().memory.costFeatures.enabled).toBe(true);
+    expect(validConfig().memory.enabled).toBe(true);
   });
 
   it("agents.default.learningOutcome.enabled is EXPLICITLY true (gates the reaction observe)", () => {
@@ -123,18 +122,11 @@ describe("REACT-03 rig config — GOTCHA C: learning is ENABLED (else the loop i
     expect(validConfig().agents["default"]!.learningOutcome.enabled).toBe(true);
   });
 
-  it("agents.default.learningSkills.enabled is EXPLICITLY true (else synthesis never runs)", () => {
-    const learningSkills = rawAgentDefault()["learningSkills"] as Record<string, unknown> | undefined;
-    expect(learningSkills, "agents.default.learningSkills EXPLICITLY present").toBeDefined();
-    expect(learningSkills!["enabled"]).toBe(true);
-    expect(validConfig().agents["default"]!.learningSkills.enabled).toBe(true);
-  });
-
-  it("agents.default.learningTuning.enabled is EXPLICITLY true (the positive reward on resolve)", () => {
-    const learningTuning = rawAgentDefault()["learningTuning"] as Record<string, unknown> | undefined;
-    expect(learningTuning, "agents.default.learningTuning EXPLICITLY present").toBeDefined();
-    expect(learningTuning!["enabled"]).toBe(true);
-    expect(validConfig().agents["default"]!.learningTuning.enabled).toBe(true);
+  it("agents.default.learning.enabled is EXPLICITLY true (Phase 226 collapses learningSkills + learningTuning into one gate; else the reflection cron never runs)", () => {
+    const learning = rawAgentDefault()["learning"] as Record<string, unknown> | undefined;
+    expect(learning, "agents.default.learning EXPLICITLY present").toBeDefined();
+    expect(learning!["enabled"]).toBe(true);
+    expect(validConfig().agents["default"]!.learning.enabled).toBe(true);
   });
 });
 

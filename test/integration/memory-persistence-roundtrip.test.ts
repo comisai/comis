@@ -27,10 +27,12 @@ function makeTestConfig(dbPath: string): MemoryConfig {
   return {
     dbPath,
     walMode: false,
-    embeddingModel: "test-model",
-    embeddingDimensions: 4,
+    recall: {
+      embeddingModel: "test-model",
+      embeddingDimensions: 4,
+    },
     compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-    retention: { maxAgeDays: 0, maxEntries: 0 },
+    retention: { maxAgeDays: 0 },
   } as MemoryConfig;
 }
 
