@@ -69,8 +69,6 @@ function round(n, d = 4) {
   return Math.round(n * f) / f;
 }
 
-const getCase = (ctx, id) => ctx.cases.get(id || ctx.lastCase);
-
 // Lazily open an implicit case so the agent can start trading without an explicit open
 // (there is no open_* tool in this workload — the session IS the case).
 function ensureCase(ctx) {
@@ -320,7 +318,6 @@ export const handlers = {
     if (!c) return ctx.grade("failure", { score: 0, rationale: "settled with no open trading session" });
     c.settled = true;
     const W = ctx.world;
-    const T = ctx.world.truth;
 
     // What strategy was active during each phase? Replay the strategy log over the steps.
     const switchStep = W.switchStep;

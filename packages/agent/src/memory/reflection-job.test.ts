@@ -393,7 +393,7 @@ describe("runReflection — group-by topicKey + corroboration gate (INV-2/D-05, 
     expect(res.value.admitted).toBe(1);
   });
 
-  it("distinctTopicKeys — under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
+  it("distinctTopicKeys: under-merge (2 successes, 2 separate topics) vs corroborated (1 topic)", async () => {
     // UNDER-MERGE: 2 trusted successes from distinct senders but on DIFFERENT topics → 2 groups,
     // each cardinality 1 → uncorroborated. distinctTopicKeys:2 + maxTopicCardinality:1 is the
     // discriminator that says "there WAS corroborating signal but it didn't merge" (the

@@ -297,7 +297,7 @@ export function selftest({ call, ctx }) {
   const transferTopic = persona.transferTopic;
 
   // GOLDEN: form -> test -> revise -> remediate -> transfer.
-  const sess = call("set_hypothesis", { misconception: persona.obviousMisconception });
+  call("set_hypothesis", { misconception: persona.obviousMisconception });
   call("pose_problem", { prompt: dp }); // discriminating problem reveals the TRUE answer
   call("revise_hypothesis", { misconception: persona.trueMisconception, because: "the discriminating problem's answer fit the other cause" });
   call("give_hint", { hint: `Let's work on ${persona.remediationKey.replace(/-/g, " ")}`, targets: persona.trueMisconception });

@@ -40,7 +40,6 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { dirname } from "node:path";
 
 import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../../config/audit-hook.js";
-
 import type { RpcHandler } from "../types.js";
 import {
   IS_DEV,

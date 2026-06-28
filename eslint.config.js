@@ -71,10 +71,11 @@ export default tseslint.config(
       // CI workflow runner scripts (e.g. check-pr-description.mjs) run under Node.
       ".github/scripts/**/*.js",
       ".github/scripts/**/*.mjs",
-      // Self-driving live-test rig scripts (relocated into the tracked tree in
-      // #249) drive the daemon under Node — process/console/fetch globals.
-      "test/live/self-driving/scripts/**/*.js",
-      "test/live/self-driving/scripts/**/*.mjs",
+      // Self-driving live-test rig (relocated into the tracked tree in #249):
+      // both the driver scripts and the sim MCP servers/CLIs run under Node —
+      // process/console/fetch globals.
+      "test/live/self-driving/**/*.js",
+      "test/live/self-driving/**/*.mjs",
     ],
     languageOptions: {
       globals: {

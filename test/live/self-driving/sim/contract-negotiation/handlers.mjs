@@ -192,7 +192,6 @@ export const handlers = {
 
     const inBand = finalPrice >= band[0] && finalPrice <= band[1];
     const overPaid = finalPrice > band[1]; // accepted too high (toward/at the anchor)
-    const underReservation = finalPrice < s.reservation; // would never have been agreed by the seller
 
     let outcome, rationale;
     if (inBand) {

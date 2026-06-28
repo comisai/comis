@@ -14,7 +14,6 @@ import { matches } from "../shared/world.mjs";
 
 export function setup({ seedWorld, variant }) {
   const v = (seedWorld.variants && seedWorld.variants[variant]) || seedWorld.variants.A;
-  const roles = ["brigaded", "rephrased", "clear_violation", "benign_decoy"];
 
   // Materialize the queue items from the role templates + the rotating surface facts.
   const items = seedWorld.items.map((tmpl) => {
@@ -222,7 +221,6 @@ export const handlers = {
     r.accountActions.push({ account, action });
     // Warn the operator if this account is a legitimate user (the brigaded author or
     // the benign-decoy author). The cost is real; the grader penalizes it.
-    const T = ctx.world.truth;
     const legitAuthors = [ctx.world.byRole.brigaded.author, ctx.world.byRole.benign_decoy.author];
     const isLegit = legitAuthors.includes(account);
     return {

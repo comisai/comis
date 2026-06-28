@@ -36,7 +36,7 @@ const marker = MARKERS[jobName] ?? `${jobName} complete`;
 /** Count log lines carrying the completion marker (across all daemon.*.log files; soft-fail to 0). */
 function markerCount() {
   let n = 0;
-  let files = [];
+  let files;
   try { files = readdirSync(logDir).filter((f) => /^daemon\..*\.log$/.test(f)); } catch { return 0; }
   for (const f of files) {
     try {
@@ -51,10 +51,10 @@ function markerCount() {
 function latestFunnel() {
   let best;
   let bestSeq = -1;
-  let files = [];
+  let files;
   try { files = readdirSync(logDir).filter((f) => /^daemon\..*\.log$/.test(f)); } catch { return undefined; }
   for (const f of files) {
-    let txt = "";
+    let txt;
     try { txt = readFileSync(join(logDir, f), "utf8"); } catch { continue; }
     for (const line of txt.split("\n")) {
       if (!line.includes(marker)) continue;

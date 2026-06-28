@@ -215,7 +215,7 @@ export const handlers = {
     return { tip: id, source: src };
   },
 
-  typology_lookup(args, ctx) {
+  typology_lookup(args, _ctx) {
     const name = String(args.name || "").toLowerCase().trim();
     if (!name) return { typologies: Object.keys(TYPOLOGIES), note: "pass `name` for the behavioral definition of one" };
     const key = Object.keys(TYPOLOGIES).find((k) => k === name || name.includes(k) || k.includes(name));
