@@ -88,6 +88,22 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The unit suite includes Linux-only sandbox tests (`*.linux.test.ts`) that
+      # exec bubblewrap, plus media + daemon config-versioning unit tests — the
+      # same OS-level tooling the old monolithic job installed before unit tests.
+      # These tests SKIP on macOS, so the gap is invisible locally and only the
+      # Linux CI shards hit it.
+      - name: Install system dependencies (ffmpeg, bubblewrap)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
+      - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Configure git identity for daemon config-versioning tests
+        run: |
+          git config --global user.email "ci@comis.local"
+          git config --global user.name "Comis CI"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -109,9 +125,13 @@ jobs:
         # single shard only covers ~25% of the source, so enforcing the floors
         # here would always fail. The floors are checked once, on the merged
         # full-coverage set, in the `coverage` job below.
+        #
+        # The `default` reporter is added alongside `blob` so a failing shard
+        # prints its failures to the job log (blob alone is silent — it only
+        # writes the report file).
         env:
           VITEST_NO_THRESHOLDS: "1"
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=default --reporter=blob
 
       - name: Upload coverage blob
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
