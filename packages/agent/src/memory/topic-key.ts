@@ -150,10 +150,69 @@ export function openingRequestTokens(signature: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-  // 3. Tokenize; drop stopwords and tokens of length <= 1.
-  const tokens = cleaned.length === 0 ? [] : cleaned.split(/\s+/).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (REFLECT-02b: collapse
+  //    morphological variants so two genuinely-same-task openings worded differently — "deliver"/"delivered"/
+  //    "delivering", "package"/"packages", "report"/"reports" — share tokens and reach the corroboration /
+  //    reuse-credit overlap they otherwise miss). Keyless + deterministic + pure (no embeddings — the v2.31
+  //    invariant holds). Stem AFTER the stopword check (stopwords are base forms).
+  const tokens =
+    cleaned.length === 0
+      ? []
+      : cleaned
+          .split(/\s+/)
+          .filter((t) => t.length > 1 && !STOPWORDS.has(t))
+          .map(stemToken);
   // 4. De-duplicate into a Set, then SORT — order-insensitive (the collision-maximizing decision, A1).
   return [...new Set(tokens)].sort();
+}
+
+/**
+ * A deliberately CONSERVATIVE inflectional stemmer (REFLECT-02b) — collapses the common,
+ * low-risk English inflections so morphological variants of the same word land on ONE token,
+ * widening the corroboration / reuse-credit overlap beyond byte-identical phrasings WITHOUT
+ * re-introducing embeddings (keyless + deterministic + pure). It strips ONLY regular inflections
+ * (verb `-ing`/`-ed`, plural `-ies`→`y`, `-(s|x|z|ch|sh)es`, plural `-s`), never derivational
+ * suffixes (`-tion`/`-ment`/`-ity` change meaning → over-merge), and is heavily guarded against
+ * the dangerous failure mode — two DISTINCT words collapsing to one token (false corroboration):
+ *  - tokens of length <= 4 are NEVER stemmed (avoids "ring"→"r", "buses"→… degenerate stems);
+ *  - `-ss`/`-us`/`-is` endings are NOT treated as plurals ("across", "status", "analysis" survive);
+ *  - each rule keeps a minimum stem length so a short root is never over-stripped.
+ * It is intentionally imperfect (base-vs-inflected like "navigate"/"navigated" may not fully
+ * reconcile) — applied UNIFORMLY at admit-core and reuse-turn time, so inflected↔inflected and
+ * base↔base variants match; the win is monotone (more true merges, guarded against false ones).
+ * NOTE: changing the token shape changes the topicKey hash — skills learned on the PRE-stemming
+ * build store an un-stemmed core and re-accrue after an upgrade (a learning system re-learns; not a
+ * code regression). Pure: no IO/clock/random.
+ */
+export function stemToken(token: string): string {
+  // Guard: never stem a short token — the over-merge risk (distinct short words colliding) and the
+  // degenerate-stem risk both concentrate here. 5+ chars only.
+  if (token.length <= 4) return token;
+  // Verb -ing (delivering→deliver, navigating→navigat). Keep a >=3-char stem.
+  if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
+  // Verb/adjective -ed (delivered→deliver, navigated→navigat). Keep a >=3-char stem.
+  if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
+  // Plural -ies → y (deliveries→delivery, categories→category).
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  // Plural -es after a sibilant (boxes→box, dishes→dish, classes→class, addresses→address).
+  if (
+    token.length > 4 &&
+    (token.endsWith("ses") || token.endsWith("xes") || token.endsWith("zes") || token.endsWith("ches") || token.endsWith("shes"))
+  ) {
+    return token.slice(0, -2);
+  }
+  // Plural -s (packages→package, reports→report, tools→tool) — but NOT a -ss/-us/-is ending
+  // ("across", "business", "status", "analysis", "this") and never below a 4-char stem.
+  if (
+    token.endsWith("s") &&
+    !token.endsWith("ss") &&
+    !token.endsWith("us") &&
+    !token.endsWith("is") &&
+    token.length > 4
+  ) {
+    return token.slice(0, -1);
+  }
+  return token;
 }
 
 /**
