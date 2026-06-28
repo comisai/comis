@@ -17,6 +17,9 @@ scripts/lcd-regression.env
 node_modules/
 **/node_modules/
 coverage/
+# Vitest blob reports (sharded CI coverage merge — never committed)
+.vitest-reports/
+**/.vitest-reports/
 .DS_Store
 **/.DS_Store
 
