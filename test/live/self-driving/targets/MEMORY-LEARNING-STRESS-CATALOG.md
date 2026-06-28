@@ -1,15 +1,18 @@
 # Memory & Learning Stress Catalog — 12 complex workloads for the v2.31 Reflection engine
 
 > A catalog of **complex, adversarial use cases** chosen to stress Comis's SHIPPED v2.31 reflection/learning
-> engine in every dimension that breaks a naive memory. Each entry is a *workload*, **not a new capability**:
-> the agent has no special domain tooling, "telemetry" / "casework" arrives as tool-turn content through the
-> emulator, and the thing under test is the LEARNING — reflect → cross-session recall → reuse/promote →
-> supersede → evict → trust-tier. The canonical worked example is
-> [`adaptive-threat-hunting.md`](./adaptive-threat-hunting.md) (mapped to the engine, with a full predicate
-> table); any entry below can be promoted into a pinned target spec in that exact shape.
+> engine in every dimension that breaks a naive memory. Each entry is a *workload*, **not a new Comis
+> capability** — its domain tools come from a runnable **`sim/` MCP tool-simulator**, and the thing under
+> test is the LEARNING — reflect → cross-session recall → reuse/promote → supersede → evict → trust-tier. The
+> agent drives real `mcp:<server>/<tool>` tools guided by a **mechanics-only** skill (the strategy is what the
+> engine must LEARN). **All 14 are built + live-validated**: these 12 complex workloads, plus 2 foundational
+> exemplars — [**threat-hunting**](./adaptive-threat-hunting.md) (a full pinned spec) and **package-delivery**
+> (the Hindsight demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
+> the dir ↔ MCP-server ↔ skill table + the deploy → `mcp connect` → drive runbook.
 >
-> **Drive surface for every entry = OFFLINE / DB / event-resident** (model `EXAMPLE-verified-learning.md`):
-> drive via tool/graph turns + cron triggers (`cron.run jobName "Reflection"` / `"Memory lifecycle"`), observe
+> **Drive surface for every entry = OFFLINE / DB / event-resident** (model `EXAMPLE-verified-learning.md` +
+> `../sim/README.md`): drive via the `sim/` MCP tool turns + cron triggers (`cron.run jobName "Reflection"` /
+> `"Memory lifecycle"`), observe
 > via `db.mjs` (`mental_models`, `outcome_events`, `memories`, `memory_usefulness`), `comis explain <S>
 > --offline --format json` (`.learning.*` is TOP-LEVEL), and the `reflect:*`/`learning:*` events + the funnel.
 > The chat reply tells you nothing — read GROUND TRUTH. A false success is the worst outcome.
@@ -39,6 +42,25 @@
 > spans the whole engine.
 
 ---
+
+## ⟢ Package-delivery courier (foundational exemplar — the Hindsight demo)
+**Domain:** an office-building delivery courier. **Primary: TRANSFER + REUSE.** · `sim/package-delivery` (`depot-sim`).
+
+An AI agent delivers packages inside an office building it has never seen. It starts knowing only that it has
+tools to navigate and a job to deliver — not where anyone sits or the best route. Cold, it wanders office to
+office reading nameplates and eventually gets lucky; over repeated deliveries it learns the building's layout,
+who sits where, and the fastest route, then goes straight to the recipient. This is the literal Hindsight
+package-delivery story — the simplest, most visual instance of "learn the map + the strategy."
+
+**What makes it a genuine stress test:**
+- **TRANSFER** — the learned "read the lobby directory, take the elevator to the dept floor" strategy must
+  generalize across buildings whose office numbers rotate (`SIM_VARIANT`), not memorize one floor plan.
+- **REUSE** — the route/strategy reflects into a `kind='skill'` playbook reused on the next delivery; a
+  successful reuse promotes it (`candidate→active`).
+- **Efficiency-as-signal** — cold deliveries succeed *slowly* (~11 moves), learned ones *fast* (~4 = par); the
+  improvement is the visible learning, graded as `efficient`. (Delivering to the wrong office fails.)
+- The gentlest, most demo-able loop — the right first end-to-end learning drive before the adversarial
+  workloads below.
 
 ## 1. Algorithmic market-making desk under regime change
 **Domain:** a quant trading desk. **Primary: DRIFT + DELAY + ANTI-DOM.**
@@ -290,6 +312,7 @@ see which workloads will hardest-test that engine predicate.
 | # | Workload | DRIFT | SUPERSEDE | EVICT/RETAIN | TRANSFER | REUSE | DELAY | ANTI-DOM | UNTRUSTED | NO-EXEC | LEAK-FREE | PROFILE | TRUST-CEIL |
 |---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | — | Adaptive threat-hunting (exemplar) | ○ | ○ | ● | ● | ● | ○ | ○ | ● | ○ | ○ | ○ | ○ |
+| — | Package-delivery courier (exemplar) |  |  |  | ● | ● | ○ |  |  |  |  |  |  |
 | 1 | Market-making desk | ● | ○ | ○ | | | ● | ● | | | | | ○ |
 | 2 | ICU clinical CDS | | ● | | | | | ○ | ● | | ● | ○ | ● |
 | 3 | Contract negotiation | | ● | | ● | ○ | ○ | | ○ | | | ● | |
@@ -309,12 +332,18 @@ The hardest, least-covered-elsewhere cases are **NO-EXEC** (#7 self-driving lab 
 **LEAK-FREE** (#2 ICU, #10 tutoring — binary privacy invariant), and **RETAIN-through-long-dormancy**
 (#12 apiary, #6 grid rare-contingency — the worst case for any forgetting policy).
 
-## Promoting an entry to a runnable target
-Each workload here is a *scenario*; to drive one, copy [`adaptive-threat-hunting.md`](./adaptive-threat-hunting.md)
-and fill its sections for the chosen entry — the **STEP-1 impl-state anchors**, the **use-case → engine
-mapping** table, the **Must-pass predicates** (REFL-1..5 / INV-1..6 with their `db.mjs`/`explain`/funnel
-oracle), the **Stage/cost**, and the **Known traps** (which carry verbatim — deploy a fresh dist + migrate
-config first, `WIPE_CRONS=1`, poll the exact `"Reflection complete (all kinds)"` line, INV-5 needs the
-`external` tier, SURFACE-RACE, the deterministic eviction gate-probe, frame INV probes benignly, SYNTH-YIELD).
-Then point a DRIVE-PROMPT `## TARGET` at the new spec. A rich, distinctive, fabrication-free transcript — which
-every workload here supplies — is exactly what the reflection LLM needs for a grounded admit.
+## Running a use case — they are already built under `sim/`
+Every entry here is a **runnable simulator** at `sim/<workload>/` (`tools.json` + seeded `world.seed.json` +
+`handlers.mjs` + a mechanics-only `SKILL.md`, each with a `--selftest`). Don't author a scenario from scratch —
+drive the existing one per [`../sim/README.md`](../sim/README.md): `deploy-sim.sh` → `mcp connect <server>
+--transport stdio --command node --args <abs>/sim/bin/mcp-server.mjs <workload> [variant]` (the `--args` is
+VARIADIC/space-separated — NOT comma-joined) → add the workload's `SKILL.md` dir to `skills.discoveryPaths` →
+drive the A→B→reuse loop (≥2 corroborating successful episodes from distinct senders with **byte-identical
+openings** → `cron.run Reflection` → reuse on a rotated `SIM_VARIANT`). Observe via the offline oracle
+(`db.mjs` / `comis explain` / the `reflect:*` funnel), never the chat reply.
+
+The `dir ↔ MCP-server ↔ skill ↔ primary-stressor` map is in [`../sim/README.md`](../sim/README.md); the
+`adaptive-threat-hunting.md` pinned spec (STEP-1 impl-state anchors, use-case→engine mapping, Must-pass
+REFL-1..5 / INV-1..6 predicates with oracles, Known traps) is the template for a *new* workload — copy
+`sim/threat-hunting/` per [`../sim/HANDLERS-CONTRACT.md`](../sim/HANDLERS-CONTRACT.md) (keep the `SKILL.md` to
+MECHANICS only). Validated end-to-end on real Comis — see the "Live-run / Phase B/C findings" in `../sim/README.md`.
