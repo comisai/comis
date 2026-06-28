@@ -37,8 +37,21 @@ const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(ch
 const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
 const base = emu.apiRoot;
 
-const getOutbound = async (after, waitMs) =>
-  (await fetch(`${base}/control/chats/${chatId}/outbound?afterMessageId=${after}&waitMs=${waitMs}`)).json();
+// Resilient long-poll: a loaded machine or a long slow-model turn (a cold local 35b can run >200s)
+// can transiently ETIMEDOUT a fetch — a crash here aborts the WHOLE drive mid-turn
+// (package-delivery-20260628). Retry a few times, then return [] so the poll loop keeps going (the
+// trajectory turn-end / answer-quiesce is the real stop signal, not any single poll).
+const getOutbound = async (after, waitMs) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const r = await fetch(`${base}/control/chats/${chatId}/outbound?afterMessageId=${after}&waitMs=${waitMs}`);
+      return await r.json();
+    } catch (e) {
+      if (attempt >= 4) { process.stderr.write(`getOutbound transient-fail x5 (${e?.message || e}) — returning [] to continue\n`); return []; }
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+  }
+};
 const inject = async (t) =>
   (await fetch(`${base}/control/chats/${chatId}/messages`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
