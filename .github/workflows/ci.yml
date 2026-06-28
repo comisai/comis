@@ -291,14 +291,18 @@ jobs:
   # ---------------------------------------------------------------------------
   ci-success:
     if: always()
-    needs: [build, coverage, integration, e2e, tarball, audit]
+    needs: [build, unit, coverage, integration, e2e, tarball, audit]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs succeeded
         run: |
-          result='${{ join(needs.*.result, ",") }}'
-          echo "upstream job results: $result"
-          case "$result" in
-            *failure*|*cancelled*) echo "::error::a required CI job did not succeed"; exit 1 ;;
-            *) echo "all required CI jobs succeeded" ;;
-          esac
+          results='${{ join(needs.*.result, ',') }}'
+          echo "upstream job results: $results"
+          # Every upstream job must be "success"; anything else (failure,
+          # cancelled, or skipped — e.g. coverage skipped because unit failed)
+          # fails this gate so it can never go green on a degraded run.
+          if printf '%s' "$results" | tr ',' '\n' | grep -qvx success; then
+            echo "::error::a required CI job did not succeed ($results)"
+            exit 1
+          fi
+          echo "all required CI jobs succeeded"
