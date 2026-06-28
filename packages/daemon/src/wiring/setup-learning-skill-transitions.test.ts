@@ -35,6 +35,45 @@ describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => 
     expect(emit).toHaveBeenCalledWith("learning:skill_promoted", expect.objectContaining({ count: 1 }));
   });
 
+  it("REFLECT-03: VALUE-GATES a success-promotion when the skill is in a WEAKENING standing (earns back trust, no proof bump)", async () => {
+    const emit = vi.fn();
+    const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never;
+    const skillTrend = createSkillTrendTracker();
+    // Prime "t a my-skill" (the gaugeKey the loop builds) to WEAKENING: two prior failures → ~0.14 (≤ 0.3 band).
+    skillTrend.updateSkillTrend("t a my-skill", "failure", 1000);
+    skillTrend.updateSkillTrend("t a my-skill", "failure", 1000);
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger },
+      SCOPE,
+      verdict("success", ["my-skill"]) as never,
+      { skillStore: { promoteByName, demoteByName: vi.fn() } as never, threshold: 3, skillFailureCorroborationTally: new Map(), skillTrend },
+    );
+    // The success did NOT accrue promotion credit — promoteByName was NOT called (proof not bumped).
+    expect(promoteByName).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalledWith("learning:skill_promoted", expect.anything());
+    // It IS surfaced on the completion log (promotionGated + the gated NAME) — diagnosable ("why no promote?").
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ promotionGated: 1, gatedSkillNames: ["my-skill"] }),
+      "Learned-skill promote/demote complete",
+    );
+  });
+
+  it("REFLECT-03: a SINGLE prior failure is 'stable' (not weakening) → the success STILL promotes (the gate only blocks sustained failure)", async () => {
+    const emit = vi.fn();
+    const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
+    const skillTrend = createSkillTrendTracker();
+    skillTrend.updateSkillTrend("t a my-skill", "failure", 1000); // one failure → "stable" (0.36 > 0.3)
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger: noopLogger },
+      SCOPE,
+      verdict("success", ["my-skill"]) as never,
+      { skillStore: { promoteByName, demoteByName: vi.fn() } as never, threshold: 3, skillFailureCorroborationTally: new Map(), skillTrend },
+    );
+    expect(promoteByName).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledWith("learning:skill_promoted", expect.objectContaining({ count: 1 }));
+  });
+
   it("is a no-op (no promote, no emit) when the verdict used no skills", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn();
