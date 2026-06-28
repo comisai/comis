@@ -199,12 +199,22 @@ export interface LearningEvents {
 
   /**
    * SURFACE-06: a corroboration-gated decay-aware-trend WEAKENING demoted N skills
-   * this resolve (active→stale→archived). Emitted DAEMON-SIDE — counts ONLY.
+   * this resolve (active→stale→archived). Emitted DAEMON-SIDE.
+   *
+   * Finding C (obs-sweep package-delivery-20260628): carries the demoted skill NAMES + the
+   * trigger trajectory id alongside the count, so `explain` answers "WHICH skill demoted and WHY"
+   * in one call (it was count-only → "2 demoted" with no name, forcing a daemon.log + mental_models
+   * hand-join). Content-free: skill NAMES are the same opaque id-class as `skill.prompt_invoked.skillName`
+   * + a trajectory id — never a procedure body/script (SEC-01).
    */
   "learning:skill_demoted": {
     agentId: string;
     /** How many skills were demoted (active→stale→archived) this resolve (count only). */
     count: number;
+    /** The demoted skill NAMES (id-class; == count entries). Finding C. */
+    demotedSkillNames?: string[];
+    /** The trajectory whose failure/correction outcome drove this demote (the WHY). Finding C. */
+    triggerTrajectoryId?: string;
     timestamp: number;
   };
 

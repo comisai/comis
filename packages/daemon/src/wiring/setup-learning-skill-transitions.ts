@@ -96,6 +96,9 @@ export async function applySkillOutcomeTransitions(
   const skillStart = deps.clock.now();
   let promoted = 0;
   let demoted = 0;
+  // Finding C: collect the demoted skill NAMES (not just the count) so the emit can name WHICH
+  // skills demoted (id-class, never a body).
+  const demotedNames: string[] = [];
 
   for (const skillName of verdict.usedSkillIds) {
     // WR-05: never key the in-process gauges on the bare name (cross-tenant alias).
@@ -120,7 +123,10 @@ export async function applySkillOutcomeTransitions(
           const changed = await runSkillTransition(deps, scope.agentId, "skill_demote", () =>
             skillStore.demoteByName(skillName, skillScope),
           );
-          if (changed) demoted += 1;
+          if (changed) {
+            demoted += 1;
+            demotedNames.push(skillName);
+          }
         }
       }
     }
@@ -130,7 +136,15 @@ export async function applySkillOutcomeTransitions(
   // COUNTS ONLY — a body/script/id-list field is a compile error. Emitted ONLY on a
   // REAL transition count (CR-01: a 0-row write never reaches here).
   if (promoted > 0) deps.eventBus.emit("learning:skill_promoted", { agentId: scope.agentId, count: promoted, timestamp: deps.clock.now() });
-  if (demoted > 0) deps.eventBus.emit("learning:skill_demoted", { agentId: scope.agentId, count: demoted, timestamp: deps.clock.now() });
+  if (demoted > 0)
+    deps.eventBus.emit("learning:skill_demoted", {
+      agentId: scope.agentId,
+      count: demoted,
+      // Finding C: name WHICH skills demoted + the trigger trajectory (the WHY) — content-free ids.
+      demotedSkillNames: demotedNames,
+      triggerTrajectoryId: scope.trajectoryId,
+      timestamp: deps.clock.now(),
+    });
   // OBS-01: one INFO completion line per resolve that moved a skill, with durationMs
   // (counts/ids only — never a procedure body).
   if (promoted > 0 || demoted > 0) {

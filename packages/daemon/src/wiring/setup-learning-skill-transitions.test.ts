@@ -60,4 +60,26 @@ describe("applySkillOutcomeTransitions — SURFACE-04/05 promote/demote", () => 
     expect(promoteByName).toHaveBeenCalledOnce();
     expect(emit).not.toHaveBeenCalledWith("learning:skill_promoted", expect.anything());
   });
+
+  it("finding C: a corroborated WEAKENING failure demotes + emits skill_demoted with the NAME + trigger trajectory", async () => {
+    const emit = vi.fn();
+    const demoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
+    const skillTrend = createSkillTrendTracker();
+    // Prime the trend below the weakening band: fresh score 0.5; two prior failures (penalty 0.55,
+    // K=3) → ~0.14, and the in-resolve failure keeps it ≤ 0.3 → "weakening". Same gaugeKey the loop
+    // builds: `${tenantId} ${agentId} ${skillName}`. Deterministic source ("tool") corroborates with 1.
+    skillTrend.updateSkillTrend("t a my-skill", "failure", 1000);
+    skillTrend.updateSkillTrend("t a my-skill", "failure", 1000);
+    await applySkillOutcomeTransitions(
+      { eventBus: { emit } as never, clock, logger: noopLogger },
+      SCOPE, // trajectoryId: "traj"
+      verdict("failure", ["my-skill"]) as never,
+      { skillStore: { promoteByName: vi.fn(), demoteByName } as never, threshold: 3, skillFailureCorroborationTally: new Map(), skillTrend },
+    );
+    expect(demoteByName).toHaveBeenCalledWith("my-skill", expect.objectContaining({ tenantId: "t", agentId: "a" }));
+    expect(emit).toHaveBeenCalledWith(
+      "learning:skill_demoted",
+      expect.objectContaining({ count: 1, demotedSkillNames: ["my-skill"], triggerTrajectoryId: "traj" }),
+    );
+  });
 });

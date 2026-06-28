@@ -329,6 +329,12 @@ export const IncidentReportSchema = z.object({
       // (present only when a promote/demote fired this session; schemaVersion stays 1).
       skillsPromoted: z.number().optional(),
       skillsDemoted: z.number().optional(),
+      // Finding C (obs-sweep package-delivery-20260628): the NAMES of skills demoted this session,
+      // folded from `learning.skill_demoted.demotedSkillNames`. Answers "WHICH skill demoted" (was
+      // count-only → "2 demoted" forced a daemon.log + mental_models hand-join). With the session's
+      // outcome (failure/corrected) this gives "this session's failure demoted skill X" in one call.
+      // Optional + additive (present only when ≥1 named demote; schemaVersion stays 1). Ids only.
+      skillsDemotedNames: z.array(z.string()).optional(),
       // OBS-4b (reflect-obs-20260627): memories that accrued a CORROBORATED failure this session
       // (count only) — the eviction-causation precursor (`learning.memory_failure_attributed`), so
       // "is this session pushing a memory toward eviction" is one `explain` field. Optional + additive

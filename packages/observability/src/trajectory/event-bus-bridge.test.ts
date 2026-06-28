@@ -3907,6 +3907,29 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("finding C: learning:skill_demoted carries demotedSkillNames + triggerTrajectoryId (ids), still strips a smuggled body", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_demoted", {
+      agentId: "default",
+      count: 2,
+      demotedSkillNames: ["skill-a", "skill-b"],
+      triggerTrajectoryId: "traj-9",
+      body: "the demoted procedure markdown", // hostile extra — must NOT cross
+      timestamp: 1000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(data.demotedSkillNames).toEqual(["skill-a", "skill-b"]);
+    expect(data.triggerTrajectoryId).toBe("traj-9");
+    expect(data.body).toBeUndefined(); // SEC-01: only the declared fields cross
+    expect(Object.keys(data).sort()).toEqual(["count", "demotedSkillNames", "triggerTrajectoryId"]);
+  });
+
   it("never forwards a body/script/id-list even if present on the payload (SEC-01 firewall)", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

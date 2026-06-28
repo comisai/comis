@@ -140,6 +140,23 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect(sig!.skillsPromoted).toBeUndefined();
   });
 
+  it("finding C: a demoted record folds demotedSkillNames into skillsDemotedNames (which skill, not just count)", () => {
+    const state = emptyLearningFold();
+    accumulateSkillTransitionRecord(state, { count: 2, demotedSkillNames: ["skill-a", "skill-b"], triggerTrajectoryId: "t1" }, "demoted");
+    accumulateSkillTransitionRecord(state, { count: 1, demotedSkillNames: ["skill-a", 123, { body: "leak" }] }, "demoted"); // dedup + drop non-strings (SEC-01)
+    const sig = buildLearningSignal(state);
+    expect(sig!.skillsDemoted).toBe(3);
+    expect([...(sig!.skillsDemotedNames ?? [])].sort()).toEqual(["skill-a", "skill-b"]);
+  });
+
+  it("finding C: skillsDemotedNames is omitted when a demote carried no names (count-only legacy record)", () => {
+    const state = emptyLearningFold();
+    accumulateSkillTransitionRecord(state, { count: 1 }, "demoted");
+    const sig = buildLearningSignal(state);
+    expect(sig!.skillsDemoted).toBe(1);
+    expect(sig!.skillsDemotedNames).toBeUndefined();
+  });
+
   it("a non-string skillName is dropped (defence-in-depth — never a body smuggled as a name)", () => {
     const state = emptyLearningFold();
     accumulateSkillInvokedRecord(state, { skillName: 42 });

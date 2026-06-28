@@ -244,20 +244,34 @@ describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-onl
     expect(r.agentId).toBe("agent-1");
   });
 
-  it("learning:skill_demoted delivers agentId + count + timestamp ONLY", () => {
+  it("learning:skill_demoted carries count + the demoted NAMES + trigger trajectory (finding C — ids only)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["learning:skill_demoted"] = {
       agentId: "agent-1",
-      count: 1,
+      count: 2,
+      demotedSkillNames: ["skill-a", "skill-b"],
+      triggerTrajectoryId: "traj-123",
       timestamp: 2,
     };
     bus.on("learning:skill_demoted", handler);
     bus.emit("learning:skill_demoted", payload);
     expect(handler).toHaveBeenCalledWith(payload);
     const r = handler.mock.calls[0]![0] as EventMap["learning:skill_demoted"];
+    expect(r.count).toBe(2);
+    expect(r.demotedSkillNames).toEqual(["skill-a", "skill-b"]);
+    expect(r.triggerTrajectoryId).toBe("traj-123");
+  });
+
+  it("learning:skill_demoted still works with count only (the names/trigger are optional)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["learning:skill_demoted"] = { agentId: "agent-1", count: 1, timestamp: 2 };
+    bus.on("learning:skill_demoted", handler);
+    bus.emit("learning:skill_demoted", payload);
+    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_demoted"];
     expect(r.count).toBe(1);
-    expect(r.agentId).toBe("agent-1");
+    expect(r.demotedSkillNames).toBeUndefined();
   });
 
   it("type safety: @ts-expect-error rejects a body/script/description field on either promote/demote payload", () => {

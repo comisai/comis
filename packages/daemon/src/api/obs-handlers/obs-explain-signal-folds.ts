@@ -80,6 +80,9 @@ export interface LearningFoldState {
    *  coverage seen this session. Does NOT bump `count`/`everResolved` (telemetry-only; must not perturb
    *  the outcome_unresolved verdict), so it surfaces only when a real learning record already built the block. */
   skillsSurfacedButUncredited: Map<string, number>;
+  /** Finding C: the NAMES of skills demoted this session (`learning.skill_demoted.demotedSkillNames`) — so
+   *  `explain` answers WHICH skill demoted, not just how many. Ids only (SEC-01). */
+  skillsDemotedNames: Set<string>;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -94,6 +97,7 @@ export function emptyLearningFold(): LearningFoldState {
     skillsDemoted: 0,
     failuresAttributed: 0,
     skillsSurfacedButUncredited: new Map(),
+    skillsDemotedNames: new Set(),
   };
 }
 
@@ -225,7 +229,13 @@ export function accumulateSkillTransitionRecord(
   state.count += 1;
   const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
   if (direction === "promoted") state.skillsPromoted += n;
-  else state.skillsDemoted += n;
+  else {
+    state.skillsDemoted += n;
+    // Finding C: collect WHICH skills demoted (names; ids only — non-string entries dropped, SEC-01).
+    if (Array.isArray(data.demotedSkillNames)) {
+      for (const name of data.demotedSkillNames) if (typeof name === "string") state.skillsDemotedNames.add(name);
+    }
+  }
   readAbstainSignal(state, data);
 }
 
@@ -275,6 +285,8 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     // OBS-4: additive — present only when a promote/demote fired this session (keeps schemaVersion 1).
     ...(state.skillsPromoted > 0 ? { skillsPromoted: state.skillsPromoted } : {}),
     ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
+    // Finding C: additive — the demoted skill NAMES (which), present only when ≥1 named demote folded.
+    ...(state.skillsDemotedNames.size > 0 ? { skillsDemotedNames: [...state.skillsDemotedNames] } : {}),
     // OBS-4b: additive — present only when a corroborated failure accrued this session.
     ...(state.failuresAttributed > 0 ? { failuresAttributed: state.failuresAttributed } : {}),
     // Finding A: additive — the reuse near-misses (uncredited surfaced skills), best coverage desc.
