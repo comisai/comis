@@ -938,6 +938,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       invokedBy: "user",
       args: {},
     },
+    "memory:skill_used": {
+      usedSkillIds: ["skill-a", "skill-b"],
+      usedCount: 2,
+    },
     "prompt:submitted": {
       promptChars: 100,
       provider: "a",
@@ -3661,7 +3665,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
     //   needed; the mapping is for operator trajectory visibility + arch closure.
     //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(108); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only)
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(109); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only); +1 IMP-3/PD-OBS-1 memory:skill_used bridged (package-delivery-20260628 — inline-surfaced reuse credit, ids+count only)
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

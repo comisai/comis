@@ -186,6 +186,15 @@ export function translatePayload(
         args: payload.args,
       };
 
+    // IMP-3 / PD-OBS-1: the per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
+    // ONLY — opaque skill ids (same id-class as skill.prompt_invoked.skillName), never a procedure body
+    // (§2.7 / SEC-01). The fold (accumulateSkillUsedRecord) reads usedSkillIds into explain.skillsUsed.
+    case "memory:skill_used":
+      return {
+        usedSkillIds: payload.usedSkillIds,
+        usedCount: payload.usedCount,
+      };
+
     case "prompt:submitted":
       return {
         promptChars: payload.promptChars,

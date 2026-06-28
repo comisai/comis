@@ -137,11 +137,9 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // (RECALL-01 — the #1 troubleshooting blind spot), so they are NOT listed here.
   "memory:entities_linked",
   "memory:recall_used",
-  // memory:skill_used (ATTR-02) — per-turn used-skill ids + count, consumed by
-  // the daemon learning write-back subscriber (Plan 07 → observe(usedSkillIds)
-  // → used_skill_ids column), NOT a turn-level trajectory step. Same class as
-  // memory:recall_used above.
-  "memory:skill_used",
+  // NB: memory:skill_used (ATTR-02) is now BRIDGED to the trajectory (IMP-3 / PD-OBS-1 —
+  // package-delivery-20260628: explain.skillsUsed was [] for an inline-surfaced reuse while
+  // skillsPromoted>0), so it is NOT listed here (the disjoint mapped-vs-allowlisted invariant).
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which

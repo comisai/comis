@@ -146,6 +146,28 @@ export function accumulateSkillInvokedRecord(state: LearningFoldState, data: Rec
 }
 
 /**
+ * Fold one `memory.skill_used` record's `data` into the state (mutating): the per-turn
+ * attributed `usedSkillIds` join `skillsUsed` (deduped). IDS ONLY — non-string entries are
+ * dropped (SEC-01; a body smuggled as an id never enters the surface).
+ *
+ * IMP-3 / PD-OBS-1 (package-delivery-20260628): a reuse via INLINE skill-surfacing credits the
+ * skill through `memory:skill_used` → `outcome_events.used_skill_ids` (the topic-match path), NOT
+ * an explicit `skill.prompt_invoked` file-read — so `skillsUsed` was `[]` while `skillsPromoted>0`
+ * (an internally-inconsistent explain view; the credit was visible only via a DB hand-join). With
+ * `memory:skill_used` now trajectory-bridged, this surfaces the credited skill ids on `explain`.
+ * Bumps `count` (a skill-only session still yields a learning block).
+ */
+export function accumulateSkillUsedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  state.count += 1;
+  if (Array.isArray(data.usedSkillIds)) {
+    for (const id of data.usedSkillIds) {
+      if (typeof id === "string") state.skillsUsed.add(id);
+    }
+  }
+  readAbstainSignal(state, data);
+}
+
+/**
  * Fold one reflection-funnel record's `data` into the state (mutating; REFLECT,
  * renamed Phase 226 from `learning.skill_synthesized` — handles BOTH `reflect.admitted`
  * and `reflect.funnel`): the only signal it contributes is the BENIGN abstain flag

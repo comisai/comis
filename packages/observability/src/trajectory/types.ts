@@ -69,6 +69,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Skill invocation observability.
   "skill.prompt_loaded",
   "skill.prompt_invoked",
+  // IMP-3 / PD-OBS-1: per-turn used-skill attribution (inline-surfaced reuse credit; ids + count only).
+  "memory.skill_used",
 
   // Memory injection observability.
   "memory.injected",

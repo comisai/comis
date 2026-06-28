@@ -19,6 +19,7 @@ import {
   emptyLearningFold,
   accumulateLearningRecord,
   accumulateSkillInvokedRecord,
+  accumulateSkillUsedRecord,
   accumulateReflectFunnelRecord,
   accumulateSkillTransitionRecord,
   accumulateMemoryFailureRecord,
@@ -40,6 +41,28 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     expect([...(sig!.skillsUsed)].sort()).toEqual(["deploy_canary", "rollback_release"]);
     // A skill-only fold still has no resolved outcome (no outcome record seen).
     expect(sig!.outcomeResolved).toBe(false);
+  });
+
+  it("IMP-3: a memory.skill_used record ⇒ usedSkillIds join skillsUsed (inline-surfaced reuse is no longer invisible)", () => {
+    // package-delivery-20260628 (PD-OBS-1): a reuse via INLINE skill-surfacing credits the skill via
+    // memory:skill_used → outcome_events.used_skill_ids (DB), NOT via an explicit prompt_invoked file
+    // read — so explain's skillsUsed (which only folded skill.prompt_invoked) was [] while
+    // skillsPromoted>0 (internally inconsistent; the credit needed a DB hand-join to see). Bridging
+    // memory:skill_used onto the trajectory + folding usedSkillIds here closes that.
+    const state = emptyLearningFold();
+    accumulateSkillUsedRecord(state, { usedSkillIds: ["skill-abc", "skill-def"], usedCount: 2 });
+    accumulateSkillUsedRecord(state, { usedSkillIds: ["skill-abc"], usedCount: 1 }); // dup id deduped
+    const sig = buildLearningSignal(state);
+    expect(sig).toBeDefined();
+    expect([...(sig!.skillsUsed)].sort()).toEqual(["skill-abc", "skill-def"]);
+  });
+
+  it("IMP-3: a non-array / non-string usedSkillIds is dropped (SEC-01 — ids only, never a smuggled body)", () => {
+    const state = emptyLearningFold();
+    accumulateSkillUsedRecord(state, { usedSkillIds: "not-an-array" });
+    accumulateSkillUsedRecord(state, { usedSkillIds: [123, "skill-ok", { body: "leak" }] });
+    const sig = buildLearningSignal(state);
+    expect(sig ? [...sig.skillsUsed] : []).toEqual(["skill-ok"]);
   });
 
   it("OBS-4: the reuse→promote chain surfaces — skill.prompt_invoked + learning.skill_promoted ⇒ skillsUsed + skillsPromoted", () => {
