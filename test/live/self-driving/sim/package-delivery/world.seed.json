@@ -1,0 +1,39 @@
+{
+  "scenario": "office-building-package-delivery",
+  "note": "The building LAYOUT, WHO sits WHERE, and the best ROUTE are the hidden truth the agent must LEARN. The SKILL.md teaches only how to use the tools. A cold agent can still deliver by wandering + reading nameplates (or the lobby directory); a learned agent goes straight there.",
+  "building": {
+    "start": "lobby",
+    "nodes": {
+      "lobby":      { "floor": 1, "type": "lobby",    "exits": ["elevator-1"], "description": "the ground-floor lobby; a building directory desk stands by the elevators" },
+      "elevator-1": { "floor": 1, "type": "elevator", "exits": ["lobby"] },
+      "elevator-2": { "floor": 2, "type": "elevator", "exits": ["hall-2"] },
+      "elevator-3": { "floor": 3, "type": "elevator", "exits": ["hall-3"] },
+      "hall-2":     { "floor": 2, "type": "hallway",  "exits": ["elevator-2", "2-01", "2-02"] },
+      "hall-3":     { "floor": 3, "type": "hallway",  "exits": ["elevator-3", "3-01", "3-02"] },
+      "2-01":       { "floor": 2, "type": "office",   "exits": ["hall-2"] },
+      "2-02":       { "floor": 2, "type": "office",   "exits": ["hall-2"] },
+      "3-01":       { "floor": 3, "type": "office",   "exits": ["hall-3"] },
+      "3-02":       { "floor": 3, "type": "office",   "exits": ["hall-3"] }
+    }
+  },
+  "variants": {
+    "A": {
+      "recipient": "Priya",
+      "par": 4,
+      "directory": { "Priya": "3-01", "Marco": "3-02", "Dana": "2-01", "Evan": "2-02" },
+      "nameplates": { "3-01": "Priya — Engineering", "3-02": "Marco — Engineering", "2-01": "Dana — Sales", "2-02": "Evan — Sales" }
+    },
+    "B": {
+      "recipient": "Dana",
+      "par": 4,
+      "directory": { "Dana": "2-02", "Evan": "2-01", "Priya": "3-02", "Marco": "3-01" },
+      "nameplates": { "2-02": "Dana — Sales", "2-01": "Evan — Sales", "3-02": "Priya — Engineering", "3-01": "Marco — Engineering" }
+    },
+    "C": {
+      "recipient": "Marco",
+      "par": 4,
+      "directory": { "Marco": "3-02", "Priya": "3-01", "Evan": "2-02", "Dana": "2-01" },
+      "nameplates": { "3-02": "Marco — Engineering", "3-01": "Priya — Engineering", "2-02": "Evan — Sales", "2-01": "Dana — Sales" }
+    }
+  }
+}

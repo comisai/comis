@@ -12,13 +12,13 @@
  *
  * Default-OFF is a COST gate, NOT back-compat: knob off ⇒ the tool is never
  * registered and there is no behavior change (no spend until an operator opts
- * in). Unlike {@link SocialModelingConfigSchema} this is a COST gate, not a
- * PRIVACY gate — the dialectic reads only the already-trust-filtered + redacted
- * recall output, so it drops the privacy sign-off field; the only knobs are
- * `enabled` and the two per-ask cost bounds.
+ * in). This is a COST gate, not a PRIVACY gate — the dialectic reads only the
+ * already-trust-filtered + redacted recall output, so it carries no privacy
+ * sign-off field; the only knobs are `enabled` and the two per-ask cost bounds.
+ * (The privacy-gated social-modeling schema this once mirrored was DELETED in
+ * Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
  *
- * Mirrors {@link SocialModelingConfigSchema}'s `z.strictObject` + `.default()`
- * shape and header conventions; kept deliberately small.
+ * A small `z.strictObject` + `.default()` schema; kept deliberately minimal.
  *
  * @module
  */

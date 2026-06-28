@@ -211,35 +211,10 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// The `user_representation` read-projection schema is co-located in
-// `user-representation-row-schema.ts` (this file is at the 800-line cap; the
-// tuned-alpha-row-schema.ts / outcome-event-row-schema.ts precedent) and re-exported
-// here so existing importers keep their import site. v2.26 WS5 REVISE-02: it carries
-// the four bi-temporal columns (t_valid_start/t_valid_end/expired_at/confidence) for
-// the asOf read + the supersession incumbent SELECT.
-export { UserRepresentationRowSchema } from "./user-representation-row-schema.js";
 
-// Schema for a `relationship` row projection. The scoped read
-// projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
-// directional (subject_user_id, about_user_id) pair is ROW DATA; trust z.enum matches
-// the DDL CHECK ('external' absent). Parsed via createRowMapper.
-export const RelationshipRowSchema = z.strictObject({
-  id: z.string(),
-  subject_user_id: z.string(),
-  about_user_id: z.string(),
-  content: z.string(),
-  trust: z.enum(["system", "learned"]),
-  source_memory_id: z.string().nullable().optional(),
-  created_at: z.number(),
-  updated_at: z.number().nullable().optional(),
-});
-
-// The `tuned_alpha` read-projection schema is co-located in
-// `tuned-alpha-row-schema.ts` (this file is at the 800-line cap; the
-// outcome-event-row-schema.ts precedent) and re-exported here so existing
-// importers keep their import site (the scoped read projects the 4 alphas +
-// updated_at only — belt #3).
-export { TunedAlphaRowSchema } from "./tuned-alpha-row-schema.js";
+// (RelationshipRowSchema — the `relationship` row projection for the directional
+//  social-modeling adapter — was DELETED in Phase 226 SIMPLIFY-03 with the rest of that
+//  subsystem (the table, the adapter, the port). No alias, I1.)
 
 /**
  * Schema for the graph-spread recursive-CTE node projection. The

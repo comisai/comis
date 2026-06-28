@@ -12,8 +12,9 @@ describe("MemoryReviewConfigSchema", () => {
       enabled: true,
       schedule: "0 2 * * *",
       minMessages: 5,
-      maxSessionsPerRun: 10,
-      maxReviewTokens: 4096,
+      // best-out-of-box (reflect-obs-20260627): broader + richer consolidation per run (cost ignored).
+      maxSessionsPerRun: 50,
+      maxReviewTokens: 16384,
       dedupThreshold: 0.85,
       autoTags: [],
     });
@@ -27,8 +28,8 @@ describe("MemoryReviewConfigSchema", () => {
     expect(result.enabled).toBe(true);
     expect(result.schedule).toBe("0 3 * * *");
     expect(result.minMessages).toBe(5);
-    expect(result.maxSessionsPerRun).toBe(10);
-    expect(result.maxReviewTokens).toBe(4096);
+    expect(result.maxSessionsPerRun).toBe(50);
+    expect(result.maxReviewTokens).toBe(16384);
     expect(result.dedupThreshold).toBe(0.85);
     expect(result.autoTags).toEqual([]);
   });

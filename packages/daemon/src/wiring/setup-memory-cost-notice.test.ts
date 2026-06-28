@@ -2,13 +2,14 @@
 /**
  * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
  *
- * On daemon startup, when the master kill switch `memory.costFeatures.enabled`
- * is ON (the default) AND at least one LLM cost-bearing memory feature is
- * actually active for some agent, the daemon emits ONE prominent WARN that:
+ * On daemon startup, when the master kill switch `memory.enabled` (renamed from
+ * `memory.costFeatures.enabled` in Phase 226) is ON (the default) AND at least
+ * one LLM cost-bearing memory feature is actually active for some agent, the
+ * daemon emits ONE prominent WARN that:
  *   - names the active cost features,
  *   - states they spend the operator's own LLM/API budget,
  *   - gives the exact one-line config to turn them ALL off
- *     (`memory.costFeatures.enabled: false`).
+ *     (`memory.enabled: false`).
  *
  * When the kill switch is OFF, or when NO cost feature is active (today's
  * default bare config), the notice emits NOTHING. The notice never logs a
@@ -62,9 +63,10 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     const warn = warns[0]!;
     // Names the active feature.
     expect(JSON.stringify(warn.payload)).toContain("memoryReview");
-    // Gives the exact one-line disable config.
+    // Gives the exact one-line disable config — the LIVE key (renamed from
+    // memory.costFeatures.enabled in Phase 226; z.strictObject rejects the old one).
     expect(JSON.stringify({ p: warn.payload, m: warn.msg })).toContain(
-      "memory.costFeatures.enabled: false",
+      "memory.enabled: false",
     );
     // States it spends the operator's own budget.
     expect((warn.msg + JSON.stringify(warn.payload)).toLowerCase()).toMatch(
@@ -88,11 +90,14 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
   });
 
   it("aggregates every active cost feature across agents into the single notice", () => {
+    // The deleted memoryConsolidation/memoryReasoning/memoryUserRepresentation crons (Phase 225-05)
+    // are no longer cost features; the surviving disclosed crons are memoryReview + memoryUsefulnessJudge
+    // (+ the query-time dialectic tool).
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
       agents: {
-        "agent-1": { ...bareAgent(), memoryConsolidation: { enabled: true } },
-        "agent-2": { ...bareAgent(), memoryReasoning: { enabled: true }, dialectic: { enabled: true } },
+        "agent-1": { ...bareAgent(), memoryReview: { enabled: true } },
+        "agent-2": { ...bareAgent(), memoryUsefulnessJudge: { enabled: true }, dialectic: { enabled: true } },
       },
       costFeaturesEnabled: true,
       logger: logger as never,
@@ -100,25 +105,26 @@ describe("emitMemoryCostFeatureNotice (first-run cost disclosure)", () => {
     const warns = logger._calls("warn");
     expect(warns, "still exactly one notice regardless of feature count").toHaveLength(1);
     const blob = JSON.stringify(warns[0]!.payload);
-    expect(blob).toContain("memoryConsolidation");
-    expect(blob).toContain("memoryReasoning");
+    expect(blob).toContain("memoryReview");
+    expect(blob).toContain("memoryUsefulnessJudge");
     expect(blob).toMatch(/dialectic|memory_ask/);
   });
 
-  it("does NOT treat the keyless lifecycle sweep or the privacy-gated social cron as cost features", () => {
+  it("does NOT treat the keyless lifecycle sweep as a cost feature", () => {
+    // (The privacy-gated social cron — which this also covered — was DELETED in
+    //  Phase 226-04 with the rest of that subsystem.)
     const logger = makeMockLogger();
     emitMemoryCostFeatureNotice({
       agents: {
         "agent-1": {
           ...bareAgent(),
           memoryLifecycle: { enabled: true },
-          socialModeling: { enabled: true, privacyReviewSignedOffBy: "op@example.com" },
         },
       },
       costFeaturesEnabled: true,
       logger: logger as never,
     });
-    // Neither is a $-spending LLM cost feature gated by this switch ⇒ no disclosure.
+    // The keyless lifecycle sweep is not a $-spending LLM cost feature gated by this switch ⇒ no disclosure.
     expect(logger._calls("warn")).toHaveLength(0);
   });
 

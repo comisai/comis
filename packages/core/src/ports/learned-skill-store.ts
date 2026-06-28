@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { LearningScope } from "./outcome-signal-port.js";
+import type { StructuredBody } from "./reflection-port.js";
 
 /**
- * LearnedSkillStorePort: the SEGREGATED hexagonal boundary for the v2.26 Verified
- * Learning procedural store (WS2 / SKILL-01) — the durable `learned_skills`
- * table of admitted, sandbox-validated procedures, each at `trust=learned` (a
- * synthesized procedure can NEVER be `system`). It admits a validated candidate
- * (`admit`), reads by name / lists (`get` / `list`), and runs the lifecycle
- * transitions a proof count / failure drives (`promote` / `demote` / `evict`).
+ * MentalModelStorePort: the SEGREGATED hexagonal boundary for the v2.31 Mental
+ * Model doc store (generalized from the v2.26 Verified Learning WS2 / SKILL-01
+ * procedural store) — the durable `mental_models` table of admitted advisory
+ * docs, each at `trust=learned` (a learned doc can NEVER be `system`). A row is
+ * a `kind ∈ {skill, profile, topic}` doc; it admits a validated candidate
+ * (`admit`), reads by name / lists (`get` / `list(scope, kind?)`), and runs the
+ * lifecycle transitions a proof count / failure drives
+ * (`promote` / `demote` / `evict`).
  *
  * This is a NEW port — like {@link OutcomeSignalPort} it deliberately does NOT
  * widen the security-reviewed `MemoryPort`. The sole ADAPTER lives in
@@ -20,71 +23,110 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * This file is type-only (mirrors outcome-signal-port.ts): no zod, no
  * @comis/memory import. Every method threads the {@link LearningScope}
  * isolation boundary and returns `Result<T, Error>` from @comis/shared — there
- * is no skill-specific error type.
+ * is no doc-specific error type.
  *
  * @module
  */
 
 /**
- * One admitted procedure row (the type-only mirror of the SKILL-01
- * `learned_skills` table). `trustLevel` is the LITERAL `"learned"` (never a
- * widened `string`) — the type-layer mirror of the DB `CHECK (trust_level IN
- * ('learned'))` keystone (SEC-01 T-201-04): a synthesized procedure cannot be
- * `system` even at the type layer. `mutating` drives the approval gate;
- * `proofCount` drives promote/demote; `sourceTrajIds` is the opaque provenance.
+ * One admitted mental-model doc row (the type-only mirror of the `mental_models`
+ * table). `trustLevel` is the LITERAL `"learned"` (never a widened `string`) —
+ * the type-layer mirror of the DB `CHECK (trust_level IN ('learned'))` keystone
+ * (SEC-01 T-201-04): a learned doc cannot be `system` even at the type layer.
+ * `kind` tags the doc family; `mutating` drives the approval gate; `proofCount`
+ * drives promote/demote; `sourceTrajIds` is the opaque provenance.
+ *
+ * NOTE: `structuredBody` (the v2.31 Reflection section-AST) IS now mirrored
+ * (Phase 223 / REFLECT-04) — `get`/`list` surface it (undefined when the
+ * `structured_body` column is NULL or holds garbage) so a reflect refresh can
+ * delta-op against the prior doc. `history` (the FOLD-01 bi-temporal supersede
+ * trail) IS now mirrored too (Phase 225) — `get`/`list` surface the appended
+ * prior-body array (undefined when the `history` column is NULL or corrupt).
  */
-export interface LearnedSkill {
-  /** Deterministic id (hash of the (tenant, agent, name) natural key — replay-stable). */
+export interface MentalModel {
+  /** Deterministic id (hash of the (tenant, agent, kind, topicKey, name) natural key — replay-stable). */
   id: string;
-  /** Stable skill name (UNIQUE per (tenant, agent); the lookup key). */
+  /** Stable doc name (UNIQUE per (tenant, agent, kind, topicKey); the lookup key). */
   name: string;
-  /** Short description of what the procedure does. */
+  /** Short description of what the doc covers. */
   description: string;
-  /** The reusable procedure body (markdown "how to do X"). */
+  /** The doc body (markdown). */
   body: string;
+  /** Doc family (closed union; CHECK-pinned at the DB). 'skill' for a learned procedure. */
+  kind: "skill" | "profile" | "topic";
+  /** The topic key a 'topic' doc clusters under; `''` for a skill/profile. */
+  topicKey: string;
   /** ALWAYS the literal `"learned"` — the type mirror of the DB CHECK (never `system`). */
   trustLevel: "learned";
   /** Lifecycle state (closed union; CHECK-pinned at the DB). */
   state: "candidate" | "active" | "stale" | "archived";
-  /** How many verified successes have reinforced this skill (drives promote/demote). */
+  /** How many verified successes have reinforced this doc (drives promote/demote). */
   proofCount: number;
   /** Confidence in [0, 1] (the synthesis/validation-derived score). */
   confidence: number;
-  /** Whether the procedure mutates state (drives the approval gate; read-only auto-admits). */
+  /** Whether the doc describes a state-mutating action (drives the approval gate; read-only auto-admits). */
   mutating: boolean;
-  /** Opaque source-trajectory ids the skill was distilled from — provenance (ids only). */
+  /** Opaque source-trajectory ids the doc was distilled from — provenance (ids only). */
   sourceTrajIds: ReadonlyArray<string>;
+  /**
+   * The Reflection section-AST (v2.31 / REFLECT-04) — the structured form a
+   * delta-op refresh reads and writes. `undefined` when the `structured_body`
+   * column is NULL (a doc never reflected, or whose AST failed to parse). Render
+   * to the `body` markdown via `renderStructuredBody`.
+   */
+  structuredBody?: StructuredBody | undefined;
+  /**
+   * The FOLD-01 bi-temporal supersede trail (Phase 225) — the ordered (oldest-
+   * first) array of prior bodies a {@link MentalModelStorePort.supersede} appended,
+   * each `{ previousContent, changedAt }`. `undefined` when the `history` column is
+   * NULL (a doc never superseded) or holds corrupt JSON (degrade-to-absent, never a
+   * throw). The shape mirrors `MemoryEntry["history"]` (the 224 FORGET-04 precedent).
+   */
+  history?: ReadonlyArray<{ previousContent: string; changedAt: number }> | undefined;
   /** Injected epoch ms the row was admitted. */
   createdAt: number;
 }
 
 /**
- * The write payload for {@link LearnedSkillStorePort.admit} — the admitted
+ * The write payload for {@link MentalModelStorePort.admit} — the admitted
  * subset of a validated candidate. `trustLevel` is intentionally NOT a field:
  * the adapter ALWAYS writes `"learned"` (the SEC-01 keystone is enforced at the
  * store, never supplied by the caller). The id is derived (the deterministic
- * (tenant, agent, name) hash), so it is not supplied either.
+ * (tenant, agent, kind, topicKey, name) hash), so it is not supplied either.
+ * `kind`/`topicKey` are OPTIONAL — omitted ⇒ the adapter applies `'skill'`/`''`,
+ * so a skill admit stays unchanged.
  */
-export interface AdmitSkillInput {
-  /** Stable skill name (UNIQUE per (tenant, agent)). */
+export interface AdmitMentalModelInput {
+  /** Stable doc name (UNIQUE per (tenant, agent, kind, topicKey)). */
   name: string;
-  /** Short description of the procedure. */
+  /** Short description of the doc. */
   description: string;
-  /** The reusable procedure body. */
+  /** The doc body (rendered markdown — typically `renderStructuredBody(structuredBody)`). */
   body: string;
-  /** Whether the procedure mutates state (drives the approval gate). */
+  /**
+   * The Reflection section-AST (v2.31 / REFLECT-04) — bound to `structured_body`
+   * (JSON) so a later reflect refresh can delta-op against it. Omitted ⇒ the
+   * column is written NULL (a doc with no structured form). Updated in lockstep
+   * with `body` on a re-admit (the idempotent upsert).
+   */
+  structuredBody?: StructuredBody | undefined;
+  /** Whether the doc describes a state-mutating action (drives the approval gate). */
   mutating: boolean;
+  /** Doc family — omitted ⇒ `'skill'` (a skill admit stays unchanged). */
+  kind?: "skill" | "profile" | "topic";
+  /** The topic key for a 'topic' doc — omitted ⇒ `''`. */
+  topicKey?: string;
   /** Initial proof count at admission (capped LOW regardless of cluster size — anti-domination). */
   proofCount: number;
   /** Confidence in [0, 1]. */
   confidence: number;
-  /** Opaque source-trajectory ids the skill was distilled from. */
+  /** Opaque source-trajectory ids the doc was distilled from. */
   sourceTrajIds: ReadonlyArray<string>;
   /** Injected epoch ms the row is admitted at (NEVER `Date.now()` — supplied by the caller's clock). */
   createdAt: number;
 }
 
-export interface LearnedSkillStorePort {
+export interface MentalModelStorePort {
   /**
    * WRITE (idempotent). Admit a validated candidate, upserting the
    * `(tenantId, agentId, name)` row at `trust=learned`, `state=candidate`. The
@@ -93,16 +135,24 @@ export interface LearnedSkillStorePort {
    * `ok({ id, admitted })`; never throws. Unresolved scope fails-closed with
    * `err(...)` — never widens to a shared/global pool (SEC-01).
    */
-  admit(input: AdmitSkillInput, scope: LearningScope): Promise<Result<{ id: string; admitted: boolean }, Error>>;
+  admit(input: AdmitMentalModelInput, scope: LearningScope): Promise<Result<{ id: string; admitted: boolean }, Error>>;
 
   /**
-   * READ. Fetch the skill named `name` within `(tenant, agent)`, or `ok(undefined)`
+   * READ. Fetch the doc named `name` within `(tenant, agent)`, or `ok(undefined)`
    * when none exists. Unresolved scope fails-closed with `err(...)`.
    */
-  get(name: string, scope: LearningScope): Promise<Result<LearnedSkill | undefined, Error>>;
+  get(name: string, scope: LearningScope): Promise<Result<MentalModel | undefined, Error>>;
 
-  /** READ. List every skill within `(tenant, agent)`. Unresolved scope fails-closed with `err(...)`. */
-  list(scope: LearningScope): Promise<Result<LearnedSkill[], Error>>;
+  /**
+   * READ. List docs within `(tenant, agent)`, optionally filtered to a single
+   * `kind` (omitted ⇒ all kinds). The kind filter is an ADDITIONAL `AND` over the
+   * load-bearing `(tenant, agent)` scope filter, never a replacement for it.
+   * Unresolved scope fails-closed with `err(...)`.
+   */
+  list(
+    scope: LearningScope,
+    kind?: "skill" | "profile" | "topic",
+  ): Promise<Result<MentalModel[], Error>>;
 
   /**
    * WRITE. Reinforce the skill `id`: `proof_count` is incremented on EVERY call,
@@ -139,6 +189,29 @@ export interface LearnedSkillStorePort {
     scope: LearningScope,
     promoteAtProofCount: number,
   ): Promise<Result<{ changed: boolean }, Error>>;
+
+  /**
+   * FOLD-01 bi-temporal supersede (Phase 225). A profile/topic doc CORRECTION
+   * UPDATEs the named doc's `body` (and `structuredBody` when supplied) and APPENDs
+   * the PRIOR body to `history` (`{ previousContent, changedAt }`, oldest-first); the
+   * row is UPDATEd, never DELETEd — deletion stays reserved for the security
+   * eviction path ({@link evict}). Mirrors the 224 `SqliteMemoryAdapter.supersede`
+   * FORGET-04 model exactly: the untrusted body passes `validateMemoryWrite` BEFORE
+   * the transaction (a `critical` body — secret egress / dangerous command — is
+   * rejected with `err`, never persisted; a `warn` is permitted because the row's
+   * trust is the fixed `'learned'`), the SELECT-incumbent → history-append → UPDATE
+   * runs inside ONE atomic transaction, and every statement is `(tenant, agent)`-
+   * scoped with bound params. `trust_level` is NEVER touched — a correction cannot
+   * escalate trust. Returns `"superseded"` on a successful revise, `"not-found"`
+   * when no scoped incumbent matched (no row written), or `err` (firewall-rejected,
+   * parse fault, or DB error — the transaction rolled back). Unresolved scope
+   * fails-closed with `err(...)` — never widens to a shared/global pool (SEC-01).
+   */
+  supersede(
+    input: { name: string; body: string; structuredBody?: StructuredBody },
+    scope: LearningScope,
+    now: number,
+  ): Promise<Result<"superseded" | "not-found", Error>>;
 
   /**
    * WRITE (name-keyed demote — the reuse-outcome loop entry point). Resolve the

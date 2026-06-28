@@ -6,13 +6,13 @@ const RERANKER_Q8_SLUG =
   "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf";
 
 describe("MemoryConfigSchema reranker fields", () => {
-  it("defaults rerankerModel to the bge-reranker-v2-m3 Q8_0 GGUF slug", () => {
+  it("defaults recall.rerankerModel to the bge-reranker-v2-m3 Q8_0 GGUF slug (Phase 226 — nested under memory.recall)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.rerankerModel).toBe(RERANKER_Q8_SLUG);
+      expect(result.data.recall.rerankerModel).toBe(RERANKER_Q8_SLUG);
       // Guard the load-bearing quant token explicitly (Q4_K_M measured slower).
-      expect(result.data.rerankerModel).toContain("bge-reranker-v2-m3-Q8_0");
+      expect(result.data.recall.rerankerModel).toContain("bge-reranker-v2-m3-Q8_0");
     }
   });
 
@@ -55,24 +55,24 @@ describe("MemoryConfigSchema reranker fields", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts a local-path rerankerModel override (string, no hf: prefix required)", () => {
+  it("accepts a local-path recall.rerankerModel override (string, no hf: prefix required)", () => {
     const result = MemoryConfigSchema.safeParse({
-      rerankerModel: "/srv/models/bge-reranker.gguf",
+      recall: { rerankerModel: "/srv/models/bge-reranker.gguf" },
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.rerankerModel).toBe("/srv/models/bge-reranker.gguf");
+      expect(result.data.recall.rerankerModel).toBe("/srv/models/bge-reranker.gguf");
     }
   });
 
-  it("leaves the existing MemoryConfig defaults untouched", () => {
+  it("leaves the existing MemoryConfig defaults untouched (recall keepers nested under memory.recall — Phase 226)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.dbPath).toBe("memory.db");
       expect(result.data.walMode).toBe(true);
-      expect(result.data.embeddingModel).toBe("text-embedding-3-small");
-      expect(result.data.embeddingDimensions).toBe(1536);
+      expect(result.data.recall.embeddingModel).toBe("text-embedding-3-small");
+      expect(result.data.recall.embeddingDimensions).toBe(1536);
       expect(result.data.compaction).toEqual({
         enabled: true,
         threshold: 1000,
@@ -86,44 +86,47 @@ describe("MemoryConfigSchema reranker fields", () => {
     const result = MemoryConfigSchema.safeParse({ rerankerUnknown: 1 });
     expect(result.success).toBe(false);
   });
+
+  it("Phase 226: the FLAT recall keys are GONE — a config using memory.embeddingModel/rerankerModel (un-nested) is rejected", () => {
+    expect(MemoryConfigSchema.safeParse({ embeddingModel: "x" }).success).toBe(false);
+    expect(MemoryConfigSchema.safeParse({ rerankerModel: "x" }).success).toBe(false);
+    expect(MemoryConfigSchema.safeParse({ embeddingDimensions: 1536 }).success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// costFeatures master kill switch (v1 opt-out posture — increment 1)
+// memory.enabled master kill switch (Phase 226 — renamed from memory.costFeatures.enabled)
 //
 // A single top-level gate that, when `false`, force-disables ALL LLM
-// cost-bearing memory features (the crons + the dialectic tool) regardless of
-// their per-agent config. Default TRUE because the v1 posture is opt-OUT, so a
-// bare config is byte-identical (the gate is on but gates nothing until a
-// per-agent feature is enabled). ADDITIVE — no existing default is flipped.
+// cost-bearing memory + learning features (the crons + the learning layer + the
+// dialectic tool) regardless of their per-agent config. Default TRUE (opt-out), so a
+// bare config is byte-identical (the gate is on but gates nothing until a per-agent
+// feature is enabled). The former nested CostFeaturesConfigSchema is GONE (no compat shim).
 // ---------------------------------------------------------------------------
 
-describe("MemoryConfigSchema costFeatures kill switch", () => {
-  it("defaults costFeatures.enabled to true (the v1 opt-out posture — operator disables)", () => {
+describe("MemoryConfigSchema enabled master kill switch (Phase 226)", () => {
+  it("defaults enabled to true (the opt-out posture — operator disables)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.costFeatures).toEqual({ enabled: true });
+      expect(result.data.enabled).toBe(true);
     }
   });
 
-  it("accepts costFeatures.enabled: false (the operator escape hatch)", () => {
-    const result = MemoryConfigSchema.safeParse({ costFeatures: { enabled: false } });
+  it("accepts enabled: false (the operator escape hatch)", () => {
+    const result = MemoryConfigSchema.safeParse({ enabled: false });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.costFeatures.enabled).toBe(false);
+      expect(result.data.enabled).toBe(false);
     }
   });
 
-  it("rejects a non-boolean costFeatures.enabled", () => {
-    expect(
-      MemoryConfigSchema.safeParse({ costFeatures: { enabled: "nope" } }).success,
-    ).toBe(false);
+  it("rejects a non-boolean enabled", () => {
+    expect(MemoryConfigSchema.safeParse({ enabled: "nope" }).success).toBe(false);
   });
 
-  it("rejects an unknown key inside costFeatures (strictObject)", () => {
-    expect(
-      MemoryConfigSchema.safeParse({ costFeatures: { enabled: true, bogus: 1 } }).success,
-    ).toBe(false);
+  it("the former costFeatures nested key is GONE — a config carrying it is rejected (z.strictObject, no compat shim)", () => {
+    expect(MemoryConfigSchema.safeParse({ costFeatures: { enabled: true } }).success).toBe(false);
+    expect(MemoryConfigSchema.safeParse({ costFeatures: { enabled: false } }).success).toBe(false);
   });
 });

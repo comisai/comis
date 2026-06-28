@@ -1,0 +1,72 @@
+{
+  "scenario": "adaptive-tutoring-self-supersession",
+  "domain": "elementary-fractions",
+  "_note_for_authors": "HIDDEN: the true misconception differs from the obvious first guess. The discriminating problem yields an answer that ONLY the true misconception predicts. None of this is in SKILL.md.",
+  "topicMap": {
+    "fraction-addition": {
+      "prereqs": ["equivalent-fractions", "common-denominator"],
+      "related": ["fraction-subtraction", "comparing-fractions", "fraction-of-a-set"]
+    }
+  },
+  "personas": {
+    "add-across-vs-keep-denominator": {
+      "topic": "fraction-addition",
+      "obviousMisconception": "adds numerators and denominators straight across (e.g. 1/2 + 1/3 = 2/5)",
+      "trueMisconception": "keeps a single denominator unchanged and only adds the numerators when denominators are unlike (e.g. 1/2 + 1/3 = 2/3)",
+      "obviousKey": "add-across",
+      "trueKey": "keep-denominator",
+      "discriminatingProblem": "1/2 + 1/3 = ?",
+      "answers": {
+        "1/2 + 1/3 = ?": { "add-across": "2/5", "keep-denominator": "2/3", "correct": "5/6" },
+        "1/4 + 1/4 = ?": { "add-across": "2/8", "keep-denominator": "2/4", "correct": "1/2" },
+        "2/3 + 1/6 = ?": { "add-across": "3/9", "keep-denominator": "3/6", "correct": "5/6" }
+      },
+      "transferTopic": "fraction-subtraction",
+      "transferProblem": "3/4 - 1/2 = ?",
+      "transferAnswers": { "keep-denominator": "2/4", "correct": "1/4" },
+      "remediationKey": "common-denominator",
+      "wrongRemediationKey": "reduce-fractions"
+    },
+    "borrow-vs-place-value": {
+      "topic": "fraction-addition",
+      "obviousMisconception": "forgets to borrow / carry when summing the fractional parts of mixed numbers",
+      "trueMisconception": "ignores the whole-number part entirely and only operates on the fractional part (e.g. 2&1/2 + 1&1/2 = 1 instead of 4)",
+      "obviousKey": "no-carry",
+      "trueKey": "drop-whole",
+      "discriminatingProblem": "2&1/2 + 1&1/2 = ?",
+      "answers": {
+        "2&1/2 + 1&1/2 = ?": { "no-carry": "3&2/2", "drop-whole": "1", "correct": "4" },
+        "3&1/4 + 1&1/4 = ?": { "no-carry": "4&2/4", "drop-whole": "1/2", "correct": "4&1/2" },
+        "1&3/4 + 2&3/4 = ?": { "no-carry": "3&6/4", "drop-whole": "1&1/2", "correct": "4&1/2" }
+      },
+      "transferTopic": "comparing-fractions",
+      "transferProblem": "Which is larger: 2&1/3 or 1&5/6?",
+      "transferAnswers": { "drop-whole": "1&5/6", "correct": "2&1/3" },
+      "remediationKey": "whole-and-part-together",
+      "wrongRemediationKey": "carry-the-one"
+    },
+    "multiply-vs-invert": {
+      "topic": "fraction-addition",
+      "obviousMisconception": "multiplies the fractions instead of adding them (e.g. 1/2 + 1/3 = 1/6)",
+      "trueMisconception": "inverts the second fraction before combining, as if every operation were division (e.g. 1/2 + 1/3 = 1/2 x 3/1 = 3/2)",
+      "obviousKey": "multiply-instead",
+      "trueKey": "invert-second",
+      "discriminatingProblem": "1/2 + 1/3 = ?",
+      "answers": {
+        "1/2 + 1/3 = ?": { "multiply-instead": "1/6", "invert-second": "3/2", "correct": "5/6" },
+        "1/4 + 1/2 = ?": { "multiply-instead": "1/8", "invert-second": "1/2", "correct": "3/4" },
+        "2/3 + 1/3 = ?": { "multiply-instead": "2/9", "invert-second": "2/1", "correct": "1" }
+      },
+      "transferTopic": "fraction-subtraction",
+      "transferProblem": "5/6 - 1/3 = ?",
+      "transferAnswers": { "invert-second": "5/2", "correct": "1/2" },
+      "remediationKey": "addition-keeps-the-operation",
+      "wrongRemediationKey": "review-multiplication"
+    }
+  },
+  "variants": {
+    "A": { "studentId": "S-417", "studentName": "Maya", "grade": 5, "persona": "add-across-vs-keep-denominator" },
+    "B": { "studentId": "S-203", "studentName": "Devon", "grade": 6, "persona": "borrow-vs-place-value" },
+    "C": { "studentId": "S-589", "studentName": "Priya", "grade": 5, "persona": "multiply-vs-invert" }
+  }
+}

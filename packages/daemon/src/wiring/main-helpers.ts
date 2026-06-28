@@ -259,9 +259,9 @@ export function resolveGatewayTokens(deps: {
  *
  * The embedder id mirrors `setup-memory.ts:308,316` — OpenAI provider →
  * `embedding.openai.model`; local/auto → `embedding.local.modelUri`. It is NOT
- * the legacy `memory.embeddingModel` field (Pitfall 3 — that predates the
+ * the legacy `memory.recall.embeddingModel` field (Pitfall 3 — that predates the
  * top-level embedding block and is not the running embedder). The reranker id is
- * `memory.rerankerModel` (default `bge-reranker-v2-m3`, which the core heuristic
+ * `memory.recall.rerankerModel` (default `bge-reranker-v2-m3`, which the core heuristic
  * classifies multilingual — Pitfall 2). Only the embedder has a config override
  * flag today, so the reranker passes `undefined` declared.
  *
@@ -274,7 +274,7 @@ export function resolveModelHealthMultilingual(
 ): { embeddingMultilingual: boolean | "unknown"; rerankerMultilingual: boolean | "unknown" } {
   const emb = config.embedding;
   const embedModelId = emb.provider === "openai" ? emb.openai.model : emb.local.modelUri;
-  const rerankerModelId = config.memory.rerankerModel;
+  const rerankerModelId = config.memory.recall.rerankerModel;
   return {
     embeddingMultilingual: resolveMultilingual(emb.multilingual, embedModelId, EMBED_MULTILINGUAL),
     rerankerMultilingual: resolveMultilingual(undefined, rerankerModelId, RERANK_MULTILINGUAL),

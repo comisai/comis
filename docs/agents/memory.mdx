@@ -175,7 +175,7 @@ The recall **core is always on** (as long as `rag.enabled` is `true`). Reranking
 is **locally-gated** — auto-on when its model is already present, off on a fresh
 install (see below). The remaining layers are each **opt-in** and described below:
 the entity, temporal-spread, and causal lanes; the recall-utility feedback factor;
-and consolidation.
+and the higher-order observations maintained by the reflection engine.
 
 ### Reranking (locally-gated, default-on)
 
@@ -238,7 +238,7 @@ poisoning-resistance posture.
 |-------|------|---------|
 | Recency (record time) | `rag.scoring.recencyAlpha` | `0.2` |
 | Temporal proximity (event time) | `rag.scoring.temporalAlpha` | `0.2` |
-| Proof count (consolidation) | `rag.scoring.proofAlpha` | `0.1` |
+| Proof count (corroboration) | `rag.scoring.proofAlpha` | `0.1` |
 | Trust level | `rag.scoring.trustAlpha` | `0.1` |
 
 ### Read-time temporal correctness
@@ -316,39 +316,42 @@ agents:
         usefulnessAlpha: 0.1 # magnitude of the usefulness boost (bounded small)
 ```
 
-### Observations & consolidation (opt-in)
+### Higher-order observations (the reflection engine)
 
-When consolidation is enabled, a background job folds repeatedly-seen facts into
-**observations** — higher-order memories that summarise a cluster of supporting
-entries. Each observation carries:
+Higher-order **topic** observations — memories that summarise a cluster of
+supporting entries — are maintained by the **one outcome-gated reflection cron**
+(`agents.<id>.learning.enabled`) as `kind:"topic"` Mental Model docs, in the same
+pass that maintains the learned **skill** docs and the per-user **profile** doc.
+(In v2.31 the standalone consolidation/reasoning crons were folded into this one
+engine — see [Memory configuration › Removed in v2.31](/agents/memory-config#removed-in-v2-31).)
+Each observation carries:
 
 - a **`proof_count`** and the **`source_ids`** of the memories that support it,
-- a **`confidence`** that decays on a half-life schedule and feeds the
-  `proofAlpha` ranking boost, and
+- a **`confidence`** that feeds the `proofAlpha` ranking boost, and
 - a **trust ceiling = `min(sources)`** — an observation can never be more trusted
   than its least-trusted source, so `external` material cannot launder itself
   into a `system`-level fact.
 
-**Fold-into-existing (proof accrual).** When a fact is **corroborated across
-multiple runs**, consolidation **folds the new sources into the existing
+**Supersede, not overwrite (proof accrual).** When a fact is **corroborated across
+multiple runs**, the engine **folds the new sources into the existing
 observation** — growing its `proof_count` and `source_ids` and appending to its
-`history` — instead of always creating a second observation. The fold is:
+`history` — instead of creating a second observation. The fold is:
 
 - **idempotent** — re-running over the same sources never double-counts (the new
-  source IDs are diffed against the ones already recorded), so a repeated review
-  pass is a no-op;
+  source IDs are diffed against the ones already recorded), so a repeated pass is a no-op;
 - **trust-ceiling preserving** — the folded trust level is `min(sources)`, so a
   fold can only **lower** an observation's trust, never launder it upward;
-- **decay-refreshing** — it refreshes `confidence` and recency so the half-life
-  decay stays meaningful as proof accrues.
+- **non-destructive** — a correction **supersedes** the prior body with a
+  bi-temporal history-append (the prior body is kept in `history`, never hard-deleted).
 
 Because the grown `proof_count` feeds the `proofAlpha` ranking boost, a fact
 corroborated across runs out-ranks a one-off mention at recall time.
 
-Consolidation is **non-destructive** (source memories are kept) and **opt-in
-(default off)** — it is a cost gate because it runs the LLM on a schedule. The
-configuration lives in the [config reference](/reference/config-yaml); this page
-describes the concept.
+The reflection engine is **outcome-gated** (it learns only from trusted-origin
+successful trajectories) and gated by `learning.enabled` under the master
+`memory.enabled` switch. The configuration lives in the
+[Memory configuration](/agents/memory-config#the-one-learning-reflection-engine-v2-31)
+reference; this page describes the concept.
 
 ## DAG context store (the default engine; in-session expansion tools)
 
@@ -365,7 +368,7 @@ summarizer compressed away — see
 engine is **DAG** mode (`contextEngine.version` defaults to `"dag"`); in the
 opt-in **pipeline** mode (`contextEngine.version: "pipeline"`), the
 `session_search` tool searches the raw session history instead. The long-term memory
-described above (semantic store, recall, consolidation) is independent of the DAG
+described above (semantic store, recall, the reflection engine) is independent of the DAG
 context store and is fully available.
 
 See [Compaction](/agents/compaction) for the pipeline engine and the DAG design
@@ -411,7 +414,7 @@ above, with its verified default. The full config reference lives at
 | `rag.rerank.timeoutMs` | number | `800` | Rerank wall-clock budget; fall back to fusion on timeout |
 | `rag.scoring.recencyAlpha` | number | `0.2` | Recency (record-time) boost weight |
 | `rag.scoring.temporalAlpha` | number | `0.2` | Event-time proximity boost weight (neutral when `occurred_at` absent) |
-| `rag.scoring.proofAlpha` | number | `0.1` | Proof-count (consolidation) boost weight |
+| `rag.scoring.proofAlpha` | number | `0.1` | Proof-count (corroboration) boost weight |
 | `rag.scoring.trustAlpha` | number | `0.1` | Trust-level boost + tie-break weight |
 | `rag.scoring.usefulnessAlpha` | number | `0.1` | Usefulness boost weight (feedback loop; neutral when absent) |
 | `rag.lanes.fts.weight` | number | `1.0` | FTS (BM25) lane RRF weight |

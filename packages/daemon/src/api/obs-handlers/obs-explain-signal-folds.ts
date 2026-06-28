@@ -47,10 +47,12 @@ const LEARNING_SOURCES: readonly LearningSource[] = ["tool", "pipeline", "correc
 /**
  * The mutable fold state accumulated across the session's learning records:
  * the `learning.outcome_observed` outcome/source signal (Phase 198) PLUS the
- * P2 procedural-skill signals (`skill.prompt_invoked` / `learning.skill_validated`
- * / `learning.skill_synthesized`). `count` gates whether ANY learning-family
- * record was seen (an absent block ⇒ `undefined`), so it bumps for every fold —
- * outcome AND skill — not just outcome records.
+ * skill-invocation signal (`skill.prompt_invoked`) and the reflection funnel
+ * (`reflect.admitted` / `reflect.funnel`, renamed Phase 226 — they contribute the
+ * BENIGN abstain flag). `count` gates whether ANY learning-family record was seen
+ * (an absent block ⇒ `undefined`), so it bumps for every fold — outcome AND
+ * reflection — not just outcome records. The Phase-203 user-model-revision +
+ * generalization fields were DELETED in Phase 226 with their 0-emit events.
  */
 export interface LearningFoldState {
   count: number;
@@ -66,21 +68,14 @@ export interface LearningFoldState {
   sources: Set<LearningSource>;
   /** Distinct learned-skill ids invoked this session (`skill.prompt_invoked`). IDs only. */
   skillsUsed: Set<string>;
-  /** A `learning.skill_validated` record reported a static/dynamic FAILURE this run. */
-  validationFailed: boolean;
   /** A record carried the BENIGN synthesis-abstain signal (Defer ≠ Retry). */
   synthesisAbstained: boolean;
-  /**
-   * REVISE- (Phase 203): the total user-model belief-slots touched this run
-   * (superseded + corroborated + inserted), summed across the daemon's per-user
-   * `learning.user_model_revised` records. Count only — no profile body.
-   */
-  userModelRevised: number;
-  /**
-   * GENERAL- (Phase 203): higher-order generalizations written this run, from the
-   * daemon's `learning.memory_generalized` records. Count only — no memory body.
-   */
-  memoriesGeneralized: number;
+  /** OBS-4: candidate→active promotions summed this session (`learning.skill_promoted`). Counts only. */
+  skillsPromoted: number;
+  /** OBS-4: skill demotions summed this session (`learning.skill_demoted`). Counts only. */
+  skillsDemoted: number;
+  /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
+  failuresAttributed: number;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -90,10 +85,10 @@ export function emptyLearningFold(): LearningFoldState {
     everResolved: false,
     sources: new Set(),
     skillsUsed: new Set(),
-    validationFailed: false,
     synthesisAbstained: false,
-    userModelRevised: 0,
-    memoriesGeneralized: 0,
+    skillsPromoted: 0,
+    skillsDemoted: 0,
+    failuresAttributed: 0,
   };
 }
 
@@ -151,55 +146,55 @@ export function accumulateSkillInvokedRecord(state: LearningFoldState, data: Rec
 }
 
 /**
- * Fold one `learning.skill_validated` record's `data` into the state (mutating):
- * a static OR dynamic validation FAILURE (`staticOk === false || dynamicOk ===
- * false`) flags `validationFailed`, so the session's used skills surface as
- * `skillFailures` (the record itself carries NO id — verdict booleans + a
- * coverage enum only; SEC-01). Bumps `count`.
+ * Fold one reflection-funnel record's `data` into the state (mutating; REFLECT,
+ * renamed Phase 226 from `learning.skill_synthesized` — handles BOTH `reflect.admitted`
+ * and `reflect.funnel`): the only signal it contributes is the BENIGN abstain flag
+ * (the payload is counts + a closed admissionOutcome enum only — no body crosses).
+ * Bumps `count` (a reflection-only session still yields a learning block).
  */
-export function accumulateSkillValidatedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
-  state.count += 1;
-  if (data.staticOk === false || data.dynamicOk === false) state.validationFailed = true;
-  readAbstainSignal(state, data);
-}
-
-/**
- * Fold one `learning.skill_synthesized` record's `data` into the state
- * (mutating): the only signal it contributes is the BENIGN abstain flag (the
- * payload is a count only). Bumps `count`.
- */
-export function accumulateSkillSynthesizedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+export function accumulateReflectFunnelRecord(state: LearningFoldState, data: Record<string, unknown>): void {
   state.count += 1;
   readAbstainSignal(state, data);
 }
 
 /**
- * Fold one `learning.user_model_revised` record's `data` into the state
- * (mutating; REVISE-/OBS-02, Phase 203): the per-slot revision counts
- * (`superseded` + `corroborated` + `inserted`) SUM into `userModelRevised` (the
- * total belief-slots the daemon touched this run; the daemon emits one record per
- * cron firing — additive across firings within a session). Numeric reads ONLY —
- * a smuggled `content`/`entryType`/`sourceId` is never read (SEC-01 / T-203-leak).
- * Bumps `count` (a revision-only session still yields a learning block).
+ * Fold one `learning.skill_promoted` / `learning.skill_demoted` record's `data` into the state
+ * (mutating; SURFACE-06, COUNTS ONLY). `data.count` is the number promoted/demoted this resolve;
+ * bump the matching tally + `count`. OBS-4 (hindsight-reflection-20260626): with `skill.prompt_invoked`
+ * (already folded into `skillsUsed`) this makes the reuse→promote chain readable on the per-session
+ * learning block — `comis explain <session>` shows "used skill X → promoted N" in one call instead of
+ * a trajectory + outcome_events + mental_models hand-join. A non-numeric `count` is read as 0 (SEC-01).
  */
-export function accumulateUserModelRevisedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+export function accumulateSkillTransitionRecord(
+  state: LearningFoldState,
+  data: Record<string, unknown>,
+  direction: "promoted" | "demoted",
+): void {
   state.count += 1;
-  const superseded = typeof data.superseded === "number" ? data.superseded : 0;
-  const corroborated = typeof data.corroborated === "number" ? data.corroborated : 0;
-  const inserted = typeof data.inserted === "number" ? data.inserted : 0;
-  state.userModelRevised += superseded + corroborated + inserted;
+  const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
+  if (direction === "promoted") state.skillsPromoted += n;
+  else state.skillsDemoted += n;
+  readAbstainSignal(state, data);
 }
 
 /**
- * Fold one `learning.memory_generalized` record's `data` into the state
- * (mutating; GENERAL-/OBS-02, Phase 203): `generalized` (higher-order memories
- * written) accumulates into `memoriesGeneralized`. Numeric read ONLY — a smuggled
- * memory `body` is never read (SEC-01 / T-203-leak). Bumps `count`.
+ * Fold one `learning.memory_failure_attributed` record's `data` into the state (mutating; OBS-4b,
+ * COUNTS ONLY). `data.count` is the number of memories that accrued a CORROBORATED failure this
+ * resolve (the eviction-causation precursor — eviction needs failure_count >= floor); bump
+ * `failuresAttributed` + `count`. A non-numeric `count` is read as 0 (SEC-01).
  */
-export function accumulateMemoryGeneralizedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+export function accumulateMemoryFailureRecord(state: LearningFoldState, data: Record<string, unknown>): void {
   state.count += 1;
-  if (typeof data.generalized === "number") state.memoriesGeneralized += data.generalized;
+  const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
+  state.failuresAttributed += n;
+  readAbstainSignal(state, data);
 }
+
+// Phase 226 SIMPLIFY-04: accumulateSkillValidatedRecord (the sandbox-validation fold —
+// sandbox deleted in 223), accumulateUserModelRevisedRecord + accumulateMemoryGeneralizedRecord
+// (the user-rep revision + generalization folds — folded into reflection in 225) were DELETED
+// with their 0-emit events. `skillFailures` now keys on the terminal outcome only (a learned
+// procedure used in a failed/corrected trajectory).
 
 /**
  * Build the `IncidentSignals["learning"]` block from the fold, or `undefined`
@@ -209,10 +204,10 @@ export function accumulateMemoryGeneralizedRecord(state: LearningFoldState, data
  * the `outcome_unresolved` verdict's trigger).
  *
  * `skillFailures` (P2): the session's used skills surface as failures when the
- * terminal outcome is `failure`/`corrected` OR a `skill_validated` record
- * reported a validation failure — "a learned procedure was used in a
+ * terminal outcome is `failure`/`corrected` — "a learned procedure was used in a
  * failed/corrected trajectory" (the `learned_skill_failing` verdict's trigger).
- * Counts/ids/closed enums only — no body/script crosses the surface.
+ * (The Phase-201 sandbox-validation failure path was removed in Phase 226 with the
+ * 0-emit event.) Counts/ids/closed enums only — no body/script crosses the surface.
  */
 export function buildLearningSignal(state: LearningFoldState): IncidentLearningSignal | undefined {
   if (state.count === 0) return undefined;
@@ -223,13 +218,13 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     ...(state.outcome !== undefined ? { outcome: state.outcome } : {}),
     sources: [...state.sources],
     skillsUsed,
-    skillFailures: outcomeFailed || state.validationFailed ? skillsUsed : [],
+    skillFailures: outcomeFailed ? skillsUsed : [],
     synthesisAbstained: state.synthesisAbstained,
-    // REVISE-/GENERAL- (Phase 203): the optional revision/generalization counts —
-    // present only when the activity happened (zero ⇒ omitted, so the frozen
-    // P0..P2 fixtures gain no field). Counts only (SEC-01).
-    ...(state.userModelRevised > 0 ? { userModelRevised: state.userModelRevised } : {}),
-    ...(state.memoriesGeneralized > 0 ? { memoriesGeneralized: state.memoriesGeneralized } : {}),
+    // OBS-4: additive — present only when a promote/demote fired this session (keeps schemaVersion 1).
+    ...(state.skillsPromoted > 0 ? { skillsPromoted: state.skillsPromoted } : {}),
+    ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
+    // OBS-4b: additive — present only when a corroborated failure accrued this session.
+    ...(state.failuresAttributed > 0 ? { failuresAttributed: state.failuresAttributed } : {}),
   };
 }
 

@@ -12,9 +12,9 @@
  *
  * ## The load-bearing security boundary
  *
- * UNLIKE the corpus-wide distances-only `knnDistances` (which reads the GLOBAL
- * `vec_memories` and returns non-identifying floats), `readEmbeddings` returns
- * raw VECTORS for a caller-supplied id set, so the read MUST be scope-isolated:
+ * Because `readEmbeddings` returns raw VECTORS for a caller-supplied id set (an
+ * identifying payload, not non-identifying distance scalars), the read MUST be
+ * scope-isolated:
  * an id belonging to (tenant A, agent Y) requested under (tenant A, agent X) is
  * ABSENT from the returned Map — even though the id was passed in. The scoped
  * LEFT JOIN (`m.tenant_id = ? AND m.agent_id = ?`) is the fix, RED-tested below.
@@ -30,12 +30,20 @@ import * as schema from "./schema.js";
 import type Database from "better-sqlite3";
 
 const memoryConfig: MemoryConfig = {
+  enabled: true,
   dbPath: ":memory:",
   walMode: false,
-  embeddingModel: "test-model",
-  embeddingDimensions: 4,
+  // Phase 226: the recall keepers nest under memory.recall (design §5).
+  recall: {
+    embeddingModel: "test-model",
+    embeddingDimensions: 4,
+    rerankerModel: "hf:test/reranker.gguf",
+  },
   compaction: { enabled: false, threshold: 1000, targetSize: 500 },
-  retention: { maxAgeDays: 0, maxEntries: 0 },
+  retention: { maxAgeDays: 0 },
+  rerankerModelsDir: "models",
+  rerankerGpu: "false",
+  rerankerThreads: 4,
 };
 
 function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {

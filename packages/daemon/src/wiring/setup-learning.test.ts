@@ -25,10 +25,10 @@ import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { TypedEventBus, runWithContext } from "@comis/core";
-import { createSqliteLearnedSkillStore, initSchema } from "@comis/memory";
+import { createSqliteMentalModelStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
-import type { LearnedSkillStorePort } from "@comis/core";
+import type { MentalModelStorePort } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -89,7 +89,7 @@ function baseVerdict(over?: Partial<ResolvedOutcome>): ResolvedOutcome {
 }
 
 /**
- * A controllable LearnedSkillStorePort stub for the SURFACE-04/05 promote/demote
+ * A controllable MentalModelStorePort stub for the SURFACE-04/05 promote/demote
  * loop. Exposes ONLY the promote/demote write methods the resolve seam calls (the
  * loop reads NO per-skill proof/trust — the threshold gate is store-side, Plan 02);
  * the read/admit/evict methods are present (the port shape) but unused by the seam.
@@ -116,7 +116,7 @@ function mockLearnedSkillStore(opts?: { promoteChanged?: boolean; demoteChanged?
     get: vi.fn(async () => ok(undefined)),
     list: vi.fn(async () => ok([])),
     evict: vi.fn(async () => ok(undefined)),
-  } as unknown as LearnedSkillStorePort;
+  } as unknown as MentalModelStorePort;
   return { store, promoteByName, demoteByName };
 }
 
@@ -549,12 +549,30 @@ describe("wireLearningOutcome — reward/failure write at resolve() (RANK-01/FOR
     const ids = us.recordUsage.mock.calls.map((c) => c[0]).flat();
     expect(ids.sort()).toEqual(["m1", "m2"]);
     // The reward write is scoped to the resolved (tenant, agent); intent omitted →
-    // the global '' bucket (the verdict carries no intent; the bandit reads per-intent).
+    // the global '' bucket (the verdict carries no intent).
     const scope = us.recordUsage.mock.calls[0]![2];
     expect(scope.agentId).toBe(AGENT);
     expect(scope.tenantId).toBe("tenant-x");
     // No failure accrual on a success.
     expect(us.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("HIGH-2 no-regression: the RANK-01 recordUsage/recordFailure reward write SURVIVES the Phase-224 bandit deletion (the FORGET-02 failure_count source)", async () => {
+    // Phase 224 deleted the UCB recall bandit (the learner/perIntent/exploration sub-fields,
+    // the per-intent apply, and the __ONLINE_TUNING__ cron) but KEPT learningTuning.enabled +
+    // the reward write it gates. This pins that contract: with learningTuning.enabled ON, a
+    // SUCCESS still rewards (recordUsage) and a FAILURE still accrues failure_count (recordFailure).
+    const success = wireRewardSeam(
+      baseVerdict({ outcome: "success", sources: ["pipeline"], recalledIds: ["k1"] }),
+    );
+    await driveTrajectory(success.bus, SESSION_KEY, TRACE);
+    expect(success.us.recordUsage, "RANK-01 success reward still fires post-bandit-deletion").toHaveBeenCalledTimes(1);
+
+    const failure = wireRewardSeam(
+      baseVerdict({ outcome: "failure", sources: ["pipeline"], recalledIds: ["k1"] }),
+    );
+    await driveTrajectory(failure.bus, SESSION_KEY, TRACE);
+    expect(failure.us.recordFailure, "FORGET-02 failure_count accrual still fires post-bandit-deletion").toHaveBeenCalled();
   });
 
   it("FAILURE verdict with a DETERMINISTIC source (pipeline) → recordFailure once (1 deterministic satisfies the gate)", async () => {
@@ -1562,10 +1580,10 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     db: import("better-sqlite3").Database,
     verdict: ResolvedOutcome,
     opts?: { promoteAt?: number; bus?: TypedEventBus; logger?: ReturnType<typeof createMockLogger> },
-  ): { bus: TypedEventBus; store: ReturnType<typeof createSqliteLearnedSkillStore> } {
+  ): { bus: TypedEventBus; store: ReturnType<typeof createSqliteMentalModelStore> } {
     const bus = opts?.bus ?? new TypedEventBus();
     const { store: outcomeStore } = makeStubStore(verdict);
-    const skillStore = createSqliteLearnedSkillStore({ db });
+    const skillStore = createSqliteMentalModelStore({ db });
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore,
@@ -1600,7 +1618,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
    */
   async function driveGraphThenAwait(
     bus: TypedEventBus,
-    store: ReturnType<typeof createSqliteLearnedSkillStore>,
+    store: ReturnType<typeof createSqliteMentalModelStore>,
     name: string,
     scope: { tenantId: string; agentId: string },
     until: (s: { state: string; proofCount: number } | undefined) => boolean,
@@ -1625,7 +1643,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
 
   it("a SUCCESS verdict whose usedSkillIds are admitted NAMES actually flips the real row candidate→active", async () => {
     const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
-    const seed = createSqliteLearnedSkillStore({ db });
+    const seed = createSqliteMentalModelStore({ db });
     const admitted = await seed.admit(
       {
         name: "deploy-the-thing",
@@ -1667,7 +1685,7 @@ describe("CR-01: promote/demote drive the REAL learned-skill store via name→id
     // proof_count to 1 (the row WAS found + reinforced) but 0+1 >= 3 is false → still
     // candidate. This isolates "the row was located by name" from "it was activated".
     const scope = { tenantId: SKILL_TENANT, agentId: SKILL_AGENT };
-    const seed = createSqliteLearnedSkillStore({ db });
+    const seed = createSqliteMentalModelStore({ db });
     await seed.admit(
       { name: "below-bar", description: "d", body: "b", mutating: false, proofCount: 0, confidence: 0.8, sourceTrajIds: ["t"], createdAt: NOW },
       scope,
@@ -1974,11 +1992,12 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 
-describe("wireLearningOutcome — surface refresh on skill ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
-  // A synthesis run that admits a candidate must refresh the per-agent surface NOW.
+describe("wireLearningOutcome — surface refresh on doc ADMISSION (SURFACE-ADMIT, live-2026-06-18)", () => {
+  // A reflection run that admits a candidate must refresh the per-agent surface NOW.
   // Otherwise the candidate stays invisible until the next boot, and promotion is
   // USE-gated (needs it surfaced first) — a second-order deadlock the post-promote
-  // refresh can never break. `learning:skill_synthesized.count` IS the admitted count.
+  // refresh can never break. `reflect:admitted.count` IS the admitted count (renamed
+  // from learning:skill_synthesized in Phase 226).
   function wire(refresh: (agentId: string) => void): TypedEventBus {
     const bus = new TypedEventBus();
     const { store } = makeStubStore();
@@ -1999,15 +2018,126 @@ describe("wireLearningOutcome — surface refresh on skill ADMISSION (SURFACE-AD
     return bus;
   }
 
-  it("refreshes the per-agent surface when a synthesis run ADMITTED >=1 skill", () => {
+  it("refreshes the per-agent surface when a reflection run ADMITTED >=1 doc", () => {
     const refresh = vi.fn();
-    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 1, timestamp: NOW });
+    wire(refresh).emit("reflect:admitted", { agentId: "agent-9", count: 1, timestamp: NOW });
     expect(refresh).toHaveBeenCalledWith("agent-9");
   });
 
-  it("does NOT refresh when a synthesis run admitted 0 skills (nothing new to surface)", () => {
+  it("does NOT refresh when a reflection run admitted 0 docs (nothing new to surface)", () => {
     const refresh = vi.fn();
-    wire(refresh).emit("learning:skill_synthesized", { agentId: "agent-9", count: 0, timestamp: NOW });
+    wire(refresh).emit("reflect:admitted", { agentId: "agent-9", count: 0, timestamp: NOW });
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+// Correction-driven demote: a user CORRECTION of a prior verdict must DEMOTE the learned skill that
+// produced it. The correction reader emits `learning:correction_observed` for the PRIOR trajectory;
+// wireLearningOutcome re-resolves it and runs the GATED skill-transition with a `corrected` verdict
+// (the resolve seam already dedup-consumed the trajectory, so this is the ONLY path that can demote
+// it). Reuses the SAME corroboration tally + decay-aware trend (anti-flap).
+describe("wireLearningOutcome — learning:correction_observed → demote the corrected skill", () => {
+  function wireCorrection(over?: {
+    resolveValue?: ResolvedOutcome;
+    learnedSkillStore?: MentalModelStorePort;
+    learningSkillsEnabled?: (id: string) => boolean;
+  }) {
+    const bus = new TypedEventBus();
+    const { store, resolve } = makeStubStore(over?.resolveValue ?? baseVerdict({ usedSkillIds: ["skill-ttp"] }));
+    const skills = mockLearnedSkillStore();
+    const logger = createMockLogger();
+    wireLearningOutcome({
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger,
+      learningOutcomeEnabled: () => true,
+      learnedSkillStore: over?.learnedSkillStore ?? skills.store,
+      learningSkillsEnabled: over?.learningSkillsEnabled ?? (() => true),
+      learningSkillsPromoteAt: () => 3,
+    });
+    const corr = (sessionId: string) =>
+      bus.emit("learning:correction_observed", {
+        agentId: AGENT,
+        tenantId: "tenant-x",
+        sessionId,
+        trajectoryId: TRACE,
+        confidence: 0.6,
+        timestamp: NOW,
+      });
+    return { bus, resolve, demoteByName: skills.demoteByName, corr, logger };
+  }
+
+  it("resolves the PRIOR trajectory to recover its credited skills (the listener runs)", async () => {
+    const { resolve, corr } = wireCorrection();
+    corr("sess-A");
+    await flushMicrotasks();
+    expect(resolve).toHaveBeenCalledWith(TRACE, { tenantId: "tenant-x", agentId: AGENT });
+  });
+
+  it("SUSTAINED corroborated corrections DEMOTE the skill, but ≤1 corroborated does NOT (anti-flap belt)", async () => {
+    const { corr, demoteByName } = wireCorrection();
+    // corr 1 (sess-A): 1 session — corroboration not yet met → no trend fold, no demote.
+    corr("sess-A");
+    await flushMicrotasks();
+    // corr 2 (sess-B): 2nd distinct session → corroborated, 1st failure folds → trend still "stable".
+    corr("sess-B");
+    await flushMicrotasks();
+    expect(demoteByName, "a single corroborated correction must NOT stale a well-reused skill (anti-induced-demotion)").not.toHaveBeenCalled();
+    // corr 3 (sess-C): sustained corroborated failure → trend reaches "weakening" → DEMOTE (active/candidate→stale).
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(demoteByName).toHaveBeenCalled();
+    expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("byte-identity: learningSkillsEnabled=false → never resolves / never demotes", async () => {
+    const { resolve, demoteByName, corr } = wireCorrection({ learningSkillsEnabled: () => false });
+    corr("sess-A");
+    corr("sess-B");
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(demoteByName).not.toHaveBeenCalled();
+  });
+
+  it("no credited skill on the corrected turn → nothing to demote (fail-closed)", async () => {
+    const { demoteByName, corr } = wireCorrection({ resolveValue: baseVerdict({ usedSkillIds: [] }) });
+    corr("sess-A");
+    corr("sess-B");
+    corr("sess-C");
+    await flushMicrotasks();
+    expect(demoteByName).not.toHaveBeenCalled();
+  });
+
+  // The correction→demote re-resolve path is otherwise SILENT until the 3rd corroborated correction
+  // actually demotes — so a single real correction can't be confirmed live. One INFO line per
+  // correction that credited ≥1 skill (counts/ids only) makes the path greppable in one look: "did
+  // the correction listener re-resolve + feed the gate?".
+  it("emits a counts-only INFO line when a correction credits ≥1 skill (the path is observable)", async () => {
+    const { corr, logger } = wireCorrection();
+    corr("sess-A");
+    await flushMicrotasks();
+    const infoCalls = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const driftLine = infoCalls.find((c) => (c[0] as { step?: string })?.step === "correction-demote-reresolve");
+    expect(driftLine, "a credited correction must log the re-resolve at INFO").toBeDefined();
+    const fields = driftLine![0] as { creditedSkillCount?: number; trajectoryId?: string; agentId?: string };
+    expect(fields.creditedSkillCount).toBe(1);
+    expect(fields.trajectoryId).toBe(TRACE);
+    expect(fields.agentId).toBe(AGENT);
+    // Counts/ids only — never a procedure body or the skill content (the §2.7 / SEC-01 firewall).
+    expect(JSON.stringify(driftLine)).not.toContain("skill-ttp"); // the id is not logged as content; count is
+  });
+
+  it("does NOT log the re-resolve line when no skill was credited (no noise on non-skill corrections)", async () => {
+    const { corr, logger } = wireCorrection({ resolveValue: baseVerdict({ usedSkillIds: [] }) });
+    corr("sess-A");
+    await flushMicrotasks();
+    const infoCalls = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const driftLine = infoCalls.find((c) => (c[0] as { step?: string })?.step === "correction-demote-reresolve");
+    expect(driftLine).toBeUndefined();
   });
 });

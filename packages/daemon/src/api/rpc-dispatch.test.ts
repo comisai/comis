@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
-import { PreconditionError, ValidationError } from "./errors.js";
+import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
 import { RequiredToolsUnreachableError } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -278,6 +278,15 @@ describe("classifyRpcError", () => {
     expect(result.errorKind).toBe("validation");
     expect(result.level).toBe("warn");
     expect(result.hint).toBeTruthy();
+  });
+
+  // OBS-10 (reflect-obs-20260627): an admin-trust denial is an EXPECTED authorization refusal, not an
+  // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a fleet ERROR.
+  it("classifies AuthorizationError as auth error (warn level), NOT internal/error", () => {
+    const result = classifyRpcError(new AuthorizationError("Admin access required for obs.explain (admin-trust only)"));
+    expect(result.errorKind).toBe("auth");
+    expect(result.level).toBe("warn"); // was internal/error via the bare-Error fallthrough
+    expect(result.hint).toMatch(/admin trust|admin-scoped|operator route/i);
   });
 
   // RequiredToolsUnreachableError must classify as validation/warn (not internal/error)

@@ -8267,10 +8267,13 @@
             "synthesisAbstained": {
               "type": "boolean"
             },
-            "userModelRevised": {
+            "skillsPromoted": {
               "type": "number"
             },
-            "memoriesGeneralized": {
+            "skillsDemoted": {
+              "type": "number"
+            },
+            "failuresAttributed": {
               "type": "number"
             }
           },

@@ -14,11 +14,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, OutcomeSignalPort, LearnedSkillStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution, SkillApprovalGate } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
@@ -26,7 +26,7 @@ import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
-import { buildSkillSynthesisCronDeps } from "./setup-channels-skill-synthesis-deps.js";
+import { buildReflectionCronDeps } from "./setup-channels-skill-synthesis-deps.js";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
 
 /** Closure-captured dependencies for the cron delivery listeners. */
@@ -67,38 +67,16 @@ export interface CronEventListenerDeps {
    *  isolation. Absent => causes parsed but not persisted. Built
    *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Consolidation store. Threaded into runMemoryConsolidation by the
-   *  opt-in `__MEMORY_CONSOLIDATION__` sentinel below. Built in setup-memory on the SAME db
-   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). Absent =>
-   *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
-   *  reaches it. */
+  /** Consolidation store. ORPHANED in Phase 225-05 (the runMemoryConsolidation job +
+   *  the `__MEMORY_CONSOLIDATION__` sentinel were deleted); the port + its memories table are
+   *  retired in Phase 226. Still threaded (no live writer). Built in setup-memory on the SAME db
+   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). */
   consolidationStore?: MemoryConsolidationStore;
-  /** Triple store — deductive current-truth write path, threaded into runMemoryReasoning via
-   *  the opt-in `__MEMORY_REASONING__` sentinel below (port TYPE, agent↛memory cut; same db
-   *  handle as the memory adapter). Absent ⇒ sentinel can't run; cron is off-by-default. */
-  tripleStore?: TripleStorePort;
-  /** Per-user representation store — the offline-builder
-   *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
-   *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
-   *  memory adapter owns; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op. Absent => the representation sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
-  userRepresentationStore?: UserRepresentationStore;
-  /** Directional relationship store — the __SOCIAL_MODELING__ sentinel's
-   *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
-   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
-   *  no-op. Absent => the relationship sentinel cannot run, but the cron is off-by-default
-   *  AND sign-off-gated so a default-config agent never reaches it. */
-  relationshipStore?: RelationshipStore;
-  /** Tuned-alpha store — the __ONLINE_TUNING__ bandit sentinel's
-   *  per-(tenant, agent) tuned-4-alpha-vector upsert write path. Built in setup-memory on the
-   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
-   *  registry → credentials chain — a missing thread would make the bandit a silent no-op
-   *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
-   *  off-by-default so a default-config agent never reaches it. */
-  tunedAlphaStore?: TunedAlphaStore;
+  // (The cron-path `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
+  //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
+  // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
+  //  upsert write path — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
   /** Memory-lifecycle sweep store — the KEYLESS
    *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
    *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
@@ -106,17 +84,16 @@ export interface CronEventListenerDeps {
    *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
    *  cron is off-by-default so a default-config agent never reaches it. */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** Recall-utility usefulness READ surface — the
-   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
-   *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
-  usefulnessStore?: MemoryUsefulnessStore;
-  outcomeStore?: OutcomeSignalPort; // SKILL-08/09: the __SKILL_SYNTHESIS__ runSkillSynthesis fail-closed success gate (agent↛memory)
-  learnedSkillStore?: LearnedSkillStorePort; // SKILL-08/09: the __SKILL_SYNTHESIS__ admit target (agent↛memory; off-by-default)
-  approvalGate?: SkillApprovalGate; // SKILL-08/09: the mutating-admission approval gate
-  /** Per-user representation read surface — the __USER_REPRESENTATION__
-   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
-   *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
-   *  surface backs the __SOCIAL_MODELING__ sentinel (grouped by resolved channelId). */
+  // (The cron-path `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
+  //  the deleted usefulness-judge sentinel. The FORGET-02 recordUsage reward write rides the
+  //  setup-learning.ts deps, not this cron chain; that store is untouched.)
+  outcomeStore?: OutcomeSignalPort; // v2.31 Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
+  learnedSkillStore?: MentalModelStorePort; // v2.31 Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
+  /** High-trust source read surface (`inspect`) — the surviving __REFLECT__ sentinel scopes
+   *  its per-(tenant, agent) profile/topic source read over it (the Phase 225 FOLD path).
+   *  Built in setup-memory; daemon-side (the agent imports no memory package). (The
+   *  __USER_REPRESENTATION__ + __SOCIAL_MODELING__ readers that also used this surface were
+   *  deleted in Phase 225-05 / 226-04 with their subsystems.) */
   memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
@@ -238,14 +215,9 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       agents,
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
-      tripleStore: deps.tripleStore,
-      userRepresentationStore: deps.userRepresentationStore,
-      relationshipStore: deps.relationshipStore,
-      tunedAlphaStore: deps.tunedAlphaStore,
       memoryLifecycleStore: deps.memoryLifecycleStore,
-      usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
-      skillSynthesis: buildSkillSynthesisCronDeps(deps), // SKILL-08/09 closed-graph bundle; undefined ⇒ off
+      reflection: buildReflectionCronDeps(deps), // v2.31 Reflection closed-graph bundle; undefined ⇒ off
       resolveAccessToken: deps.resolveAccessToken, // LEARN-01: OAuth-provider background jobs
     });
     if (handledMemoryCron) return;

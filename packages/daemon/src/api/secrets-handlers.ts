@@ -48,6 +48,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   SecretsSetContract,
   SecretsGetContract,
@@ -145,7 +146,7 @@ export function createSecretsHandlers(
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for secrets.get");
+        throw new AuthorizationError("Admin access required for secrets.get");
       }
 
       const bucket = readBucket.tryConsume();
@@ -265,7 +266,7 @@ export function createSecretsHandlers(
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for secrets.set");
+        throw new AuthorizationError("Admin access required for secrets.set");
       }
 
       const bucket = setBucket.tryConsume();
@@ -429,7 +430,7 @@ export function createSecretsHandlers(
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for secrets.list");
+        throw new AuthorizationError("Admin access required for secrets.list");
       }
 
       // Strip + contract-parse for type narrowing (request has no fields;
@@ -491,7 +492,7 @@ export function createSecretsHandlers(
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for secrets.delete");
+        throw new AuthorizationError("Admin access required for secrets.delete");
       }
 
       const bucket = deleteBucket.tryConsume();

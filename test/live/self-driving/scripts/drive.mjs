@@ -18,7 +18,22 @@ const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 const chatId = chatIdArg || '678314278';
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
+// Guard the #1 mis-invocation (hindsight-reflection-20260626): passing DATA in the maxMs slot
+// (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
+// the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
+// that actually landed. Fail LOUD instead of fabricating a no-reply.
+if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
+  console.error(`drive.mjs: non-numeric quiesceMs/maxMs (quiesceMs="${quiesceMsArg}", maxMs="${maxMsArg}"). ` +
+    `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
+  process.exit(2);
+}
 const DATA = dataArg || process.env.DATA || '/home/comis/.comis';
+// FROMUSER (env) — drive a chat as a DIFFERENT sender than the chatId. The session/trajectory stays
+// keyed by chatId, but the inbound message author is FROMUSER. Lets one trusted sender drive N distinct
+// chat-SESSIONS (reflection anti-domination cardinality is distinct (sessionId, sender) — so two chats
+// from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
+// pollution / no per-sender priming). Default: fromUserId == chatId (v2 behavior). (dispatch-learning-20260627)
+const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const emu = JSON.parse(readFileSync('/tmp/comis-emu.json', 'utf8'));
 const base = emu.apiRoot;
 
@@ -27,7 +42,7 @@ const getOutbound = async (after, waitMs) =>
 const inject = async (t) =>
   (await fetch(`${base}/control/chats/${chatId}/messages`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fromUserId: Number(chatId), text: t }),
+    body: JSON.stringify({ fromUserId: fromUser, text: t }),
   })).json();
 
 // v2: a message is PROGRESS (not the final answer) if it's a tool/announce/checklist/plan line.

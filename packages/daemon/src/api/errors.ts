@@ -30,3 +30,20 @@ export class ValidationError extends Error {
     this.name = "ValidationError";
   }
 }
+
+/**
+ * Caller lacks the admin TRUST this control-plane method requires (an operator on a
+ * non-admin token, or using the wrong route). OBS-10 (reflect-obs-20260627): an EXPECTED
+ * authorization denial — NOT an internal/handler fault. `classifyRpcError` maps it to
+ * `errorKind:"auth"`, `level:"warn"` so an operator's wrong-trust call (e.g. obs.explain over
+ * a non-admin token) does NOT read as a fleet ERROR / trip operator alerts (the denial itself
+ * is correct + the gate still fired; only the LOG classification changes). Replaces the bare
+ * `throw new Error("Admin access required …")` the dispatcher mis-classified as internal/error
+ * (the deleted substring-fallback — typed errors are the sanctioned path).
+ */
+export class AuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthorizationError";
+  }
+}

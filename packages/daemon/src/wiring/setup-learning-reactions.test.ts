@@ -584,7 +584,8 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     return {
       config: {
         agents: over.agents ?? {},
-        memory: { costFeatures: { enabled: over.costFeatures ?? true } },
+        // Phase 226: the master kill-switch is `memory.enabled` (was memory.costFeatures.enabled).
+        memory: { enabled: over.costFeatures ?? true },
         providers: { entries: {} },
       },
       secretManager: { get: (name: string): string | undefined => secrets[name] },
@@ -622,6 +623,42 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     );
     expect(built.deps.learningOutcomeEnabled("a1")).toBe(false); // master switch off → gate closed
     expect(built.recordOutboundMessage).toBeUndefined(); // and the capture is off
+  });
+
+  // -------------------------------------------------------------------------
+  // H-1 (Phase 226): the master-kill-switch rename `memory.costFeatures.enabled`
+  // → `memory.enabled` MUST NOT silently invert the gate. This reader once
+  // declared a LOOSE local type `memory?: { costFeatures?: { enabled?: boolean } }`
+  // gating on `memory?.costFeatures?.enabled !== false`. After the schema collapse
+  // deletes `costFeatures`, a config with ONLY `memory.enabled:false` (the NEW
+  // shape) would read `undefined !== false === true` → FORCE-ENABLED (the
+  // kill-switch inverts), invisible to tsc. This pins the CORRECT post-rename
+  // behavior (force-DISABLE) — RED against the pre-rename loose reader. The fix
+  // re-points the local slice to the real MemoryConfig type AND this is the belt.
+  // -------------------------------------------------------------------------
+  it("H-1: memory.enabled:false (the renamed master kill-switch) force-DISABLES the reaction/outcome wiring for every agent", () => {
+    const { store } = makeStubStore();
+    const built = buildReactionWiringDeps(
+      // The NEW shape: memory.enabled is the master gate; NO costFeatures key exists.
+      {
+        config: {
+          agents: { a1: { learningOutcome: { enabled: true } } },
+          memory: { enabled: false },
+          providers: { entries: {} },
+        },
+        secretManager: { get: (): string | undefined => undefined },
+        eventBus: new TypedEventBus(),
+        outcomeStore: store,
+        logger: createMockLogger(),
+      } as never,
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    // The master kill-switch is OFF → the outcome gate must be closed for every agent.
+    // (Pre-rename: reads costFeatures (absent) → undefined !== false === true → force-ENABLED → RED.)
+    expect(built.deps.learningOutcomeEnabled("a1")).toBe(false);
+    // And byte-identity: the outbound capture is off when the master switch is off.
+    expect(built.recordOutboundMessage).toBeUndefined();
   });
 
   it("resolveSenderTrust reads senderTrustMap[reactorId] ?? defaultTrustLevel (RAW channel-sender string, default external)", () => {
@@ -797,7 +834,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
             elevatedReply: { senderTrustMap: { flooder: "admin" }, defaultTrustLevel: "external" },
           },
         },
-        memory: { costFeatures: { enabled: true } },
+        memory: { enabled: true },
         providers: { entries: {} },
       },
       secretManager: { get: (): string | undefined => undefined },
@@ -843,7 +880,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
             elevatedReply: { senderTrustMap: {}, defaultTrustLevel: "known" },
           },
         },
-        memory: { costFeatures: { enabled: true } },
+        memory: { enabled: true },
         providers: { entries: {} },
       },
       secretManager: { get: (): string | undefined => undefined },

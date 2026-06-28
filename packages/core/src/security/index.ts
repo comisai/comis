@@ -115,6 +115,13 @@ export type { InputSecurityGuard, InputSecurityGuardResult, InputSecurityGuardCo
 export { validateMemoryWrite } from "./memory-write-validator.js";
 export type { MemoryWriteValidationResult } from "./memory-write-validator.js";
 
+// Learned-doc static scan (v2.31 Reflection) — the STATIC poison/secret scan an
+// advisory Mental Model doc receives (SKILL-02 / INV-3). Wraps validateMemoryWrite
+// per-field; no scripts/tool-policy/dynamic surface. Consumed by the agent reflection
+// job (223-04) + the daemon reflect path (223-05).
+export { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "./validate-learned-doc-body.js";
+export type { LearnedDocValidation, LearnedDocFinding } from "./validate-learned-doc-body.js";
+
 // Canary tokens
 export { generateCanaryToken, detectCanaryLeakage } from "./canary-token.js";
 

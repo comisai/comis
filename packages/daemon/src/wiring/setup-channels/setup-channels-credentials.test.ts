@@ -24,7 +24,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // runMemoryConsolidation is the spy the behavioral tests assert against.
 // ---------------------------------------------------------------------------
 
-// Phase 203: runMemoryConsolidation now returns counts-only stats (was void) — the daemon emits learning:memory_generalized from them.
+// runMemoryConsolidation returns counts-only stats (generalized/clustersConsidered/durationMs).
+// (The learning:memory_generalized telemetry event was deleted in Phase 226 SIMPLIFY-04; the
+// consolidation cron no longer emits a learning event — the stats stay for the INFO completion line.)
 const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { generalized: 0, clustersConsidered: 0, durationMs: 0 } })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 // The reasoning job + its injected-seam factory. runMemoryReasoning
@@ -95,14 +97,14 @@ function makeEventBus() {
   };
 }
 
-/** A stub consolidation store — its methods must NEVER be reached on the
- *  short-circuit path (RED A); on the enabled path runMemoryConsolidation is
- *  mocked so these are not called by the daemon test directly either. */
+/** A stub consolidation store — the trimmed live surface (Phase 226 cut the
+ *  dead consolidation-cron writer methods). Its methods are not reached on the
+ *  short-circuit path. */
 function makeConsolidationStore() {
   return {
-    listConsolidationCandidates: vi.fn(async () => ({ ok: true as const, value: [] })),
     listObservations: vi.fn(async () => ({ ok: true as const, value: [] })),
-    applyConsolidation: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    unlinkDeletedSources: vi.fn(async () => ({ ok: true as const, value: 0 })),
+    purgeConsolidatedDerivedFrom: vi.fn(async () => ({ ok: true as const, value: 0 })),
   };
 }
 
@@ -220,83 +222,31 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
-  // RED A — the opt-in cost gate
-  // A disabled (or default-config) agent must do NO consolidation work and the
-  // sentinel must short-circuit ok so the scheduler records a clean run.
+  // Phase 225 FOLD §3.2: the __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+  // __USER_REPRESENTATION__ sentinel intercepts were REMOVED end-to-end — their work
+  // folds into the ONE __REFLECT__ cron (Plan 04). Fired through registerCronEventListeners
+  // (with the per-agent features ENABLED), the consolidation/reasoning jobs are NEVER
+  // invoked — the sentinel is no longer routed (the registrations are gone too, so it can
+  // no longer fire in production; this proves a stray one is inert).
   // -------------------------------------------------------------------------
 
-  it("short-circuits ok and does NOT run consolidation when the agent has it disabled (opt-in gate)", async () => {
-    const consolidationStore = makeConsolidationStore();
-    const deps = makeDeps({
-      // memoryConsolidation undefined => default OFF.
-      agents: { "agent-1": { name: "Agent 1" } },
-      consolidationStore,
-    });
-    registerCronEventListeners(deps);
+  it.each(["__MEMORY_CONSOLIDATION__", "__MEMORY_REASONING__", "__USER_REPRESENTATION__"])(
+    "FOLD: the removed %s sentinel runs no job end-to-end (folded into __REFLECT__)",
+    async (sentinel) => {
+      const deps = makeDeps({
+        agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true }, memoryReasoning: { enabled: true }, memoryUserRepresentation: { enabled: true } } },
+        apiKey: "test-key",
+      });
+      registerCronEventListeners(deps);
 
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: "agent-1",
-      onComplete,
-    });
+      const onComplete = vi.fn();
+      await deps.__eventBus.fire("scheduler:job_result", { result: sentinel, agentId: "agent-1", onComplete });
 
-    // The opt-in cost gate: no LLM work, no store reads, clean ok.
-    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
-    expect(consolidationStore.listConsolidationCandidates).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("short-circuits ok for an explicitly disabled (enabled:false) agent", async () => {
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", memoryConsolidation: { enabled: false } } },
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  // -------------------------------------------------------------------------
-  // RED B — the enabled path
-  // An operator-enabled agent runs runMemoryConsolidation with the injected
-  // store + clock + the resolved cheap model/key; onComplete reflects the result.
-  // -------------------------------------------------------------------------
-
-  it("runs runMemoryConsolidation with the injected store + clock when the agent has it enabled", async () => {
-    const consolidationStore = makeConsolidationStore();
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true, maxCandidatesPerRun: 50 } } },
-      apiKey: "test-key",
-      consolidationStore,
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryConsolidation.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.agentId).toBe("agent-1");
-    expect(arg.tenantId).toBe("tenant-a");
-    // The injected store (from setup-memory) + clock (composition root) reach the job.
-    expect(arg.consolidationStore).toBe(consolidationStore);
-    expect(arg.clock).toBe(deps.clock);
-    expect(arg.apiKey).toBe("test-key");
-    expect(arg.config).toEqual({ enabled: true, maxCandidatesPerRun: 50 });
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
+      // The folded jobs are never invoked (the intercept branches are gone).
+      expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
+      expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+    },
+  );
 
   // -------------------------------------------------------------------------
   // CR-01: the __MEMORY_REVIEW__ branch threads R6 capabilityClass +
@@ -351,202 +301,6 @@ describe("setup-channels-credentials", () => {
     const arg = mockRunMemoryReview.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.capabilityClass).toBe("frontier");
     expect(arg.hasCapableModelOverride).toBe(true);
-  });
-
-  it("reports an error onComplete when runMemoryConsolidation returns err", async () => {
-    mockRunMemoryConsolidation.mockResolvedValueOnce({ ok: false as const, error: new Error("boom") });
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryConsolidation).toHaveBeenCalledOnce();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "boom" });
-  });
-
-  it("skips with an error when an enabled agent has no API key (no key value logged)", async () => {
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryConsolidation: { enabled: true } } },
-      apiKey: undefined, // secretManager.get returns undefined
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    // No LLM work without a key; the WARN carries the env-var NAME, never the value.
-    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-
-  it("warns + errors when the consolidation sentinel fires without an agentId", async () => {
-    const deps = makeDeps();
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_CONSOLIDATION__",
-      agentId: undefined,
-      onComplete,
-    });
-
-    expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory consolidation" });
-  });
-
-  // -------------------------------------------------------------------------
-  // __MEMORY_REASONING__ sentinel.
-  // Mirrors the consolidation block: the opt-in cost gate (a disabled/default
-  // agent does NO LLM work) + the enabled path (runMemoryReasoning runs with
-  // BOTH the consolidation store AND the triple store injected + the built
-  // reason() seam). The triple-store thread is the deductive write path — a
-  // missing thread would make the deductive path a silent no-op.
-  // -------------------------------------------------------------------------
-
-  it("short-circuits ok and does NOT run reasoning when the agent has it disabled (opt-in gate)", async () => {
-    const consolidationStore = makeConsolidationStore();
-    const tripleStore = makeTripleStore();
-    const deps = makeDeps({
-      // memoryReasoning undefined => default OFF.
-      agents: { "agent-1": { name: "Agent 1" } },
-      consolidationStore,
-      tripleStore,
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    // The opt-in cost gate: no LLM work, no store reads, clean ok.
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
-    expect(consolidationStore.listConsolidationCandidates).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("short-circuits ok for an explicitly disabled (enabled:false) reasoning agent", async () => {
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", memoryReasoning: { enabled: false } } },
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
-  });
-
-  it("runs runMemoryReasoning with BOTH stores + the built reason seam when the agent has it enabled", async () => {
-    const consolidationStore = makeConsolidationStore();
-    const tripleStore = makeTripleStore();
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true, maxObservationsPerRun: 25 } } },
-      apiKey: "test-key",
-      consolidationStore,
-      tripleStore,
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryReasoning).toHaveBeenCalledOnce();
-    const arg = mockRunMemoryReasoning.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.agentId).toBe("agent-1");
-    expect(arg.tenantId).toBe("tenant-a");
-    // BOTH stores injected (the field-plumbing chain is complete) — the deductive
-    // write path (tripleStore) AND the inductive write path (consolidationStore).
-    expect(arg.consolidationStore).toBe(consolidationStore);
-    expect(arg.tripleStore).toBe(tripleStore);
-    expect(arg.clock).toBe(deps.clock);
-    // The injected reason seam was built from the resolved cheap model + key, and
-    // is the exact fn passed as deps.reason.
-    expect(mockCreateReasoningSeam).toHaveBeenCalledOnce();
-    const seamArg = mockCreateReasoningSeam.mock.calls[0][0] as Record<string, unknown>;
-    expect(seamArg.apiKey).toBe("test-key");
-    expect(seamArg.provider).toBe("anthropic");
-    expect(arg.reason).toBe(mockReasonSeam);
-    expect(arg.config).toEqual({ enabled: true, maxObservationsPerRun: 25 });
-    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
-  });
-
-  it("reports an error onComplete when runMemoryReasoning returns err", async () => {
-    mockRunMemoryReasoning.mockResolvedValueOnce({ ok: false as const, error: new Error("boom") });
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
-      apiKey: "test-key",
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    expect(mockRunMemoryReasoning).toHaveBeenCalledOnce();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "boom" });
-  });
-
-  it("skips reasoning with an error when an enabled agent has no API key (no key value logged)", async () => {
-    const deps = makeDeps({
-      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
-      apiKey: undefined, // secretManager.get returns undefined
-    });
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: "agent-1",
-      onComplete,
-    });
-
-    // No LLM work without a key; the seam is never built, the job never runs.
-    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
-  });
-
-  it("warns + errors when the reasoning sentinel fires without an agentId", async () => {
-    const deps = makeDeps();
-    registerCronEventListeners(deps);
-
-    const onComplete = vi.fn();
-    await deps.__eventBus.fire("scheduler:job_result", {
-      result: "__MEMORY_REASONING__",
-      agentId: undefined,
-      onComplete,
-    });
-
-    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
   });
 
   // -------------------------------------------------------------------------

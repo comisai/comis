@@ -1245,48 +1245,90 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "enabled": true,
-      "eviction": {
-        "enabled": true,
-        "strengthThreshold": 0.2
+      "forget": {
+        "failureEvictionFloor": 3,
+        "highProofFloor": 5,
+        "maxDormantDays": 365
       },
-      "failurePenalty": 0.5
+      "reflect": {
+        "maxDocsPerRun": 100,
+        "minConfidence": 0.6,
+        "promoteAtProofCount": 3,
+        "schedule": "0 */3 * * *"
+      }
     },
     "immutable": true,
-    "path": "agents.learningForgetting",
+    "path": "agents.learning",
     "type": "object"
   },
   {
     "default": true,
     "immutable": true,
-    "path": "agents.learningForgetting.enabled",
+    "path": "agents.learning.enabled",
     "type": "boolean"
   },
   {
     "default": {
-      "enabled": true,
-      "strengthThreshold": 0.2
+      "failureEvictionFloor": 3,
+      "highProofFloor": 5,
+      "maxDormantDays": 365
     },
     "immutable": true,
-    "path": "agents.learningForgetting.eviction",
+    "path": "agents.learning.forget",
     "type": "object"
   },
   {
-    "default": true,
+    "default": 3,
     "immutable": true,
-    "path": "agents.learningForgetting.eviction.enabled",
-    "type": "boolean"
+    "path": "agents.learning.forget.failureEvictionFloor",
+    "type": "integer"
   },
   {
-    "default": 0.2,
+    "default": 5,
     "immutable": true,
-    "path": "agents.learningForgetting.eviction.strengthThreshold",
+    "path": "agents.learning.forget.highProofFloor",
+    "type": "integer"
+  },
+  {
+    "default": 365,
+    "immutable": true,
+    "path": "agents.learning.forget.maxDormantDays",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "maxDocsPerRun": 100,
+      "minConfidence": 0.6,
+      "promoteAtProofCount": 3,
+      "schedule": "0 */3 * * *"
+    },
+    "immutable": true,
+    "path": "agents.learning.reflect",
+    "type": "object"
+  },
+  {
+    "default": 100,
+    "immutable": true,
+    "path": "agents.learning.reflect.maxDocsPerRun",
+    "type": "integer"
+  },
+  {
+    "default": 0.6,
+    "immutable": true,
+    "path": "agents.learning.reflect.minConfidence",
     "type": "number"
   },
   {
-    "default": 0.5,
+    "default": 3,
     "immutable": true,
-    "path": "agents.learningForgetting.failurePenalty",
-    "type": "number"
+    "path": "agents.learning.reflect.promoteAtProofCount",
+    "type": "integer"
+  },
+  {
+    "default": "0 */3 * * *",
+    "immutable": true,
+    "path": "agents.learning.reflect.schedule",
+    "type": "string"
   },
   {
     "default": {
@@ -1308,7 +1350,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
           "âœ…"
         ]
       },
-      "retentionDays": 30,
+      "retentionDays": 90,
       "sources": [
         "tool",
         "pipeline"
@@ -1392,7 +1434,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": 30,
+    "default": 90,
     "immutable": true,
     "path": "agents.learningOutcome.retentionDays",
     "type": "integer"
@@ -1405,110 +1447,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.learningOutcome.sources",
     "type": "array"
-  },
-  {
-    "default": {
-      "approval": {
-        "requireForMutating": true
-      },
-      "autoAdmitReadOnly": true,
-      "enabled": true,
-      "minConfidence": 0.7,
-      "promoteAtProofCount": 3,
-      "validation": {
-        "requireReproduction": true
-      }
-    },
-    "immutable": true,
-    "path": "agents.learningSkills",
-    "type": "object"
-  },
-  {
-    "default": {
-      "requireForMutating": true
-    },
-    "immutable": true,
-    "path": "agents.learningSkills.approval",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.approval.requireForMutating",
-    "type": "boolean"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.autoAdmitReadOnly",
-    "type": "boolean"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 0.7,
-    "immutable": true,
-    "path": "agents.learningSkills.minConfidence",
-    "type": "number"
-  },
-  {
-    "default": 3,
-    "immutable": true,
-    "path": "agents.learningSkills.promoteAtProofCount",
-    "type": "integer"
-  },
-  {
-    "default": {
-      "requireReproduction": true
-    },
-    "immutable": true,
-    "path": "agents.learningSkills.validation",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningSkills.validation.requireReproduction",
-    "type": "boolean"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "exploration": 0.1,
-      "learner": "bandit",
-      "perIntent": true
-    },
-    "immutable": true,
-    "path": "agents.learningTuning",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningTuning.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 0.1,
-    "immutable": true,
-    "path": "agents.learningTuning.exploration",
-    "type": "number"
-  },
-  {
-    "default": "bandit",
-    "immutable": true,
-    "path": "agents.learningTuning.learner",
-    "type": "string"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.learningTuning.perIntent",
-    "type": "boolean"
   },
   {
     "default": 100000,
@@ -1535,126 +1473,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "autoTags": [],
-      "consolidateExternal": false,
-      "dedupThreshold": 0.9,
       "enabled": true,
-      "generalize": {
-        "enabled": true,
-        "minDistinctContexts": 3
-      },
-      "maxCandidatesPerRun": 200,
-      "maxClusterSize": 12,
-      "maxClustersPerRun": 25,
-      "maxConsolidationTokens": 1024,
-      "schedule": "30 3 * * *",
-      "similarityThreshold": 0.82
-    },
-    "immutable": true,
-    "path": "agents.memoryConsolidation",
-    "type": "object"
-  },
-  {
-    "default": [],
-    "immutable": true,
-    "path": "agents.memoryConsolidation.autoTags",
-    "type": "array"
-  },
-  {
-    "default": false,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.consolidateExternal",
-    "type": "boolean"
-  },
-  {
-    "default": 0.9,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.dedupThreshold",
-    "type": "number"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "minDistinctContexts": 3
-    },
-    "immutable": true,
-    "path": "agents.memoryConsolidation.generalize",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.generalize.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 3,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.generalize.minDistinctContexts",
-    "type": "integer"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.maxCandidatesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 12,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.maxClusterSize",
-    "type": "integer"
-  },
-  {
-    "default": 25,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.maxClustersPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 1024,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.maxConsolidationTokens",
-    "type": "integer"
-  },
-  {
-    "default": "30 3 * * *",
-    "immutable": true,
-    "path": "agents.memoryConsolidation.schedule",
-    "type": "string"
-  },
-  {
-    "default": 0.82,
-    "immutable": true,
-    "path": "agents.memoryConsolidation.similarityThreshold",
-    "type": "number"
-  },
-  {
-    "default": {
-      "durableCap": 1000,
-      "enabled": true,
-      "ephemeralCap": 500,
-      "epsilonPrune": 0.05,
-      "maxDormantDays": 90,
-      "schedule": "0 9 * * *",
-      "thetaDemote": 0.3,
-      "thetaPromote": 0.7
+      "schedule": "0 9 * * *"
     },
     "immutable": true,
     "path": "agents.memoryLifecycle",
     "type": "object"
-  },
-  {
-    "default": 1000,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.durableCap",
-    "type": "integer"
   },
   {
     "default": true,
@@ -1663,146 +1487,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 500,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.ephemeralCap",
-    "type": "integer"
-  },
-  {
-    "default": 0.05,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.epsilonPrune",
-    "type": "number"
-  },
-  {
-    "default": 90,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.maxDormantDays",
-    "type": "integer"
-  },
-  {
     "default": "0 9 * * *",
     "immutable": true,
     "path": "agents.memoryLifecycle.schedule",
     "type": "string"
   },
   {
-    "default": 0.3,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.thetaDemote",
-    "type": "number"
-  },
-  {
-    "default": 0.7,
-    "immutable": true,
-    "path": "agents.memoryLifecycle.thetaPromote",
-    "type": "number"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "maxSourceMemories": 200,
-      "schedule": "0 8 * * *"
-    },
-    "immutable": true,
-    "path": "agents.memoryOnlineTuning",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryOnlineTuning.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryOnlineTuning.maxSourceMemories",
-    "type": "integer"
-  },
-  {
-    "default": "0 8 * * *",
-    "immutable": true,
-    "path": "agents.memoryOnlineTuning.schedule",
-    "type": "string"
-  },
-  {
-    "default": {
-      "autoTags": [],
-      "enabled": true,
-      "knnK": 10,
-      "maxCandidatesPerRun": 200,
-      "maxObservationsPerRun": 25,
-      "maxReasoningTokens": 1024,
-      "reasonExternal": false,
-      "schedule": "0 4 * * *",
-      "surprisalTopFraction": 0.1
-    },
-    "immutable": true,
-    "path": "agents.memoryReasoning",
-    "type": "object"
-  },
-  {
-    "default": [],
-    "immutable": true,
-    "path": "agents.memoryReasoning.autoTags",
-    "type": "array"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryReasoning.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 10,
-    "immutable": true,
-    "path": "agents.memoryReasoning.knnK",
-    "type": "integer"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryReasoning.maxCandidatesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 25,
-    "immutable": true,
-    "path": "agents.memoryReasoning.maxObservationsPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 1024,
-    "immutable": true,
-    "path": "agents.memoryReasoning.maxReasoningTokens",
-    "type": "integer"
-  },
-  {
-    "default": false,
-    "immutable": true,
-    "path": "agents.memoryReasoning.reasonExternal",
-    "type": "boolean"
-  },
-  {
-    "default": "0 4 * * *",
-    "immutable": true,
-    "path": "agents.memoryReasoning.schedule",
-    "type": "string"
-  },
-  {
-    "default": 0.1,
-    "immutable": true,
-    "path": "agents.memoryReasoning.surprisalTopFraction",
-    "type": "number"
-  },
-  {
     "default": {
       "autoTags": [],
       "dedupThreshold": 0.85,
       "enabled": true,
-      "maxReviewTokens": 4096,
-      "maxSessionsPerRun": 10,
+      "maxReviewTokens": 16384,
+      "maxSessionsPerRun": 50,
       "minMessages": 5,
       "schedule": "0 2 * * *"
     },
@@ -1829,13 +1525,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 4096,
+    "default": 16384,
     "immutable": true,
     "path": "agents.memoryReview.maxReviewTokens",
     "type": "integer"
   },
   {
-    "default": 10,
+    "default": 50,
     "immutable": true,
     "path": "agents.memoryReview.maxSessionsPerRun",
     "type": "integer"
@@ -1850,118 +1546,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": "0 2 * * *",
     "immutable": true,
     "path": "agents.memoryReview.schedule",
-    "type": "string"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "maxCandidatesPerRun": 200,
-      "schedule": "0 6 * * *"
-    },
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.maxCandidatesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": "0 6 * * *",
-    "immutable": true,
-    "path": "agents.memoryTripleExtraction.schedule",
-    "type": "string"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "maxSourceChars": 24000,
-      "maxSourceMemories": 200,
-      "schedule": "0 7 * * *"
-    },
-    "immutable": true,
-    "path": "agents.memoryUsefulnessJudge",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryUsefulnessJudge.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 24000,
-    "immutable": true,
-    "path": "agents.memoryUsefulnessJudge.maxSourceChars",
-    "type": "integer"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryUsefulnessJudge.maxSourceMemories",
-    "type": "integer"
-  },
-  {
-    "default": "0 7 * * *",
-    "immutable": true,
-    "path": "agents.memoryUsefulnessJudge.schedule",
-    "type": "string"
-  },
-  {
-    "default": {
-      "enabled": true,
-      "historyCap": 10,
-      "maxEntriesPerRun": 50,
-      "maxSourceChars": 24000,
-      "maxSourceMemories": 200,
-      "schedule": "0 5 * * *"
-    },
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 10,
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.historyCap",
-    "type": "integer"
-  },
-  {
-    "default": 50,
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.maxEntriesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 24000,
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.maxSourceChars",
-    "type": "integer"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.maxSourceMemories",
-    "type": "integer"
-  },
-  {
-    "default": "0 5 * * *",
-    "immutable": true,
-    "path": "agents.memoryUserRepresentation.schedule",
     "type": "string"
   },
   {
@@ -2308,9 +1892,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "enabled": true,
         "lambda": 0.7
       },
-      "onlineTuning": {
-        "enabled": true
-      },
       "pinned": {
         "enabled": false,
         "maxPinnedInjection": 5
@@ -2602,20 +2183,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag.mmr.lambda",
     "type": "number"
-  },
-  {
-    "default": {
-      "enabled": true
-    },
-    "immutable": true,
-    "path": "agents.rag.onlineTuning",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.rag.onlineTuning.enabled",
-    "type": "boolean"
   },
   {
     "default": {
@@ -3676,46 +3243,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.skills.watchEnabled",
     "type": "boolean"
-  },
-  {
-    "immutable": true,
-    "path": "agents.socialModeling",
-    "type": "object"
-  },
-  {
-    "default": false,
-    "immutable": true,
-    "path": "agents.socialModeling.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 50,
-    "immutable": true,
-    "path": "agents.socialModeling.maxEntriesPerRun",
-    "type": "integer"
-  },
-  {
-    "default": 24000,
-    "immutable": true,
-    "path": "agents.socialModeling.maxSourceChars",
-    "type": "integer"
-  },
-  {
-    "default": 200,
-    "immutable": true,
-    "path": "agents.socialModeling.maxSourceMemories",
-    "type": "integer"
-  },
-  {
-    "immutable": true,
-    "path": "agents.socialModeling.privacyReviewSignedOffBy",
-    "type": "string"
-  },
-  {
-    "default": "0 6 * * *",
-    "immutable": true,
-    "path": "agents.socialModeling.schedule",
-    "type": "string"
   },
   {
     "immutable": true,
@@ -7457,47 +6984,49 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
     "type": "integer"
   },
   {
-    "default": {
-      "enabled": true
-    },
-    "immutable": false,
-    "path": "memory.costFeatures",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "memory.costFeatures.enabled",
-    "type": "boolean"
-  },
-  {
     "default": "memory.db",
     "immutable": false,
     "path": "memory.dbPath",
     "type": "string"
   },
   {
+    "default": true,
+    "immutable": false,
+    "path": "memory.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "embeddingDimensions": 1536,
+      "embeddingModel": "text-embedding-3-small",
+      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    },
+    "immutable": false,
+    "path": "memory.recall",
+    "type": "object"
+  },
+  {
     "default": 1536,
     "immutable": false,
-    "path": "memory.embeddingDimensions",
+    "path": "memory.recall.embeddingDimensions",
     "type": "integer"
   },
   {
     "default": "text-embedding-3-small",
     "immutable": false,
-    "path": "memory.embeddingModel",
+    "path": "memory.recall.embeddingModel",
+    "type": "string"
+  },
+  {
+    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+    "immutable": false,
+    "path": "memory.recall.rerankerModel",
     "type": "string"
   },
   {
     "default": "auto",
     "immutable": false,
     "path": "memory.rerankerGpu",
-    "type": "string"
-  },
-  {
-    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
-    "immutable": false,
-    "path": "memory.rerankerModel",
     "type": "string"
   },
   {
@@ -8795,13 +8324,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "enabled": true,
           "maxActiveCaches": 20
         },
-        "learningForgetting": {
+        "learning": {
           "enabled": true,
-          "eviction": {
-            "enabled": true,
-            "strengthThreshold": 0.2
+          "forget": {
+            "failureEvictionFloor": 3,
+            "highProofFloor": 5,
+            "maxDormantDays": 365
           },
-          "failurePenalty": 0.5
+          "reflect": {
+            "maxDocsPerRun": 100,
+            "minConfidence": 0.6,
+            "promoteAtProofCount": 3,
+            "schedule": "0 */3 * * *"
+          }
         },
         "learningOutcome": {
           "correction": {
@@ -8822,102 +8357,27 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
               "âœ…"
             ]
           },
-          "retentionDays": 30,
+          "retentionDays": 90,
           "sources": [
             "tool",
             "pipeline"
           ]
         },
-        "learningSkills": {
-          "approval": {
-            "requireForMutating": true
-          },
-          "autoAdmitReadOnly": true,
-          "enabled": true,
-          "minConfidence": 0.7,
-          "promoteAtProofCount": 3,
-          "validation": {
-            "requireReproduction": true
-          }
-        },
-        "learningTuning": {
-          "enabled": true,
-          "exploration": 0.1,
-          "learner": "bandit",
-          "perIntent": true
-        },
         "maxContextChars": 100000,
         "maxSteps": 150,
         "maxToolResultChars": 50000,
-        "memoryConsolidation": {
-          "autoTags": [],
-          "consolidateExternal": false,
-          "dedupThreshold": 0.9,
-          "enabled": true,
-          "generalize": {
-            "enabled": true,
-            "minDistinctContexts": 3
-          },
-          "maxCandidatesPerRun": 200,
-          "maxClusterSize": 12,
-          "maxClustersPerRun": 25,
-          "maxConsolidationTokens": 1024,
-          "schedule": "30 3 * * *",
-          "similarityThreshold": 0.82
-        },
         "memoryLifecycle": {
-          "durableCap": 1000,
           "enabled": true,
-          "ephemeralCap": 500,
-          "epsilonPrune": 0.05,
-          "maxDormantDays": 90,
-          "schedule": "0 9 * * *",
-          "thetaDemote": 0.3,
-          "thetaPromote": 0.7
-        },
-        "memoryOnlineTuning": {
-          "enabled": true,
-          "maxSourceMemories": 200,
-          "schedule": "0 8 * * *"
-        },
-        "memoryReasoning": {
-          "autoTags": [],
-          "enabled": true,
-          "knnK": 10,
-          "maxCandidatesPerRun": 200,
-          "maxObservationsPerRun": 25,
-          "maxReasoningTokens": 1024,
-          "reasonExternal": false,
-          "schedule": "0 4 * * *",
-          "surprisalTopFraction": 0.1
+          "schedule": "0 9 * * *"
         },
         "memoryReview": {
           "autoTags": [],
           "dedupThreshold": 0.85,
           "enabled": true,
-          "maxReviewTokens": 4096,
-          "maxSessionsPerRun": 10,
+          "maxReviewTokens": 16384,
+          "maxSessionsPerRun": 50,
           "minMessages": 5,
           "schedule": "0 2 * * *"
-        },
-        "memoryTripleExtraction": {
-          "enabled": true,
-          "maxCandidatesPerRun": 200,
-          "schedule": "0 6 * * *"
-        },
-        "memoryUsefulnessJudge": {
-          "enabled": true,
-          "maxSourceChars": 24000,
-          "maxSourceMemories": 200,
-          "schedule": "0 7 * * *"
-        },
-        "memoryUserRepresentation": {
-          "enabled": true,
-          "historyCap": 10,
-          "maxEntriesPerRun": 50,
-          "maxSourceChars": 24000,
-          "maxSourceMemories": 200,
-          "schedule": "0 5 * * *"
         },
         "model": "default",
         "modelFailover": {
@@ -8987,9 +8447,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "mmr": {
             "enabled": true,
             "lambda": 0.7
-          },
-          "onlineTuning": {
-            "enabled": true
           },
           "pinned": {
             "enabled": false,
@@ -13478,14 +12935,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "targetSize": 500,
         "threshold": 1000
       },
-      "costFeatures": {
-        "enabled": true
-      },
       "dbPath": "memory.db",
-      "embeddingDimensions": 1536,
-      "embeddingModel": "text-embedding-3-small",
+      "enabled": true,
+      "recall": {
+        "embeddingDimensions": 1536,
+        "embeddingModel": "text-embedding-3-small",
+        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+      },
       "rerankerGpu": "auto",
-      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
       "rerankerModelsDir": "models",
       "rerankerThreads": 4,
       "retention": {
@@ -13526,47 +12983,49 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": {
-      "enabled": true
-    },
-    "immutable": false,
-    "path": "memory.costFeatures",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "memory.costFeatures.enabled",
-    "type": "boolean"
-  },
-  {
     "default": "memory.db",
     "immutable": false,
     "path": "memory.dbPath",
     "type": "string"
   },
   {
+    "default": true,
+    "immutable": false,
+    "path": "memory.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "embeddingDimensions": 1536,
+      "embeddingModel": "text-embedding-3-small",
+      "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    },
+    "immutable": false,
+    "path": "memory.recall",
+    "type": "object"
+  },
+  {
     "default": 1536,
     "immutable": false,
-    "path": "memory.embeddingDimensions",
+    "path": "memory.recall.embeddingDimensions",
     "type": "integer"
   },
   {
     "default": "text-embedding-3-small",
     "immutable": false,
-    "path": "memory.embeddingModel",
+    "path": "memory.recall.embeddingModel",
+    "type": "string"
+  },
+  {
+    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+    "immutable": false,
+    "path": "memory.recall.rerankerModel",
     "type": "string"
   },
   {
     "default": "auto",
     "immutable": false,
     "path": "memory.rerankerGpu",
-    "type": "string"
-  },
-  {
-    "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
-    "immutable": false,
-    "path": "memory.rerankerModel",
     "type": "string"
   },
   {
@@ -17740,56 +17199,106 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "language": {
       "type": "string"
     },
-    "learningForgetting": {
+    "learning": {
       "additionalProperties": false,
       "default": {
         "enabled": true,
-        "eviction": {
-          "enabled": true,
-          "strengthThreshold": 0.2
+        "forget": {
+          "failureEvictionFloor": 3,
+          "highProofFloor": 5,
+          "maxDormantDays": 365
         },
-        "failurePenalty": 0.5
+        "reflect": {
+          "maxDocsPerRun": 100,
+          "minConfidence": 0.6,
+          "promoteAtProofCount": 3,
+          "schedule": "0 */3 * * *"
+        }
       },
       "properties": {
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "eviction": {
+        "forget": {
           "additionalProperties": false,
           "default": {
-            "enabled": true,
-            "strengthThreshold": 0.2
+            "failureEvictionFloor": 3,
+            "highProofFloor": 5,
+            "maxDormantDays": 365
           },
           "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
+            "failureEvictionFloor": {
+              "default": 3,
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
             },
-            "strengthThreshold": {
-              "default": 0.2,
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
+            "highProofFloor": {
+              "default": 5,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "maxDormantDays": {
+              "default": 365,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           "required": [
-            "enabled",
-            "strengthThreshold"
+            "maxDormantDays",
+            "failureEvictionFloor",
+            "highProofFloor"
           ],
           "type": "object"
         },
-        "failurePenalty": {
-          "default": 0.5,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
+        "reflect": {
+          "additionalProperties": false,
+          "default": {
+            "maxDocsPerRun": 100,
+            "minConfidence": 0.6,
+            "promoteAtProofCount": 3,
+            "schedule": "0 */3 * * *"
+          },
+          "properties": {
+            "maxDocsPerRun": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "minConfidence": {
+              "default": 0.6,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "promoteAtProofCount": {
+              "default": 3,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "schedule": {
+              "default": "0 */3 * * *",
+              "type": "string"
+            }
+          },
+          "required": [
+            "schedule",
+            "minConfidence",
+            "promoteAtProofCount",
+            "maxDocsPerRun"
+          ],
+          "type": "object"
         }
       },
       "required": [
         "enabled",
-        "eviction",
-        "failurePenalty"
+        "reflect",
+        "forget"
       ],
       "type": "object"
     },
@@ -17814,7 +17323,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "âœ…"
           ]
         },
-        "retentionDays": 30,
+        "retentionDays": 90,
         "sources": [
           "tool",
           "pipeline"
@@ -17904,7 +17413,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "retentionDays": {
-          "default": 30,
+          "default": 90,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -17935,124 +17444,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
-    "learningSkills": {
-      "additionalProperties": false,
-      "default": {
-        "approval": {
-          "requireForMutating": true
-        },
-        "autoAdmitReadOnly": true,
-        "enabled": true,
-        "minConfidence": 0.7,
-        "promoteAtProofCount": 3,
-        "validation": {
-          "requireReproduction": true
-        }
-      },
-      "properties": {
-        "approval": {
-          "additionalProperties": false,
-          "default": {
-            "requireForMutating": true
-          },
-          "properties": {
-            "requireForMutating": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "requireForMutating"
-          ],
-          "type": "object"
-        },
-        "autoAdmitReadOnly": {
-          "default": true,
-          "type": "boolean"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "minConfidence": {
-          "default": 0.7,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "promoteAtProofCount": {
-          "default": 3,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "validation": {
-          "additionalProperties": false,
-          "default": {
-            "requireReproduction": true
-          },
-          "properties": {
-            "requireReproduction": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "requireReproduction"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "enabled",
-        "validation",
-        "autoAdmitReadOnly",
-        "approval",
-        "minConfidence",
-        "promoteAtProofCount"
-      ],
-      "type": "object"
-    },
-    "learningTuning": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "exploration": 0.1,
-        "learner": "bandit",
-        "perIntent": true
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "exploration": {
-          "default": 0.1,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "learner": {
-          "default": "bandit",
-          "enum": [
-            "bandit",
-            "nudge"
-          ],
-          "type": "string"
-        },
-        "perIntent": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled",
-        "learner",
-        "perIntent",
-        "exploration"
-      ],
-      "type": "object"
-    },
     "maxContextChars": {
       "default": 100000,
       "exclusiveMinimum": 0,
@@ -18076,294 +17467,25 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "maximum": 9007199254740991,
       "type": "integer"
     },
-    "memoryConsolidation": {
-      "additionalProperties": false,
-      "default": {
-        "autoTags": [],
-        "consolidateExternal": false,
-        "dedupThreshold": 0.9,
-        "enabled": true,
-        "generalize": {
-          "enabled": true,
-          "minDistinctContexts": 3
-        },
-        "maxCandidatesPerRun": 200,
-        "maxClusterSize": 12,
-        "maxClustersPerRun": 25,
-        "maxConsolidationTokens": 1024,
-        "schedule": "30 3 * * *",
-        "similarityThreshold": 0.82
-      },
-      "properties": {
-        "autoTags": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "consolidateExternal": {
-          "default": false,
-          "type": "boolean"
-        },
-        "dedupThreshold": {
-          "default": 0.9,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "generalize": {
-          "additionalProperties": false,
-          "default": {
-            "enabled": true,
-            "minDistinctContexts": 3
-          },
-          "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
-            "minDistinctContexts": {
-              "default": 3,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "enabled",
-            "minDistinctContexts"
-          ],
-          "type": "object"
-        },
-        "maxCandidatesPerRun": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxClusterSize": {
-          "default": 12,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxClustersPerRun": {
-          "default": 25,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxConsolidationTokens": {
-          "default": 1024,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "30 3 * * *",
-          "type": "string"
-        },
-        "similarityThreshold": {
-          "default": 0.82,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "similarityThreshold",
-        "dedupThreshold",
-        "maxCandidatesPerRun",
-        "maxClusterSize",
-        "maxClustersPerRun",
-        "maxConsolidationTokens",
-        "consolidateExternal",
-        "autoTags",
-        "generalize"
-      ],
-      "type": "object"
-    },
     "memoryLifecycle": {
       "additionalProperties": false,
       "default": {
-        "durableCap": 1000,
         "enabled": true,
-        "ephemeralCap": 500,
-        "epsilonPrune": 0.05,
-        "maxDormantDays": 90,
-        "schedule": "0 9 * * *",
-        "thetaDemote": 0.3,
-        "thetaPromote": 0.7
+        "schedule": "0 9 * * *"
       },
       "properties": {
-        "durableCap": {
-          "default": 1000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
         "enabled": {
           "default": true,
           "type": "boolean"
-        },
-        "ephemeralCap": {
-          "default": 500,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "epsilonPrune": {
-          "default": 0.05,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "maxDormantDays": {
-          "default": 90,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
         },
         "schedule": {
           "default": "0 9 * * *",
           "type": "string"
-        },
-        "thetaDemote": {
-          "default": 0.3,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "thetaPromote": {
-          "default": 0.7,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
         }
       },
       "required": [
         "enabled",
-        "schedule",
-        "thetaPromote",
-        "thetaDemote",
-        "durableCap",
-        "ephemeralCap",
-        "epsilonPrune",
-        "maxDormantDays"
-      ],
-      "type": "object"
-    },
-    "memoryOnlineTuning": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "maxSourceMemories": 200,
-        "schedule": "0 8 * * *"
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "maxSourceMemories": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "0 8 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxSourceMemories"
-      ],
-      "type": "object"
-    },
-    "memoryReasoning": {
-      "additionalProperties": false,
-      "default": {
-        "autoTags": [],
-        "enabled": true,
-        "knnK": 10,
-        "maxCandidatesPerRun": 200,
-        "maxObservationsPerRun": 25,
-        "maxReasoningTokens": 1024,
-        "reasonExternal": false,
-        "schedule": "0 4 * * *",
-        "surprisalTopFraction": 0.1
-      },
-      "properties": {
-        "autoTags": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "knnK": {
-          "default": 10,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxCandidatesPerRun": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxObservationsPerRun": {
-          "default": 25,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxReasoningTokens": {
-          "default": 1024,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "reasonExternal": {
-          "default": false,
-          "type": "boolean"
-        },
-        "schedule": {
-          "default": "0 4 * * *",
-          "type": "string"
-        },
-        "surprisalTopFraction": {
-          "default": 0.1,
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxCandidatesPerRun",
-        "surprisalTopFraction",
-        "knnK",
-        "maxObservationsPerRun",
-        "maxReasoningTokens",
-        "reasonExternal",
-        "autoTags"
+        "schedule"
       ],
       "type": "object"
     },
@@ -18373,8 +17495,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "autoTags": [],
         "dedupThreshold": 0.85,
         "enabled": true,
-        "maxReviewTokens": 4096,
-        "maxSessionsPerRun": 10,
+        "maxReviewTokens": 16384,
+        "maxSessionsPerRun": 50,
         "minMessages": 5,
         "schedule": "0 2 * * *"
       },
@@ -18397,13 +17519,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "boolean"
         },
         "maxReviewTokens": {
-          "default": 4096,
+          "default": 16384,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
         },
         "maxSessionsPerRun": {
-          "default": 10,
+          "default": 50,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -18427,128 +17549,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxReviewTokens",
         "dedupThreshold",
         "autoTags"
-      ],
-      "type": "object"
-    },
-    "memoryTripleExtraction": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "maxCandidatesPerRun": 200,
-        "schedule": "0 6 * * *"
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "maxCandidatesPerRun": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "0 6 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxCandidatesPerRun"
-      ],
-      "type": "object"
-    },
-    "memoryUsefulnessJudge": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "maxSourceChars": 24000,
-        "maxSourceMemories": 200,
-        "schedule": "0 7 * * *"
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "maxSourceChars": {
-          "default": 24000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxSourceMemories": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "0 7 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxSourceMemories",
-        "maxSourceChars"
-      ],
-      "type": "object"
-    },
-    "memoryUserRepresentation": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true,
-        "historyCap": 10,
-        "maxEntriesPerRun": 50,
-        "maxSourceChars": 24000,
-        "maxSourceMemories": 200,
-        "schedule": "0 5 * * *"
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "historyCap": {
-          "default": 10,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxEntriesPerRun": {
-          "default": 50,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxSourceChars": {
-          "default": 24000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxSourceMemories": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "schedule": {
-          "default": "0 5 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxEntriesPerRun",
-        "maxSourceMemories",
-        "maxSourceChars",
-        "historyCap"
       ],
       "type": "object"
     },
@@ -18960,9 +17960,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "enabled": true,
           "lambda": 0.7
         },
-        "onlineTuning": {
-          "enabled": true
-        },
         "pinned": {
           "enabled": false,
           "maxPinnedInjection": 5
@@ -19290,22 +18287,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
-        "onlineTuning": {
-          "additionalProperties": false,
-          "default": {
-            "enabled": true
-          },
-          "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "enabled"
-          ],
-          "type": "object"
-        },
         "pinned": {
           "additionalProperties": false,
           "default": {
@@ -19469,7 +18450,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "lanes",
         "entityLane",
         "feedback",
-        "onlineTuning",
         "mmr",
         "forget",
         "pinned",
@@ -20749,49 +19729,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
-    "socialModeling": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "maxEntriesPerRun": {
-          "default": 50,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxSourceChars": {
-          "default": 24000,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "maxSourceMemories": {
-          "default": 200,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "privacyReviewSignedOffBy": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "schedule": {
-          "default": "0 6 * * *",
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "schedule",
-        "maxEntriesPerRun",
-        "maxSourceMemories",
-        "maxSourceChars"
-      ],
-      "type": "object"
-    },
     "sourceGate": {
       "additionalProperties": false,
       "properties": {
@@ -21093,17 +20030,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "activity",
     "delivery",
     "memoryReview",
-    "memoryConsolidation",
-    "memoryReasoning",
-    "memoryUserRepresentation",
     "dialectic",
-    "memoryUsefulnessJudge",
     "learningOutcome",
-    "learningTuning",
-    "learningForgetting",
-    "learningSkills",
-    "memoryTripleExtraction",
-    "memoryOnlineTuning",
+    "learning",
     "memoryLifecycle"
   ],
   "type": "object"
@@ -25850,35 +24779,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
       ],
       "type": "object"
     },
-    "costFeatures": {
-      "additionalProperties": false,
-      "default": {
-        "enabled": true
-      },
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled"
-      ],
-      "type": "object"
-    },
     "dbPath": {
       "default": "memory.db",
       "type": "string"
     },
-    "embeddingDimensions": {
-      "default": 1536,
-      "exclusiveMinimum": 0,
-      "maximum": 9007199254740991,
-      "type": "integer"
+    "enabled": {
+      "default": true,
+      "type": "boolean"
     },
-    "embeddingModel": {
-      "default": "text-embedding-3-small",
-      "type": "string"
+    "recall": {
+      "additionalProperties": false,
+      "default": {
+        "embeddingDimensions": 1536,
+        "embeddingModel": "text-embedding-3-small",
+        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+      },
+      "properties": {
+        "embeddingDimensions": {
+          "default": 1536,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "embeddingModel": {
+          "default": "text-embedding-3-small",
+          "type": "string"
+        },
+        "rerankerModel": {
+          "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          "type": "string"
+        }
+      },
+      "required": [
+        "embeddingModel",
+        "embeddingDimensions",
+        "rerankerModel"
+      ],
+      "type": "object"
     },
     "rerankerGpu": {
       "default": "auto",
@@ -25889,10 +24826,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
         "vulkan",
         "false"
       ],
-      "type": "string"
-    },
-    "rerankerModel": {
-      "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
       "type": "string"
     },
     "rerankerModelsDir": {
@@ -25929,17 +24862,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
     }
   },
   "required": [
+    "enabled",
     "dbPath",
     "walMode",
-    "embeddingModel",
-    "embeddingDimensions",
+    "recall",
     "compaction",
     "retention",
-    "rerankerModel",
     "rerankerModelsDir",
     "rerankerGpu",
-    "rerankerThreads",
-    "costFeatures"
+    "rerankerThreads"
   ],
   "type": "object"
 }"
@@ -29189,56 +28120,106 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "language": {
             "type": "string"
           },
-          "learningForgetting": {
+          "learning": {
             "additionalProperties": false,
             "default": {
               "enabled": true,
-              "eviction": {
-                "enabled": true,
-                "strengthThreshold": 0.2
+              "forget": {
+                "failureEvictionFloor": 3,
+                "highProofFloor": 5,
+                "maxDormantDays": 365
               },
-              "failurePenalty": 0.5
+              "reflect": {
+                "maxDocsPerRun": 100,
+                "minConfidence": 0.6,
+                "promoteAtProofCount": 3,
+                "schedule": "0 */3 * * *"
+              }
             },
             "properties": {
               "enabled": {
                 "default": true,
                 "type": "boolean"
               },
-              "eviction": {
+              "forget": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": true,
-                  "strengthThreshold": 0.2
+                  "failureEvictionFloor": 3,
+                  "highProofFloor": 5,
+                  "maxDormantDays": 365
                 },
                 "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
+                  "failureEvictionFloor": {
+                    "default": 3,
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
                   },
-                  "strengthThreshold": {
-                    "default": 0.2,
-                    "maximum": 1,
-                    "minimum": 0,
-                    "type": "number"
+                  "highProofFloor": {
+                    "default": 5,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "maxDormantDays": {
+                    "default": 365,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
                   }
                 },
                 "required": [
-                  "enabled",
-                  "strengthThreshold"
+                  "maxDormantDays",
+                  "failureEvictionFloor",
+                  "highProofFloor"
                 ],
                 "type": "object"
               },
-              "failurePenalty": {
-                "default": 0.5,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
+              "reflect": {
+                "additionalProperties": false,
+                "default": {
+                  "maxDocsPerRun": 100,
+                  "minConfidence": 0.6,
+                  "promoteAtProofCount": 3,
+                  "schedule": "0 */3 * * *"
+                },
+                "properties": {
+                  "maxDocsPerRun": {
+                    "default": 100,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "minConfidence": {
+                    "default": 0.6,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "promoteAtProofCount": {
+                    "default": 3,
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "schedule": {
+                    "default": "0 */3 * * *",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "schedule",
+                  "minConfidence",
+                  "promoteAtProofCount",
+                  "maxDocsPerRun"
+                ],
+                "type": "object"
               }
             },
             "required": [
               "enabled",
-              "eviction",
-              "failurePenalty"
+              "reflect",
+              "forget"
             ],
             "type": "object"
           },
@@ -29263,7 +28244,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "âœ…"
                 ]
               },
-              "retentionDays": 30,
+              "retentionDays": 90,
               "sources": [
                 "tool",
                 "pipeline"
@@ -29353,7 +28334,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "retentionDays": {
-                "default": 30,
+                "default": 90,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
@@ -29384,124 +28365,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
-          "learningSkills": {
-            "additionalProperties": false,
-            "default": {
-              "approval": {
-                "requireForMutating": true
-              },
-              "autoAdmitReadOnly": true,
-              "enabled": true,
-              "minConfidence": 0.7,
-              "promoteAtProofCount": 3,
-              "validation": {
-                "requireReproduction": true
-              }
-            },
-            "properties": {
-              "approval": {
-                "additionalProperties": false,
-                "default": {
-                  "requireForMutating": true
-                },
-                "properties": {
-                  "requireForMutating": {
-                    "default": true,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "requireForMutating"
-                ],
-                "type": "object"
-              },
-              "autoAdmitReadOnly": {
-                "default": true,
-                "type": "boolean"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "minConfidence": {
-                "default": 0.7,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "promoteAtProofCount": {
-                "default": 3,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "validation": {
-                "additionalProperties": false,
-                "default": {
-                  "requireReproduction": true
-                },
-                "properties": {
-                  "requireReproduction": {
-                    "default": true,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "requireReproduction"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "enabled",
-              "validation",
-              "autoAdmitReadOnly",
-              "approval",
-              "minConfidence",
-              "promoteAtProofCount"
-            ],
-            "type": "object"
-          },
-          "learningTuning": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "exploration": 0.1,
-              "learner": "bandit",
-              "perIntent": true
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "exploration": {
-                "default": 0.1,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "learner": {
-                "default": "bandit",
-                "enum": [
-                  "bandit",
-                  "nudge"
-                ],
-                "type": "string"
-              },
-              "perIntent": {
-                "default": true,
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "enabled",
-              "learner",
-              "perIntent",
-              "exploration"
-            ],
-            "type": "object"
-          },
           "maxContextChars": {
             "default": 100000,
             "exclusiveMinimum": 0,
@@ -29525,294 +28388,25 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maximum": 9007199254740991,
             "type": "integer"
           },
-          "memoryConsolidation": {
-            "additionalProperties": false,
-            "default": {
-              "autoTags": [],
-              "consolidateExternal": false,
-              "dedupThreshold": 0.9,
-              "enabled": true,
-              "generalize": {
-                "enabled": true,
-                "minDistinctContexts": 3
-              },
-              "maxCandidatesPerRun": 200,
-              "maxClusterSize": 12,
-              "maxClustersPerRun": 25,
-              "maxConsolidationTokens": 1024,
-              "schedule": "30 3 * * *",
-              "similarityThreshold": 0.82
-            },
-            "properties": {
-              "autoTags": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "consolidateExternal": {
-                "default": false,
-                "type": "boolean"
-              },
-              "dedupThreshold": {
-                "default": 0.9,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "generalize": {
-                "additionalProperties": false,
-                "default": {
-                  "enabled": true,
-                  "minDistinctContexts": 3
-                },
-                "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
-                  "minDistinctContexts": {
-                    "default": 3,
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991,
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "enabled",
-                  "minDistinctContexts"
-                ],
-                "type": "object"
-              },
-              "maxCandidatesPerRun": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxClusterSize": {
-                "default": 12,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxClustersPerRun": {
-                "default": 25,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxConsolidationTokens": {
-                "default": 1024,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "30 3 * * *",
-                "type": "string"
-              },
-              "similarityThreshold": {
-                "default": 0.82,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "similarityThreshold",
-              "dedupThreshold",
-              "maxCandidatesPerRun",
-              "maxClusterSize",
-              "maxClustersPerRun",
-              "maxConsolidationTokens",
-              "consolidateExternal",
-              "autoTags",
-              "generalize"
-            ],
-            "type": "object"
-          },
           "memoryLifecycle": {
             "additionalProperties": false,
             "default": {
-              "durableCap": 1000,
               "enabled": true,
-              "ephemeralCap": 500,
-              "epsilonPrune": 0.05,
-              "maxDormantDays": 90,
-              "schedule": "0 9 * * *",
-              "thetaDemote": 0.3,
-              "thetaPromote": 0.7
+              "schedule": "0 9 * * *"
             },
             "properties": {
-              "durableCap": {
-                "default": 1000,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
               "enabled": {
                 "default": true,
                 "type": "boolean"
-              },
-              "ephemeralCap": {
-                "default": 500,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "epsilonPrune": {
-                "default": 0.05,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "maxDormantDays": {
-                "default": 90,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
               },
               "schedule": {
                 "default": "0 9 * * *",
                 "type": "string"
-              },
-              "thetaDemote": {
-                "default": 0.3,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              },
-              "thetaPromote": {
-                "default": 0.7,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
               }
             },
             "required": [
               "enabled",
-              "schedule",
-              "thetaPromote",
-              "thetaDemote",
-              "durableCap",
-              "ephemeralCap",
-              "epsilonPrune",
-              "maxDormantDays"
-            ],
-            "type": "object"
-          },
-          "memoryOnlineTuning": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "maxSourceMemories": 200,
-              "schedule": "0 8 * * *"
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "maxSourceMemories": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "0 8 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxSourceMemories"
-            ],
-            "type": "object"
-          },
-          "memoryReasoning": {
-            "additionalProperties": false,
-            "default": {
-              "autoTags": [],
-              "enabled": true,
-              "knnK": 10,
-              "maxCandidatesPerRun": 200,
-              "maxObservationsPerRun": 25,
-              "maxReasoningTokens": 1024,
-              "reasonExternal": false,
-              "schedule": "0 4 * * *",
-              "surprisalTopFraction": 0.1
-            },
-            "properties": {
-              "autoTags": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "knnK": {
-                "default": 10,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxCandidatesPerRun": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxObservationsPerRun": {
-                "default": 25,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxReasoningTokens": {
-                "default": 1024,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "reasonExternal": {
-                "default": false,
-                "type": "boolean"
-              },
-              "schedule": {
-                "default": "0 4 * * *",
-                "type": "string"
-              },
-              "surprisalTopFraction": {
-                "default": 0.1,
-                "maximum": 1,
-                "minimum": 0,
-                "type": "number"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxCandidatesPerRun",
-              "surprisalTopFraction",
-              "knnK",
-              "maxObservationsPerRun",
-              "maxReasoningTokens",
-              "reasonExternal",
-              "autoTags"
+              "schedule"
             ],
             "type": "object"
           },
@@ -29822,8 +28416,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "autoTags": [],
               "dedupThreshold": 0.85,
               "enabled": true,
-              "maxReviewTokens": 4096,
-              "maxSessionsPerRun": 10,
+              "maxReviewTokens": 16384,
+              "maxSessionsPerRun": 50,
               "minMessages": 5,
               "schedule": "0 2 * * *"
             },
@@ -29846,13 +28440,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "boolean"
               },
               "maxReviewTokens": {
-                "default": 4096,
+                "default": 16384,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
               },
               "maxSessionsPerRun": {
-                "default": 10,
+                "default": 50,
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991,
                 "type": "integer"
@@ -29876,128 +28470,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxReviewTokens",
               "dedupThreshold",
               "autoTags"
-            ],
-            "type": "object"
-          },
-          "memoryTripleExtraction": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "maxCandidatesPerRun": 200,
-              "schedule": "0 6 * * *"
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "maxCandidatesPerRun": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "0 6 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxCandidatesPerRun"
-            ],
-            "type": "object"
-          },
-          "memoryUsefulnessJudge": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "maxSourceChars": 24000,
-              "maxSourceMemories": 200,
-              "schedule": "0 7 * * *"
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "maxSourceChars": {
-                "default": 24000,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxSourceMemories": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "0 7 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxSourceMemories",
-              "maxSourceChars"
-            ],
-            "type": "object"
-          },
-          "memoryUserRepresentation": {
-            "additionalProperties": false,
-            "default": {
-              "enabled": true,
-              "historyCap": 10,
-              "maxEntriesPerRun": 50,
-              "maxSourceChars": 24000,
-              "maxSourceMemories": 200,
-              "schedule": "0 5 * * *"
-            },
-            "properties": {
-              "enabled": {
-                "default": true,
-                "type": "boolean"
-              },
-              "historyCap": {
-                "default": 10,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxEntriesPerRun": {
-                "default": 50,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxSourceChars": {
-                "default": 24000,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxSourceMemories": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "schedule": {
-                "default": "0 5 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxEntriesPerRun",
-              "maxSourceMemories",
-              "maxSourceChars",
-              "historyCap"
             ],
             "type": "object"
           },
@@ -30409,9 +28881,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "enabled": true,
                 "lambda": 0.7
               },
-              "onlineTuning": {
-                "enabled": true
-              },
               "pinned": {
                 "enabled": false,
                 "maxPinnedInjection": 5
@@ -30739,22 +29208,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
-              "onlineTuning": {
-                "additionalProperties": false,
-                "default": {
-                  "enabled": true
-                },
-                "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "enabled"
-                ],
-                "type": "object"
-              },
               "pinned": {
                 "additionalProperties": false,
                 "default": {
@@ -30918,7 +29371,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "lanes",
               "entityLane",
               "feedback",
-              "onlineTuning",
               "mmr",
               "forget",
               "pinned",
@@ -32198,49 +30650,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
-          "socialModeling": {
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "default": false,
-                "type": "boolean"
-              },
-              "maxEntriesPerRun": {
-                "default": 50,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxSourceChars": {
-                "default": 24000,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "maxSourceMemories": {
-                "default": 200,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "privacyReviewSignedOffBy": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "schedule": {
-                "default": "0 6 * * *",
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "schedule",
-              "maxEntriesPerRun",
-              "maxSourceMemories",
-              "maxSourceChars"
-            ],
-            "type": "object"
-          },
           "sourceGate": {
             "additionalProperties": false,
             "properties": {
@@ -32542,17 +30951,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "activity",
           "delivery",
           "memoryReview",
-          "memoryConsolidation",
-          "memoryReasoning",
-          "memoryUserRepresentation",
           "dialectic",
-          "memoryUsefulnessJudge",
           "learningOutcome",
-          "learningTuning",
-          "learningForgetting",
-          "learningSkills",
-          "memoryTripleExtraction",
-          "memoryOnlineTuning",
+          "learning",
           "memoryLifecycle"
         ],
         "type": "object"
@@ -32660,13 +31061,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled": true,
             "maxActiveCaches": 20
           },
-          "learningForgetting": {
+          "learning": {
             "enabled": true,
-            "eviction": {
-              "enabled": true,
-              "strengthThreshold": 0.2
+            "forget": {
+              "failureEvictionFloor": 3,
+              "highProofFloor": 5,
+              "maxDormantDays": 365
             },
-            "failurePenalty": 0.5
+            "reflect": {
+              "maxDocsPerRun": 100,
+              "minConfidence": 0.6,
+              "promoteAtProofCount": 3,
+              "schedule": "0 */3 * * *"
+            }
           },
           "learningOutcome": {
             "correction": {
@@ -32687,102 +31094,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "âœ…"
               ]
             },
-            "retentionDays": 30,
+            "retentionDays": 90,
             "sources": [
               "tool",
               "pipeline"
             ]
           },
-          "learningSkills": {
-            "approval": {
-              "requireForMutating": true
-            },
-            "autoAdmitReadOnly": true,
-            "enabled": true,
-            "minConfidence": 0.7,
-            "promoteAtProofCount": 3,
-            "validation": {
-              "requireReproduction": true
-            }
-          },
-          "learningTuning": {
-            "enabled": true,
-            "exploration": 0.1,
-            "learner": "bandit",
-            "perIntent": true
-          },
           "maxContextChars": 100000,
           "maxSteps": 150,
           "maxToolResultChars": 50000,
-          "memoryConsolidation": {
-            "autoTags": [],
-            "consolidateExternal": false,
-            "dedupThreshold": 0.9,
-            "enabled": true,
-            "generalize": {
-              "enabled": true,
-              "minDistinctContexts": 3
-            },
-            "maxCandidatesPerRun": 200,
-            "maxClusterSize": 12,
-            "maxClustersPerRun": 25,
-            "maxConsolidationTokens": 1024,
-            "schedule": "30 3 * * *",
-            "similarityThreshold": 0.82
-          },
           "memoryLifecycle": {
-            "durableCap": 1000,
             "enabled": true,
-            "ephemeralCap": 500,
-            "epsilonPrune": 0.05,
-            "maxDormantDays": 90,
-            "schedule": "0 9 * * *",
-            "thetaDemote": 0.3,
-            "thetaPromote": 0.7
-          },
-          "memoryOnlineTuning": {
-            "enabled": true,
-            "maxSourceMemories": 200,
-            "schedule": "0 8 * * *"
-          },
-          "memoryReasoning": {
-            "autoTags": [],
-            "enabled": true,
-            "knnK": 10,
-            "maxCandidatesPerRun": 200,
-            "maxObservationsPerRun": 25,
-            "maxReasoningTokens": 1024,
-            "reasonExternal": false,
-            "schedule": "0 4 * * *",
-            "surprisalTopFraction": 0.1
+            "schedule": "0 9 * * *"
           },
           "memoryReview": {
             "autoTags": [],
             "dedupThreshold": 0.85,
             "enabled": true,
-            "maxReviewTokens": 4096,
-            "maxSessionsPerRun": 10,
+            "maxReviewTokens": 16384,
+            "maxSessionsPerRun": 50,
             "minMessages": 5,
             "schedule": "0 2 * * *"
-          },
-          "memoryTripleExtraction": {
-            "enabled": true,
-            "maxCandidatesPerRun": 200,
-            "schedule": "0 6 * * *"
-          },
-          "memoryUsefulnessJudge": {
-            "enabled": true,
-            "maxSourceChars": 24000,
-            "maxSourceMemories": 200,
-            "schedule": "0 7 * * *"
-          },
-          "memoryUserRepresentation": {
-            "enabled": true,
-            "historyCap": 10,
-            "maxEntriesPerRun": 50,
-            "maxSourceChars": 24000,
-            "maxSourceMemories": 200,
-            "schedule": "0 5 * * *"
           },
           "model": "default",
           "modelFailover": {
@@ -32852,9 +31184,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "mmr": {
               "enabled": true,
               "lambda": 0.7
-            },
-            "onlineTuning": {
-              "enabled": true
             },
             "pinned": {
               "enabled": false,
@@ -38724,14 +37053,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "targetSize": 500,
           "threshold": 1000
         },
-        "costFeatures": {
-          "enabled": true
-        },
         "dbPath": "memory.db",
-        "embeddingDimensions": 1536,
-        "embeddingModel": "text-embedding-3-small",
+        "enabled": true,
+        "recall": {
+          "embeddingDimensions": 1536,
+          "embeddingModel": "text-embedding-3-small",
+          "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+        },
         "rerankerGpu": "auto",
-        "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
         "rerankerModelsDir": "models",
         "rerankerThreads": 4,
         "retention": {
@@ -38772,35 +37101,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
-        "costFeatures": {
-          "additionalProperties": false,
-          "default": {
-            "enabled": true
-          },
-          "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "enabled"
-          ],
-          "type": "object"
-        },
         "dbPath": {
           "default": "memory.db",
           "type": "string"
         },
-        "embeddingDimensions": {
-          "default": 1536,
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
+        "enabled": {
+          "default": true,
+          "type": "boolean"
         },
-        "embeddingModel": {
-          "default": "text-embedding-3-small",
-          "type": "string"
+        "recall": {
+          "additionalProperties": false,
+          "default": {
+            "embeddingDimensions": 1536,
+            "embeddingModel": "text-embedding-3-small",
+            "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+          },
+          "properties": {
+            "embeddingDimensions": {
+              "default": 1536,
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "embeddingModel": {
+              "default": "text-embedding-3-small",
+              "type": "string"
+            },
+            "rerankerModel": {
+              "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+              "type": "string"
+            }
+          },
+          "required": [
+            "embeddingModel",
+            "embeddingDimensions",
+            "rerankerModel"
+          ],
+          "type": "object"
         },
         "rerankerGpu": {
           "default": "auto",
@@ -38811,10 +37148,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "vulkan",
             "false"
           ],
-          "type": "string"
-        },
-        "rerankerModel": {
-          "default": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
           "type": "string"
         },
         "rerankerModelsDir": {
@@ -38851,17 +37184,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         }
       },
       "required": [
+        "enabled",
         "dbPath",
         "walMode",
-        "embeddingModel",
-        "embeddingDimensions",
+        "recall",
         "compaction",
         "retention",
-        "rerankerModel",
         "rerankerModelsDir",
         "rerankerGpu",
-        "rerankerThreads",
-        "costFeatures"
+        "rerankerThreads"
       ],
       "type": "object"
     },

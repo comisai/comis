@@ -38,49 +38,25 @@ export type { VerbosityConfig, VerbosityLevel, VerbosityOverride } from "./schem
 export { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 export type { MemoryReviewConfig } from "./schema-memory-review.js";
 
-// Memory consolidation schema
-export { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.js";
-export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js";
+// (The social-modeling schema was DELETED in Phase 226 SIMPLIFY-03 — the entire
+// social-modeling subsystem (the __SOCIAL_MODELING__ cron, the RelationshipStore port,
+// the sqlite adapter, the relationship table, the relationship-block prompt injection)
+// is gone; no re-export alias, I1.)
 
-// Memory reasoning schema
-export { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
-export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
+// (The offline usefulness-judge schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+// usefulness-judge cron is gone; no re-export alias, I1.)
 
-// Per-user representation schema
-export { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
-export type { MemoryUserRepresentationConfig } from "./schema-memory-user-representation.js";
-
-// Social-modeling schema
-export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
-export type { SocialModelingConfig } from "./schema-social-modeling.js";
-
-// Offline usefulness-judge schema (OPTIONAL; default-ON, gated by the master cost switch)
-export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
-export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
-
-// Outcome-signal (Verified Learning WS1) schema — per-agent, default-OFF
+// Outcome-signal (Verified Learning WS1) schema — per-agent, default-ON (opt-out)
 export { LearningOutcomeConfigSchema } from "./schema-learning-outcome.js";
 export type { LearningOutcomeConfig } from "./schema-learning-outcome.js";
 
-// Learning-tuning (Verified Learning WS3 / ranking) schema — per-agent, default-OFF
-export { LearningTuningConfigSchema } from "./schema-learning-tuning.js";
-export type { LearningTuningConfig } from "./schema-learning-tuning.js";
+// The collapsed learning-layer schema (Phase 226 / SIMPLIFY-01/05) — per-agent, default-ON.
+// Replaces the per-loop schema-learning-skills/-tuning/-forgetting (deleted; no re-export aliases, I1).
+export { LearningConfigSchema } from "./schema-learning.js";
+export type { LearningConfig } from "./schema-learning.js";
 
-// Learning-forgetting (Verified Learning WS4 / forgetting) schema — per-agent, default-OFF
-export { LearningForgettingConfigSchema } from "./schema-learning-forgetting.js";
-export type { LearningForgettingConfig } from "./schema-learning-forgetting.js";
-
-// Procedural-learning (Verified Learning WS2 / skills) schema — per-agent, default-OFF
-export { LearningSkillsConfigSchema } from "./schema-learning-skills.js";
-export type { LearningSkillsConfig } from "./schema-learning-skills.js";
-
-// Memory triple-extraction schema (Verified Learning WS7) — per-agent, default-OFF
-export { MemoryTripleExtractionConfigSchema } from "./schema-memory-triple-extraction.js";
-export type { MemoryTripleExtractionConfig } from "./schema-memory-triple-extraction.js";
-
-// Offline tuned-alpha bandit schema (default-ON, gated by the master cost switch; KEYLESS cron)
-export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
-export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
+// (The memory triple-extraction schema was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+// no-op extraction cron is gone; the TripleStorePort recall lane survives. No alias, I1.)
 
 // SCAFFOLD-DORMANT memory-lifecycle sweep schema (default-OFF, KEYLESS cron)
 export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";

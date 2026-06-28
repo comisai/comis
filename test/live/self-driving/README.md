@@ -35,7 +35,8 @@ the few `…` refs to it below point at `.planning/live-tests/…` (present on t
 | **`05-CATALOG.md`** | The reusable test inventory: capability domains, the P-phase structure, Track K/L/M, the 30 UCs, the HARD security oracles, the config-combination classes. |
 | **`scripts/`** | Copy-paste helpers (`deploy-dist.sh`, `setup-vps.sh`, `restart-m1.sh`, `clean-restart.sh`, `drive.mjs`, `revoke.mjs`, `db.mjs` (DB oracle), `models-sweep.sh`, `config.example.yaml`). See `scripts/README.md`. |
 | **`templates/`** | `TEST-PLAN.template.md`, `RESULTS-LOG.template.md`, `FIX-VERIFY-LOG.template.md` — copy per run into `runs/<target>-<date>/`. |
-| **`targets/`** | How to specify a target + worked examples: `EXAMPLE-nvda-dag.md` (channel/orchestrate) and `EXAMPLE-verified-learning.md` (offline/DB/event-resident). |
+| **`targets/`** | How to specify a target + worked examples: `EXAMPLE-nvda-dag.md` (channel/orchestrate) and `EXAMPLE-verified-learning.md` (offline/DB/event-resident). Also `MEMORY-LEARNING-STRESS-CATALOG.md` (12 complex memory/learning workloads) + `adaptive-threat-hunting.md` (a pinned spec). |
+| **`sim/`** | **Real-world tool simulators + skills** for the memory/learning workloads — each gives the agent a zero-dep MCP toolset over a stateful, seeded world + a mechanics-teaching `SKILL.md`, so a drive produces rich transcripts the reflection engine learns from. `sim/README.md` = how to use + how to copy/install onto a running daemon while driving a memory/learning test. |
 | **`runs/`** | Per-run output (TEST-PLAN/RESULTS-LOG/FIX-VERIFY-LOG). Worked runs: `runs/verified-learning-20260624/` (offline target; found+fixed the MD-02 `memory_store` bug) · `runs/orchestration-excellence-20260624/` (channel/DAG target; verified P0-A/B/C+P1 shipped, found the per-root wall-clock long-session degrade). |
 
 ## The one-paragraph contract (memorize this)

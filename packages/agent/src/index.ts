@@ -198,53 +198,16 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
-// Memory consolidation (periodic clustering of near-duplicate memories → observations)
-export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
-export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
+// (The offline triple-extraction job — runMemoryTripleExtraction + its
+// MemoryTripleExtractionDeps/Config/Stats + TripleCandidate types — was DELETED in Phase 226
+// SIMPLIFY-03 alongside its dormant __MEMORY_TRIPLE_EXTRACTION__ cron (the `extract` returned
+// [] — no triples were ever written). The TripleStorePort + its sqlite adapter + the
+// graphSpread recall lane (recall-graph-spread-lane.ts) survive — only the extraction JOB went.)
 
-// Offline triple extraction (conversation text → S/P/O triples
-// written into the trust-first bi-temporal KG; default-OFF, NEVER on the recall path)
-export { runMemoryTripleExtraction } from "./memory/memory-triple-extraction-job.js";
-export type {
-  MemoryTripleExtractionDeps,
-  MemoryTripleExtractionConfig,
-  MemoryTripleExtractionStats,
-  TripleCandidate,
-} from "./memory/memory-triple-extraction-job.js";
-
-// Offline reasoning (typed deductive + inductive
-// observations: deductive → trust-first upsertTriple, inductive → applyConsolidation
-// (≤ learned); default-OFF, surprisal-gated, NEVER on the recall path)
-export { runMemoryReasoning } from "./memory/memory-reasoning-job.js";
-export type {
-  MemoryReasoningDeps,
-  MemoryReasoningConfig,
-  MemoryReasoningStats,
-  MemoryReasoningResult,
-  ReasoningOutput,
-} from "./memory/memory-reasoning-job.js";
-// The daemon-injected reasoning seam factory: builds the OFFLINE
-// reason() seam from a cheap resolved model, keeping the specialist prompts +
-// parsers agent-internal. Consumed by the daemon __MEMORY_REASONING__ sentinel.
-export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
-export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
-
-// Offline per-user representation build seam. The factory the daemon
-// __USER_REPRESENTATION__ sentinel calls to BUILD the build() seam from a cheap resolved
-// model, keeping USER_REPRESENTATION_PROMPT + its parser agent-internal. Consumed by the
-// daemon __USER_REPRESENTATION__ sentinel.
-export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
-export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
-
-// Offline usefulness-judge seam (the OPTIONAL second usefulness signal alongside the
-// keyless citation-marker attribution). The factory the daemon __USEFULNESS_JUDGE__
-// sentinel calls to BUILD judge({ candidateIds, answer }) from a cheap resolved model
-// (the daemon injects it), keeping USEFULNESS_JUDGE_PROMPT + its lenient/total parser
-// agent-internal (mirrors createUserRepresentationSeam). The verdict partition is written
-// through usefulnessStore.recordUsage by the sentinel (WIRE-02). Only the factory is
-// exported — its Deps/Input/Verdict shapes are inferred at the daemon call site (no
-// unconsumed type surface on the public barrel).
-export { createUsefulnessJudgeSeam } from "./memory/memory-usefulness-judge-seam.js";
+// (The offline usefulness-judge seam — createUsefulnessJudgeSeam — was DELETED in Phase 226
+// SIMPLIFY-03 alongside its dormant __USEFULNESS_JUDGE__ cron. The keyless citation-marker
+// attribution stays the usefulness signal; the FORGET-02 recordUsage reward write lives in
+// the daemon's setup-learning.ts (a separate seam), not this factory.)
 
 // Query-time dialectic synthesis seam (the ONE allowed query-time LLM
 // surface). The factory the daemon `memory.ask` handler calls to BUILD the
@@ -266,72 +229,13 @@ export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
 // kept module-internal (no unconsumed type surface on the public barrel).
 export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory-dialectic-synthesis.js";
 
-// Offline per-user representation builder (the WRITE path of
-// the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
-// external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite
-// (skip non-clean) → upsert via the @comis/core port → counts-only event → idempotent.
-// The ONLY LLM use here and it is OFFLINE; the read path stays LLM-free.)
-export { runUserRepresentationBuild } from "./memory/memory-user-representation-job.js";
-export type {
-  MemoryUserRepresentationDeps,
-  MemoryUserRepresentationConfig,
-  MemoryUserRepresentationStats,
-  MemoryUserRepresentationResult,
-  UserRepresentationSourceMemory,
-} from "./memory/memory-user-representation-job.js";
-// Offline tuned-alpha bandit job. The LLM-FREE,
-// DETERMINISTIC, KEYLESS optimizer: default-OFF gate → read the accrued feedback signal
-// → aggregate the bounded used-RATE → computeTunedAlphas (pure clamped step) → upsert
-// via the @comis/core port → counts-only event → non-fatal. The daemon
-// __ONLINE_TUNING__ sentinel dispatches it WITHOUT any model/key block.
-export { runOnlineTuning } from "./memory/online-tuning-job.js";
-export type {
-  MemoryOnlineTuningDeps,
-  MemoryOnlineTuningConfig,
-  MemoryOnlineTuningStats,
-  MemoryOnlineTuningResult,
-  OnlineTuningBaselineAlphas,
-  OnlineTuningFeedEntry,
-} from "./memory/online-tuning-job.js";
-// The builder prompt + parser (the build() seam's payload shape) — agent-internal;
-// the daemon __USER_REPRESENTATION__ seam imports these to keep the prompt
-// string out of the daemon (mirrors createReasoningSeam).
-export {
-  parseUserRepresentationOutput,
-  buildUserRepresentationPrompt,
-} from "./memory/memory-user-representation-prompt.js";
-export type { UserRepresentationCandidate, UserRepresentationBuildOutput } from "./memory/memory-user-representation-prompt.js";
-
-// Offline directional relationship build seam. The factory the
-// daemon __SOCIAL_MODELING__ sentinel calls to BUILD the build() seam from a cheap resolved
-// model, keeping RELATIONSHIP_PROMPT + its parser agent-internal. Consumed by the daemon
-// __SOCIAL_MODELING__ cron dispatch — a temporary orphan until that lands.
-export { createRelationshipSeam } from "./memory/memory-relationship-seam.js";
-export type { RelationshipSeamDeps } from "./memory/memory-relationship-seam.js";
-
-// Offline directional relationship builder (the WRITE path of
-// the per-channel relationship model: default-OFF gate → read high-trust multi-party
-// sources → EXCLUDE external-trust (anti-poisoning) → bound → INJECTED build() seam →
-// validateMemoryWrite (skip non-clean) → upsert via the @comis/core port → counts-only
-// event → idempotent. Directional: subjectUserId from the speaker, aboutUserId from the
-// LLM; A→B is distinct from B→A. The ONLY LLM use here and it is OFFLINE; the
-// read path stays LLM-free.)
-export { runRelationshipBuild } from "./memory/memory-relationship-job.js";
-export type {
-  MemoryRelationshipDeps,
-  MemoryRelationshipConfig,
-  MemoryRelationshipStats,
-  MemoryRelationshipResult,
-  RelationshipSourceMemory,
-} from "./memory/memory-relationship-job.js";
-// The directional builder prompt + parser (the build() seam's payload shape) —
-// agent-internal; the daemon __SOCIAL_MODELING__ seam imports these to keep the
-// prompt string out of the daemon (mirrors createUserRepresentationSeam).
-export {
-  parseRelationshipOutput,
-  buildRelationshipPrompt,
-} from "./memory/memory-relationship-prompt.js";
-export type { RelationshipCandidate, RelationshipBuildOutput } from "./memory/memory-relationship-prompt.js";
+// (The offline directional relationship builder (runRelationshipBuild), its cheap-model
+//  seam factory (createRelationshipSeam), and the directional builder prompt + parser
+//  (RELATIONSHIP_PROMPT / buildRelationshipPrompt / parseRelationshipOutput) — the
+//  WRITE path of the social-modeling subsystem — were DELETED in Phase 226 SIMPLIFY-03
+//  with the rest of that subsystem (the __SOCIAL_MODELING__ cron, the RelationshipStore
+//  port + adapter, the `relationship` table, the relationship-block prompt injection).
+//  No alias, I1.)
 
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
@@ -518,11 +422,6 @@ export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 export { createMemoryRecall } from "./rag/memory-recall.js";
 export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
-// Deterministic apply overlay — also consumed by the daemon's dialectic recall
-// (setup-dialectic.ts) so `memory.ask` applies the SAME tuned-alpha overlay (with the SAME
-// config-sourced trust-freeze, belt #2) as the main prompt-assembly recall path. The single
-// source of truth for the overlay — never re-implemented at the second consumer.
-export { buildScoringAlphas } from "./rag/scoring-overlay.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
 export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";
@@ -678,24 +577,29 @@ export { createOutcomeJudgeSeam } from "./memory/index.js";
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
-// Verified Learning WS2 (P2 Skills, Phase 201 Plan 04). The LLM-backed
-// procedural-synthesis adapter the daemon constructs on the `skillSynthesis` mid
-// tier (SKILL-02). Re-exported from the memory sub-barrel beside its daemon
-// consumer (Plan 07 wiring) so the public-export-consumers gate never sees an
-// orphan once that wiring lands. The synthesis JOB (`runSkillSynthesis`) lands in
-// the same plan's later tasks. The synthesis PROMPT + parser stay agent-internal.
-export { createLlmSkillSynthesisAdapter } from "./memory/index.js";
-export type { LlmSkillSynthesisAdapterDeps } from "./memory/index.js";
-
-// The procedural skill-synthesis JOB (SKILL-03/04/05/08) the daemon invokes from
-// the `__SKILL_SYNTHESIS__` cron (Plan 07): select success → abstain → cluster
-// (anti-domination) → synthesize → validate → admit. Consumes @comis/core PORT
-// TYPES only (the agent↛memory / agent↛skills closed-graph cut); the daemon
-// injects the store + validation adapters + the LCD-merged source.
-export { runSkillSynthesis } from "./memory/index.js";
+// v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06). The
+// reflection JOB (runReflection) + the cheap-model reflect adapter + the
+// prompt/parser the daemon invokes from the __REFLECT__ cron (Plan 05): SELECT
+// trusted-origin success → group-by-topicKey → ≥2-distinct corroboration gate →
+// delta-ops reflect → validateLearnedDocBody guard → admit at candidate/learned.
+// Consumes @comis/core PORT TYPES + the static guard + the pure delta-ops only
+// (the agent↛memory / agent↛skills cut); the daemon injects the store + adapter.
+// Re-exported from the memory sub-barrel beside its daemon consumer (Plan 05) so
+// the public-export-consumers gate never sees an orphan. This REPLACED the dead
+// embedding-clustering synthesis pipeline (job/adapter/prompt), deleted in Plan 06.
+export { createLlmReflectionAdapter, runReflection, classifyReflectOutcome } from "./memory/index.js";
+// The per-kind reflect prompts the daemon `__REFLECT__` cron injects as the adapter
+// `systemPrompt` (Plan 04): REFLECT_PROMPT (skill default), PROFILE_REFLECT_PROMPT
+// (Plan 02), TOPIC_REFLECT_PROMPT (Plan 03). One engine, varied per-kind prompt.
+export { REFLECT_PROMPT, PROFILE_REFLECT_PROMPT, TOPIC_REFLECT_PROMPT } from "./memory/index.js";
 export type {
-  SkillSynthesisJobDeps,
-  SkillSynthesisJobResult,
-  SynthesisSourceTrajectory,
-  SkillApprovalGate,
+  LlmReflectionAdapterDeps,
+  ReflectionAdapter,
+  ReflectInput,
+  ReflectionResult,
+  RunReflectionDeps,
+  RunReflectionResult,
+  RunReflectionConfig,
+  ReflectionSourceTrajectory,
+  ReflectAdmissionOutcome,
 } from "./memory/index.js";

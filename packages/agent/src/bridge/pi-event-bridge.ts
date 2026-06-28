@@ -43,7 +43,7 @@ import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
 import { classifyError } from "../executor/error-classifier.js";
-import { getSessionPromptSkillLocations } from "../executor/prompt-assembly.js";
+import { getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills } from "../executor/prompt-assembly.js";
 import { suggestClosestTool } from "./tool-name-suggest.js";
 import { toolFailureHint } from "./tool-failure-hint.js";
 import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
@@ -2666,7 +2666,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
   // ATTR-01: ReadonlySet view of the per-turn attributed skill ids. The
   // executor reads this back at the postExecution call site (carrier → the
   // memory:skill_used write-back). Read-only — `m` is never exported.
-  const getUsedSkillIds = (): ReadonlySet<string> => m.turnUsedSkillIds;
+  // Reuse-attribution UNION: the explicit-`read` attributions (ATTR-01, m.turnUsedSkillIds)
+  // with the per-turn TOPIC-MATCHED surfaced skills (prompt-assembly computed which surfaced
+  // skills THIS turn's request instantiates) — so a skill applied without opening its SKILL.md
+  // still promotes. Empty/no-match ⇒ byte-identical to before.
+  const getUsedSkillIds = (): ReadonlySet<string> => {
+    const topicMatched = getSessionPromptTopicMatchedSkills(formatSessionKey(deps.sessionKey));
+    if (!topicMatched || topicMatched.length === 0) return m.turnUsedSkillIds;
+    return new Set<string>([...m.turnUsedSkillIds, ...topicMatched]);
+  };
 
   return { listener, getResult, addGhostCost, getThinkingBlockStores, getDrainState, getUsedSkillIds };
 }

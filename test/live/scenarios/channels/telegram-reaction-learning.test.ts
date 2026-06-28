@@ -416,8 +416,8 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the §10A.6 A->B reaction-gated s
       ).toBeGreaterThanOrEqual(1);
 
       // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
-      // session's prompt-skills freeze (learning:skill_synthesized -> refresh; no
-      // restart needed at HEAD). reset is NOT needed for the rig's single chat — the
+      // session's prompt-skills freeze (reflect:admitted -> refresh; renamed Phase 226;
+      // no restart needed at HEAD). reset is NOT needed for the rig's single chat — the
       // memory.db persists; an analogous request exercises the reuse path.
       const inboundB = await r.send(
         "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",

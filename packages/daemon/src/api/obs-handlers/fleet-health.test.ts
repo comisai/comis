@@ -216,6 +216,35 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
 }
 
 describe("assembleFleetHealthReport (R2 — 4-source read fan-in)", () => {
+  // OBS-2b/3b WIRING GUARD (reflect-obs-20260627): assembleFleetHealthReport must QUERY each learning
+  // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
+  // is BUILT from rows; these prove fleet-health actually QUERIES the category + passes it (the wiring
+  // a unit test can't see). A live regression (the memory_lifecycle query/arg was lost to a git-checkout
+  // during the OBS-10 fix) produced the row but no finding — caught live, now guarded here.
+  it("OBS-2b: surfaces the memory_lifecycle finding from forget-sweep rows (handler wiring)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "memory_lifecycle", severity: "info", message: "learning:lifecycle_swept",
+      details: JSON.stringify({ signal: "lifecycle_sweep", scanned: 7, promoted: 0, demoted: 0, evicted: 1 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    const ml = report.findings.find((f) => f.code === "memory_lifecycle");
+    expect(ml, "fleet-health must query category:memory_lifecycle + pass it to buildFindings").toBeDefined();
+    expect(ml!.detail).toContain("evicted=1");
+  });
+
+  it("OBS-3b: surfaces the learning_health finding from reflection-funnel rows (handler wiring)", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    store.insertDiagnostic({
+      timestamp: now - 1_000, category: "learning_health", severity: "info", message: "reflect:funnel",
+      details: JSON.stringify({ signal: "reflect_funnel", admissionOutcome: "admitted", admitted: 1, untrustedDrops: 0 }),
+    });
+    const report = await assembleFleetHealthReport({ obsStore: store, dataDir: makeDataDirWithActivity(), clock: createFakeClock(now) }, 24);
+    expect(report.findings.find((f) => f.code === "learning_health"), "fleet-health must query category:learning_health").toBeDefined();
+  });
+
   it("merges A1+A2+A3+I-track onto FleetHealthReport (digest-only, with coverage)", async () => {
     const now = systemNowMs();
     const clock = createFakeClock(now);

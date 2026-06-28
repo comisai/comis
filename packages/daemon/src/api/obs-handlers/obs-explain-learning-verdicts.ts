@@ -50,48 +50,28 @@ export const learnedSkillFailingVerdict: VerdictPredicate = (s) => {
 };
 
 /**
- * `synthesis_abstained_low_capability` (BENIGN). The skill-synthesis cron
- * abstained because the agent's model tier is below the capability gate
- * (small/nano without a capable override). `Defer ≠ Retry`: NOT a failure —
- * every acute cause out-ranks it; it ranks ABOVE the generic `outcome_unresolved`
- * because the abstain is the SPECIFIC, named reason the outcome stayed unresolved.
- * Absent learning block / a non-abstained run ⇒ no verdict (no fixture regression).
+ * `synthesis_abstained_low_capability` (BENIGN). The reflection cron abstained
+ * because the agent's model tier is below the capability gate (small/nano without
+ * a capable override). `Defer ≠ Retry`: NOT a failure — every acute cause out-ranks
+ * it; it ranks ABOVE the generic `outcome_unresolved` because the abstain is the
+ * SPECIFIC, named reason the outcome stayed unresolved. Absent learning block / a
+ * non-abstained run ⇒ no verdict (no fixture regression).
  */
 export const synthesisAbstainedVerdict: VerdictPredicate = (s) => {
   if (s.learning === undefined || !s.learning.synthesisAbstained) return null;
   return {
     code: "synthesis_abstained_low_capability",
     detail:
-      "synthesis abstained — the agent's model tier is below the capability gate " +
+      "reflection abstained — the agent's model tier is below the capability gate " +
       "(small/nano without a capable override); this is BENIGN (Defer != Retry), not a failure",
     suggestedNextSteps: [
-      "set a capable skillSynthesis tier override or raise the agent model tier",
+      "set a capable reflection tier override or raise the agent model tier",
       "obs.explain depth=full",
     ],
   };
 };
 
-/**
- * `user_model_revised` (BENIGN, OBS-02 Phase 203). The offline user-representation
- * cron REVISED the user model this session (`userModelRevised > 0` — belief slots
- * superseded/corroborated/inserted). Routine learning activity, NOT a failure:
- * every acute cause out-ranks it, and (like `synthesisAbstainedVerdict`) it ranks
- * ABOVE the generic `outcome_unresolved` as the SPECIFIC named reason the session
- * carried a learning signal. The COUNT only — the detail never names a profile
- * entry's content/entryType (SEC-01). Absent learning block / zero count ⇒ no
- * verdict (the frozen fixtures carry none, so no regression).
- */
-export const userModelRevisedVerdict: VerdictPredicate = (s) => {
-  if (s.learning === undefined || (s.learning.userModelRevised ?? 0) === 0) return null;
-  return {
-    code: "user_model_revised",
-    detail:
-      `the user model was revised this session ` +
-      `(${s.learning.userModelRevised} belief slot(s) superseded/corroborated/inserted); ` +
-      `this is BENIGN routine learning, not a failure`,
-    suggestedNextSteps: [
-      "inspect the bi-temporal history via the user-representation asOf read (Phase 203)",
-      "obs.explain depth=full",
-    ],
-  };
-};
+// Phase 226 SIMPLIFY-04: userModelRevisedVerdict was DELETED — the user-rep-revision
+// signal it keyed on was removed with its 0-emit event (the user-rep revision path
+// folded into the reflection engine in Phase 225). Its registration in
+// obs-explain-heuristics.ts was removed in the same lockstep.

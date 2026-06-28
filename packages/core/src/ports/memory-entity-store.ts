@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { MemorySearchResult } from "./memory.js";
+import type { LearningScope } from "./outcome-signal-port.js";
 
 /**
  * MemoryEntityStore: the SEGREGATED hexagonal boundary for entity-associative
@@ -26,19 +27,23 @@ import type { MemorySearchResult } from "./memory.js";
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: two agents (or
  * tenants) must NEVER collapse to one entity row or surface each other's
  * memories even when an entity name is identical.
+ *
+ * SIMPLIFY-02: UNIFIED onto the canonical {@link LearningScope} (`{tenantId,
+ * agentId, now?}`) — the isolation fields are NOT re-declared here (that was the
+ * 15× per-port repetition the collapse kills). This is a thin alias that DERIVES
+ * `tenantId`/`agentId` from `LearningScope` and re-narrows the injected clock
+ * `now` to REQUIRED (the entity write path — `resolveAndLink` — bookkeeps
+ * `first_seen`/`last_seen` from it; NEVER `Date.now()`).
  */
-export interface EntityScope {
-  /** Tenant partition (isolation boundary). */
-  tenantId: string;
-  /** Agent partition (isolation boundary). */
-  agentId: string;
+export type EntityScope = LearningScope & {
   /**
    * Injected wall-clock epoch milliseconds for `first_seen` / `last_seen`
-   * bookkeeping. NEVER `Date.now()` — the caller supplies it from an injected
-   * clock so the write path stays deterministic/testable.
+   * bookkeeping. REQUIRED on the entity write path. NEVER `Date.now()` — the
+   * caller supplies it from an injected clock so the write path stays
+   * deterministic/testable.
    */
   now: number;
-}
+};
 
 /**
  * A single entity row for the entity-graph diagnostic. Counts +

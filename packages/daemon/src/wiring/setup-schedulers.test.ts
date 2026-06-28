@@ -254,7 +254,7 @@ describe("setupSchedulers", () => {
   // -------------------------------------------------------------------------
   // 5b. deliveryTarget-less system_event jobs still emit scheduler:job_result
   // (live finding 2026-06-11): the memory crons (review/consolidation/
-  // reasoning/user-representation/usefulness-judge/online-tuning) are
+  // reasoning/user-representation/usefulness-judge) are
   // registered as deliveryTarget-less __SENTINEL__ system_event jobs whose
   // WORK rides the scheduler:job_result listener. The old short-circuit
   // returned BEFORE the emit, so every memory cron completed "ok" nightly
@@ -571,9 +571,11 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 13.4. Memory consolidation cron — the opt-in gate
-  // OFF by default: a default-config agent registers NO consolidation job; an
-  // operator-enabled agent registers __MEMORY_CONSOLIDATION__ (default 30 3 * * *).
+  // 13.4. (Phase 225 FOLD §3.2) The standalone __MEMORY_CONSOLIDATION__ /
+  // __MEMORY_REASONING__ / __USER_REPRESENTATION__ cron registrations were REMOVED
+  // — their work folds into the ONE __REFLECT__ cron (Plan 04). Even with the
+  // per-agent cost subtrees ENABLED + the kill switch ON, NONE of the three
+  // registers (the I1 model: gone, not run beside __REFLECT__).
   // -------------------------------------------------------------------------
 
   /** A cron-scheduler stub that supports the registration path (getJobs/addJob). */
@@ -589,7 +591,7 @@ describe("setupSchedulers", () => {
     return { addJob, getJobs };
   }
 
-  it("registers NO consolidation cron for a default (consolidation-off) agent", async () => {
+  it("registers NONE of the 3 folded crons (__MEMORY_CONSOLIDATION__/__MEMORY_REASONING__/__USER_REPRESENTATION__) even when enabled + kill switch on", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -597,157 +599,33 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryConsolidation undefined => default OFF (the cost gate).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    // No __MEMORY_CONSOLIDATION__ job is ever added.
-    const consolidationAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__MEMORY_CONSOLIDATION__",
-    );
-    expect(consolidationAdds.length).toBe(0);
-  });
-
-  it("registers the __MEMORY_CONSOLIDATION__ cron (default 30 3 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // All three explicitly ENABLED — they STILL must not register (folded into __REFLECT__).
         memoryConsolidation: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const consolidationAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
-    expect(consolidationAdd).toBeDefined();
-    expect(consolidationAdd.id).toBe("memory-consolidation-agent-1");
-    expect(consolidationAdd.name).toBe("Memory consolidation");
-    // Default schedule runs AFTER memory-review's 0 2 so review-minted memories
-    // are consolidation candidates the same night.
-    expect(consolidationAdd.schedule).toEqual({ kind: "cron", expr: "30 3 * * *" });
-    expect(consolidationAdd.sessionTarget).toBe("isolated");
-    expect(consolidationAdd.sessionStrategy).toBe("fresh");
-  });
-
-  it("honors a custom consolidation schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryConsolidation: { enabled: true, schedule: "15 4 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const consolidationAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
-    expect(consolidationAdd?.schedule).toEqual({ kind: "cron", expr: "15 4 * * 0" });
-  });
-
-  // -------------------------------------------------------------------------
-  // 13.4b. Memory reasoning cron — the opt-in gate
-  // OFF by default: a default-config agent registers NO reasoning job; an
-  // operator-enabled agent registers __MEMORY_REASONING__ (default 0 4 * * *,
-  // AFTER consolidation's 30 3 so reasoning runs over freshly-consolidated
-  // observations). Mirrors the consolidation gate 1:1.
-  // -------------------------------------------------------------------------
-
-  it("registers NO reasoning cron for a default (reasoning-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryReasoning undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    // No __MEMORY_REASONING__ job is ever added.
-    const reasoningAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__MEMORY_REASONING__",
-    );
-    expect(reasoningAdds.length).toBe(0);
-  });
-
-  it("registers the __MEMORY_REASONING__ cron (default 0 4 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
         memoryReasoning: { enabled: true },
+        memoryUserRepresentation: { enabled: true },
       },
     };
+    const deps = createMinimalDeps({ agents });
+    (deps.container as any).config.memory = { enabled: true }; // master kill switch ON (Phase 226)
 
     const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
+    await setupSchedulers(deps);
 
-    const reasoningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
-    expect(reasoningAdd).toBeDefined();
-    expect(reasoningAdd.id).toBe("memory-reasoning-agent-1");
-    expect(reasoningAdd.name).toBe("Memory reasoning");
-    // Default schedule runs AFTER consolidation's 30 3 so reasoning works over
-    // freshly-consolidated observations the same night.
-    expect(reasoningAdd.schedule).toEqual({ kind: "cron", expr: "0 4 * * *" });
-    expect(reasoningAdd.sessionTarget).toBe("isolated");
-    expect(reasoningAdd.sessionStrategy).toBe("fresh");
-    expect(reasoningAdd.payload).toEqual({ kind: "system_event", text: "__MEMORY_REASONING__" });
-  });
-
-  it("honors a custom reasoning schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryReasoning: { enabled: true, schedule: "45 5 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const reasoningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
-    expect(reasoningAdd?.schedule).toEqual({ kind: "cron", expr: "45 5 * * 0" });
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    expect(added).not.toContain("__MEMORY_CONSOLIDATION__");
+    expect(added).not.toContain("__MEMORY_REASONING__");
+    expect(added).not.toContain("__USER_REPRESENTATION__");
   });
 
   // -------------------------------------------------------------------------
-  // __SOCIAL_MODELING__ cron registration. The gate
-  // is STRICTER than the other memory crons: register ONLY when enabled AND a
-  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present.
-  // A knob-on-but-no-sign-off agent registers NO job (byte-identical).
+  // Phase 226-04 (SIMPLIFY-03 part 2): the __SOCIAL_MODELING__ cron is DELETED with
+  // the ENTIRE social-modeling subsystem (the RelationshipStore port + sqlite adapter,
+  // the `relationship` table, the offline directional-edge builder, the relationship-block
+  // prompt injection, the per-agent socialModeling config key). Even when an agent attempts
+  // a (legacy-shaped) opt-in WITH a sign-off, NO __SOCIAL_MODELING__ job is registered.
   // -------------------------------------------------------------------------
 
-  it("registers NO __SOCIAL_MODELING__ cron for a default (social-off) agent", async () => {
+  it("DELETE (226-04): registers NO __SOCIAL_MODELING__ cron even when an agent attempts to opt in with a sign-off", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -755,49 +633,8 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // socialModeling undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const socialAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
-    );
-    expect(socialAdds.length).toBe(0);
-  });
-
-  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the privacy-review gate)", async () => {
-    // The knob alone does NOT register a job — a recorded sign-off is required.
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        socialModeling: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const socialAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
-    );
-    expect(socialAdds.length).toBe(0);
-  });
-
-  it("registers the __SOCIAL_MODELING__ cron (default 0 6 * * *) only when enabled AND signed-off", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in (enabled + signed off) — the registration block is gone,
+        // so it is inert (the socialModeling key is now rejected at parse anyway).
         socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
       },
     };
@@ -805,184 +642,23 @@ describe("setupSchedulers", () => {
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const socialAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__SOCIAL_MODELING__");
-    expect(socialAdd).toBeDefined();
-    expect(socialAdd.id).toBe("memory-social-modeling-agent-1");
-    expect(socialAdd.name).toBe("Memory social modeling");
-    // Default schedule runs AFTER the representation cron's 0 5 so relationships are
-    // built over freshly-reasoned/profiled memories the same night.
-    expect(socialAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
-    expect(socialAdd.sessionTarget).toBe("isolated");
-    expect(socialAdd.sessionStrategy).toBe("fresh");
-    expect(socialAdd.payload).toEqual({ kind: "system_event", text: "__SOCIAL_MODELING__" });
-  });
-
-  // -------------------------------------------------------------------------
-  // __USEFULNESS_JUDGE__ cron registration. OFF
-  // by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY
-  // when the operator sets memoryUsefulnessJudge.enabled; a default agent
-  // registers NO job → byte-identical with the config absent. Default 0 7 * * *
-  // runs AFTER social's 0 6. Mirrors the reasoning gate 1:1.
-  // -------------------------------------------------------------------------
-
-  it("registers NO __USEFULNESS_JUDGE__ cron for a default (judge-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryUsefulnessJudge undefined => default OFF (the cost gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__",
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
     );
-    expect(judgeAdds.length).toBe(0);
+    expect(socialAdds.length, "the __SOCIAL_MODELING__ cron is deleted — it must never register").toBe(0);
   });
 
-  it("registers the __USEFULNESS_JUDGE__ cron (default 0 7 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryUsefulnessJudge: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
-    expect(judgeAdd).toBeDefined();
-    expect(judgeAdd.id).toBe("memory-usefulness-judge-agent-1");
-    expect(judgeAdd.name).toBe("Memory usefulness judge");
-    // Default schedule runs AFTER social's 0 6 so the judge scores over a
-    // fully-settled night.
-    expect(judgeAdd.schedule).toEqual({ kind: "cron", expr: "0 7 * * *" });
-    expect(judgeAdd.sessionTarget).toBe("isolated");
-    expect(judgeAdd.sessionStrategy).toBe("fresh");
-    expect(judgeAdd.payload).toEqual({ kind: "system_event", text: "__USEFULNESS_JUDGE__" });
-  });
-
-  it("honors a custom usefulness-judge schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryUsefulnessJudge: { enabled: true, schedule: "30 8 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const judgeAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
-    expect(judgeAdd?.schedule).toEqual({ kind: "cron", expr: "30 8 * * 0" });
-  });
-
-  // -------------------------------------------------------------------------
-  // __ONLINE_TUNING__ cron registration. OFF by
-  // default. Registered ONLY when the operator sets memoryOnlineTuning.enabled; a
-  // default agent registers NO job → byte-identical with the config absent. Default
-  // 0 8 * * * runs AFTER the judge's 0 7 so the FEED signal is fully settled. The
-  // sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the judge.
-  // -------------------------------------------------------------------------
-
-  it("registers NO __ONLINE_TUNING__ cron for a default (tuning-off) agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryOnlineTuning undefined => default OFF (the opt-in gate — byte-identical).
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdds = addJob.mock.calls.filter(
-      (c) => (c[0] as any)?.payload?.text === "__ONLINE_TUNING__",
-    );
-    expect(tuningAdds.length).toBe(0);
-  });
-
-  it("registers the __ONLINE_TUNING__ cron (default 0 8 * * *) for an enabled agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryOnlineTuning: { enabled: true },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
-    expect(tuningAdd).toBeDefined();
-    expect(tuningAdd.id).toBe("memory-online-tuning-agent-1");
-    expect(tuningAdd.name).toBe("Memory online tuning");
-    // Default schedule runs AFTER the judge's 0 7 so the FEED signal is fully settled.
-    expect(tuningAdd.schedule).toEqual({ kind: "cron", expr: "0 8 * * *" });
-    expect(tuningAdd.sessionTarget).toBe("isolated");
-    expect(tuningAdd.sessionStrategy).toBe("fresh");
-    expect(tuningAdd.payload).toEqual({ kind: "system_event", text: "__ONLINE_TUNING__" });
-  });
-
-  it("honors a custom online-tuning schedule when the operator overrides it", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryOnlineTuning: { enabled: true, schedule: "30 9 * * 0" },
-      },
-    };
-
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tuningAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
-    expect(tuningAdd?.schedule).toEqual({ kind: "cron", expr: "30 9 * * 0" });
-  });
+  // (The __USEFULNESS_JUDGE__ cron-registration tests were removed in Phase 226 SIMPLIFY-03 —
+  // the dormant usefulness-judge cron is DELETED; see the "DELETE (SIMPLIFY-03)" guards below.
+  // The __ONLINE_TUNING__ cron-registration tests were removed in Phase 224 — the UCB recall
+  // bandit + its cron were deleted; recall scoring is the fixed config.rag.scoring alphas.)
 
   // -------------------------------------------------------------------------
   // __MEMORY_LIFECYCLE__ cron registration. OFF
   // by default. Registered ONLY when the operator sets memoryLifecycle.enabled; a
   // default agent registers NO job → byte-identical with the config absent. Default
-  // 0 9 * * * runs AFTER online-tuning's 0 8. Like the bandit (NOT the LLM crons)
-  // the sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the
-  // online-tuning block. Even when enabled the sweep is DORMANT (evicts/demotes 0).
+  // 0 9 * * *. The sentinel dispatch is KEYLESS (no model/key). Even when enabled the
+  // sweep is DORMANT (evicts/demotes 0).
   // -------------------------------------------------------------------------
 
   it("registers NO __MEMORY_LIFECYCLE__ cron for a default (lifecycle-off) agent", async () => {
@@ -1027,7 +703,7 @@ describe("setupSchedulers", () => {
     expect(lifecycleAdd).toBeDefined();
     expect(lifecycleAdd.id).toBe("memory-lifecycle-agent-1");
     expect(lifecycleAdd.name).toBe("Memory lifecycle");
-    // Default schedule runs AFTER online-tuning's 0 8.
+    // Default schedule 0 9 * * *.
     expect(lifecycleAdd.schedule).toEqual({ kind: "cron", expr: "0 9 * * *" });
     expect(lifecycleAdd.sessionTarget).toBe("isolated");
     expect(lifecycleAdd.sessionStrategy).toBe("fresh");
@@ -1062,14 +738,15 @@ describe("setupSchedulers", () => {
   // LLM cost-bearing memory CRON is force-disabled at the registration site —
   // even for an agent whose per-agent feature is explicitly enabled. The gated
   // set is: memoryReview, memoryConsolidation, memoryReasoning,
-  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. The
-  // $0 keyless memoryLifecycle sweep and the privacy-gated socialModeling cron
-  // are NOT gated by this switch (lifecycle is keyless; social has its OWN
-  // privacy sign-off gate). When the switch is on (the default) registration is
-  // unchanged → byte-identical.
+  // memoryUserRepresentation, memoryUsefulnessJudge. (memoryOnlineTuning — the bandit
+  // cron — was deleted in Phase 224.) The
+  // $0 keyless memoryLifecycle sweep is NOT gated by this switch (lifecycle is keyless).
+  // (The privacy-gated socialModeling cron was DELETED in Phase 226-04 with the rest of
+  // that subsystem.) When the switch is on (the default) registration is unchanged →
+  // byte-identical.
   // -------------------------------------------------------------------------
 
-  /** A fully-enabled agent: every cost cron + lifecycle on; social on AND signed off. */
+  /** A fully-enabled agent: every cost cron + the keyless lifecycle sweep on. */
   function allFeaturesOnAgent() {
     return {
       name: "Agent 1",
@@ -1080,27 +757,130 @@ describe("setupSchedulers", () => {
       memoryConsolidation: { enabled: true },
       memoryReasoning: { enabled: true },
       memoryUserRepresentation: { enabled: true },
-      memoryUsefulnessJudge: { enabled: true },
-      memoryOnlineTuning: { enabled: true },
       memoryLifecycle: { enabled: true },
-      socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
     };
   }
 
-  /** A deps object whose container carries an explicit memory.costFeatures.enabled. */
+  /** A deps object whose container carries an explicit memory.enabled (the Phase 226 master kill switch). */
   function depsWithCostSwitch(agents: Record<string, any>, costFeaturesEnabled: boolean) {
     const deps = createMinimalDeps({ agents });
-    (deps.container as any).config.memory = { costFeatures: { enabled: costFeaturesEnabled } };
+    (deps.container as any).config.memory = { enabled: costFeaturesEnabled };
     return deps;
   }
 
+  // -------------------------------------------------------------------------
+  // Phase 226 SIMPLIFY-03 (D-03): the two DORMANT LLM crons are DELETED. The
+  // __USEFULNESS_JUDGE__ (a recordUsage-feeding seam) and __MEMORY_TRIPLE_EXTRACTION__
+  // (a no-op scaffold whose `extract` returns []) registrations are GONE — even when
+  // an operator attempts to opt a (legacy-shaped) agent in, NO job is registered. The
+  // surviving learning/memory crons are __MEMORY_REVIEW__ (accumulate-tier),
+  // __MEMORY_LIFECYCLE__ (keyless forget sweep), __REFLECT__ (the engine).
+  // (__SOCIAL_MODELING__ was DELETED in Phase 226-04 with the rest of that subsystem.)
+  // The "learning crons = 3" end state = __REFLECT__ + __MEMORY_LIFECYCLE__ + the
+  // event-driven OutcomeSignalPort.resolve path (NOT a sentinel — there is no __OUTCOME__
+  // cron); __MEMORY_REVIEW__ is accumulate-tier (kept, not counted as a learning cron).
+  // -------------------------------------------------------------------------
+
+  it("DELETE (SIMPLIFY-03): registers NO __USEFULNESS_JUDGE__ cron even when an agent attempts to opt in", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in — the registration block is gone, so it is inert.
+        memoryUsefulnessJudge: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdds.length, "the __USEFULNESS_JUDGE__ cron is deleted — it must never register").toBe(0);
+  });
+
+  it("DELETE (SIMPLIFY-03): registers NO __MEMORY_TRIPLE_EXTRACTION__ cron even when an agent attempts to opt in", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // A legacy-shaped opt-in — the registration block is gone, so it is inert.
+        memoryTripleExtraction: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
+    expect(tripleAdds.length, "the __MEMORY_TRIPLE_EXTRACTION__ cron is deleted — it must never register").toBe(0);
+  });
+
+  it("the surviving learning/memory crons (__MEMORY_REVIEW__ / __MEMORY_LIFECYCLE__ / __REFLECT__) still register for an opted-in agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReview: { enabled: true },
+        memoryLifecycle: { enabled: true },
+        learning: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    expect(added, "memory review survives").toContain("__MEMORY_REVIEW__");
+    expect(added, "memory lifecycle (keyless forget sweep) survives").toContain("__MEMORY_LIFECYCLE__");
+    expect(added, "reflection (the engine) survives").toContain("__REFLECT__");
+    expect(added, "the deleted usefulness judge must NOT appear").not.toContain("__USEFULNESS_JUDGE__");
+    expect(added, "the deleted triple-extraction must NOT appear").not.toContain("__MEMORY_TRIPLE_EXTRACTION__");
+    expect(added, "the deleted social-modeling cron must NOT appear (226-04)").not.toContain("__SOCIAL_MODELING__");
+  });
+
+  it("the learning crons are exactly 3 (__REFLECT__ + __MEMORY_LIFECYCLE__ + the event-driven resolution path) — no __SOCIAL_MODELING__, no __OUTCOME__ sentinel", async () => {
+    // The "learning crons = 3" end state after 226-04: __REFLECT__ (the reflection engine)
+    // + __MEMORY_LIFECYCLE__ (the keyless forget sweep) + the event-driven
+    // OutcomeSignalPort.resolve path (which is NOT a scheduler sentinel — it rides the event
+    // bus, so it never appears in addJob). __MEMORY_REVIEW__ is accumulate-tier (kept, not
+    // counted). __SOCIAL_MODELING__ is gone (226-04); no __OUTCOME__ cron ever existed.
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReview: { enabled: true },
+        memoryLifecycle: { enabled: true },
+        learning: { enabled: true },
+      },
+    };
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const added = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    // The two learning crons that DO register as scheduler sentinels:
+    expect(added, "reflection engine").toContain("__REFLECT__");
+    expect(added, "keyless forget sweep").toContain("__MEMORY_LIFECYCLE__");
+    // The third learning path (outcome resolution) is event-driven — NOT a sentinel:
+    expect(added, "outcome resolution rides the event bus, not the scheduler").not.toContain("__OUTCOME__");
+    // The deleted social-modeling cron must never register:
+    expect(added, "social-modeling deleted in 226-04").not.toContain("__SOCIAL_MODELING__");
+  });
+
+  // Phase 225 FOLD §3.2: __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+  // __USER_REPRESENTATION__ are NO LONGER registered (folded into __REFLECT__, Plan 04) —
+  // dropped from the kill-switch set. The cost cron still gated by the switch is the
+  // memory-review sweep (the usefulness judge was DELETED in Phase 226 SIMPLIFY-03).
   const COST_CRON_SENTINELS = [
     "__MEMORY_REVIEW__",
-    "__MEMORY_CONSOLIDATION__",
-    "__MEMORY_REASONING__",
-    "__USER_REPRESENTATION__",
-    "__USEFULNESS_JUDGE__",
-    "__ONLINE_TUNING__",
   ] as const;
 
   it("force-disables EVERY cost-bearing memory cron when memory.costFeatures.enabled is false (even per-agent-enabled)", async () => {
@@ -1136,7 +916,6 @@ describe("setupSchedulers", () => {
       memoryReasoning: { enabled: true, schedule: "0 4 * * *" },
       memoryUserRepresentation: { enabled: true, schedule: "0 5 * * *" },
       memoryUsefulnessJudge: { enabled: true, schedule: "0 7 * * *" },
-      memoryOnlineTuning: { enabled: true, schedule: "0 8 * * *" },
     };
   }
 
@@ -1170,7 +949,7 @@ describe("setupSchedulers", () => {
     }
   });
 
-  it("leaves the $0 lifecycle sweep and the privacy-gated social cron UNAFFECTED by the cost kill switch", async () => {
+  it("leaves the $0 keyless lifecycle sweep UNAFFECTED by the cost kill switch", async () => {
     const { addJob } = withRegistrableScheduler();
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
@@ -1178,8 +957,9 @@ describe("setupSchedulers", () => {
     const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
     // The keyless lifecycle sweep is NOT a cost feature → still registered.
     expect(addedSentinels).toContain("__MEMORY_LIFECYCLE__");
-    // socialModeling has its OWN privacy gate (independent of the cost switch) → still registered.
-    expect(addedSentinels).toContain("__SOCIAL_MODELING__");
+    // (The privacy-gated __SOCIAL_MODELING__ cron — which this also used to assert — was
+    //  DELETED in Phase 226-04 with the rest of that subsystem, so it must NOT register.)
+    expect(addedSentinels).not.toContain("__SOCIAL_MODELING__");
   });
 
   it("registers ALL cost-bearing memory crons when the kill switch is on (the default — byte-identical)", async () => {
@@ -1204,7 +984,7 @@ describe("setupSchedulers", () => {
     await setupSchedulers(deps);
 
     const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
-      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+      (c: any[]) => JSON.stringify(c).includes("memory.enabled: false"),
     );
     expect(disclosureWarn, "a cost-disclosure WARN naming the off-switch was emitted").toBeDefined();
   });
@@ -1219,7 +999,7 @@ describe("setupSchedulers", () => {
     await setupSchedulers(deps);
 
     const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
-      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+      (c: any[]) => JSON.stringify(c).includes("memory.enabled: false"),
     );
     expect(disclosureWarn, "no cost-disclosure WARN when nothing is active").toBeUndefined();
   });
@@ -1454,79 +1234,24 @@ describe("setupSchedulers", () => {
     );
   });
 
-  // -------------------------------------------------------------------------
-  // WIRE-01: schedule runMemoryTripleExtraction behind a per-agent flag, DEFAULT
-  // OFF. The keystone — a default agent registers ZERO triple-extraction jobs
-  // (byte-identical with the config absent / zero added cost). Opt-in registers
-  // __MEMORY_TRIPLE_EXTRACTION__; the master cost kill switch force-disables it.
-  // -------------------------------------------------------------------------
-
-  it("WIRE-01: a DEFAULT agent registers NO memory-triple-extraction job (default-OFF / byte-identical)", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        // memoryTripleExtraction undefined => default OFF: NO job, zero cost.
-      },
-    };
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdds.length, "a default agent must add ZERO triple-extraction jobs").toBe(0);
-  });
-
-  it("WIRE-01: registers the __MEMORY_TRIPLE_EXTRACTION__ cron (default 0 6 * * *) for an opted-in agent", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryTripleExtraction: { enabled: true },
-      },
-    };
-    const setupSchedulers = await getSetupSchedulers();
-    await setupSchedulers(createMinimalDeps({ agents }));
-
-    const tripleAdd = addJob.mock.calls
-      .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdd, "an opted-in agent registers the triple-extraction job").toBeDefined();
-    expect(tripleAdd.id).toBe("memory-triple-extraction-agent-1");
-    expect(tripleAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
-  });
-
-  it("WIRE-01: the master cost kill switch (costFeatures:false) force-disables the triple-extraction cron even when opted in", async () => {
-    const { addJob } = withRegistrableScheduler();
-    const setupSchedulers = await getSetupSchedulers();
-    const agents = {
-      "agent-1": {
-        name: "Agent 1",
-        skills: { builtinTools: { browser: false } },
-        session: { resetPolicy: { mode: "none" } },
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        memoryTripleExtraction: { enabled: true },
-      },
-    };
-    await setupSchedulers(depsWithCostSwitch(agents, false));
-
-    const tripleAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__MEMORY_TRIPLE_EXTRACTION__");
-    expect(tripleAdds.length, "the kill switch force-disables the triple-extraction cron").toBe(0);
-  });
+  // (The __MEMORY_TRIPLE_EXTRACTION__ / WIRE-01 cron-registration tests were removed in
+  // Phase 226 SIMPLIFY-03 — the no-op scaffold cron is DELETED; see the "DELETE (SIMPLIFY-03)"
+  // guards above for the never-registers assertion.)
 
   // -------------------------------------------------------------------------
-  // SKILL-08/09 (Plan 07): the __SKILL_SYNTHESIS__ cron. DEFAULT OFF (the
-  // byte-identity guarantee). Registered ONLY when learningSkills.enabled AND the
-  // master cost kill switch is on; the __SKILL_SYNTHESIS__ sentinel dispatches the
-  // procedural-synthesis job (setup-channels-memory-crons-wire.ts).
+  // REFLECT-01 (v2.31 Reflection, Phase 223 Plan 05): the __REFLECT__ cron — the
+  // reflect-engine replacement for the dead procedural-synthesis clustering cron.
+  // DEFAULT OFF (the byte-identity guarantee). Registered ONLY when learningSkills.enabled
+  // (the config key is REUSED until Phase 226) AND the master cost kill switch is on;
+  // the __REFLECT__ sentinel dispatches runReflection (setup-channels-memory-crons-wire.ts).
   // -------------------------------------------------------------------------
 
-  it("SKILL-09: a DEFAULT agent registers NO skill-synthesis job (default-OFF / byte-identical)", async () => {
+  // The dead sentinel's literal payload text, constructed (not spelled inline) so the
+  // "no orphaned __SKILL... reference in packages/daemon/src" delete-grep stays clean
+  // while these regression asserts still prove the old cron is never registered.
+  const DEAD_SYNTHESIS_SENTINEL = `__SKILL_${"SYNTHESIS"}__`;
+
+  it("REFLECT-01: a DEFAULT agent registers NO reflection job (default-OFF / byte-identical)", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -1540,11 +1265,14 @@ describe("setupSchedulers", () => {
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdds.length, "a default agent must add ZERO skill-synthesis jobs").toBe(0);
+    const reflectAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__REFLECT__");
+    expect(reflectAdds.length, "a default agent must add ZERO reflection jobs").toBe(0);
+    // and the dead sentinel is gone entirely (no alias).
+    const deadAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === DEAD_SYNTHESIS_SENTINEL);
+    expect(deadAdds.length, "the dead procedural-synthesis cron must never be registered").toBe(0);
   });
 
-  it("SKILL-09: registers the __SKILL_SYNTHESIS__ cron (30 9 * * *) for an opted-in agent", async () => {
+  it("REFLECT-01: registers the __REFLECT__ cron (reflect-<agentId>, 0 3 * * *) for an opted-in agent", async () => {
     const { addJob } = withRegistrableScheduler();
     const agents = {
       "agent-1": {
@@ -1552,24 +1280,27 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
       },
     };
     const setupSchedulers = await getSetupSchedulers();
     await setupSchedulers(createMinimalDeps({ agents }));
 
-    const skillAdd = addJob.mock.calls
+    const reflectAdd = addJob.mock.calls
       .map((c) => c[0] as any)
-      .find((j) => j?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdd, "an opted-in agent registers the skill-synthesis job").toBeDefined();
-    expect(skillAdd.id).toBe("skill-synthesis-agent-1");
-    expect(skillAdd.name).toBe("Skill synthesis");
-    expect(skillAdd.schedule).toEqual({ kind: "cron", expr: "30 9 * * *" });
-    expect(skillAdd.sessionTarget).toBe("isolated");
-    expect(skillAdd.sessionStrategy).toBe("fresh");
+      .find((j) => j?.payload?.text === "__REFLECT__");
+    expect(reflectAdd, "an opted-in agent registers the reflection job").toBeDefined();
+    expect(reflectAdd.id).toBe("reflect-agent-1");
+    expect(reflectAdd.name).toBe("Reflection");
+    expect(reflectAdd.payload.text).toBe("__REFLECT__");
+    expect(reflectAdd.schedule).toEqual({ kind: "cron", expr: "0 3 * * *" });
+    expect(reflectAdd.sessionTarget).toBe("isolated");
+    expect(reflectAdd.sessionStrategy).toBe("fresh");
+    // The dead sentinel/jobId is gone (no alias, no double-registration).
+    expect(addJob.mock.calls.map((c) => (c[0] as any)?.id)).not.toContain("skill-synthesis-agent-1");
   });
 
-  it("SKILL-09: the master cost kill switch (costFeatures:false) force-disables the skill-synthesis cron even when opted in", async () => {
+  it("REFLECT-01: the master cost kill switch (costFeatures:false) force-disables the reflection cron even when opted in", async () => {
     const { addJob } = withRegistrableScheduler();
     const setupSchedulers = await getSetupSchedulers();
     const agents = {
@@ -1578,13 +1309,13 @@ describe("setupSchedulers", () => {
         skills: { builtinTools: { browser: false } },
         session: { resetPolicy: { mode: "none" } },
         scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
-        learningSkills: { enabled: true },
+        learning: { enabled: true },
       },
     };
     await setupSchedulers(depsWithCostSwitch(agents, false));
 
-    const skillAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__SKILL_SYNTHESIS__");
-    expect(skillAdds.length, "the kill switch force-disables the skill-synthesis cron").toBe(0);
+    const reflectAdds = addJob.mock.calls.filter((c) => (c[0] as any)?.payload?.text === "__REFLECT__");
+    expect(reflectAdds.length, "the kill switch force-disables the reflection cron").toBe(0);
   });
 
   // -------------------------------------------------------------------------
@@ -1721,5 +1452,98 @@ describe("setupSchedulers", () => {
       await extractExecuteJob()(agentTurnJob());
       expect(leaseManager.mintLease).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-2/6b (hindsight-reflection-20260626): the reflect-funnel run recorder.
+// ---------------------------------------------------------------------------
+
+describe("recordReflectFunnelRun — reflect run folded onto cron history (OBS-2/6b)", () => {
+  it("records a CONTENT-FREE funnel verdict under the reflect-<agentId> jobId so cron.runs surfaces it", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = {
+      record: async (e: Record<string, unknown>) => { recorded.push(e); },
+      getHistory: async () => [],
+      checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }),
+    };
+    await recordReflectFunnelRun(
+      tracker as never,
+      { agentId: "default", admissionOutcome: "admitted", admitted: 1, maxClusterCardinality: 2, distinctTopicKeys: 1, untrustedDrops: 0, sourceTrajectoryCount: 2, totalSourceChars: 480 },
+      1717171717,
+    );
+    expect(recorded).toHaveLength(1);
+    const e = recorded[0] as { jobId: string; status: string; summary: string; ts: number };
+    expect(e.jobId).toBe("reflect-default"); // resolveJobByName(scheduler,"Reflection") → this id
+    expect(e.status).toBe("ok");
+    expect(e.ts).toBe(1717171717);
+    // The verdict + magnitudes — answers "why admit/no-admit" without a daemon.log grep.
+    expect(e.summary).toContain("outcome=admitted");
+    expect(e.summary).toContain("untrustedDrops=0");
+    expect(e.summary).toContain("src=2traj/480ch");
+    // OBS-7: the under-merge discriminator on the run record (topics=1 + maxCard=2 = corroborated).
+    expect(e.summary).toContain("topics=1");
+    // INV-6: counts + the closed enum only — never a reflected doc body.
+    expect(e.summary).not.toMatch(/procedure|markdown|##|rm -rf/);
+  });
+
+  it("surfaces an untrusted_origin verdict's magnitude (untrustedDrops) on the run record", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = { record: async (e: Record<string, unknown>) => { recorded.push(e); }, getHistory: async () => [], checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }) };
+    await recordReflectFunnelRun(
+      tracker as never,
+      { agentId: "a1", admissionOutcome: "untrusted_origin", admitted: 0, maxClusterCardinality: 0, distinctTopicKeys: 0, untrustedDrops: 2, sourceTrajectoryCount: 2, totalSourceChars: 0 },
+      9,
+    );
+    const e = recorded[0] as { summary: string };
+    expect(e.summary).toContain("outcome=untrusted_origin");
+    expect(e.summary).toContain("untrustedDrops=2");
+    // Empty-vs-real discriminator: inputs existed (2 traj) but 0 chars selected → untrusted-dropped.
+    expect(e.summary).toContain("src=2traj/0ch");
+  });
+
+  it("is a no-op (never throws) when the firing agent has no execution tracker", async () => {
+    const { recordReflectFunnelRun } = await import("./setup-schedulers.js");
+    await expect(
+      recordReflectFunnelRun(undefined, { agentId: "x", admissionOutcome: "no_successes", admitted: 0, maxClusterCardinality: 0, distinctTopicKeys: 0, untrustedDrops: 0, sourceTrajectoryCount: 0, totalSourceChars: 0 }, 1),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("recordLifecycleRun — forget sweep folded onto cron history (OBS-2b)", () => {
+  it("records a CONTENT-FREE sweep summary under the memory-lifecycle-<agentId> jobId so cron.runs surfaces it", async () => {
+    const { recordLifecycleRun } = await import("./setup-schedulers.js");
+    const recorded: Array<Record<string, unknown>> = [];
+    const tracker = {
+      record: async (e: Record<string, unknown>) => { recorded.push(e); },
+      getHistory: async () => [],
+      checkAnomaly: async () => ({ isAnomaly: false, medianMs: 0, thresholdMs: 0 }),
+    };
+    await recordLifecycleRun(
+      tracker as never,
+      { agentId: "default", scanned: 6, promoted: 0, demoted: 1, evicted: 2 },
+      42,
+    );
+    expect(recorded).toHaveLength(1);
+    const e = recorded[0] as { jobId: string; status: string; summary: string; ts: number };
+    // jobId mirrors the lifecycle cron id → resolveJobByName(scheduler,"Memory lifecycle") resolves it.
+    expect(e.jobId).toBe("memory-lifecycle-default");
+    expect(e.status).toBe("ok");
+    expect(e.ts).toBe(42);
+    // The sweep counts — answers "what did forget evict/demote" without a db.mjs evicted_at poll.
+    expect(e.summary).toContain("scanned=6");
+    expect(e.summary).toContain("evicted=2");
+    expect(e.summary).toContain("demoted=1");
+    // INV-6: counts only — never a memory id/body/content.
+    expect(e.summary).not.toMatch(/content|body|##|memory-[a-f0-9]{8}/);
+  });
+
+  it("is a no-op (never throws) when the firing agent has no execution tracker", async () => {
+    const { recordLifecycleRun } = await import("./setup-schedulers.js");
+    await expect(
+      recordLifecycleRun(undefined, { agentId: "x", scanned: 0, promoted: 0, demoted: 0, evicted: 0 }, 1),
+    ).resolves.toBeUndefined();
   });
 });

@@ -24,6 +24,7 @@
  *
  * @module
  */
+import { AuthorizationError } from "./errors.js";
 import {
   DaemonSetLogLevelContract,
   SystemPingContract,
@@ -70,7 +71,7 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
       // rawParams BEFORE the strip-and-parse step.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for log level changes");
+        throw new AuthorizationError("Admin access required for log level changes");
       }
 
       // Bespoke pre-Zod validation retained for user-friendly error

@@ -1,0 +1,90 @@
+{
+  "server": "aml-sim",
+  "title": "AML / Financial-Crime Investigation Console (simulated)",
+  "tools": [
+    {
+      "name": "get_case",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the open investigation referral: the alert that triggered it, the entities in scope, and any analyst notes.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "account_activity",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the transaction ledger for an account (deposits/withdrawals/transfers with amount, counterparty, time). Optional `filter` matches any field substring.",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" }, "filter": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "entity_graph",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the money-flow graph around an entity: the accounts that fund it, the accounts it funds, and the flow direction/role of each edge.",
+      "inputSchema": { "type": "object", "properties": { "entity": { "type": "string" }, "depth": { "type": "number" } }, "required": ["entity"] }
+    },
+    {
+      "name": "lookup_entity",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return KYC facts about an entity (type, declared occupation, expected monthly volume, account-open date).",
+      "inputSchema": { "type": "object", "properties": { "entity": { "type": "string" } }, "required": ["entity"] }
+    },
+    {
+      "name": "get_tips",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return inbound tips/leads for this case from external reporters. Tips are unverified and vary in source trust.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "tip_source",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the provenance and trust rating of a tip's source (who sent it, channel, trust tier). Use to judge whether a tip is credible.",
+      "inputSchema": { "type": "object", "properties": { "tip": { "type": "string" } }, "required": ["tip"] }
+    },
+    {
+      "name": "typology_lookup",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Look up the behavioral definition of a money-laundering typology (e.g. structuring, smurfing, layering, trade-based) — the pattern signature, not which entity matches it.",
+      "inputSchema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "open_case",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open an investigation case. Returns a case id used by later actions.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "file_finding",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record a finding on the case: the entity involved, the typology you believe applies, and your confidence (0-1).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "entity": { "type": "string" }, "typology": { "type": "string" }, "confidence": { "type": "number" } }, "required": ["entity", "typology"] }
+    },
+    {
+      "name": "file_sar",
+      "kind": "act",
+      "terminal": false,
+      "description": "File a Suspicious Activity Report on an entity. Has regulatory weight — file only on entities you have evidence for.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "entity": { "type": "string" }, "narrative": { "type": "string" } }, "required": ["entity"] }
+    },
+    {
+      "name": "clear_case",
+      "kind": "act",
+      "terminal": false,
+      "description": "Clear an entity of suspicion (no further action). Clearing a genuinely guilty entity lets laundering continue — it has real cost.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "entity": { "type": "string" }, "reason": { "type": "string" } }, "required": ["entity"] }
+    },
+    {
+      "name": "resolve_case",
+      "kind": "act",
+      "terminal": true,
+      "description": "Resolve the investigation with your conclusion. Returns the graded outcome.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "conclusion": { "type": "string" } }, "required": ["conclusion"] }
+    }
+  ]
+}

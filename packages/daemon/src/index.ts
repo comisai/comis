@@ -115,6 +115,18 @@ export type {
 export { setupSkillBundles, buildSkillRegistriesForBundles } from "./wiring/setup-skill-bundles.js";
 export type { SetupSkillBundlesDeps } from "./wiring/setup-skill-bundles.js";
 
+// Resolve-seam learned-skill promote/demote loop body + the in-process
+// decay-aware trend tracker, surfaced through the daemon barrel so the Phase-222
+// MODEL-04 source-agnostic characterization
+// (test/integration/mental-model-readonly-lifecycle.test.ts) can drive the REAL
+// transition path — a hand-authored (no-synthesis) mental_models doc promotes via
+// promoteByName EXACTLY as a synthesized skill — instead of a store-only fallback.
+// Both are name-keyed and (tenant, agent)-scoped via the LearningScope/skillGaugeKey
+// they consume (no new data path / secret / cross-tenant widening). Mirrors the
+// skill-bundle-install test-driven re-export precedent above.
+export { applySkillOutcomeTransitions } from "./wiring/setup-learning-skill-transitions.js";
+export { createSkillTrendTracker } from "./wiring/setup-learning-skill-trend.js";
+
 // Re-export createTracingLogger so the test daemon harness can thread the
 // `LoggerOptions.disableRedaction` opt-in through to the SAME logger
 // instance the daemon uses for production code paths. Consumer is

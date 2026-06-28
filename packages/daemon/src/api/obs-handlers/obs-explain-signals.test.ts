@@ -1226,3 +1226,80 @@ describe("toIncidentSignals — OBS-02 learning.outcome_observed aggregation", (
     expect(json).not.toContain("mem-7");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-CANARY (Phase 226 SIMPLIFY-04 — the §2.7 must-keep-working proof). The
+// synthesis funnel was RENAMED to reflect:* (reflect:admitted + reflect:funnel)
+// and bridged as reflect.admitted / reflect.funnel. `comis explain` MUST keep
+// folding a reflect:*-bearing trajectory into the learning block + verdict — a
+// broken rename would blind the operator surface. The frozen no-learning
+// fixtures must still return an absent block (no regression). Pitfall 6: the
+// forget (learning.memory_*) + outcome (learning.outcome_observed) records are
+// NOT folded under reflect:* — only the reflection funnel was renamed.
+// ---------------------------------------------------------------------------
+describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:* trajectory (Phase 226)", () => {
+  it("a reflect.admitted + reflect.funnel + learning.outcome_observed trajectory STILL yields the learning block", () => {
+    const s = toIncidentSignals([
+      // The renamed reflection-funnel records (was learning.skill_synthesized / .skill_synthesis_funnel).
+      event("reflect.admitted", 1, { count: 1 }),
+      event("reflect.funnel", 2, {
+        synthesized: 2,
+        validated: 1,
+        admitted: 1,
+        maxClusterCardinality: 2,
+        admissionOutcome: "admitted",
+      }),
+      // The kept differentiator (NOT renamed — Pitfall 6).
+      event("learning.outcome_observed", 3, {
+        trajectoryId: "traj-1",
+        outcome: "success",
+        source: "tool",
+        confidence: 0.9,
+      }),
+    ]);
+    // The block is present (explain reconstructs the learning dimension) and the
+    // outcome folded — the rename did not orphan the funnel records.
+    expect(s.learning).toBeDefined();
+    expect(s.learning?.outcomeResolved).toBe(true);
+    expect(s.learning?.outcome).toBe("success");
+    expect(s.learning?.synthesisAbstained).toBe(false);
+  });
+
+  it("the benign reflection-abstain signal folds off a reflect.funnel record (synthesisAbstained sticky-true)", () => {
+    const s = toIncidentSignals([
+      event("reflect.funnel", 1, {
+        synthesized: 0,
+        validated: 0,
+        admitted: 0,
+        maxClusterCardinality: 0,
+        admissionOutcome: "no_successes",
+        // The cron flags the benign abstain on the funnel record (Defer != Retry).
+        abstained: true,
+      }),
+    ]);
+    expect(s.learning).toBeDefined();
+    expect(s.learning?.synthesisAbstained).toBe(true);
+  });
+
+  it("a reflect.funnel record carries only counts/closed-enums into the surface — never a doc body (content-free)", () => {
+    const s = toIncidentSignals([
+      event("reflect.funnel", 1, {
+        synthesized: 1,
+        validated: 1,
+        admitted: 1,
+        maxClusterCardinality: 2,
+        admissionOutcome: "admitted",
+        // A hostile producer leaking the reflected doc body must not survive.
+        body: "the reflected procedure says the password is hunter2",
+      }),
+    ]);
+    const json = JSON.stringify(s.learning);
+    expect(json).not.toContain("hunter2");
+    expect(json).not.toContain("procedure");
+  });
+
+  it("a no-learning trajectory still returns an ABSENT learning block (the frozen fixtures cannot regress)", () => {
+    const s = toIncidentSignals([event("session.started", 0, { channel: { type: "discord", id: "c1" } })]);
+    expect(s.learning).toBeUndefined();
+  });
+});

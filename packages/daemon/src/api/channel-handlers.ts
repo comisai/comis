@@ -19,6 +19,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   ChannelsHealthContract,
   DeliveryQueueStatusContract,
@@ -205,7 +206,7 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       // Bespoke pre-Zod validation FIRST (admin trust + param presence).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel management");
+        throw new AuthorizationError("Admin access required for channel management");
       }
 
       const channelType = rawParams.channel_type as string | undefined;
@@ -261,7 +262,7 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       // Bespoke pre-Zod validation FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel management");
+        throw new AuthorizationError("Admin access required for channel management");
       }
 
       const channelType = rawParams.channel_type as string | undefined;
@@ -317,7 +318,7 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       // Bespoke pre-Zod validation FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel management");
+        throw new AuthorizationError("Admin access required for channel management");
       }
 
       const channelType = rawParams.channel_type as string | undefined;

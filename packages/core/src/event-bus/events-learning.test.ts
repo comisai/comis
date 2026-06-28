@@ -105,90 +105,110 @@ describe("memory:skill_used skill-use attribution event (counts/ids only)", () =
 });
 
 // ---------------------------------------------------------------------------
-// SKILL-09 (Plan 07): the two procedural-synthesis TELEMETRY events. Emitted
-// DAEMON-SIDE (plain eventBus.emit) after runSkillSynthesis returns. Counts /
-// ids / closed-enums (coverage) ONLY — a body/script/finding field is a compile
-// error (the §2.7 / SEC-01 firewall). Live in THIS same LearningEvents sibling.
+// REFLECT (Phase 226 SIMPLIFY-04): the reflection funnel TELEMETRY events,
+// RENAMED from learning:skill_synthesized / learning:skill_synthesis_funnel to
+// reflect:admitted / reflect:funnel. Emitted DAEMON-SIDE (plain eventBus.emit)
+// after runReflection returns. Counts / closed-enums (admissionOutcome) ONLY — a
+// body/script/finding field is a compile error (the §2.7 / SEC-01 firewall). The
+// vestigial learning:skill_validated (0-emit, sandbox deleted in 223) was removed
+// in this same lockstep. Live in THIS same LearningEvents sibling.
 // ---------------------------------------------------------------------------
 
-describe("learning:skill_synthesized / learning:skill_validated telemetry (counts-only)", () => {
-  it("declares BOTH keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+describe("reflect:admitted / reflect:funnel telemetry (counts-only, renamed Phase 226)", () => {
+  it("declares BOTH renamed keys on the LearningEvents interface (source grep — reproducible RED)", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
-    expect(src).toContain('"learning:skill_synthesized"');
-    expect(src).toContain('"learning:skill_validated"');
+    expect(src).toContain('"reflect:admitted"');
+    expect(src).toContain('"reflect:funnel"');
+    // The old synthesis-funnel names + the deleted vestigial are GONE (no compat alias, I1).
+    expect(src).not.toContain('"learning:skill_synthesized"');
+    expect(src).not.toContain('"learning:skill_synthesis_funnel"');
+    expect(src).not.toContain('"learning:skill_validated"');
   });
 
-  it("learning:skill_synthesized delivers agentId + count + timestamp ONLY", () => {
+  it("reflect:admitted delivers agentId + count + timestamp ONLY", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-    const payload: EventMap["learning:skill_synthesized"] = {
+    const payload: EventMap["reflect:admitted"] = {
       agentId: "agent-1",
       count: 3,
       timestamp: 1,
     };
-    bus.on("learning:skill_synthesized", handler);
-    bus.emit("learning:skill_synthesized", payload);
+    bus.on("reflect:admitted", handler);
+    bus.emit("reflect:admitted", payload);
     expect(handler).toHaveBeenCalledWith(payload);
-    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_synthesized"];
+    const r = handler.mock.calls[0]![0] as EventMap["reflect:admitted"];
     expect(r.count).toBe(3);
     expect(r.agentId).toBe("agent-1");
   });
 
-  it("learning:skill_validated delivers staticOk/dynamicOk + the coverage closed-enum ONLY", () => {
+  it("reflect:funnel delivers the funnel counts + the admissionOutcome closed-enum ONLY", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-    const payload: EventMap["learning:skill_validated"] = {
+    const payload: EventMap["reflect:funnel"] = {
       agentId: "agent-1",
-      staticOk: true,
-      dynamicOk: false,
-      coverage: "static-only",
+      synthesized: 2,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      // OBS-1: the funnel MAGNITUDES (counts only) — answer "how many untrusted dropped / was the
+      // source empty" via the bridged event instead of a daemon.log grep.
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 0,
+      sourceTrajectoryCount: 2,
+      totalSourceChars: 480,
+      admissionOutcome: "admitted",
       timestamp: 2,
     };
-    bus.on("learning:skill_validated", handler);
-    bus.emit("learning:skill_validated", payload);
+    bus.on("reflect:funnel", handler);
+    bus.emit("reflect:funnel", payload);
     expect(handler).toHaveBeenCalledWith(payload);
-    const r = handler.mock.calls[0]![0] as EventMap["learning:skill_validated"];
-    expect(r.staticOk).toBe(true);
-    expect(r.dynamicOk).toBe(false);
-    expect(r.coverage).toBe("static-only");
+    const r = handler.mock.calls[0]![0] as EventMap["reflect:funnel"];
+    expect(r.maxClusterCardinality).toBe(2);
+    expect(r.admissionOutcome).toBe("admitted");
+    // OBS-1: the magnitude counts ride the content-free payload.
+    expect(r.untrustedDrops).toBe(0);
+    expect(r.sourceTrajectoryCount).toBe(2);
+    expect(r.totalSourceChars).toBe(480);
+  });
+
+  it("OBS-1: reflect:funnel SOURCE declares the content-free magnitude counts (reproducible RED)", () => {
+    const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
+    // Counts only — the empty-source-vs-LLM-yield discriminator + the untrusted-drop magnitude.
+    expect(src).toContain("untrustedDrops");
+    expect(src).toContain("sourceTrajectoryCount");
+    expect(src).toContain("totalSourceChars");
   });
 
   it("type safety: @ts-expect-error rejects a body/script/finding field on either telemetry payload", () => {
     const bus = new TypedEventBus();
 
-    bus.emit("learning:skill_synthesized", {
+    bus.emit("reflect:admitted", {
       agentId: "a",
       count: 1,
       timestamp: 1,
-      // @ts-expect-error - a synthesized procedure body must NEVER ride on the counts-only payload
-      body: "the synthesized procedure markdown",
+      // @ts-expect-error - a reflected doc body must NEVER ride on the counts-only payload
+      body: "the reflected procedure markdown",
     });
 
-    bus.emit("learning:skill_validated", {
+    bus.emit("reflect:funnel", {
       agentId: "a",
-      staticOk: true,
-      dynamicOk: true,
-      coverage: "full",
+      synthesized: 1,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      admissionOutcome: "admitted",
       timestamp: 1,
-      // @ts-expect-error - validation findings/scripts must NEVER ride on the counts-only payload
-      scripts: ["rm -rf /"],
-    });
-
-    // @ts-expect-error - coverage is a CLOSED enum ("full" | "static-only"), not an arbitrary string
-    bus.emit("learning:skill_validated", {
-      agentId: "a",
-      staticOk: true,
-      dynamicOk: true,
-      coverage: "partial",
-      timestamp: 1,
+      // @ts-expect-error - a reflected doc body/findings must NEVER ride on the counts-only funnel payload
+      body: "the reflected procedure markdown",
     });
   });
 
-  it("type contract: both telemetry keys are members of EventMap (counts/ids/closed-enums only)", () => {
-    expectTypeOf<EventMap>().toHaveProperty("learning:skill_synthesized");
-    expectTypeOf<EventMap>().toHaveProperty("learning:skill_validated");
-    expectTypeOf<EventMap["learning:skill_synthesized"]["count"]>().toEqualTypeOf<number>();
-    expectTypeOf<EventMap["learning:skill_validated"]["coverage"]>().toEqualTypeOf<"full" | "static-only">();
+  it("type contract: both renamed keys are members of EventMap (counts/closed-enums only)", () => {
+    expectTypeOf<EventMap>().toHaveProperty("reflect:admitted");
+    expectTypeOf<EventMap>().toHaveProperty("reflect:funnel");
+    expectTypeOf<EventMap["reflect:admitted"]["count"]>().toEqualTypeOf<number>();
+    expectTypeOf<EventMap["reflect:funnel"]["maxClusterCardinality"]>().toEqualTypeOf<number>();
   });
 });
 
@@ -277,103 +297,20 @@ describe("learning:skill_promoted / learning:skill_demoted telemetry (counts-onl
 });
 
 // ---------------------------------------------------------------------------
-// REVISE-01 / GENERAL-01 (Phase 203 Plan 01): the two P4-deepening TELEMETRY
-// events. Emitted DAEMON-SIDE (plain eventBus.emit — never `?.`) by the
-// user-rep revision + consolidation generalization cron handlers (Plan 05) —
-// counts ONLY. learning:user_model_revised carries superseded/corroborated/
-// inserted; learning:memory_generalized carries generalized/clustersConsidered.
-// A profile-entry content / entry_type / id-list, or a synthesized memory body /
-// source-id, is a compile error (the §2.7 / SEC-01 firewall). Mirror the
-// SURFACE-06 promote/demote counts-only + source-grep RED + @ts-expect-error
-// precedent exactly. Live in THIS same LearningEvents sibling.
+// Phase 226 SIMPLIFY-04: the REVISE-01 (learning:user_model_revised) +
+// GENERAL-01 (learning:memory_generalized) telemetry events were DELETED — both
+// grep-confirmed 0-emit at HEAD (the user-rep revision + consolidation
+// generalization paths were folded into the reflection engine in Phase 225). Their
+// trajectory-bridge entries, translator cases, type members, and obs folds/verdicts
+// were removed in the same lockstep change. A guard asserts they are GONE from the
+// interface source (no compat alias, I1).
 // ---------------------------------------------------------------------------
 
-describe("learning:user_model_revised / learning:memory_generalized telemetry (counts-only — REVISE-01/GENERAL-01)", () => {
-  it("declares BOTH new P4-deepening keys on the LearningEvents interface (source grep — reproducible RED)", () => {
+describe("deleted vestigial learning telemetry (Phase 226 SIMPLIFY-04)", () => {
+  it("the 3 vestigial 0-emit keys are GONE from the LearningEvents interface source", () => {
     const src = readFileSync(resolve(here, "events-learning.ts"), "utf8");
-    expect(src).toContain('"learning:user_model_revised"');
-    expect(src).toContain('"learning:memory_generalized"');
-  });
-
-  it("learning:user_model_revised delivers superseded/corroborated/inserted counts + durationMs + agentId only", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-    const payload: EventMap["learning:user_model_revised"] = {
-      agentId: "agent-1",
-      superseded: 2,
-      corroborated: 1,
-      inserted: 3,
-      durationMs: 42,
-      timestamp: 1,
-    };
-    bus.on("learning:user_model_revised", handler);
-    bus.emit("learning:user_model_revised", payload);
-    expect(handler).toHaveBeenCalledWith(payload);
-    const r = handler.mock.calls[0]![0] as EventMap["learning:user_model_revised"];
-    expect(r.superseded).toBe(2);
-    expect(r.corroborated).toBe(1);
-    expect(r.inserted).toBe(3);
-    expect(r.agentId).toBe("agent-1");
-  });
-
-  it("learning:memory_generalized delivers generalized/clustersConsidered counts + durationMs + agentId only", () => {
-    const bus = new TypedEventBus();
-    const handler = vi.fn();
-    const payload: EventMap["learning:memory_generalized"] = {
-      agentId: "agent-1",
-      generalized: 1,
-      clustersConsidered: 4,
-      durationMs: 17,
-      timestamp: 2,
-    };
-    bus.on("learning:memory_generalized", handler);
-    bus.emit("learning:memory_generalized", payload);
-    expect(handler).toHaveBeenCalledWith(payload);
-    const r = handler.mock.calls[0]![0] as EventMap["learning:memory_generalized"];
-    expect(r.generalized).toBe(1);
-    expect(r.clustersConsidered).toBe(4);
-    expect(r.agentId).toBe("agent-1");
-  });
-
-  it("type safety: @ts-expect-error rejects a content/body field on either P4-deepening payload (SEC-01 firewall)", () => {
-    const bus = new TypedEventBus();
-
-    bus.emit("learning:user_model_revised", {
-      agentId: "a",
-      superseded: 1,
-      corroborated: 0,
-      inserted: 0,
-      durationMs: 1,
-      timestamp: 1,
-      // @ts-expect-error - a superseded profile-entry's content must NEVER ride on the counts-only payload
-      content: "the superseded preference text",
-    });
-
-    bus.emit("learning:memory_generalized", {
-      agentId: "a",
-      generalized: 1,
-      clustersConsidered: 1,
-      durationMs: 1,
-      timestamp: 1,
-      // @ts-expect-error - the synthesized higher-order memory body must NEVER ride on the counts-only payload
-      body: "user prefers concise answers in general",
-    });
-
-    // @ts-expect-error - the cluster source-id list must NEVER ride on the counts-only generalization payload
-    bus.emit("learning:memory_generalized", {
-      agentId: "a",
-      generalized: 1,
-      clustersConsidered: 1,
-      durationMs: 1,
-      timestamp: 1,
-      sourceIds: ["mem-1", "mem-2"],
-    });
-  });
-
-  it("type contract: both P4-deepening keys are members of EventMap (counts only)", () => {
-    expectTypeOf<EventMap>().toHaveProperty("learning:user_model_revised");
-    expectTypeOf<EventMap>().toHaveProperty("learning:memory_generalized");
-    expectTypeOf<EventMap["learning:user_model_revised"]["superseded"]>().toEqualTypeOf<number>();
-    expectTypeOf<EventMap["learning:memory_generalized"]["generalized"]>().toEqualTypeOf<number>();
+    expect(src).not.toContain('"learning:skill_validated"');
+    expect(src).not.toContain('"learning:user_model_revised"');
+    expect(src).not.toContain('"learning:memory_generalized"');
   });
 });

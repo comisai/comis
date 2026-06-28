@@ -322,10 +322,21 @@ export const IncidentReportSchema = z.object({
       skillsUsed: z.array(z.string()),
       skillFailures: z.array(z.string()),
       synthesisAbstained: z.boolean(),
-      // REVISE-01 / GENERAL-01 (Phase 203): optional/additive revision + generalization
-      // counts (counts only, never bodies). Absent in P0..P3 — existing fixtures unaffected.
-      userModelRevised: z.number().optional(),
-      memoriesGeneralized: z.number().optional(),
+      // OBS-4 (hindsight-reflection-20260626): the reuse→promote chain on this session, COUNTS only.
+      // `skillsPromoted`/`skillsDemoted` fold the `learning.skill_promoted`/`learning.skill_demoted`
+      // trajectory records so `comis explain <session>` shows "used skill X → promoted N" in ONE call
+      // instead of a trajectory + outcome_events + mental_models hand-join. Optional + additive
+      // (present only when a promote/demote fired this session; schemaVersion stays 1).
+      skillsPromoted: z.number().optional(),
+      skillsDemoted: z.number().optional(),
+      // OBS-4b (reflect-obs-20260627): memories that accrued a CORROBORATED failure this session
+      // (count only) — the eviction-causation precursor (`learning.memory_failure_attributed`), so
+      // "is this session pushing a memory toward eviction" is one `explain` field. Optional + additive
+      // (present only when >0; schemaVersion stays 1).
+      failuresAttributed: z.number().optional(),
+      // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
+      // were DELETED with their 0-emit events (the user-rep revision + generalization paths
+      // folded into the reflection engine in Phase 225). The block stays counts/ids-only.
     })
     .optional(),
   /** PERSIST-01 (observability-excellence, Phase 176): the prompt-cache breaks the
@@ -752,9 +763,8 @@ export interface IncidentSignals {
    * EMPTY in P0 (skill-use attribution lands Phase 201); `synthesisAbstained` is
    * false in P0 (synthesis is Phase 201). Absent ⇒ no learning records in the
    * trajectory (omitted from the report — the signal is per-agent default-OFF).
-   * `userModelRevised`/`memoriesGeneralized` (Phase 203) are optional counts of
-   * the session's profile-revision / higher-order-generalization activity (counts
-   * only, never bodies); absent in P0..P3.
+   * (The Phase-203 `userModelRevised`/`memoriesGeneralized` counts were removed in
+   * Phase 226 with their 0-emit events.)
    */
   learning?: {
     outcomeResolved: boolean;
@@ -763,10 +773,12 @@ export interface IncidentSignals {
     skillsUsed: string[];
     skillFailures: string[];
     synthesisAbstained: boolean;
-    /** REVISE-01 (Phase 203): incumbent profile entries soft-closed by revision this session (count only). Optional/additive. */
-    userModelRevised?: number;
-    /** GENERAL-01 (Phase 203): higher-order semantic memories synthesized this session (count only). Optional/additive. */
-    memoriesGeneralized?: number;
+    /** OBS-4: count of candidate skills promoted to active this session (`learning.skill_promoted`). */
+    skillsPromoted?: number;
+    /** OBS-4: count of skills demoted this session (`learning.skill_demoted`). */
+    skillsDemoted?: number;
+    /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`) — eviction precursor. */
+    failuresAttributed?: number;
   };
 }
 

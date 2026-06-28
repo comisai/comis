@@ -13,12 +13,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"   # per-box rig config (VPS ssh target, GWTOKEN, …) — see .live-env.example
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 
-# /root — the root-run + driver/oracle scripts (drive/media-drive/revoke/cfg-patch/db/logscan/
-# model-battery/gate-probe + the sweeps)
+# /root — ALL driver/oracle helpers. GLOB every *.mjs + the root-run *.sh (reflect-obs-20260627: a
+# hardcoded list silently DROPPED new helpers — reflect-run.mjs/seed.mjs didn't deploy; a glob means a
+# new helper auto-deploys, no list to maintain). restart-m1/daemon-supervisor are comis-side (below),
+# deploy-scripts itself is local-only — both excluded from this /root push.
 scp -o ConnectTimeout=15 \
-  "$HERE"/drive.mjs "$HERE"/media-drive.mjs "$HERE"/revoke.mjs "$HERE"/cfg-patch.mjs "$HERE"/db.mjs \
-  "$HERE"/logscan.mjs "$HERE"/model-battery.mjs "$HERE"/gate-probe.mjs \
-  "$HERE"/clean-restart.sh "$HERE"/models-sweep.sh "$HERE"/deploy-dist.sh "$HERE"/setup-vps.sh \
+  "$HERE"/*.mjs \
+  "$HERE"/clean-restart.sh "$HERE"/models-sweep.sh "$HERE"/deploy-dist.sh "$HERE"/setup-vps.sh "$HERE"/restart-emu.sh \
   "$VPS:/root/"
 
 # /home/comis — the comis-run launcher + SIGUSR2 supervisor (must be comis-owned + executable)

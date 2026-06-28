@@ -1,0 +1,90 @@
+{
+  "server": "fire-sim",
+  "title": "Wildland-Fire Incident Command (simulated ICP)",
+  "tools": [
+    {
+      "name": "get_weather",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Current and forecast on-scene weather: wind speed/direction, gusts, temperature, relative humidity, and any forecast shift (a front, wind switch, or RH crash).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "fuel_moisture",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Fuel readings for the incident: dominant fuel model, 1-/10-/100-hour dead fuel moisture, live fuel moisture, and ladder/canopy fuel continuity.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "terrain",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Terrain facts for a division/zone: slope, aspect, chutes/saddles/box-canyon features and any alignment of slope with wind. `zone` selects one; omit for all.",
+      "inputSchema": { "type": "object", "properties": { "zone": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "spread_forecast",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Modeled fire behavior: predicted rate of spread, flame length, spotting distance, and which zones the head/flanks reach over the next operational period.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "resource_status",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Available resources: hand crews, engines, dozers, and air tankers/helicopters with their current commit status.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_incident_map",
+      "kind": "observe",
+      "terminal": false,
+      "description": "The incident map: zones with their role (fire origin, head, flanks, values-at-risk like communities/structures), and the current fire perimeter.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "open_incident",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open an incident command record. Returns an incident id used by later actions.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "set_tactic",
+      "kind": "act",
+      "terminal": false,
+      "description": "Set the suppression tactic and containment line for the incident (e.g. 'direct' or 'indirect'; plus where you anchor the line).",
+      "inputSchema": { "type": "object", "properties": { "incident": { "type": "string" }, "tactic": { "type": "string" }, "containment_line": { "type": "string" } }, "required": ["tactic"] }
+    },
+    {
+      "name": "assign_crew",
+      "kind": "act",
+      "terminal": false,
+      "description": "Assign a crew/engine/dozer to work a zone. The tool reports the safety posture of that assignment.",
+      "inputSchema": { "type": "object", "properties": { "incident": { "type": "string" }, "resource": { "type": "string" }, "zone": { "type": "string" }, "task": { "type": "string" } }, "required": ["resource", "zone"] }
+    },
+    {
+      "name": "order_air",
+      "kind": "act",
+      "terminal": false,
+      "description": "Order an air resource (air tanker retardant line or helicopter water drops) onto a zone.",
+      "inputSchema": { "type": "object", "properties": { "incident": { "type": "string" }, "aircraft": { "type": "string" }, "zone": { "type": "string" } }, "required": ["zone"] }
+    },
+    {
+      "name": "issue_evac",
+      "kind": "act",
+      "terminal": false,
+      "description": "Issue an evacuation order or warning for a zone with people/structures at risk.",
+      "inputSchema": { "type": "object", "properties": { "incident": { "type": "string" }, "zone": { "type": "string" }, "level": { "type": "string" } }, "required": ["zone"] }
+    },
+    {
+      "name": "declare_contained",
+      "kind": "act",
+      "terminal": true,
+      "description": "Declare the fire contained and end the operational period. Returns the graded outcome of your incident command decisions.",
+      "inputSchema": { "type": "object", "properties": { "incident": { "type": "string" }, "note": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

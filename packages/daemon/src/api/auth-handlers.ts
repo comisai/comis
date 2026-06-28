@@ -57,6 +57,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import {
   AuthListContract,
   AuthLogoutContract,
@@ -152,7 +153,7 @@ export function createAuthHandlers(
       // rawParams BEFORE the strip-and-parse step.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for auth.list");
+        throw new AuthorizationError("Admin access required for auth.list");
       }
 
       if (!deps.oauthCredentialStore) {
@@ -237,7 +238,7 @@ export function createAuthHandlers(
       // Admin gate FIRST (separate from the contract schema).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for auth.logout");
+        throw new AuthorizationError("Admin access required for auth.logout");
       }
 
       // Bespoke profileId guard runs BEFORE the contract parse so the
@@ -331,7 +332,7 @@ export function createAuthHandlers(
       // 1. Admin gate — read BEFORE stripInternalFields (dispatcher injects _trustLevel).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for auth.set");
+        throw new AuthorizationError("Admin access required for auth.set");
       }
 
       // 2. Guard: store must exist (encrypted mode requires daemon-owned store;

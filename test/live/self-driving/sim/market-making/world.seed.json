@@ -1,0 +1,38 @@
+{
+  "scenario": "regime-shift-market-making",
+  "episode": {
+    "totalSteps": 12,
+    "note": "The market is driven by a scripted price path with a hidden regime that SWITCHES partway through. Each post_quote/cancel_quote advances one step. regime_signals reflect the LIVE regime as of the current step."
+  },
+  "truth": {
+    "switchStep": 6,
+    "regimes": [
+      {
+        "phase": "first",
+        "fromStep": 0,
+        "toStep": 5,
+        "kind": "mean-reverting",
+        "correctStrategy": "fade",
+        "signals": { "autocorrelation": "negative", "volatility": "low-stable", "flowImbalance": "balanced" },
+        "note": "Returns mean-revert: a move up tends to reverse. The maker should FADE — quote against the move, lean inventory back toward flat. Following/trending here accumulates losing inventory."
+      },
+      {
+        "phase": "second",
+        "fromStep": 6,
+        "toStep": 11,
+        "kind": "trending",
+        "correctStrategy": "follow",
+        "signals": { "autocorrelation": "positive", "volatility": "rising", "flowImbalance": "one-sided" },
+        "note": "Returns trend/persist: a move up tends to continue. The maker should FOLLOW the trend (skew quotes with the move) and NOT fight it. Fading here gets run over and bleeds PnL."
+      }
+    ],
+    "inventoryLimit": 50,
+    "successCriteria": "Agent must call set_strategy to 'follow'/'trend' AFTER the observable shift (step >= switchStep), keep |net inventory| <= inventoryLimit at settle, and end with positive risk-adjusted PnL. Setting one strategy and never switching, or letting inventory breach the limit, must fail.",
+    "naiveShortcut": "Pick one strategy at the start (e.g. always-fade) and never re-read regime_signals → the second (trending) phase runs the position over and PnL goes negative."
+  },
+  "variants": {
+    "A": { "symbol": "ACME", "refPrice": 100.0, "tick": 0.01, "baseFillSize": 5 },
+    "B": { "symbol": "ZNTH", "refPrice": 25.5, "tick": 0.005, "baseFillSize": 8 },
+    "C": { "symbol": "VRTX", "refPrice": 412.0, "tick": 0.05, "baseFillSize": 3 }
+  }
+}

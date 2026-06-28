@@ -1,0 +1,83 @@
+{
+  "server": "apiary-sim",
+  "title": "Precision Apiary Console (simulated bee yard, one season)",
+  "tools": [
+    {
+      "name": "get_hives",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List the hives in the yard with their current placement and last-recorded state (population, brood, stores).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "inspect_hive",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Open one hive and return a detailed inspection: brood pattern, population trend, and any field-visible health signs. More revealing than the summary in get_hives.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" } }, "required": ["hive"] }
+    },
+    {
+      "name": "pest_pressure",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return measured pest indicators (e.g. varroa mite count per 100 bees) for a hive. Requires a scheduled inspection to have a sample; otherwise returns the last lab reading or 'no sample'.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" } }, "required": ["hive"] }
+    },
+    {
+      "name": "forage_map",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the forage sources currently blooming this season, each with location, nectar quality, and bloom status. This is the LIVE map for this year.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "weather_season",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the season weather outlook by week (temperature, rain) — context for bloom timing and inspection planning.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "harvest_forecast",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the projected honey-flow curve by week (relative nectar income), so you can judge when stores will peak. Does not name a date — you read the curve.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "schedule_inspection",
+      "kind": "act",
+      "terminal": false,
+      "description": "Schedule an inspection of a hive in a given week. This is what produces a fresh pest sample for pest_pressure.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" }, "week": { "type": "number" } }, "required": ["hive"] }
+    },
+    {
+      "name": "treat",
+      "kind": "act",
+      "terminal": false,
+      "description": "Apply a mite/disease treatment to a hive in a given week. Treating costs effort and stresses a healthy colony — only treat what needs it, and in time.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" }, "week": { "type": "number" }, "reason": { "type": "string" } }, "required": ["hive"] }
+    },
+    {
+      "name": "place_hive",
+      "kind": "act",
+      "terminal": false,
+      "description": "Move/place a hive at a forage location for the season. Good placement is near a source that is actually blooming this year.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" }, "location": { "type": "string" } }, "required": ["hive", "location"] }
+    },
+    {
+      "name": "harvest",
+      "kind": "act",
+      "terminal": false,
+      "description": "Pull honey supers from a hive in a given week. Harvesting too early or too late costs yield and can leave the colony short on winter stores.",
+      "inputSchema": { "type": "object", "properties": { "hive": { "type": "string" }, "week": { "type": "number" } }, "required": ["hive", "week"] }
+    },
+    {
+      "name": "close_season",
+      "kind": "act",
+      "terminal": true,
+      "description": "End the season and submit your apiary for grading. Returns the graded outcome (colony survival + harvest yield).",
+      "inputSchema": { "type": "object", "properties": { "notes": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

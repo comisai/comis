@@ -3,39 +3,58 @@
  * Shared types for the memory-cron sentinel handlers.
  *
  * Extracted into a types-only leaf so both setup-channels-memory-crons.ts (the
- * LLM/keyless sentinels) and setup-channels-memory-crons-wire.ts (the WS7-wired
- * __USEFULNESS_JUDGE__ / __MEMORY_TRIPLE_EXTRACTION__ sentinels) can import the
- * context shape WITHOUT a runtime cycle between those two files (the main file
- * delegates its fall-through to the wire file).
+ * LLM/keyless sentinels) and setup-channels-memory-crons-wire.ts (the KEYLESS
+ * __MEMORY_LIFECYCLE__ sweep + the __REFLECT__ engine) can import the context shape
+ * WITHOUT a runtime cycle between those two files (the main file delegates its
+ * fall-through to the wire file).
  *
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, LearnedSkillStorePort, SkillValidationPort, OutcomeSignalPort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, MemoryLifecyclePort, MentalModelStorePort, OutcomeSignalPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
-import type { SynthesisSourceTrajectory, SkillApprovalGate } from "@comis/agent";
+import type { ReflectionSourceTrajectory } from "@comis/agent";
 
 /**
- * The closed-graph skill-synthesis injectables for the __SKILL_SYNTHESIS__ sentinel
- * (SKILL-08/09). Assembled DAEMON-SIDE (registerCronEventListeners, setup-channels-
- * credentials.ts — the SOLE composition root that may import @comis/memory +
- * @comis/skills + @comis/agent together) and threaded here so the handler injects
- * the real adapters into `runSkillSynthesis` (which consumes @comis/core PORT TYPES
- * only — the agent↛memory/skills build cut). Absent ⇒ the sentinel cannot run
+ * The closed-graph REFLECTION injectables for the `__REFLECT__` sentinel (v2.31
+ * Reflection, Phase 223, REFLECT-01/02 — the reflect-engine replacement for the
+ * deleted `SkillSynthesisCronDeps`). Assembled DAEMON-SIDE (registerCronEventListeners,
+ * setup-channels-credentials.ts — the SOLE composition root that may import
+ * @comis/memory + @comis/agent together) and threaded here so the handler injects
+ * the real store + source into `runReflection` (which consumes @comis/core PORT
+ * TYPES only — the agent↛memory build cut). Absent ⇒ the sentinel cannot run
  * (off-by-default, so a default-config agent never reaches it).
+ *
+ * DROPPED vs the synthesis bundle: `buildValidationAdapter` (the sandbox adapter —
+ * an advisory doc has no executable surface; the only validation is the JOB's
+ * static `validateLearnedDocBody`, INV-3) and `approvalGate` (no mutating-admission
+ * gate — removing it removes an attack surface). The reflect ADAPTER is built
+ * per-run in the handler (it needs the resolved model/key), like the synthesis one.
  */
-export interface SkillSynthesisCronDeps {
-  /** The @comis/memory learned-skill store (the admit target), built on the shared db handle. */
-  learnedSkillStore: Pick<LearnedSkillStorePort, "admit">;
+export interface ReflectionCronDeps {
+  /** The @comis/memory mental-model store. `get` reads the prior doc for delta-ops;
+   *  `admit` is the candidate/learned write target; `supersede` (Phase 225 FOLD-01) is
+   *  the bi-temporal history-append a profile/topic CORRECTION routes through (the prior
+   *  body is preserved in `history`, never overwritten). Built on the shared db handle. */
+  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit" | "supersede">;
   /** The @comis/memory outcome-signal store (the fail-closed success gate the job selects on). */
   outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
-  /** Build the @comis/skills sandbox validation adapter for an agent (injects its tool list + policy). */
-  buildValidationAdapter: (agentId: string) => Promise<Pick<SkillValidationPort, "validate">>;
-  /** Build the LCD-merged source trajectories (buildReviewSessionSource — NOT sessionStore.listDetailed). */
-  buildSourceTrajectories: (agentId: string, tenantId: string) => Promise<SynthesisSourceTrajectory[]>;
-  /** The mutating-admission approval gate (the daemon's shared ApprovalGate). */
-  approvalGate: SkillApprovalGate;
+  /**
+   * Build the per-KIND source trajectories for the reflection SELECT step (Phase 225
+   * FOLD — the daemon-side `kind` seam). SKILL sources are OUTCOME trajectories (the
+   * LCD-merged review source, buildReviewSessionSource — NOT sessionStore.listDetailed),
+   * each carrying a daemon-derived `trustedOrigin` (INV-5/D-04 axis 1) + `sourceTrustExternal:false`
+   * (axis 2 is N/A for an outcome trajectory). PROFILE/TOPIC sources are built from the
+   * agent's high-trust SOURCE MEMORIES (memoryApi.inspect), each carrying `sourceTrustExternal =
+   * (trustLevel === "external")` (FOLD-04 axis 2 — the old user-rep layer-1 firewall). The job
+   * filters on BOTH axes.
+   */
+  buildSourceTrajectories: (
+    kind: "skill" | "profile" | "topic",
+    agentId: string,
+    tenantId: string,
+  ) => Promise<ReflectionSourceTrajectory[]>;
 }
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
@@ -63,31 +82,28 @@ export interface MemoryCronContext {
   tenantId?: string;
   // All stores below are injected from setup-memory on the shared db; the agent
   // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
-  /** The inductive applyConsolidation write (__MEMORY_CONSOLIDATION__). */
+  /** Orphaned in Phase 225-05 (the __MEMORY_CONSOLIDATION__ cron + its writer were deleted); retired in 226. */
   consolidationStore?: MemoryConsolidationStore;
-  /** The deductive trust-first upsertTriple write (__MEMORY_REASONING__ + __MEMORY_TRIPLE_EXTRACTION__). */
-  tripleStore?: TripleStorePort;
-  /** The per-user profile upsert write (__USER_REPRESENTATION__). */
-  userRepresentationStore?: UserRepresentationStore;
-  /** The per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
-  relationshipStore?: RelationshipStore;
-  /** The tuned-alpha upsert write the KEYLESS bandit drives (__ONLINE_TUNING__). */
-  tunedAlphaStore?: TunedAlphaStore;
-  /** The per-memory usefulness store: the READ surface (`readUsefulness`) the
-   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over, AND the WRITE
-   *  surface (`recordUsage`) the __USEFULNESS_JUDGE__ sentinel records its verdict through. */
-  usefulnessStore?: MemoryUsefulnessStore;
+  // (The cron-context `tripleStore` field was DELETED in Phase 226-03 — its sole reader was the
+  //  deleted triple-extraction dispatch branch. The graphSpread recall lane consumes tripleStore
+  //  via the SEPARATE setupAgents deps chain, NOT this cron context; the port + lane survive.)
+  // (The cron-context `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
+  //  upsert — was DELETED in Phase 226-04 with the rest of the social-modeling subsystem.)
+  // (The cron-context `usefulnessStore` field was DELETED in Phase 226-03 — its sole reader was
+  //  the deleted usefulness-judge dispatch branch. The FORGET-02 recordUsage reward write uses
+  //  the setup-learning.ts deps, NOT this cron context; that store survives.)
   /** The DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
    *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
    *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred). */
   memoryLifecycleStore?: MemoryLifecyclePort;
-  /** The `inspect` read surface the __USER_REPRESENTATION__ / __SOCIAL_MODELING__
-   *  (grouped by channelId) / __ONLINE_TUNING__ (the bounded candidate-id set) /
-   *  __USEFULNESS_JUDGE__ + __MEMORY_TRIPLE_EXTRACTION__ sentinels
-   *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
+  /** The `inspect` high-trust source read surface — the surviving __REFLECT__ sentinel scopes
+   *  its per-(tenant, agent) profile/topic source reads over it (the Phase 225 FOLD path). (The
+   *  __SOCIAL_MODELING__ reader was deleted in Phase 226-04; the __USEFULNESS_JUDGE__ +
+   *  __MEMORY_TRIPLE_EXTRACTION__ readers in Phase 226-03 — all with their subsystems.) */
   memoryApi?: MemoryApi;
-  /** The closed-graph skill-synthesis injectables (the __SKILL_SYNTHESIS__ sentinel, SKILL-08/09).
-   *  Assembled daemon-side; the handler injects the store + validation adapter + LCD source into
-   *  runSkillSynthesis. Absent ⇒ off-by-default (a default-config agent never reaches the sentinel). */
-  skillSynthesis?: SkillSynthesisCronDeps;
+  /** The closed-graph reflection injectables (the `__REFLECT__` sentinel, v2.31 Reflection,
+   *  REFLECT-01/02). Assembled daemon-side; the handler injects the mental-model store + the
+   *  trusted-origin LCD source into runReflection. Absent ⇒ off-by-default (a default-config
+   *  agent never reaches the sentinel). */
+  reflection?: ReflectionCronDeps;
 }

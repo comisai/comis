@@ -223,7 +223,7 @@ export function registerMemoryCommand(program: Command): void {
         info(
           "No outcome events recorded yet. Outcome learning is ON by default " +
             "(opt-out via agents.<id>.learningOutcome.enabled: false, or the master " +
-            "memory.costFeatures.enabled: false); events accrue as agent turns finish.",
+            "memory.enabled: false); events accrue as agent turns finish.",
         );
         return;
       }
@@ -252,7 +252,8 @@ export function registerMemoryCommand(program: Command): void {
 
   // memory skills — OBS-02 (Phase 201, P2 skills) procedural-learning telemetry:
   // the learned-skill admission funnel (synthesized/admitted counts by state, per
-  // agent). Read OFFLINE from the local learned_skills table (~/.comis/memory.db):
+  // agent). Read OFFLINE from the local mental_models table (kind='skill' rows,
+  // ~/.comis/memory.db):
   // the CLI cannot import @comis/agent/@comis/skills (closed graph), so the offline
   // @comis/memory read is the sanctioned path (mirrors `memory learning`).
   // Counts/ids/closed-enums only — NEVER a procedure body/script/description.
@@ -274,8 +275,8 @@ export function registerMemoryCommand(program: Command): void {
         }
         info(
           "No learned skills yet — none have been synthesized + admitted. Skill synthesis " +
-            "is ON by default (opt-out via agents.<id>.learningSkills.enabled: false, or the master " +
-            "memory.costFeatures.enabled: false), and runs on its schedule over successful trajectories (procedures only).",
+            "is ON by default (opt-out via agents.<id>.learning.enabled: false, or the master " +
+            "memory.enabled: false), and runs on its schedule over successful trajectories (procedures only).",
         );
         return;
       }

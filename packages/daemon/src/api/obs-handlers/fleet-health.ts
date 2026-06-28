@@ -45,6 +45,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
 import {
   ObsFleetHealthContract,
@@ -325,6 +326,10 @@ export async function assembleFleetHealthReport(
   const healthSignals = deps.obsStore?.queryDiagnostics({ category: "health_signal", sinceMs }) ?? [];
   const modelHealth = deps.obsStore?.queryDiagnostics({ category: "model_health", sinceMs }) ?? [];
   const configPosture = deps.obsStore?.queryDiagnostics({ category: "config_posture", sinceMs }) ?? [];
+  // OBS-3b (hindsight-reflection-20260626): the reflection funnel rows → the learning_health finding.
+  const learningHealth = deps.obsStore?.queryDiagnostics({ category: "learning_health", sinceMs }) ?? [];
+  // OBS-2b (reflect-obs-20260627): the forget-sweep rows → the memory_lifecycle finding.
+  const memoryLifecycle = deps.obsStore?.queryDiagnostics({ category: "memory_lifecycle", sinceMs }) ?? [];
 
   // TELEM-02 — the pre-committed pipeline-authoring decision verdict (gates Phase
   // 174). PURE + deterministic: the windowed pipeline_authoring rows -> the
@@ -335,7 +340,7 @@ export async function assembleFleetHealthReport(
   );
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
-  const allFindings = buildFindings(healthSignals, modelHealth, configPosture);
+  const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle);
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
 
@@ -471,7 +476,7 @@ export function bindFleetHealthHandlers(deps: ObsHandlerDeps): Record<string, Rp
     [ObsFleetHealthContract.method]: async (rawParams) => {
       // H1: admin check (defense-in-depth; gateway-router is the primary gate).
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       // stripInternalFields BEFORE contract parse — `_trustLevel` cannot be
       // smuggled into the parsed params or the report.

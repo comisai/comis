@@ -1,0 +1,76 @@
+{
+  "server": "tutor-sim",
+  "title": "Adaptive 1:1 Tutoring Console (simulated single student)",
+  "tools": [
+    {
+      "name": "get_student",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the student's profile (name, grade, current topic, recent score). A profile is context, not a diagnosis.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "attempt_history",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the student's recent answered problems with the answer they gave (one obvious error pattern is visible; whether it is the WHOLE story is for you to test).",
+      "inputSchema": { "type": "object", "properties": { "topic": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "diagnostic",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Run a short diagnostic probe (`probe` selects which sub-skill). Returns how the student responded to that probe. Different probes discriminate between competing explanations.",
+      "inputSchema": { "type": "object", "properties": { "probe": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "curriculum",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the topic map: the current topic, its prerequisites, and topics related to it (used for transfer).",
+      "inputSchema": { "type": "object", "properties": { "topic": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "affect_signal",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the student's current affective state (confidence, frustration, engagement). Affect colors behavior; it is not the diagnosis.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "pose_problem",
+      "kind": "act",
+      "terminal": false,
+      "description": "Pose a problem to the student and observe their answer. The answer reflects the student's TRUE underlying misconception, which a well-chosen problem will reveal.",
+      "inputSchema": { "type": "object", "properties": { "session": { "type": "string" }, "topic": { "type": "string" }, "prompt": { "type": "string" } }, "required": ["prompt"] }
+    },
+    {
+      "name": "give_hint",
+      "kind": "act",
+      "terminal": false,
+      "description": "Give the student a remediating hint. A hint that targets their CURRENT (revised) misconception moves mastery; a hint aimed at the wrong misconception does not.",
+      "inputSchema": { "type": "object", "properties": { "session": { "type": "string" }, "hint": { "type": "string" }, "targets": { "type": "string" } }, "required": ["hint"] }
+    },
+    {
+      "name": "set_hypothesis",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record your initial hypothesis about the student's misconception. You can revise it later with revise_hypothesis.",
+      "inputSchema": { "type": "object", "properties": { "session": { "type": "string" }, "misconception": { "type": "string" } }, "required": ["misconception"] }
+    },
+    {
+      "name": "revise_hypothesis",
+      "kind": "act",
+      "terminal": false,
+      "description": "Replace your current hypothesis with a revised one after evidence disproved the previous guess. This becomes your CURRENT hypothesis.",
+      "inputSchema": { "type": "object", "properties": { "session": { "type": "string" }, "misconception": { "type": "string" }, "because": { "type": "string" } }, "required": ["misconception"] }
+    },
+    {
+      "name": "assess_mastery",
+      "kind": "act",
+      "terminal": true,
+      "description": "Run the terminal mastery check and close the session. Returns the graded outcome based on your CURRENT hypothesis, the remediation you gave, and transfer to a related topic.",
+      "inputSchema": { "type": "object", "properties": { "session": { "type": "string" }, "transferTopic": { "type": "string" } }, "required": [] }
+    }
+  ]
+}

@@ -2,26 +2,28 @@
 /**
  * First-run cost-disclosure notice (v1 opt-out posture — increment 1).
  *
- * On daemon startup, when the master cost-feature kill switch
- * (`memory.costFeatures.enabled`) is ON (the default) AND at least one LLM
- * cost-bearing memory feature is actually active for some agent, emit ONE
- * prominent WARN that:
+ * On daemon startup, when the master cost-feature kill switch (`memory.enabled`,
+ * renamed from `memory.costFeatures.enabled` in Phase 226) is ON (the default)
+ * AND at least one LLM cost-bearing memory feature is actually active for some
+ * agent, emit ONE prominent WARN that:
  *   - names the active cost features,
  *   - states they spend the operator's OWN LLM/API budget,
  *   - gives the exact one-line config to turn them ALL off
- *     (`memory.costFeatures.enabled: false`).
+ *     (`memory.enabled: false`).
  *
  * Emitted once per startup (this function is called once from the daemon boot
  * sequence). When the kill switch is OFF, or when NO cost feature is active
  * (today's default bare config), it emits NOTHING. It never logs a secret/key —
  * only feature names and a count.
  *
- * Scope of "cost-bearing" mirrors the kill switch exactly: the six crons
- * (memoryReview, memoryConsolidation, memoryReasoning, memoryUserRepresentation,
- * memoryUsefulnessJudge, memoryOnlineTuning) and the query-time dialectic tool
- * (`memory_ask`). The $0 keyless memoryLifecycle sweep and the privacy-gated
- * socialModeling cron are NOT cost features here (lifecycle is keyless; social
- * has its own privacy gate), so neither triggers the notice.
+ * Scope of "cost-bearing" mirrors the kill switch exactly: the surviving crons
+ * (memoryReview, memoryUsefulnessJudge) and the query-time dialectic tool
+ * (`memory_ask`). (memoryOnlineTuning — the bandit cron — was deleted in Phase 224;
+ * memoryConsolidation / memoryReasoning / memoryUserRepresentation were deleted in
+ * Phase 225-05 — their work folded into the one learningSkills-gated reflection cron.)
+ * The $0 keyless memoryLifecycle sweep is NOT a cost feature here (lifecycle is
+ * keyless), so it does not trigger the notice. (The privacy-gated socialModeling
+ * cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
  *
  * @module
  */
@@ -31,11 +33,7 @@ import type { ComisLogger } from "@comis/infra";
 /** A per-agent config slice carrying only the cost-feature opt-in flags this notice reads. */
 interface CostFeatureAgentSlice {
   memoryReview?: { enabled?: boolean };
-  memoryConsolidation?: { enabled?: boolean };
-  memoryReasoning?: { enabled?: boolean };
-  memoryUserRepresentation?: { enabled?: boolean };
   memoryUsefulnessJudge?: { enabled?: boolean };
-  memoryOnlineTuning?: { enabled?: boolean };
   dialectic?: { enabled?: boolean };
 }
 
@@ -47,11 +45,7 @@ interface CostFeatureAgentSlice {
  */
 const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; label: string }> = [
   { key: "memoryReview", label: "memoryReview (cron)" },
-  { key: "memoryConsolidation", label: "memoryConsolidation (cron)" },
-  { key: "memoryReasoning", label: "memoryReasoning (cron)" },
-  { key: "memoryUserRepresentation", label: "memoryUserRepresentation (cron)" },
   { key: "memoryUsefulnessJudge", label: "memoryUsefulnessJudge (cron)" },
-  { key: "memoryOnlineTuning", label: "memoryOnlineTuning (cron)" },
   { key: "dialectic", label: "dialectic / memory_ask (query-time tool)" },
 ];
 
@@ -59,7 +53,8 @@ const COST_FEATURE_CATALOG: ReadonlyArray<{ key: keyof CostFeatureAgentSlice; la
 export interface MemoryCostFeatureNoticeDeps {
   /** All per-agent configs (the same `container.config.agents` map). */
   agents: Record<string, CostFeatureAgentSlice>;
-  /** The master kill switch (`memory.costFeatures.enabled`). When false ⇒ no notice. */
+  /** The master kill switch (`memory.enabled`, renamed from `memory.costFeatures.enabled`
+   *  in Phase 226). When false ⇒ no notice. */
   costFeaturesEnabled: boolean;
   /** Counts/names-only structural logger — never a secret/key. */
   logger: ComisLogger;
@@ -100,9 +95,9 @@ export function emitMemoryCostFeatureNotice(deps: MemoryCostFeatureNoticeDeps): 
     {
       activeCostFeatures: activeFeatures,
       activeCostFeatureCount: activeFeatures.length,
-      disableWith: "memory.costFeatures.enabled: false",
+      disableWith: "memory.enabled: false",
       errorKind: "config" as const,
-      hint: "These memory features make LLM/API calls that spend YOUR configured provider budget. To turn ALL of them off in one place, set `memory.costFeatures.enabled: false` in your config.",
+      hint: "These memory features make LLM/API calls that spend YOUR configured provider budget. To turn ALL of them off in one place, set `memory.enabled: false` in your config.",
     },
     "LLM cost-bearing memory features are ACTIVE and will spend your own LLM/API budget",
   );

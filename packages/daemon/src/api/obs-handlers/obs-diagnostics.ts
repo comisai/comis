@@ -16,6 +16,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import {
   ObsChannelsAllContract,
   ObsChannelsGetContract,
@@ -46,7 +47,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsDiagnosticsContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for diagnostics");
+        throw new AuthorizationError("Admin access required for diagnostics");
       }
 
       // Strip dispatcher-injected internals BEFORE contract parse.
@@ -104,7 +105,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsChannelsAllContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel activity");
+        throw new AuthorizationError("Admin access required for channel activity");
       }
 
       const userParams = stripInternalFields(rawParams);
@@ -144,7 +145,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsChannelsStaleContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel activity");
+        throw new AuthorizationError("Admin access required for channel activity");
       }
 
       const userParams = stripInternalFields(rawParams);
@@ -162,7 +163,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsChannelsGetContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for channel activity");
+        throw new AuthorizationError("Admin access required for channel activity");
       }
 
       // Bespoke pre-Zod guard preserves the legacy error message
@@ -185,7 +186,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsDeliveryRecentContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for delivery data");
+        throw new AuthorizationError("Admin access required for delivery data");
       }
 
       const userParams = stripInternalFields(rawParams);
@@ -246,7 +247,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     [ObsDeliveryStatsContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for delivery data");
+        throw new AuthorizationError("Admin access required for delivery data");
       }
 
       const userParams = stripInternalFields(rawParams);

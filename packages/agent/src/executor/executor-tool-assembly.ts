@@ -308,25 +308,14 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // and pinned entries are never prepended to recall results even when the operator
       // has set `rag.pinned.enabled: true` and pinned memories in the DB.
       pinnedStore: deps.pinnedStore,
-      // Forward the per-user representation store the SAME way as usefulnessStore — a
-      // missing forward here is a silent no-op (the profile <user_profile> block never renders even
-      // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
-      // the LLM-free standing-block read.
-      userRepresentationStore: deps.userRepresentationStore,
-      // Forward the directional relationship store the SAME way as
-      // userRepresentationStore — a missing forward here is a silent no-op (the
-      // <channel_relationships> block never renders even with the store wired in the daemon).
-      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read.
-      relationshipStore: deps.relationshipStore,
-      // Forward the learned-alpha store the SAME way as usefulnessStore — a
-      // missing forward here is a silent no-op (buildScoringAlphas never reads the tuned vector
-      // even with the store wired through the daemon → BootContext → createPiExecutor chain AND
-      // rag.onlineTuning.enabled). prompt-assembly's gated read `if (onlineTuningEnabled &&
-      // deps.tunedAlphaStore)` (the deterministic apply overlay) consumes it. This is the final hop in the
-      // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. Default-OFF byte-identity is
-      // preserved: when the store is absent/undefined (off) the static config.rag.scoring alphas
-      // pass unchanged, and the trust-freeze belts hold (trustAlpha is sourced only from config).
-      tunedAlphaStore: deps.tunedAlphaStore,
+      // FOLD-01 (Phase 225): forward the mental-model store — the kind:"profile" source for the
+      // rewired <user_profile> block (prompt-assembly's deps.mentalModelStore.list(scope,"profile")
+      // → buildProfileBlock; the standalone userRepresentationStore was deleted in Plan 05). A
+      // missing forward here is a silent no-op (the profile block never renders even with the store
+      // wired daemon-side — the documented field-plumbing drop, Pitfall 1).
+      mentalModelStore: deps.mentalModelStore,
+      // (The directional relationshipStore forward was DELETED in Phase 226-04 with the rest of
+      //  the social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

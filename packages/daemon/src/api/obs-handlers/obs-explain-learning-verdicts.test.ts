@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OBS-02 (Phase 203 Plan 05): the BENIGN `user_model_revised` verdict predicate.
+ * Co-located unit coverage for the surviving learning-verdict predicates in
+ * `obs-explain-learning-verdicts.ts` (`learnedSkillFailingVerdict` +
+ * `synthesisAbstainedVerdict`). Both are BENIGN, rank below every acute cause, and
+ * return `null` on an absent learning block so the frozen obs-explain fixtures
+ * cannot regress.
  *
- * Co-located unit coverage for the learning-verdict predicates in
- * `obs-explain-learning-verdicts.ts`. The Phase-203 addition is a BENIGN verdict
- * that fires when `IncidentSignals.learning.userModelRevised > 0` — the user
- * model was revised this session — and ranks BELOW `outcome_unresolved` and
- * every acute cause (mirrors `synthesisAbstainedVerdict`'s benign ordering;
- * `Defer ≠ Retry`). It returns `null` on an absent learning block / zero count so
- * the frozen obs-explain fixtures (which carry none) cannot regress.
+ * Phase 226 SIMPLIFY-04: the `userModelRevisedVerdict` (Phase 203) was DELETED — the
+ * `userModelRevised` signal it keyed on was removed with its 0-emit event (the user-rep
+ * revision path folded into the reflection engine in Phase 225). The reflection-abstain
+ * verdict's detail was reworded from "skill-synthesis cron" to "reflection".
  *
  * @module
  */
@@ -18,10 +19,9 @@ import type { IncidentSignals } from "@comis/core";
 import {
   learnedSkillFailingVerdict,
   synthesisAbstainedVerdict,
-  userModelRevisedVerdict,
 } from "./obs-explain-learning-verdicts.js";
 
-/** A minimal learning signal with the P2/P3 fields zeroed unless overridden. */
+/** A minimal learning signal with the P2 fields zeroed unless overridden. */
 function learning(overrides: Partial<NonNullable<IncidentSignals["learning"]>> = {}): IncidentSignals {
   return {
     learning: {
@@ -35,33 +35,22 @@ function learning(overrides: Partial<NonNullable<IncidentSignals["learning"]>> =
   } as IncidentSignals;
 }
 
-describe("userModelRevisedVerdict (OBS-02, Phase 203 — BENIGN)", () => {
-  it("returns null when the learning block is absent (no fixture regression)", () => {
-    expect(userModelRevisedVerdict({} as IncidentSignals)).toBeNull();
+describe("synthesisAbstainedVerdict (BENIGN — reworded to 'reflection' in Phase 226)", () => {
+  it("returns null when the learning block is absent / not abstained (no fixture regression)", () => {
+    expect(synthesisAbstainedVerdict({} as IncidentSignals)).toBeNull();
+    expect(synthesisAbstainedVerdict(learning())).toBeNull();
   });
 
-  it("returns null when userModelRevised is undefined or zero (Defer != Retry)", () => {
-    expect(userModelRevisedVerdict(learning())).toBeNull();
-    expect(userModelRevisedVerdict(learning({ userModelRevised: 0 }))).toBeNull();
-  });
-
-  it("fires with code 'user_model_revised' when userModelRevised > 0", () => {
-    const v = userModelRevisedVerdict(learning({ userModelRevised: 3 }));
+  it("fires with code 'synthesis_abstained_low_capability' when synthesisAbstained is true", () => {
+    const v = synthesisAbstainedVerdict(learning({ synthesisAbstained: true }));
     expect(v).not.toBeNull();
-    expect(v!.code).toBe("user_model_revised");
+    expect(v!.code).toBe("synthesis_abstained_low_capability");
+    expect(v!.detail).toMatch(/reflection abstained/i); // reworded from "synthesis abstained"
     expect(v!.suggestedNextSteps.length).toBeGreaterThan(0);
   });
 
-  it("carries no profile body — only the COUNT (SEC-01)", () => {
-    const v = userModelRevisedVerdict(learning({ userModelRevised: 2, memoriesGeneralized: 1 }));
-    const json = JSON.stringify(v);
-    // The detail names the count, never a profile entry's content/entryType.
-    expect(json).not.toMatch(/preference|identity|relationship|instruction/i);
-  });
-
-  it("the existing skill/synthesis verdicts still return null on a revision-only signal (no ordering steal)", () => {
-    const sig = learning({ userModelRevised: 2 });
-    expect(learnedSkillFailingVerdict(sig)).toBeNull();
-    expect(synthesisAbstainedVerdict(sig)).toBeNull();
+  it("learnedSkillFailingVerdict returns null on a non-failing learning signal", () => {
+    expect(learnedSkillFailingVerdict(learning())).toBeNull();
+    expect(learnedSkillFailingVerdict(learning({ skillFailures: ["flaky"] }))).not.toBeNull();
   });
 });

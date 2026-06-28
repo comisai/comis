@@ -1,0 +1,90 @@
+{
+  "server": "icu-sim",
+  "title": "ICU Clinical Decision Support (simulated single-patient bedside)",
+  "tools": [
+    {
+      "name": "get_vitals",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the patient's latest vital signs (HR, BP, RR, SpO2, temp) and a short trend note.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_labs",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the currently-resulted labs for the patient. Some labs are still pending and result over time / once the right workup is ordered.",
+      "inputSchema": { "type": "object", "properties": { "panel": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "get_notes",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the clinical notes in the chart. Optional `author_role` filter (attending|resident|consult|unverified). Authors differ in reliability.",
+      "inputSchema": { "type": "object", "properties": { "author_role": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "get_orders",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the active orders (meds, fluids, workup) and their status.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "ward_baseline",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the ward's established baseline / reference ranges for vitals and common labs.",
+      "inputSchema": { "type": "object", "properties": { "metric": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "guideline_lookup",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Look up the diagnostic guideline for a suspected condition: which finding/lab discriminates it from look-alikes.",
+      "inputSchema": { "type": "object", "properties": { "condition": { "type": "string" } }, "required": ["condition"] }
+    },
+    {
+      "name": "open_assessment",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open the assessment record for this patient. Returns a case id used by later actions.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "propose_differential",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record a differential diagnosis list (ranked candidate diagnoses) on the case.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "candidates": { "type": "array", "items": { "type": "string" } } }, "required": ["candidates"] }
+    },
+    {
+      "name": "recommend_workup",
+      "kind": "act",
+      "terminal": false,
+      "description": "Order/recommend a diagnostic workup (e.g. a specific lab or test). Ordering the discriminating test makes its result available on the next get_labs.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "test": { "type": "string" } }, "required": ["test"] }
+    },
+    {
+      "name": "flag_deterioration",
+      "kind": "act",
+      "terminal": false,
+      "description": "Flag the patient as deteriorating to the bedside team (escalation). Has real cost if raised without basis.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "reason": { "type": "string" } }, "required": ["reason"] }
+    },
+    {
+      "name": "update_assessment",
+      "kind": "act",
+      "terminal": false,
+      "description": "Update the working assessment: the current leading diagnosis and a confidence (0-1). Call again to REVISE as evidence changes.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "diagnosis": { "type": "string" }, "confidence": { "type": "number" }, "rationale": { "type": "string" } }, "required": ["diagnosis"] }
+    },
+    {
+      "name": "finalize_assessment",
+      "kind": "act",
+      "terminal": true,
+      "description": "Finalize the assessment with your final diagnosis and confidence. Returns the graded outcome. TERMINAL.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "diagnosis": { "type": "string" }, "confidence": { "type": "number" } }, "required": ["diagnosis"] }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "server": "nego-sim",
+  "title": "Contract Negotiation Desk (simulated)",
+  "tools": [
+    {
+      "name": "get_counterparty",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return public facts about the counterparty you are negotiating with (id, name, role). Does NOT reveal their negotiating limits.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_term_sheet",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the deal's term sheet: what is being negotiated, the unit of the primary term, and the current state of the negotiation (latest ask on the table, your last offer, round number, status).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "market_comparables",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return external market comparables for this kind of deal (low / median / high) so you can judge whether a price is reasonable.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "history",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the full ordered log of the negotiation so far: every offer you sent and every response the counterparty gave.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "read_message",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Read the counterparty's most recent message (their current ask and their stated reasoning/tone). Reading does not change the negotiation.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "send_offer",
+      "kind": "act",
+      "terminal": false,
+      "description": "Send a counter-offer of `price` (in the term-sheet unit) to the counterparty. They will respond; read their reply with read_message or history.",
+      "inputSchema": { "type": "object", "properties": { "price": { "type": "number" }, "note": { "type": "string" } }, "required": ["price"] }
+    },
+    {
+      "name": "make_concession",
+      "kind": "act",
+      "terminal": false,
+      "description": "Move your own offer to `price` as a goodwill concession. The counterparty will respond.",
+      "inputSchema": { "type": "object", "properties": { "price": { "type": "number" }, "note": { "type": "string" } }, "required": ["price"] }
+    },
+    {
+      "name": "walk_away",
+      "kind": "act",
+      "terminal": false,
+      "description": "End the negotiation with no deal. Returns the graded outcome (walking away from a deal that could have closed in-band is a failure).",
+      "inputSchema": { "type": "object", "properties": { "reason": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "accept",
+      "kind": "act",
+      "terminal": true,
+      "description": "Accept the price currently on the table (the counterparty's latest ask) and sign. TERMINAL: returns the graded outcome based on the final agreed terms.",
+      "inputSchema": { "type": "object", "properties": { "price": { "type": "number" } }, "required": [] }
+    }
+  ]
+}

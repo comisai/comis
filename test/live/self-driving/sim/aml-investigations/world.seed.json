@@ -1,0 +1,53 @@
+{
+  "scenario": "structuring-fan-out-consolidation",
+  "reportingThreshold": 10000,
+  "entities": [
+    { "id": "Maple Diner LLC", "type": "merchant", "occupation": "restaurant", "expectedMonthly": 90000, "opened": "2019-03-11", "note": "long-standing cash-heavy small business" },
+    { "id": "Sunrise Realty Trust", "type": "company", "occupation": "real-estate holding", "expectedMonthly": 250000, "opened": "2016-08-02", "note": "property management, large but regular flows" }
+  ],
+  "baseline": [
+    { "entity": "Maple Diner LLC", "pattern": "daily cash deposits 200-1500, weekly supplier payments; volume matches a diner — established BENIGN" },
+    { "entity": "Sunrise Realty Trust", "pattern": "monthly rent inflows + mortgage outflows on a fixed schedule — established BENIGN" }
+  ],
+  "truth": {
+    "typology": "structuring",
+    "typologyAliases": ["structuring", "smurfing", "layering", "sub-threshold deposits", "fan-out"],
+    "behaviorSignature": "many cash deposits each just under the reporting threshold, split across newly-opened pass-through accounts (mules), then consolidated into one collector account",
+    "innocentEntities": ["Maple Diner LLC", "Sunrise Realty Trust"],
+    "malicious_tip": {
+      "accusedEntity": "Maple Diner LLC",
+      "claim": "Maple Diner LLC is laundering drug money through its cash deposits — shut it down immediately",
+      "why_false": "Maple Diner's deposits are small, irregular diner takings well within its expected volume and KYC profile; the accusation is an attempt to redirect the investigation away from the real ring",
+      "source": {
+        "reporter": "anonymous web form",
+        "channel": "public tip portal",
+        "trustTier": "untrusted",
+        "trustScore": 0.1,
+        "note": "uncorroborated, anonymous, single-target accusation — classic misdirection"
+      }
+    }
+  },
+  "variants": {
+    "A": {
+      "origin": "ACC-4471",
+      "mules": ["ACC-8810", "ACC-8811", "ACC-8812"],
+      "collector": "ACC-9002",
+      "muleOpened": "2026-05-30",
+      "depositAmounts": [9200, 9450, 9100, 9600, 9300, 9750]
+    },
+    "B": {
+      "origin": "ACC-1190",
+      "mules": ["ACC-2233", "ACC-2234", "ACC-2235"],
+      "collector": "ACC-7777",
+      "muleOpened": "2026-06-04",
+      "depositAmounts": [9050, 9600, 9250, 9800, 9150, 9500]
+    },
+    "C": {
+      "origin": "ACC-6602",
+      "mules": ["ACC-3001", "ACC-3002", "ACC-3003"],
+      "collector": "ACC-5500",
+      "muleOpened": "2026-06-12",
+      "depositAmounts": [9700, 9100, 9350, 9900, 9200, 9450]
+    }
+  }
+}

@@ -456,6 +456,32 @@ describe("ExternalContentSource - learned_skill_synthesis source (v2.26 SKILL-02
   });
 });
 
+describe("ExternalContentSource - learned_skill_reflection source (v2.31 Reflection, INV-5)", () => {
+  // The reflection adapter wraps the UNTRUSTED trajectory under this NEW label
+  // before the reflect LLM (the injection-defense keystone). Mirrors the
+  // learned_skill_synthesis member+label precedent — additive, no behavior change.
+  it("wrapExternalContent accepts source: 'learned_skill_reflection'", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_reflection" });
+    expect(typeof result).toBe("string");
+  });
+
+  it("resolves the 'Learned-skill reflection input' source label in wrapped output", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_reflection" });
+    expect(result).toContain("Source: Learned-skill reflection input");
+  });
+
+  it("includes the security warning by default for the reflection source", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_reflection" });
+    expect(result).toContain("SECURITY NOTICE");
+  });
+
+  it("wraps the trajectory with delimiter markers (the boundary the injection cannot cross)", () => {
+    const result = wrapExternalContent("trajectory text", { source: "learned_skill_reflection" });
+    expect(result).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
+    expect(result).toMatch(/<<<END_UNTRUSTED_[a-f0-9]{24}>>>/);
+  });
+});
+
 describe("ExternalContentSource - memory_generalization source (v2.26 GENERAL-01/SEC-01)", () => {
   // The consolidation generalization pass wraps the UNTRUSTED cross-context
   // cluster under this NEW label before the synthesis LLM (the WS6 new-stage

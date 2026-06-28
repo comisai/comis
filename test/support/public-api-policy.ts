@@ -164,11 +164,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
-      // Consolidation job Deps. runMemoryConsolidation is consumed by the
-      // daemon (setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
-      // but it is called with an inline object, so the named Deps SHAPE type has no
-      // production consumer — baseline orphan (mirror MemoryReviewDeps).
-      "MemoryConsolidationDeps",
       // Offline triple-extraction job.
       // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
       // OPTIONAL (the job is default-OFF and the benchmark calls
@@ -183,67 +178,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // Offline reasoning job. runMemoryReasoning
-      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch,
-      // so it SHRANK out of this baseline (no longer an orphan). createReasoningSeam
-      // (the daemon-injected reason() seam factory) is likewise consumed by the
-      // dispatch — no entry needed. The Deps/Config/Stats/Result SHAPE types + the
-      // ReasoningOutput seam-output type are referenced via inline objects only (the
-      // dispatch + the gated bench construct them structurally / import them
-      // same-package) — baseline orphans (mirror MemoryTripleExtractionDeps).
-      // ReasoningSeamDeps is the createReasoningSeam input shape — the daemon
-      // calls it with an inline object, so the TYPE itself has no cross-package importer.
-      "MemoryReasoningDeps",
-      "MemoryReasoningConfig",
-      "MemoryReasoningStats",
-      "MemoryReasoningResult",
-      "ReasoningOutput",
-      "ReasoningSeamDeps",
-      // Offline per-user representation builder.
-      // runUserRepresentationBuild is now CONSUMED by the daemon __USER_REPRESENTATION__
-      // cron-sentinel dispatch, so it SHRANK out of this baseline (no longer an
-      // orphan). createUserRepresentationSeam (the daemon-injected build() seam factory) is
-      // consumed by the dispatch too. buildUserRepresentationPrompt + parseUserRepresentationOutput
-      // are imported by createUserRepresentationSeam via the RELATIVE same-package path (the prompt
-      // stays agent-internal), so their @comis/agent index re-exports have no cross-package importer
-      // — baseline orphans (mirror DEDUCTIVE_PROMPT/parseDeductiveResult being relative-only). The
-      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
-      // SourceMemory read-shape are referenced via inline objects only (the dispatch + the gated
-      // bench construct them structurally) — baseline orphans (mirror MemoryReasoningDeps).
-      // UserRepresentationSeamDeps (the createUserRepresentationSeam input shape) is called with an
-      // inline object, so the TYPE itself has no cross-package importer (mirror ReasoningSeamDeps).
-      "buildUserRepresentationPrompt",
-      "parseUserRepresentationOutput",
-      "MemoryUserRepresentationDeps",
-      "MemoryUserRepresentationConfig",
-      "MemoryUserRepresentationStats",
-      "MemoryUserRepresentationResult",
-      "UserRepresentationSourceMemory",
-      "UserRepresentationCandidate",
-      "UserRepresentationBuildOutput",
-      "UserRepresentationSeamDeps",
-      // Offline directional relationship builder.
-      // SHRUNK: the offline-builder run-fn + the cheap-model seam-factory are now CONSUMED
-      // by the daemon __SOCIAL_MODELING__ cron dispatch (setup-channels-memory-crons.ts), so they
-      // were REMOVED from this list (the shrink — mirror the per-user-representation builder/seam
-      // shrink; allowlist-shrink enforces shrink-only). buildRelationshipPrompt +
-      // parseRelationshipOutput are imported by the seam via the RELATIVE same-package path (the
-      // prompt stays agent-internal), so their @comis/agent index re-exports have no cross-package
-      // importer — baseline orphans (mirror buildUserRepresentationPrompt above). The
-      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
-      // SourceMemory read-shape are referenced via inline objects only — baseline orphans (mirror
-      // MemoryUserRepresentationDeps). RelationshipSeamDeps (the seam-factory input shape) is called
-      // with an inline object, so the TYPE itself has no cross-package importer.
-      "buildRelationshipPrompt",
-      "parseRelationshipOutput",
-      "MemoryRelationshipDeps",
-      "MemoryRelationshipConfig",
-      "MemoryRelationshipStats",
-      "MemoryRelationshipResult",
-      "RelationshipSourceMemory",
-      "RelationshipCandidate",
-      "RelationshipBuildOutput",
-      "RelationshipSeamDeps",
+      // (Phase 225-05 DELETED the standalone reasoning + user-representation jobs/seams/prompts +
+      //  their @comis/agent exports — runMemoryReasoning / MemoryReasoning* / ReasoningOutput /
+      //  ReasoningSeamDeps and runUserRepresentationBuild / createUserRepresentationSeam /
+      //  build|parseUserRepresentationOutput|Prompt / MemoryUserRepresentation* /
+      //  UserRepresentationSourceMemory|Candidate|BuildOutput|SeamDeps — so their allowlist entries
+      //  were REMOVED here, not just shrunk. createReasoningSeam was likewise deleted [the
+      //  __MEMORY_TRIPLE_EXTRACTION__ scaffold that reused it was de-wired]. The work folded into the
+      //  ONE __REFLECT__ cron [Plan 04].)
+      // (Phase 226-04 DELETED the offline directional relationship builder + its prompt/parser +
+      //  seam-factory (runRelationshipBuild / createRelationshipSeam / buildRelationshipPrompt /
+      //  parseRelationshipOutput + the MemoryRelationship* Deps/Config/Stats/Result SHAPE types +
+      //  the Candidate/BuildOutput/SourceMemory/SeamDeps types) — the ENTIRE social-modeling
+      //  subsystem is gone, so they are no longer re-exported from @comis/agent and their allowlist
+      //  entries were removed, not just shrunk.)
       // Offline tuned-alpha bandit. SHRUNK:
       // runOnlineTuning is now CONSUMED by the daemon __ONLINE_TUNING__ cron-sentinel dispatch
       // (setup-channels-memory-crons.ts), so it was REMOVED from this list (the interface-first
@@ -524,17 +472,35 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consume it via the local module path, which the walker skips as a
       // self-import.
       "MinViableEquation",
-      // Verified Learning WS2 (P2 Skills, Phase 201). The synthesis adapter
-      // (createLlmSkillSynthesisAdapter), the JOB (runSkillSynthesis) + its source
-      // type (SynthesisSourceTrajectory), and the approval-gate structural subset
-      // (SkillApprovalGate) are now CONSUMED by the daemon Plan 07 wiring
-      // (setup-channels-memory-crons-wire.ts / setup-channels-skill-synthesis-deps.ts
-      // / setup-channels-memory-crons-types.ts) — they SHRANK out of this allowlist
-      // (the shrink-only ratchet). Only the deps/result SHAPE types stay
-      // ahead-of-consumer (referenced via Parameters<>/ReturnType<>, not name-imported).
-      "LlmSkillSynthesisAdapterDeps",
-      "SkillSynthesisJobDeps",
-      "SkillSynthesisJobResult",
+      // Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
+      // The synthesis adapter / JOB / prompt / source / approval-gate subset were
+      // the dead embedding-clustering pipeline the reflection engine REPLACED
+      // (Plan 05 swapped the cron; Plan 06 deleted skill-synthesis-job.ts +
+      // llm-skill-synthesis-adapter.ts + skill-synthesis-prompt.ts). Their barrel
+      // re-exports are gone, so they need no allowlist entry — removed (the
+      // shrink-only ratchet runs BOTH ways).
+      // v2.31 Reflection engine (Phase 223 Plan 04, REFLECT-01/03/04/05/06) — the
+      // reflection JOB (runReflection) + classifier + the cheap-model reflect
+      // adapter (createLlmReflectionAdapter) + prompt/parser, surfaced on the
+      // @comis/agent barrel. Plan 05 (the daemon __REFLECT__ wiring) now name-imports
+      // `runReflection` + `createLlmReflectionAdapter` (value) in
+      // setup-channels-memory-crons-wire.ts and `ReflectionSourceTrajectory` (type) in
+      // setup-channels-skill-synthesis-deps.ts / setup-channels-memory-crons-types.ts —
+      // so those THREE SHRANK out of this allowlist (the shrink-only ratchet,
+      // AGENTS.md §2.8). The rest stay ahead-of-consumer (the LLM-mock A→B harness in
+      // Plan 08 consumes ReflectionResult/the deps types). They ship ALONGSIDE the
+      // synthesis entries; Plan 06 deletes the synthesis half.
+      "classifyReflectOutcome",
+      "REFLECT_PROMPT",
+      "parseReflectionResult",
+      "LlmReflectionAdapterDeps",
+      "ReflectionAdapter",
+      "ReflectInput",
+      "ReflectionResult",
+      "RunReflectionDeps",
+      "RunReflectionResult",
+      "RunReflectionConfig",
+      "ReflectAdmissionOutcome",
       // Sandbox-posture primitive (SANDBOX-01/02, phase 172). resolvePostureFromSkills
       // SHRANK out of this baseline — Plan 02's daemon wiring
       // (setup-cross-session-runtime.ts) now name-imports it cross-package to build
@@ -845,6 +811,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // its own deny-branch tests (intra-core, excluded from the consumer scan).
       // Shrink this entry once 211-05 wires it into the bwrap provider.
       "validateBindMount",
+      // ── learned-doc static scan (v2.31 Reflection, 223-02, interface-first) ──
+      // validateLearnedDocBody is the STATIC poison/secret scan an advisory Mental
+      // Model doc receives (SKILL-02 / INV-3) — the renamed `scanFields` extracted to
+      // @comis/core (where validateMemoryWrite already lives). It lands FIRST so the
+      // agent reflection job (223-04) + the daemon reflect path (223-05) consume it
+      // without a @comis/skills dependency. Until those plans land, the only callers
+      // are its own static-scan tests (intra-core, excluded from the consumer scan).
+      // Mirrors the validateBindMount interface-first precedent above. Shrink each
+      // entry once 223-04/05 wire it into the reflection path.
+      "validateLearnedDocBody",
+      "MAX_DOC_NAME_LENGTH",
+      "LearnedDocValidation",
+      "LearnedDocFinding",
       // ── orchestration authoring gate (Phase 174 / v2.27 P2) ──
       // The orchestration.authoring.{intentAction,repairProducer,gbnfConstrain}
       // gate ships GATED-OFF (every flag .default(false); the 173 gate returned
@@ -1231,35 +1210,41 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutcomeObservation",
       "ResolvedOutcome",
       "OutcomePruneResult",
-      // Verified Learning procedural-learning ports (v2.26 Phase 201 Plan 01, Wave 1)
-      // — the three greenfield type-only ports (SkillSynthesisPort,
-      // SkillValidationPort, LearnedSkillStorePort) + their DTOs, surfaced on the
-      // public @comis/core barrel (exports/ports.ts) so the LATER-wave plans can
-      // import them BY TYPE. This is interface-first Wave 1 (the OutcomeSignalPort /
-      // TunedAlphaStore precedent directly above): the contracts land FIRST, the
-      // cross-package consumers land in later waves —
-      //   - Plan 04 (@comis/agent skill-synthesis-job) consumes SkillSynthesisPort
-      //     + SynthesisInput + CandidateSkill,
-      //   - Plans 05/06 (@comis/skills sandbox-validation adapter) consume
-      //     SkillValidationPort + SkillValidationResult + SkillValidationFinding +
-      //     ReplayContext,
-      //   - Plan 04/07 (@comis/memory store + @comis/daemon wiring) consume
-      //     LearnedSkillStorePort + LearnedSkill + AdmitSkillInput.
-      // Defining the contracts in @comis/core first is the closed-graph SEC-01 cut
-      // (agent↛memory / agent↛skills) — the synthesis job imports PORT TYPES only.
-      // Each SHRINKS out of this baseline when its real cross-package NAME-import
-      // consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never under-listed,
-      // closed by deletion).
-      "SkillSynthesisPort",
-      "SynthesisInput",
-      "CandidateSkill",
-      "SkillValidationPort",
-      "SkillValidationResult",
-      "SkillValidationFinding",
-      "ReplayContext",
-      "LearnedSkillStorePort",
-      "LearnedSkill",
-      "AdmitSkillInput",
+      // Mental Model doc store port (v2.31 Phase 223) — the type-only
+      // MentalModelStorePort + its DTOs (MentalModel, AdmitMentalModelInput),
+      // surfaced on the public @comis/core barrel (exports/ports.ts) so @comis/memory
+      // (the sqlite-mental-model-store adapter) + @comis/daemon (the reflection
+      // wiring) import them BY TYPE — the closed-graph SEC-01 cut (agent↛memory).
+      // The v2.26 SkillSynthesisPort / SynthesisInput / CandidateSkill +
+      // SkillValidationPort / SkillValidationResult / SkillValidationFinding /
+      // ReplayContext entries were DELETED in Phase 223 Plan 07 with the orphaned
+      // skill-synthesis-port.ts / skill-validation-port.ts files — the embedding-
+      // clustering synthesis pipeline + the dynamic sandbox they typed are gone
+      // (Plans 04-06), leaving zero consumers (the reflection engine replaced them).
+      // Each entry below SHRINKS out of this baseline when its real cross-package
+      // NAME-import consumer lands (the shrink-only ratchet, AGENTS.md §2.8 — never
+      // under-listed, closed by deletion).
+      "MentalModelStorePort",
+      "MentalModel",
+      "AdmitMentalModelInput",
+      // Reflection delta-ops (v2.31 Phase 223 Plan 03, Wave 2) — the @comis/core
+      // reflection-port: the DocSection/StructuredBody/DeltaOp types + the pure
+      // applyDeltaOps (byte-stable section refresh, REFLECT-04 — untargeted
+      // sections survive by reference) + renderStructuredBody (AST → markdown).
+      // Surfaced on the public barrel (exports/ports.ts) so the LATER-wave consumer
+      // can import them: Plan 04 (@comis/agent reflection-job + reflection-prompt
+      // parser) applies the LLM's delta-ops against the prior doc's AST. Until that
+      // plan lands, the only callers are this port's own pure tests (intra-core,
+      // excluded from the consumer scan) — interface-first, the MentalModelStorePort
+      // precedent directly above. Each SHRINKS out when Plan 04's name-import lands
+      // (the shrink-only ratchet, AGENTS.md §2.8). StructuredBody is ALSO consumed
+      // intra-core by learned-skill-store.ts (MentalModel.structuredBody), so it
+      // stays listed only until the cross-package consumer (Plan 04) lands.
+      "DocSection",
+      "StructuredBody",
+      "DeltaOp",
+      "applyDeltaOps",
+      "renderStructuredBody",
       // MemoryLifecyclePort + MemoryLifecycleScope +
       // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
       // ahead-of-consumer planned-orphans. REMOVED:
@@ -1524,20 +1509,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
-      // Per-agent consolidation config schema. Wired into PerAgentConfig
-      // (schema-agent-runtime) WITHIN @comis/core; the daemon consumes the
-      // INFERRED config TYPE, not the schema value. The schema value therefore has no
-      // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
-      "MemoryConsolidationConfigSchema",
-      // Per-agent reasoning config schema + type. Wired into
-      // PerAgentConfig (schema-agent-runtime) WITHIN @comis/core; the schema-runtime attach
-      // is a self-import (the public-export-consumers gate skips same-package imports), so
-      // both the schema value AND the inferred config TYPE are surfaced AHEAD of their
-      // cross-package consumers — the reasoning job reads MemoryReasoningConfig
-      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema +
-      // runMemoryTripleExtraction). Shrink when the consumer lands.
-      "MemoryReasoningConfigSchema",
-      "MemoryReasoningConfig",
+      // (Phase 225-05 DELETED the consolidation + reasoning config schemas —
+      //  MemoryConsolidationConfigSchema / MemoryReasoningConfigSchema / MemoryReasoningConfig
+      //  are no longer exported from @comis/core, so their allowlist entries were removed.)
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -2102,52 +2076,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the offline writer / lane reference it directly.
       "TripleTrust",
-      // Per-user representation port + prefix-type enum.
-      // This is the first piece: the type-only
-      // UserRepresentationStore port + the UserRepresentationType prefix-type enum
-      // are the contract every later piece consumes — the SOLE @comis/memory
-      // adapter, the offline profile-builder, the LLM-free
-      // prompt-assembly injection, and the daemon wiring all
-      // import these from @comis/core BY TYPE (never @comis/memory — the agent↛
-      // memory build cut). No in-repo consumer exists yet (the adapter lands
-      // later), so the export-graph walker counts them as orphans. They are the
-      // documented port API surface — tracked here as planned-orphans,
-      // mirror the TripleStorePort / MemoryEmbeddingStore ahead-of-consumer dance.
-      // Shrinks as the adapter (by TYPE) → the builder/injection →
-      // the daemon wiring reference each name directly.
-      "UserRepresentationStore",
-      "UserRepresentationScope",
-      // UserRepresentationTrust is referenced only INSIDE UserRepresentationInput.trust
-      // (a field type, not a standalone import) — the same orphan shape as TripleTrust.
-      "UserRepresentationTrust",
-      "UserRepresentationEntry",
-      "UserRepresentationInput",
-      // The prefix-type enum (value schema + inferred type). The builder
-      // classifies entries with UserRepresentationTypeSchema; the port consumes the
-      // inferred UserRepresentationType. Shrinks when those consumers land.
-      "UserRepresentationTypeSchema",
-      "UserRepresentationType",
-      // Directional relationship port. This is
-      // the first piece: the type-only RelationshipStore port
-      // carrying the directional (subjectUserId, aboutUserId) pair + the
-      // (tenant, agent, channel) scope is the contract every later piece consumes —
-      // the SOLE @comis/memory adapter, the offline directional builder,
-      // the (optional) LLM-free injection, and the daemon wiring all import these
-      // from @comis/core BY TYPE (never @comis/memory — the agent↛memory build cut).
-      // No in-repo consumer exists yet (the adapter lands later), so the
-      // export-graph walker counts them as orphans. They are the documented
-      // port API surface — tracked here as planned-orphans, mirror the
-      // UserRepresentationStore / TripleStorePort ahead-of-consumer dance. Shrinks as
-      // the adapter (by TYPE) → the builder/injection → the daemon wiring
-      // reference each name directly.
-      "RelationshipStore",
-      "RelationshipScope",
-      // RelationshipTrust is referenced only INSIDE RelationshipInput.trust (a field
-      // type, not a standalone import) — the same orphan shape as TripleTrust /
-      // UserRepresentationTrust.
-      "RelationshipTrust",
-      "RelationshipEntry",
-      "RelationshipInput",
+      // (Phase 225-05 DELETED the type-only UserRepresentationStore port + its
+      //  Scope/Trust/Entry/Input DTOs + the UserRepresentationType(Schema) prefix-type enum —
+      //  no longer exported from @comis/core [the <user_profile> read folded onto the
+      //  MentalModelStorePort kind:"profile" path], so their allowlist entries were removed.)
+      // (Phase 226-04 DELETED the type-only RelationshipStore port + its
+      //  Scope/Trust/Entry/Input DTOs — the ENTIRE social-modeling subsystem (the
+      //  __SOCIAL_MODELING__ cron, the sqlite adapter, the `relationship` table, the
+      //  offline directional builder, the relationship-block prompt injection) is gone,
+      //  so they are no longer exported from @comis/core and their allowlist entries
+      //  were removed, not just shrunk.)
       // StorageModePreRead is the return type of preReadStorageMode (daemon-boot
       // pre-read); the daemon imports preReadStorageMode (which has an in-repo
       // consumer) but does not import the return type name directly, so it is an
@@ -2416,6 +2354,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "setupSkillBundles",
       "buildSkillRegistriesForBundles",
       "SetupSkillBundlesDeps",
+      // Resolve-seam learned-skill promote/demote loop body + the in-process
+      // decay-aware trend tracker, surfaced through the daemon barrel so the
+      // Phase-222 MODEL-04 source-agnostic characterization
+      // (test/integration/mental-model-readonly-lifecycle.test.ts) drives the
+      // REAL transition path (a hand-authored no-synthesis mental_models doc
+      // promotes via promoteByName exactly as a synthesized skill) rather than a
+      // store-only fallback. Two test-driven exports, the sanctioned
+      // skill-bundle-install pattern; both are name-keyed + (tenant, agent)-scoped
+      // (no new data path / secret / cross-tenant widening). The
+      // public-export-consumers AST walker excludes test/**, so the orphan list is
+      // the canonical place to record the planned test consumer.
+      "applySkillOutcomeTransitions",
+      "createSkillTrendTracker",
       // Extracted single-writer persistMcpServers, surfaced through the
       // daemon barrel as the rule-of-three fulfillment. Direct in-repo
       // consumers live in packages/daemon/src/ leaf modules
@@ -2698,41 +2649,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
-      // Per-user representation store.
-      // createSqliteUserRepresentationStore's daemon consumer LANDED
-      // (setup-memory.ts constructs the SOLE adapter on the shared db handle) — the
-      // factory-orphan SHRANK on schedule (mirror createSqliteTripleStore /
-      // the entry above); its entry is removed.
-      // MemoryUserRepresentationStoreDeps is the constructor-deps SHAPE type
-      // (referenced via inline objects only); UserRepresentationRowSchema is the row
-      // schema consumed by createRowMapper inside the adapter (an intra-file value
-      // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryTripleStoreDeps / MemoryTripleRowSchema).
-      "MemoryUserRepresentationStoreDeps",
-      "UserRepresentationRowSchema",
-      // Directional relationship store.
-      // SHRUNK: the SOLE (tenant, agent, channel)-scoped directional-edge adapter factory is
-      // now CONSUMED by its daemon composition-root consumer (setup-memory.ts constructs it on the
-      // shared db handle, mirror the per-user-representation adapter), so it was REMOVED from
-      // this list (the shrink-only allowlist-shrink.test.ts enforces this shrink — mirror the
-      // user-representation / triple-store adapter shrink). MemoryRelationshipStoreDeps is
-      // the constructor-deps SHAPE type (referenced via inline objects only); RelationshipRowSchema is
-      // the row schema consumed by createRowMapper inside the adapter (an intra-file value reference,
-      // not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryUserRepresentationStoreDeps / UserRepresentationRowSchema above).
-      "MemoryRelationshipStoreDeps",
-      "RelationshipRowSchema",
+      // (Phase 225-05 DELETED the per-user-representation store —
+      //  createSqliteUserRepresentationStore + MemoryUserRepresentationStoreDeps +
+      //  UserRepresentationRowSchema are no longer exported from @comis/memory [the
+      //  user_representation table was dropped; the profile folded onto mental_models], so
+      //  their allowlist entries were removed.)
+      // (Phase 226-04 DELETED the directional relationship sqlite adapter
+      //  (createSqliteRelationshipStore + MemoryRelationshipStoreDeps) + its RelationshipRowSchema
+      //  row schema — the ENTIRE social-modeling subsystem is gone, so they are no longer exported
+      //  from @comis/memory and their allowlist entries were removed.)
       // Tuned-alpha store. createSqliteTunedAlphaStore
       // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
       // upsert + scoped read; undefined-on-absent). SHRUNK: the daemon
       // composition-root now CONSTRUCTS it on the shared db handle in setup-memory, so
       // the transient factory-orphan was REMOVED from this list (the factory-orphan shrink —
-      // mirror createSqliteTripleStore / the user-representation + relationship adapter
+      // mirror createSqliteTripleStore / the user-representation adapter
       // shrinks; allowlist-shrink enforces shrink-only). MemoryTunedAlphaStoreDeps is the
       // constructor-deps SHAPE type (referenced via inline objects only); TunedAlphaRowSchema
       // is the row schema consumed by createRowMapper inside the adapter (an intra-file value
       // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
-      // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
+      // MemoryTripleStoreDeps / MemoryTripleRowSchema above).
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
       // Memory-lifecycle store.
@@ -2760,26 +2696,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // composition-root consumer LANDS in Plan 04 (Wave 4 — setup-learning.ts
       // constructs it on the shared db handle in setup-memory + the default-OFF
       // learningOutcome wiring subscribes/prunes), at which point this factory
-      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle +
-      // relationship adapter shrinks; allowlist-shrink enforces shrink-only).
+      // entry SHRINKS OUT (mirror createSqliteTunedAlphaStore / the lifecycle
+      // adapter shrinks; allowlist-shrink enforces shrink-only).
       // OutcomeStoreDeps is the constructor-deps SHAPE type (referenced via inline
       // objects only — the daemon calls the factory with an inline `{ db, logger }`)
       // — PERMANENT baseline orphan (mirror MemoryTunedAlphaStoreDeps /
       // MemoryLifecycleStoreDeps above).
       "createSqliteOutcomeStore",
       "OutcomeStoreDeps",
-      // Learned-skill store (v2.26 Verified Learning WS2, Phase 201 Plan 02).
-      // createSqliteLearnedSkillStore is the SOLE LearnedSkillStorePort adapter (the
-      // (tenant, agent)-scoped learned_skills procedural store — idempotent
-      // deterministic-id admit(), scoped get()/list(), and the promote()/demote()/
-      // evict() lifecycle, evict being a soft evicted_at set, never a hard DELETE).
-      // The daemon composition-root consumer LANDED (Plan 07: setup-memory.ts builds
-      // it on the shared db handle, threaded into the __SKILL_SYNTHESIS__ cron), so the
-      // FACTORY orphan createSqliteLearnedSkillStore was REMOVED here (the shrink-only
-      // ratchet fired on schedule; mirror createSqliteMemoryEmbeddingStore below).
-      // LearnedSkillStoreDeps is the constructor-deps SHAPE type (the daemon calls the
-      // factory with an inline `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
-      "LearnedSkillStoreDeps",
+      // Mental Model doc store (v2.31; generalized from the v2.26 Verified Learning
+      // WS2 learned-skill store, Phase 201 Plan 02 / Phase 222 Plan 01).
+      // createSqliteMentalModelStore is the SOLE MentalModelStorePort adapter (the
+      // (tenant, agent)-scoped mental_models doc store — idempotent
+      // deterministic-id admit(), scoped get()/list(scope, kind?), and the
+      // promote()/demote()/evict() lifecycle, evict being a soft evicted_at set,
+      // never a hard DELETE). The daemon composition-root consumer LANDED (Plan 07:
+      // setup-memory.ts builds it on the shared db handle, threaded into the
+      // __SKILL_SYNTHESIS__ cron), so the FACTORY orphan createSqliteMentalModelStore
+      // was REMOVED here (the shrink-only ratchet fired on schedule; mirror
+      // createSqliteMemoryEmbeddingStore below). MentalModelStoreDeps is the
+      // constructor-deps SHAPE type (the daemon calls the factory with an inline
+      // `{ db, logger }`) — PERMANENT baseline orphan (mirror OutcomeStoreDeps above).
+      "MentalModelStoreDeps",
       // Scoped embedding-read store. createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
@@ -3239,19 +3177,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // not a baseline orphan.
       "SkillManifestSchema",
       "SkillManifestParsed",
-      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201 Plan 05/06). The
-      // SkillValidationPort adapter (STATIC half this plan; Plan 06 extends it
-      // with the DYNAMIC bwrap sandbox replay) + the canonical `mcp__`-aware
-      // mutating classifier + its deps type. The whole adapter lives in
-      // @comis/skills because applyToolPolicy + the bwrap sandbox provider are
-      // @comis/skills symbols (the synthesis job in @comis/agent consumes only the
-      // @comis/core SkillValidationPort TYPE — the closed-graph cut). The FACTORY
-      // createSandboxSkillValidationAdapter is now CONSUMED by the daemon Plan 07
-      // wiring (setup-channels-skill-synthesis-deps.ts builds it with the agent's tool
-      // list + policy), so it SHRANK out here (the shrink-only ratchet). classifyMutating
-      // (the exported predicate, no name-import consumer yet) + SandboxSkillValidationAdapterDeps
-      // (the constructor-deps SHAPE, called inline) stay ahead-of-consumer.
-      "classifyMutating",
-      "SandboxSkillValidationAdapterDeps",
+      // v2.26 Verified Learning WS2 (P2 Skills, Phase 201) — DELETED in Phase 223 Plan 06.
+      // The SkillValidationPort sandbox adapter (the bwrap dynamic-replay half + the
+      // now-redundant static scan, which moved to @comis/core validateLearnedDocBody in
+      // Plan 02) was the learned-code execution surface. An advisory doc has NO executable
+      // surface, so Plan 05 dropped the adapter from the reflect path and Plan 06 deleted
+      // sandbox-skill-validation-adapter.ts (the static guard validateLearnedDocBody is ALL
+      // that remains, INV-3). Its barrel re-exports are gone — no allowlist entry needed.
     ])],
   ]);

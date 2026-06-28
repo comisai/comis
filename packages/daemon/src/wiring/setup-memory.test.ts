@@ -90,15 +90,13 @@ const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
 // Consolidation store factory — mocked so setup wires it without a real DB.
 // setupMemory now builds this on the shared db handle (mirror the entity store); without
 // the mock entry the @comis/memory factory is undefined and every setup call throws.
+// Phase 226 (SIMPLIFY-02): the port is trimmed to its live read/maintenance
+// surface — the dead consolidation-cron writer methods (candidates/apply/fold/
+// knn/markReasoned) are gone; the mock carries only the surviving methods.
 const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
-  listConsolidationCandidates: vi.fn(async () => ({ ok: true, value: [] })),
   listObservations: vi.fn(async () => ({ ok: true, value: [] })),
-  applyConsolidation: vi.fn(async () => ({ ok: true, value: undefined })),
-  // The port gained foldIntoExisting; without this stub the
-  // mock no longer satisfies the MemoryConsolidationStore surface and every
-  // setupMemory test that touches the store throws `foldIntoExisting is not a
-  // function` (the MEMORY.md "setup-memory mock" gate).
-  foldIntoExisting: vi.fn(async () => ({ ok: true, value: undefined })),
+  unlinkDeletedSources: vi.fn(async () => ({ ok: true, value: 0 })),
+  purgeConsolidatedDerivedFrom: vi.fn(async () => ({ ok: true, value: 0 })),
 })));
 // Usefulness store factory — mocked so setup wires it without a real
 // DB. setupMemory builds this on the shared db handle (mirror the entity + consolidation
@@ -149,30 +147,9 @@ const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
   readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
 })));
-// Per-user representation store factory — mocked so
-// setup wires it without a real DB. setupMemory builds this on the shared db handle (mirror
-// the triple/embedding stores); without the mock entry the @comis/memory factory is undefined
-// and EVERY setup call throws `createSqliteUserRepresentationStore is not a function` (the
-// MEMORY.md "setup-memory mock" gate). The two segregated port halves are stubbed
-// (the upsert write + the (tenant, agent, user)-scoped read the prompt-assembly injection reads).
-const mockCreateSqliteUserRepresentationStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: [] })),
-})));
-// Directional relationship store factory — mocked so setup
-// wires it without a real DB. setupMemory builds this on the shared db handle (mirror the
-// triple/embedding/user-representation stores); without the mock entry the @comis/memory factory is
-// undefined and EVERY setup call throws `createSqliteRelationshipStore is not a function` (the
-// MEMORY.md "setup-memory mock" gate). The two segregated port halves are stubbed (the
-// directional upsert write + the (tenant, agent, channel)-scoped read the prompt-assembly injection reads).
-const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: [] })),
-})));
-const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
-  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
-  read: vi.fn(async () => ({ ok: true, value: undefined })),
-})));
+// (The directional relationship store factory mock — createSqliteRelationshipStore — was
+//  DELETED in Phase 226-04 with the rest of the social-modeling subsystem; setupMemory no
+//  longer constructs it, so no mock entry is needed.)
 // Outcome-signal store factory (Verified Learning WS1) — mocked so setupMemory wires it
 // (createSqliteOutcomeStore + wireLearningOutcome) without a real DB. Without the mock entry the
 // @comis/memory factory is undefined and EVERY setup call throws `createSqliteOutcomeStore is not
@@ -192,10 +169,11 @@ const mockCreateSqliteOutcomeStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
   runLifecycleSweep: vi.fn(async () => ({ ok: true, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } })),
 })));
-// Learned-skill store factory (SKILL-01) — mocked so setup wires it on the shared db without a real DB
-// (mirror the outcome store). Without the mock entry the @comis/memory factory is undefined and EVERY
-// setup call throws `createSqliteLearnedSkillStore is not a function`. The port methods are stubbed.
-const mockCreateSqliteLearnedSkillStore = vi.hoisted(() => vi.fn(() => ({
+// Mental-model store factory (the kind-generic learned-skill store, SKILL-01) — mocked so setup wires it
+// on the shared db without a real DB (mirror the outcome store). Without the mock entry the @comis/memory
+// factory is undefined and EVERY setup call throws `createSqliteMentalModelStore is not a function`. The
+// port methods are stubbed.
+const mockCreateSqliteMentalModelStore = vi.hoisted(() => vi.fn(() => ({
   admit: vi.fn(async () => ({ ok: true, value: undefined })),
   get: vi.fn(async () => ({ ok: true, value: undefined })),
   list: vi.fn(async () => ({ ok: true, value: [] })),
@@ -226,12 +204,9 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
   createSqliteTripleStore: mockCreateSqliteTripleStore,
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
-  createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
-  createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
-  createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
   createSqliteOutcomeStore: mockCreateSqliteOutcomeStore,
-  createSqliteLearnedSkillStore: mockCreateSqliteLearnedSkillStore,
+  createSqliteMentalModelStore: mockCreateSqliteMentalModelStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -272,8 +247,13 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
     config: {
       memory: {
         dbPath: "/test/memory.db",
-        embeddingDimensions: 768,
-        rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        // Phase 226: the recall keepers (embeddingDimensions/rerankerModel) nest under memory.recall.
+        recall: {
+          embeddingModel: "text-embedding-3-small",
+          embeddingDimensions: 768,
+          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          ...overrides.recall,
+        },
         rerankerModelsDir: "models",
         rerankerGpu: "auto",
         rerankerThreads: 4,
@@ -467,7 +447,7 @@ describe("setupMemory", () => {
   // 5. Uses provider dimensions to adjust memoryConfig
   // -------------------------------------------------------------------------
 
-  it("uses provider dimensions to adjust memoryConfig.embeddingDimensions", async () => {
+  it("uses provider dimensions to adjust memoryConfig.recall.embeddingDimensions", async () => {
     const container = createMinimalContainer({
       embedding: { enabled: true, provider: "local", cache: { maxEntries: 100 } },
     });
@@ -480,9 +460,10 @@ describe("setupMemory", () => {
       timers: testTimers,
     });
 
-    // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384)
+    // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384),
+    // nested under memory.recall (Phase 226).
     const adapterArgs = mockSqliteMemoryAdapter.mock.calls[0];
-    expect(adapterArgs[0].embeddingDimensions).toBe(384);
+    expect(adapterArgs[0].recall.embeddingDimensions).toBe(384);
   });
 
   // -------------------------------------------------------------------------
@@ -1026,8 +1007,9 @@ describe("setupMemory", () => {
   it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
     // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
     // absent without calling the probe or computing safePath (the structurally-off path).
+    // Phase 226: the reranker model lives under memory.recall.
     const container = createMinimalContainer({
-      memory: { rerankerModel: undefined },
+      recall: { rerankerModel: undefined },
     });
     const setupMemory = await getSetupMemory();
 
@@ -1225,27 +1207,8 @@ describe("setupMemory", () => {
     expect(result.usefulnessStore).toBeDefined();
   });
 
-  it("builds the tuned-alpha store on the SAME shared db handle and returns it", async () => {
-    const container = createMinimalContainer(); // all-default config (online tuning OFF)
-    const setupMemory = await getSetupMemory();
-
-    const result = await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-
-    // Built UNCONDITIONALLY (no model/IO cost; it stays dormant until BOTH the recall-side
-    // gate rag.onlineTuning.enabled AND the bandit cron memoryOnlineTuning.enabled are on).
-    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledOnce();
-    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so
-    // the (tenant, agent) scope is consistent with the memory rows / feedback signal it tunes over.
-    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb }),
-    );
-    expect(result.tunedAlphaStore).toBeDefined();
-  });
+  // (The tuned-alpha store construction test was removed in Phase 224 — the UCB recall bandit
+  // store was deleted; setup-memory no longer builds or returns a tunedAlphaStore.)
 
   it("builds the memory-lifecycle sweep store on the SAME shared db handle and returns it", async () => {
     const container = createMinimalContainer(); // all-default config (lifecycle cron OFF)
@@ -1375,74 +1338,6 @@ describe("setupMemory", () => {
     // presence assertions — a defined port method proves the store, not just a truthy field).
     expect(result.embeddingStore.readEmbeddings).toBeTypeOf("function");
   });
-
-  it("builds the per-user representation store on the SAME shared db handle and returns it", async () => {
-    const container = createMinimalContainer(); // all-default config (memoryUserRepresentation OFF)
-    const setupMemory = await getSetupMemory();
-
-    const result = await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-
-    // Built UNCONDITIONALLY (no opt-in gate at build time — only the LLM-free <user_profile>
-    // injection in prompt-assembly is gated on the dep being present + the offline builder cron
-    // is its own default-OFF cost gate). Without the mock-map entry this call throws
-    // "createSqliteUserRepresentationStore is not a function".
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledOnce();
-    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
-    // entity/temporal/causal/triple/embedding/consolidation/usefulness stores receive) — NOT a
-    // second Database. A separate handle silently returns empty (the source_memory_id ON DELETE
-    // CASCADE + the (tenant, agent, user) isolation scope must stay consistent with the memory
-    // rows the profile is distilled from).
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb }),
-    );
-    expect(result.userRepresentationStore).toBeDefined();
-    // The two segregated port halves prove the store, not just a truthy field (mirror the
-    // embeddingStore.readEmbeddings presence assertion): the upsert write (offline builder) +
-    // the (tenant, agent, user)-scoped read (the prompt-assembly <user_profile> injection).
-    expect(result.userRepresentationStore.upsert).toBeTypeOf("function");
-    expect(result.userRepresentationStore.read).toBeTypeOf("function");
-  });
-
-  it("REVISE-02 (Phase 203): forwards the MAX configured memoryUserRepresentation.historyCap of an ENABLED agent into the user-rep store constructor", async () => {
-    const container = createMinimalContainer({
-      agents: {
-        // disabled agent's cap is ignored even though it is larger
-        ignored: { memoryUserRepresentation: { enabled: false, historyCap: 99 } },
-        a: { memoryUserRepresentation: { enabled: true, historyCap: 7 } },
-        b: { memoryUserRepresentation: { enabled: true, historyCap: 25 } },
-      },
-    });
-    const setupMemory = await getSetupMemory();
-    await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
-      expect.objectContaining({ db: mockDb, historyCap: 25 }),
-    );
-  });
-
-  it("REVISE-02 (Phase 203): omits historyCap (store keeps its default) when no ENABLED agent configures it", async () => {
-    const container = createMinimalContainer({
-      agents: { a: { memoryUserRepresentation: { enabled: false, historyCap: 50 } } },
-    });
-    const setupMemory = await getSetupMemory();
-    await setupMemory({
-      container,
-      memoryLogger: createMockLogger() as any,
-      clock: testClock,
-      timers: testTimers,
-    });
-    const arg = mockCreateSqliteUserRepresentationStore.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.historyCap).toBeUndefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1468,8 +1363,12 @@ describe("setupMemory recall-counter wiring", () => {
       config: {
         memory: {
           dbPath: "/test/memory.db",
-          embeddingDimensions: 768,
-          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          // Phase 226: the recall keepers nest under memory.recall.
+          recall: {
+            embeddingModel: "text-embedding-3-small",
+            embeddingDimensions: 768,
+            rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          },
           rerankerModelsDir: "models",
           rerankerGpu: "auto",
           rerankerThreads: 4,

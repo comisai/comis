@@ -254,6 +254,12 @@ describe("bindObsExplainHandlers", () => {
     await expect(handlers["obs.explain"]!({ sessionKey: SESSION_678, _trustLevel: "user" })).rejects.toThrow(/Admin/i);
   });
 
+  it("OBS-5: the admin-deny message names the operator route (comis explain offline)", async () => {
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: makeFixtureReader("session-678314278") }));
+    // The message must point the operator at the working route instead of leaving them to guess.
+    await expect(handlers["obs.explain"]!({ sessionKey: SESSION_678, _trustLevel: "user" })).rejects.toThrow(/comis explain/i);
+  });
+
   it("refine: neither sessionKey nor traceId throws (request.parse refine)", async () => {
     const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: makeFixtureReader("session-678314278") }));
     await expect(handlers["obs.explain"]!({ _trustLevel: "admin" })).rejects.toThrow();

@@ -66,8 +66,10 @@ describe("resolveModelHealthMultilingual (EMB-01 provider-aware boot helper)", (
   });
 
   it("returns rerankerMultilingual \"unknown\" for a non-multilingual reranker id (no per-reranker config flag)", () => {
+    // Phase 226: the reranker model lives under memory.recall — override the whole recall block.
+    const base = AppConfigSchema.parse({}) as unknown as Config;
     const result = resolveModelHealthMultilingual(
-      configWith({ memory: { rerankerModel: "hf:org/some-english-reranker.gguf" } }),
+      configWith({ memory: { recall: { ...base.memory.recall, rerankerModel: "hf:org/some-english-reranker.gguf" } } }),
     );
     expect(result.rerankerMultilingual).toBe("unknown");
   });

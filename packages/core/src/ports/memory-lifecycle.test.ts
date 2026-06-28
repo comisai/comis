@@ -33,7 +33,6 @@ import type {
 import type {
   MemoryLifecyclePort as PublicMemoryLifecyclePort,
   MemoryLifecycleScope as PublicMemoryLifecycleScope,
-  MemoryTier as PublicMemoryTier,
   LifecycleSweepReport as PublicLifecycleSweepReport,
 } from "../index.js";
 
@@ -63,16 +62,27 @@ describe("MemoryLifecyclePort — type-only segregated lifecycle port", () => {
     expect(portSrc, "MemoryLifecyclePort interface must be declared").toMatch(
       /export\s+interface\s+MemoryLifecyclePort\b/,
     );
-    expect(portSrc, "MemoryLifecycleScope interface must be declared").toMatch(
-      /export\s+interface\s+MemoryLifecycleScope\b/,
-    );
+    // SIMPLIFY-02 (phase 226): MemoryLifecycleScope is UNIFIED onto the canonical
+    // `LearningScope {tenantId, agentId, now?}` — it no longer re-declares the
+    // isolation fields locally (that was the 15× repetition the collapse kills).
+    // It is now a type-alias that DERIVES `tenantId`/`agentId` from LearningScope
+    // and adds the lifecycle-specific narrowing (`now: number` required on the
+    // write/sweep path) + the per-call eviction `policy?` override. So the local
+    // standalone `interface MemoryLifecycleScope` MUST be gone.
+    expect(
+      portSrc,
+      "MemoryLifecycleScope must NOT be a standalone interface (unified onto LearningScope)",
+    ).not.toMatch(/export\s+interface\s+MemoryLifecycleScope\b/);
+    expect(
+      portSrc,
+      "MemoryLifecycleScope must derive from the canonical LearningScope",
+    ).toMatch(/MemoryLifecycleScope\s*=\s*LearningScope\b/);
     expect(portSrc, "runLifecycleSweep method must be on the port").toMatch(
       /\brunLifecycleSweep\s*\(/,
     );
-    // The (tenant, agent) scope + the injected clock (never Date.now()).
-    expect(portSrc, "MemoryLifecycleScope must carry tenantId").toMatch(/\btenantId\s*:\s*string/);
-    expect(portSrc, "MemoryLifecycleScope must carry agentId").toMatch(/\bagentId\s*:\s*string/);
-    expect(portSrc, "MemoryLifecycleScope must carry the injected clock now").toMatch(
+    // The injected clock (never Date.now()) stays REQUIRED on the sweep path —
+    // the alias narrows LearningScope's optional `now?` back to `now: number`.
+    expect(portSrc, "MemoryLifecycleScope must narrow the injected clock to now: number").toMatch(
       /\bnow\s*:\s*number/,
     );
     // The port must stay type-only (mirrors tuned-alpha-store.ts) — neither a zod
@@ -195,7 +205,6 @@ describe("MemoryLifecyclePort — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     expectTypeOf<PublicMemoryLifecyclePort>().toEqualTypeOf<MemoryLifecyclePort>();
     expectTypeOf<PublicMemoryLifecycleScope>().toEqualTypeOf<MemoryLifecycleScope>();
-    expectTypeOf<PublicMemoryTier>().toEqualTypeOf<MemoryTier>();
     expectTypeOf<PublicLifecycleSweepReport>().toEqualTypeOf<LifecycleSweepReport>();
 
     // A downstream consumer can name the port type from the public surface.

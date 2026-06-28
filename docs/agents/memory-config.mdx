@@ -1,23 +1,28 @@
 ---
 title: "Memory configuration"
-description: "Every Comis memory capability and the exact config option that enables it — recall, the recall-time signals, the build/tool features, and the maintenance jobs"
+description: "Every Comis memory capability and the exact config option that enables it — recall, the recall-time signals, the one learning-reflection engine, and the maintenance jobs"
 icon: "sliders"
 ---
 
 **What this page is.** The complete reference for Comis's agent-memory capabilities and the
-exact config option for each. **As of v1 the memory features are ON by default (opt-out)** —
-a fresh install runs them and you edit config to turn them off. Two capabilities deliberately
-stay OFF: **`socialModeling`** (gated on a privacy-review sign-off — it models third parties)
-and the v2.26 outcome-gated learning loops **`learningTuning`** / **`learningForgetting`**
-(default-off, see [Outcome-gated ranking & forgetting](#outcome-gated-ranking--forgetting-v2-26)). The trust boundary
+exact config option for each. **The memory features are ON by default (opt-out)** — a fresh
+install runs them and you edit config to turn them off. The trust boundary
 (`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen** — not a tunable capability.
 
 <Warning>
-  The LLM **build/ask** features (review, consolidation, reasoning, user-representation,
-  usefulness-judge, online-tuning, and `memory_ask`) spend **your own** LLM/API budget. They
-  are on by default in v1, and the daemon prints a first-run notice listing what's active.
-  **One line turns all of them off:** `memory.costFeatures.enabled: false`.
+  The LLM **build/ask** features (the session review job, the one learning-reflection cron,
+  and the `memory_ask` grounded-Q&A tool) spend **your own** LLM/API budget. They are on by
+  default, and the daemon prints a first-run notice listing what's active.
+  **One line turns all of them off:** `memory.enabled: false`.
 </Warning>
+
+<Note>
+  **Renamed in v2.31.** The master kill-switch is now `memory.enabled` (was the old top-level
+  cost-features switch), and the three recall model knobs nest under `memory.recall.*`.
+  The whole per-agent learning layer collapsed into **one** `agents.<id>.learning` block (one
+  `learning.enabled` flag + `learning.reflect.*` + `learning.forget.*`) — see
+  [Removed in v2.31](#removed-in-v2-31) for the deleted keys and the one-line config update.
+</Note>
 
 **Where the config lives.** Capabilities are configured **per agent** under
 `agents.<agentId>.` in `~/.comis/config.yaml`. The shared **memory engine** (store +
@@ -26,33 +31,33 @@ below is the **effective default** — set any `enabled: false` to opt a feature
 
 <Note>
   On by default is necessary but not always sufficient — several capabilities also need
-  *built derived state* (a populated graph, learned weights, scored usefulness) before they
-  change recall. See [Dependencies & gotchas](#dependencies--gotchas) below.
+  *built derived state* (a populated graph, scored usefulness) before they change recall. See
+  [Dependencies & gotchas](#dependencies--gotchas) below.
 </Note>
 
-## Default config (v1 — opt-out)
+## Default config (opt-out)
 
 This is the **effective default** a fresh install runs. To opt out, set the relevant
-`enabled: false` (or flip the master `memory.costFeatures.enabled: false` to silence all
-LLM-cost features at once).
+`enabled: false` (or flip the master `memory.enabled: false` to silence all LLM-cost features
+at once).
 
 ```yaml
 # ─────────────────────────────────────────────────────────────────────────
 # 1. MEMORY ENGINE (top-level) — the substrate every capability runs on
 # ─────────────────────────────────────────────────────────────────────────
 memory:
+  enabled: true                     # MASTER KILL SWITCH — set false to disable ALL LLM cost features at once
   dbPath: memory.db
   walMode: true
-  embeddingModel: text-embedding-3-small   # hosted (1536d). Point at a local GGUF for on-device.
-  embeddingDimensions: 1536
-  rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"  # local by default
+  recall:                           # the $0 on-device recall substrate — NOT gated by `memory.enabled`
+    embeddingModel: text-embedding-3-small   # hosted (1536d). Point at a local GGUF for on-device.
+    embeddingDimensions: 1536
+    rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"  # local by default
   rerankerModelsDir: models
   rerankerGpu: auto                 # auto | metal | cuda | vulkan | false
   rerankerThreads: 4
   compaction: { enabled: true, threshold: 1000, targetSize: 500 }
   retention: { maxAgeDays: 0 }      # 0 = keep forever
-  costFeatures:
-    enabled: true                   # MASTER KILL SWITCH — set false to disable ALL LLM cost features at once
 
 agents:
   my-agent:
@@ -75,7 +80,7 @@ agents:
         proofAlpha: 0.1
         trustAlpha: 0.1             # FROZEN — leave at the shipped value
         usefulnessAlpha: 0.1        # magnitude of the recall-utility (FEED) loop
-        forgetAlpha: 0.1            # magnitude of FadeMem (FORGET) decay
+        forgetAlpha: 0.1            # magnitude of the recall-score decay (FORGET)
       lanes:
         fts: { weight: 1.0 }
         vector: { weight: 1.5 }
@@ -85,93 +90,52 @@ agents:
       entityLane: { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 }  # default off
       mmr: { enabled: true, lambda: 0.7 }       # MMR diversity re-rank — default off
       feedback: { enabled: true }               # FEED recall-utility loop (uses scoring.usefulnessAlpha)
-      onlineTuning: { enabled: true }           # LEARN-RANK recall-apply gate (pairs with memoryOnlineTuning)
-      forget: { enabled: true }                 # FORGET decay gate (uses scoring.forgetAlpha)
+      forget: { enabled: true }                 # recall-score decay gate (uses scoring.forgetAlpha)
       queryUnderstanding:                       # LEARN-IQ (LLM-free)
         intentReweight: true
         synonyms: true
         temporalParse: true
 
     # ───────────────────────────────────────────────────────────────────
-    # 3. BUILD-PATH / TOOL CAPABILITIES (write memory; some run on a cron)
+    # 3. OUTCOME SIGNAL + the ask tool
     # ───────────────────────────────────────────────────────────────────
-    memoryUserRepresentation:        # USER — a per-user profile
-      enabled: true
-      schedule: "0 5 * * *"
-      maxEntriesPerRun: 50
-      maxSourceMemories: 200
-      maxSourceChars: 24000
-
-    socialModeling:                  # SOCIAL — directional relationship model
-      enabled: true
-      privacyReviewSignedOffBy: "your-name-here"   # REQUIRED — stays OFF without a non-empty sign-off
-      schedule: "0 6 * * *"
-      maxEntriesPerRun: 50
-      maxSourceMemories: 200
+    learningOutcome:                 # the Verified Learning outcome signal (gates reflection + forgetting)
+      enabled: false                 # default OFF (opt-in)
+      judge: { enabled: true }       # cost-gated LLM fallback for a conversational turn
 
     dialectic:                       # memory_ask grounded-Q&A tool (the one query-time LLM surface)
       enabled: true
       maxOutputTokens: 1024
       maxRecall: 10
 
-    memoryReasoning:                 # REASON — offline deductive/inductive observations
-      enabled: true
-      schedule: "0 4 * * *"
-      maxCandidatesPerRun: 200
-      surprisalTopFraction: 0.1
-      knnK: 10
-      maxObservationsPerRun: 25
-      maxReasoningTokens: 1024
-      reasonExternal: false
-      autoTags: []
-
     # ───────────────────────────────────────────────────────────────────
-    # 4. MAINTENANCE / LIFECYCLE JOBS (cron-driven; default off)
+    # 4. MAINTENANCE / LIFECYCLE JOBS (cron-driven)
     # ───────────────────────────────────────────────────────────────────
-    memoryReview:                    # session → memory review + dedup
+    memoryReview:                    # session → memory review + dedup (accumulate tier)
       enabled: true
       schedule: "0 2 * * *"
       minMessages: 5
-      maxSessionsPerRun: 10
-      maxReviewTokens: 4096
+      maxSessionsPerRun: 50            # best-out-of-box: broader consolidation coverage per run (was 10)
+      maxReviewTokens: 16384           # best-out-of-box: richer consolidation per session (was 4096)
 
-    memoryConsolidation:             # cluster + fold / dedup
+    memoryLifecycle:                 # the FORGET sweep cron — TRIMMED to enable + schedule
       enabled: true
-      schedule: "30 3 * * *"
-      similarityThreshold: 0.82
-
-    memoryUsefulnessJudge:           # scores recall-utility → feeds the FEED loop
-      enabled: true
-      schedule: "0 7 * * *"
-      maxSourceMemories: 200
-      maxSourceChars: 24000
-
-    memoryOnlineTuning:              # the LEARN-RANK bandit (learns scoring alphas)
-      enabled: true
-      schedule: "0 8 * * *"
-      maxSourceMemories: 200
-
-    memoryLifecycle:                 # FORGET sweep / tier promote-demote (soft eviction gated by learningForgetting, below)
-      enabled: true
-      schedule: "0 9 * * *"
-      thetaPromote: 0.7
-      thetaDemote: 0.3
+      schedule: "0 9 * * *"          # the __LIFECYCLE__ sweep slot (keyless; thresholds live in learning.forget)
 
     # ───────────────────────────────────────────────────────────────────
-    # 5. VERIFIED LEARNING — outcome-gated ranking & forgetting (v2.26; default OFF)
+    # 5. LEARNING — the one outcome-gated reflection engine (~10 keys)
     # ───────────────────────────────────────────────────────────────────
-    learningTuning:                  # LEARN-TUNE — outcome-rewarded, per-intent ranking bandit
-      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
-      learner: bandit                # bandit (deterministic UCB) | nudge (conservative fallback)
-      perIntent: true                # learn a per-(tenant, agent, intent) vector
-      exploration: 0.1               # UCB confidence weight [0..1]
-
-    learningForgetting:              # LEARN-FORGET — wrongness-based soft eviction
-      enabled: false                 # opt-in (also force-disabled by memory.costFeatures.enabled: false)
-      eviction:
-        enabled: true                # the parent `enabled` is the real gate
-        strengthThreshold: 0.2       # strength floor below which a non-pinned/non-system memory is soft-evicted
-      failurePenalty: 0.5            # weight on a memory's failure_count when decaying strength [0..1]
+    learning:
+      enabled: true                  # ONE master gate for the WHOLE learning layer (opt-out; force-disabled by memory.enabled: false)
+      reflect:                       # the one __REFLECT__ cron (skill + profile + topic in one pass)
+        schedule: "0 */3 * * *"      # best-out-of-box: every 3 hours (near-real-time learning; was daily 03:00)
+        minConfidence: 0.6           # reflection-side confidence floor [0..1]
+        promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
+        maxDocsPerRun: 100           # finite DoS bound — best-out-of-box raised (don't throttle learning; was 25)
+      forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
+        maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less; was 90)
+        failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
+        highProofFloor: 5            # high-proof exemption — a memory at/above this proof count is never failure-evicted
 ```
 
 ## Capability → config map
@@ -186,62 +150,122 @@ agents:
 | Entity lane | `rag.entityLane.enabled` | Entity-seeded recall expansion |
 | MMR diversity | `rag.mmr.enabled` | Maximal-marginal-relevance diversification |
 | **FEED** loop | `rag.feedback.enabled` | Boosts memories that proved useful (`scoring.usefulnessAlpha`) |
-| **LEARN-RANK** | `rag.onlineTuning.enabled` | Applies bandit-learned ranking weights at recall |
 | **LEARN-IQ** | `rag.queryUnderstanding.intentReweight` (+ `synonyms`, `temporalParse`) | LLM-free query understanding / lane reweighting |
-| **FORGET** | `rag.forget.enabled` | FadeMem per-type decay demotes stale memories (`scoring.forgetAlpha`) |
-| **USER** | `memoryUserRepresentation.enabled` | Builds a per-user representation |
-| **SOCIAL** | `socialModeling.enabled` **+** `socialModeling.privacyReviewSignedOffBy` | Directional relationship model (double-gated) |
+| **FORGET** (recall decay) | `rag.forget.enabled` | Per-type score decay demotes stale memories at recall (`scoring.forgetAlpha`) |
+| Outcome signal | `learningOutcome.enabled` | Records each finished turn's real task-outcome (the signal reflection + forgetting gate on) |
 | **DIALECTIC** | `dialectic.enabled` | The `memory_ask` grounded-Q&A tool (query-time LLM) |
-| **REASON** | `memoryReasoning.enabled` | Offline deductive/inductive observations |
-| Review | `memoryReview.enabled` | Turns sessions into reviewed memories |
-| Consolidation | `memoryConsolidation.enabled` | Clusters + folds/dedups memories |
-| Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
-| Online tuning | `memoryOnlineTuning.enabled` | The bandit cron that learns the alphas for LEARN-RANK |
-| Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep (the soft-eviction behaviour is gated by `learningForgetting`, below) |
-| **LEARN-TUNE** (v2.26) | `learningTuning.enabled` *(default false)* | Outcome-rewarded, per-query-intent ranking: gates the bandit on a real task outcome + learns a vector per intent. Composes with `memoryOnlineTuning` + `rag.onlineTuning` |
-| **LEARN-FORGET** (v2.26) | `learningForgetting.enabled` *(default false)* | Wrongness-based **soft** eviction: a memory recalled into failed/corrected outcomes decays faster and is soft-evicted (`evicted_at`, reversible, never hard-deleted). Composes with `memoryLifecycle` + `rag.forget` |
+| Review | `memoryReview.enabled` | Turns sessions into reviewed memories (accumulate tier) |
+| Lifecycle sweep | `memoryLifecycle.enabled` | The keyless `__LIFECYCLE__` soft-eviction sweep (thresholds in `learning.forget.*`) |
+| **LEARN** (reflection) | `learning.enabled` | The one outcome-gated reflection engine — maintains the learned **skill** docs, the per-user **profile** doc, and higher-order **topic** observations in one pass; plus the wrongness-based soft eviction (`learning.forget.*`) |
 
-## Outcome-gated ranking & forgetting (v2.26)
+## The one learning-reflection engine (v2.31)
 
-**Verified Learning** adds two per-agent loops that gate ranking and forgetting on a **real task outcome** (the v2.26 `outcome_events` signal) instead of a text-overlap proxy. Both are **default-OFF** and force-disabled by the master `memory.costFeatures.enabled` switch, so a default install is byte-identical — the tables exist but nothing learns or evicts.
+Comis's learning layer is **one outcome-gated reflection engine**. Where earlier versions had
+five separate cron loops (skill synthesis, ranking tuning, user-representation, consolidation,
+reasoning), a single `__REFLECT__` cron now maintains named **Mental Model** docs
+(`kind: skill | profile | topic`) via byte-stable delta-ops, gated on a **real task outcome**
+(the `learningOutcome` signal) rather than a text-overlap proxy. The whole layer is governed by
+**one flag** — `agents.<id>.learning.enabled` — under the master `memory.enabled` switch.
 
-- **Ranking** — `agents.<id>.learningTuning.enabled` turns the tuned-alpha learner into an **outcome-rewarded, per-query-intent** bandit: it learns a separate ranking-weight vector per deterministic `classifyIntent` bucket, rewarded when a recalled memory rides a `success` trajectory and penalised on `failure`/`corrected`. The learner is deterministic, and the **trust weight is never tuned** (it stays config-sourced and provably frozen). It composes with the existing `memoryOnlineTuning` (the cron) + `rag.onlineTuning` (the apply) — all must be on for tuning to be live.
-- **Forgetting** — `agents.<id>.learningForgetting.enabled` couples a memory's decay to its outcome-attributed `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently weak memory: it is marked `evicted_at` (excluded from recall, still resolvable via `asOf`/inspect, **reversible**, never hard-deleted). A **corroboration gate** (≥2 independent failures, or one deterministic source) and **exemptions** for pinned / `system` / high-`proof_count` memories make induced eviction impractical. It composes with `memoryLifecycle` (the sweep schedule) + `rag.forget` (score-decay).
+```yaml
+agents:
+  my-agent:
+    learning:
+      enabled: true            # the SINGLE gate for the whole learning layer
+      reflect:
+        schedule: "0 3 * * *"  # the one reflection cron
+        minConfidence: 0.6     # the reflection-side confidence floor
+        promoteAtProofCount: 3 # candidate → active after this many attributed successes
+        maxDocsPerRun: 25      # per-run cost bound
+      forget:
+        maxDormantDays: 90
+        failureEvictionFloor: 3
+        highProofFloor: 5
+```
 
-See [`learningTuning` / `learningForgetting` in config-yaml](/reference/config-yaml#learning-tuning-agents-learningtuning) for every key and default, and the [`tuned_alpha` / `memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26) storage. Both loops emit **counts-only** signals (`memory:online_tuning_applied`, `learning:memory_demoted` / `learning:memory_evicted`) for `comis explain` / `comis fleet`.
+- **Reflection (`learning.reflect.*`)** — the `__REFLECT__` cron clusters trusted-origin
+  **successful** trajectories (by distinct `(session, sender)` — N near-identical successes from
+  one sender count once) and distils them into Mental Model docs at `trust=learned`. A learned
+  doc is **advisory** (no executable column — the agent reads it and acts through its own
+  already-permissioned tools); it can **never** exceed `learned` trust (a DB `CHECK` makes
+  `system` structurally impossible). An admitted `candidate` **promotes to `active`** once its
+  `proof_count` crosses `promoteAtProofCount` from attributed successful reuse; an active doc
+  **demotes** (`active` → `stale` → `archived`) on corroborated, sustained failing reuse. The
+  per-user **profile** doc (`kind:"profile"`) and higher-order **topic** observations
+  (`kind:"topic"`) are maintained in the **same pass** — a profile **correction supersedes**
+  the prior doc with a bi-temporal **history-append** (the prior body is preserved in the doc's
+  `history`, never hard-deleted), and external-trust sources are excluded by the engine's
+  two-axis anti-poison SELECT.
+- **Forgetting (`learning.forget.*`)** — couples a memory's decay to its outcome-attributed
+  `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently
+  weak or stale memory: it is marked `evicted_at` (excluded from recall, still resolvable via
+  `asOf`/inspect, **reversible**, never hard-deleted). A memory implicated in
+  `failureEvictionFloor` (default 3) or more **corroborated** failures is soft-evicted regardless
+  of its decayed strength, while a memory at/above `highProofFloor` (default 5) is **exempt**.
+  A **corroboration gate** (≥2 independent failures, or one deterministic source, on every
+  `failure_count` increment) plus exemptions for pinned / `system` / high-`proof_count` memories
+  make induced eviction impractical: a poisoner cannot evict a well-corroborated, pinned, or
+  system memory no matter how many failures it induces. The sweep runs on the keyless
+  `memoryLifecycle` cron (`__LIFECYCLE__`).
 
-## Deepened user model: revise & generalize (v2.26)
+Recall **ranking** itself is the **fixed `rag.scoring`** fusion (deterministic RRF + the
+cross-encoder reranker) — there is no learned recall weight.
 
-Two further v2.26 deepenings change how the **USER** representation and **Consolidation** maintain long-term knowledge — both **non-destructive** and **`asOf`-auditable**:
+See [`learning` in config-yaml](/reference/config-yaml#learning-agents-learning) for every key
+and default, the [`mental_models`](/operations/data-directory#learned-skills-verified-learning-v2-26)
+and [`memory_usefulness` / `evicted_at`](/operations/data-directory#ranking--forgetting-verified-learning-v2-26)
+storage, and the **counts-only** trajectory telemetry (`reflect:admitted` / `reflect:funnel`
+for the reflection funnel; `learning:memory_demoted` / `learning:memory_evicted` for the
+forget sweep) surfaced through [`comis explain`](/reference/cli#comis-explain) and
+[`comis fleet`](/reference/cli#comis-fleet).
 
-- **The user model revises (it does not rebuild).** With `memoryUserRepresentation.enabled` on, the builder no longer overwrites a profile slot. A contradicting profile fact of **equal-or-higher trust soft-closes** the incumbent belief (bi-temporal `t_valid_end`/`expired_at` — never deleted, still resolvable via `asOf`) and records the new one as current truth; a restatement **bumps confidence** in place; a **lower-trust** contradiction is **recorded-not-believed** (anti-poison); topic-distinct facts **coexist**. The default profile read returns **current truth only**, and per-record history is **bounded** by `memoryUserRepresentation.historyCap` (default 10). See the bi-temporal [`user_representation` columns](/operations/data-directory#user-representation-verified-learning-v2-26) for the storage detail.
-- **Consolidation can generalize (it abstracts, it does not copy).** With `memoryConsolidation.generalize.enabled` on (default off), the consolidation cron adds a second pass that synthesizes **one higher-order `semantic` memory** ("user prefers X in general") from a cluster spanning at least `generalize.minDistinctContexts` distinct `(session, sender)` contexts — an anti-domination gate so one repeated session cannot mint a "general" preference. The generalization is a **new node** (the source memories are kept + linked, trust never raised above `learned`), is **byte-identical when off**, abstains on small/nano models, and is itself **supersedable** by a later contradicting triple.
+## Removed in v2.31
 
-Both are **default-safe** and surface **counts-only** through `comis explain` / `comis fleet` (the `learning` signal's `userModelRevised` / `memoriesGeneralized` counts and the benign `user_model_revised` verdict). See [`memoryUserRepresentation` / `memoryConsolidation.generalize` in config-yaml](/reference/config-yaml#user-representation-agents-memoryuserrepresentation).
+The per-agent learning config collapsed into one `learning` block, and the master kill-switch
+moved to the top level. Because the schema is **strict** (`z.strictObject`), a `config.yaml`
+that still carries a removed key is **rejected at boot** with an "unrecognized key" parse error
+— the explicit operator-update path (there is no compatibility shim). If your config sets any
+of the removed blocks below, delete them and adopt the replacement:
+
+| Removed config block | Replaced by |
+|---|---|
+| the old top-level master cost switch | `memory.enabled` (the master kill-switch) |
+| the flat recall model keys on `memory` (embedding model, embedding dimensions, reranker model) | `memory.recall.embeddingModel` / `embeddingDimensions` / `rerankerModel` |
+| the per-agent skill-synthesis block | `agents.<id>.learning.enabled` + `learning.reflect.*` |
+| the per-agent ranking-tuning block | folded into `agents.<id>.learning.enabled` (the outcome-reward write stays wired) |
+| the per-agent wrongness-eviction block (incl. its eviction floor) | `agents.<id>.learning.forget.*` |
+| the per-agent usefulness-judge block | **removed** (the dormant usefulness-judge cron was deleted) |
+| the per-agent triple-extraction block | **removed** (the scaffold triple-extraction cron was deleted) |
+| the per-agent social-modeling block | **removed** (the social-modeling subsystem was deleted) |
+| the standalone user-representation / reasoning / consolidation blocks | **removed** — the work folds into the one reflection cron (`kind:"profile"` / `kind:"topic"` docs) |
+| the dormant `memoryLifecycle` FadeMem constants (`thetaPromote`, `thetaDemote`, `durableCap`, `ephemeralCap`, `epsilonPrune`, `maxDormantDays`) | `memoryLifecycle` is trimmed to `{ enabled, schedule }`; the dormancy window moved to `learning.forget.maxDormantDays` |
+
+A **bare config** (`memory:`/`agents:` with no learning keys) loads fully-defaulted — the
+removal only affects a config that still names a deleted key. The daemon's boot error names
+the exact unrecognized key, so an operator updating an old config is pointed straight at the
+line to delete.
 
 ## Dependencies & gotchas
 
 1. **Some capabilities need built derived state, not just the flag:**
    - **KG** (`rag.lanes.graphSpread`) is a no-op until the knowledge graph is populated with
      entities/edges.
-   - **LEARN-RANK** (`rag.onlineTuning`) only changes recall after the `memoryOnlineTuning`
-     bandit has run and learned weights.
-   - **FEED** (`rag.feedback`) is meaningful once `memoryUsefulnessJudge` has scored recalls.
-   - **FORGET** demotion (`rag.forget`) shows up at recall; **eviction** is the `memoryLifecycle`
-     sweep — live as **soft, reversible** eviction (`evicted_at`) when the v2.26
-     `learningForgetting` gate is enabled (default-off), exempting pinned/system/high-proof
-     memories. See [Outcome-gated ranking & forgetting](#outcome-gated-ranking--forgetting-v2-26).
-2. **SOCIAL is double-gated.** `enabled: true` does nothing on its own; it activates only with
-   a non-empty `socialModeling.privacyReviewSignedOffBy` operator sign-off.
-3. **`dialectic` (`memory_ask`) spends tokens per ask** — it is the only query-time LLM
+   - **FORGET** decay (`rag.forget`) shows up at recall; **eviction** is the `memoryLifecycle`
+     sweep — live as **soft, reversible** eviction (`evicted_at`) when `learning.enabled` is on
+     (it reads `learning.forget.*`), exempting pinned/system/high-proof memories. See
+     [the one learning-reflection engine](#the-one-learning-reflection-engine-v2-31).
+   - **Reflection** needs a stream of trusted-origin **successful** outcomes to learn from — it
+     gates on the `learningOutcome` signal, and abstains (a benign skip, never a failure) when a
+     run finds no corroborated success.
+2. **`dialectic` (`memory_ask`) spends tokens per ask** — it is the only query-time LLM
    surface in the memory stack. Everything else in recall is LLM-free.
-4. **Trust is frozen, not a tunable capability.** `rag.scoring.trustAlpha` and
+3. **Trust is frozen, not a tunable capability.** `rag.scoring.trustAlpha` and
    `rag.includeTrustLevels` are the trust hard-boundary; leave them at the shipped values.
-5. **On by default in v1 — watch your spend.** The LLM build/ask features are opt-out for v1
-   so operators get the full memory stack from day one; they spend your own budget. Your
-   controls are the first-run notice and the master switch `memory.costFeatures.enabled: false`
-   (or per-feature `enabled: false`). Measure the effect in your own domain — Comis's honest,
-   reproducible methodology and the latest costed results are on the
+4. **On by default — watch your spend.** The LLM build/ask features are opt-out so operators
+   get the full memory stack from day one; they spend your own budget. Your controls are the
+   first-run notice and the master switch `memory.enabled: false` (or per-feature
+   `enabled: false`). Measure the effect in your own domain — Comis's honest, reproducible
+   methodology and the latest costed results are on the
    [Memory benchmarks](/agents/memory-benchmarks) page.
 
 See also: [Memory](/agents/memory) · [Search](/agents/search) · [Embeddings](/agents/embeddings) · [RAG](/agents/rag).

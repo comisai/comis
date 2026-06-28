@@ -25,9 +25,17 @@
 //   export COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml
 //   export COMIS_GATEWAY_TOKEN=<the literal ≥32-char token from config.yaml>
 // Adjust the import path if the daemon src tree isn't at /root/comis-src.
+// --pick <dotpath> (reflect-obs-20260627): print ONLY that field of the result instead of the whole
+// RESULT:{…} blob, so the caller stops hand-writing `node -e 'JSON.parse(...)'` extractors. A dotpath
+// indexes objects + arrays: `report.findings.0.code`, `runs.0.summary`, `triggered`. Prints `PICK:<json>`
+// (or `PICK:undefined` for a missing path). Errors still print `ERROR:…` unchanged.
 import { readFileSync } from "node:fs";
 import { withClient } from "/root/comis-src/packages/cli/dist/client/rpc-client.js";
-const [, , method, key, val] = process.argv;
+const rawArgv = process.argv.slice(2);
+let pickPath;
+const pIdx = rawArgv.indexOf("--pick");
+if (pIdx !== -1) { pickPath = rawArgv[pIdx + 1]; rawArgv.splice(pIdx, 2); }
+const [method, key, val] = rawArgv;
 const tryJson = (s) => { try { return JSON.parse(s); } catch { return s; } };
 let params = {};
 if (key === "--file") {
@@ -42,7 +50,12 @@ if (key === "--file") {
 }
 try {
   const r = await withClient((c) => c.call(method, params));
-  console.log("RESULT:" + JSON.stringify(r));
+  if (pickPath !== undefined) {
+    const picked = pickPath.split(".").reduce((acc, k) => (acc == null ? undefined : acc[k]), r);
+    console.log("PICK:" + JSON.stringify(picked));
+  } else {
+    console.log("RESULT:" + JSON.stringify(r));
+  }
 } catch (e) {
   console.log("ERROR:" + (e?.message || String(e)));
 }

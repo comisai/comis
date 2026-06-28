@@ -68,14 +68,12 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
+import { topicMatchedSkillNames } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
-import { buildScoringAlphas } from "../rag/scoring-overlay.js";
-import { classifyIntent } from "../rag/query-understanding.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
-import { buildUserRepresentationBlock } from "./user-representation-block.js";
-import { buildRelationshipBlock } from "./relationship-block.js";
+import { buildProfileBlock } from "./user-representation-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -195,6 +193,20 @@ const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefined>();
  *  skill the model invoked. Empty when no visible skills are listed (the
  *  default until learned skills exist), so the attribution path is a no-op. */
 const sessionPromptSkillLocations = new Map<string, ReadonlyMap<string, string>>();
+
+/** Reuse-attribution carrier: per-session, per-TURN set of the learned-skill NAMES whose stored
+ *  common-core (topicTokens) the CURRENT turn instantiates (`topicMatchedSkillNames`). The
+ *  pi-event-bridge UNIONS these into the turn's `usedSkillIds`, so a skill APPLIED from the surfaced
+ *  `<available_skills>` summary / recall — without an explicit `read` of its SKILL.md (the ATTR-01
+ *  path) — still promotes on success. Overwritten every prompt assembly (the same per-turn lifecycle
+ *  as the XML/location snapshots). Empty/no-match ⇒ the no-op default. */
+const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>();
+
+/** Read the per-turn topic-matched learned-skill names for a session. The pi-event-bridge
+ *  calls this when assembling the turn's `usedSkillIds`. Undefined when nothing matched this turn. */
+export function getSessionPromptTopicMatchedSkills(snapshotKey: string): ReadonlyArray<string> | undefined {
+  return sessionPromptTopicMatchedSkills.get(snapshotKey);
+}
 
 /**
  * Parse a frozen `<available_skills>` XML block (the exact shape emitted by
@@ -455,27 +467,17 @@ export interface PromptAssemblyParams {
      *  read, recall order unchanged. Passed from PiExecutorDeps → PromptAssemblyParams.deps
      *  → createMemoryRecall. TYPE-only (the agent↛memory build cut). */
     provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-    /** Optional learned-alpha store for the deterministic apply overlay
-     *  (default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
-     *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
-     *  config.rag.scoring alphas pass unchanged (byte-identical recall, the cost gate).
-     *  The read is a pure deterministic store.read scoped to (tenantId, agentId) — NO
-     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
-     *  TYPE-only (the agent↛memory build cut). */
-    tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
     /** Optional per-user profile store for the LLM-free standing-block injection
      *  (default-OFF). Absent ⇒ no read, no push, byte-identical prompt
-     *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
-     *  build cut. The read is a deterministic store.read + a pure formatter; NO
-     *  model call crosses onto the recall hot path (the milestone's #1 constraint). */
-    userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-    /** Optional channel-relationship store for the LLM-free directional standing-block
-     *  injection (read side; default-OFF, gated on the privacy-review sign-off).
-     *  Absent ⇒ no read, no push, byte-identical prompt (the cost gate). The agent
-     *  receives the port TYPE only — the agent↛memory build cut. The read is a
-     *  deterministic store.read scoped to channelId = sessionKey.channelId + a pure
-     *  formatter; NO model call crosses onto the recall hot path (the #1 constraint). */
-    relationshipStore?: import("@comis/core").RelationshipStore;
+    /** Optional mental-model store (the v2.31 Reflection doc store) for the LLM-free
+     *  `<user_profile>` standing-block injection (FOLD-01, Phase 225 — the kind:"profile"
+     *  read source; the standalone userRepresentationStore was deleted in Plan 05). Absent ⇒ no list, no push,
+     *  byte-identical prompt (the cost gate). The agent receives the segregated port
+     *  TYPE only — the agent↛memory build cut. The read is a deterministic
+     *  `list(scope,"profile")` + the pure `buildProfileBlock` formatter (the per-user
+     *  doc is selected by `topicKey === sessionKey.userId`); NO model call crosses onto
+     *  the recall hot path (the milestone's #1 constraint). */
+    mentalModelStore?: import("@comis/core").MentalModelStorePort;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -1070,34 +1072,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
-      // The deterministic apply overlay. Read the learned alpha vector
-      // GATED on config.rag.onlineTuning.enabled AND a present store dep, then overlay
-      // the four non-trust alphas via buildScoringAlphas (trust STILL from config.rag.scoring
-      // — belt #2). The `onlineTuning` field is added to the schema later, so it is read
-      // through a structural widening that compiles against today's strict RagConfig (the
-      // same posture as `feedback` above). Default-OFF byte-identity: with the
-      // knob off OR no store dep OR no learned row, `tunedVector` stays undefined → the
-      // store is NEVER read and buildScoringAlphas returns config.rag.scoring unchanged. The
-      // read is PURE + non-fatal: a read failure → undefined → byte-identical fallback. NO
-      // model call crosses onto the recall hot path (the milestone's #1 constraint).
-      let tunedVector: import("@comis/core").TunedAlphaVector | undefined;
-      const onlineTuningEnabled =
-        (config.rag as typeof config.rag & { onlineTuning?: { enabled: boolean } }).onlineTuning
-          ?.enabled === true;
-      if (onlineTuningEnabled && deps.tunedAlphaStore) {
-        // RANK-02: read the PER-INTENT tuned vector for THIS turn's query intent. The
-        // deterministic, LLM-free classifyIntent (same `msg.text` that feeds the recall
-        // below) keeps the recall hot path deterministic; the adapter resolves the global
-        // '' bucket when no per-intent row exists. intent is an ADDITIONAL key, never a
-        // relaxation of the (tenant, agent) isolation scope (belt #2 still sources trust
-        // from config at the overlay).
-        const tr = await deps.tunedAlphaStore.read({
-          tenantId: deps.tenantId ?? sessionKey.tenantId,
-          agentId: agentId ?? config.name,
-          intent: classifyIntent(msg.text),
-        });
-        if (tr.ok) tunedVector = tr.value;
-      }
+      // Recall scoring is the FIXED config.rag.scoring alphas (Phase 224, RECALL-02/03):
+      // the UCB online-tuning bandit + its per-intent tuned-alpha overlay are deleted, so
+      // there is no learned-weight read on the recall hot path — ranking is fused RRF + the
+      // cross-encoder reranker over the config-sourced alphas only. Deterministic + LLM-free.
       const recall = createMemoryRecall(
         {
           memoryPort: deps.memoryPort,
@@ -1132,11 +1110,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          // The deterministic apply overlay (PURE — no clock, no LLM, no
-          // randomness). tunedVector present (tuning ON + a learned row) → the four
-          // non-trust alphas come from it, trustAlpha STILL from config (belt #2).
-          // tunedVector undefined (default-OFF) → config.rag.scoring unchanged.
-          scoring: buildScoringAlphas(config.rag.scoring, tunedVector),
+          // Fixed config-sourced scoring alphas — no learned overlay (Phase 224, RECALL-02/03).
+          scoring: config.rag.scoring,
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
           // MMR diversity re-rank + query understanding. Both are
@@ -1292,92 +1267,100 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // USER-PROFILE STANDING BLOCK: the LLM-free per-user-profile block is a DURABLE
   // standing block ("what we know about this user"), NOT a per-recall-conditional one.
-  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled`
-  // AND the optional store dep — INDEPENDENT of whether RAG ran, whether
-  // recall hit, and independent of `rag.enabled`. This is why it lives OUTSIDE the
+  // FOLD-01 (Phase 225 Plan 02): the source is REWIRED from the deleted
+  // `userRepresentationStore` to the v2.31 mental-model store — a `kind:"profile"`
+  // Mental Model doc (`mentalModelStore.list(scope,"profile")` → `buildProfileBlock`).
+  //
+  // It is injected on its OWN gate — `config.learning.enabled` (the collapsed
+  // learning flag, Phase 226 / SIMPLIFY-05; was learningSkills.enabled)
+  // AND the optional store dep — INDEPENDENT of whether RAG ran, whether recall hit,
+  // and independent of `rag.enabled`. This is why it lives OUTSIDE the
   // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
   // there silently dropped the profile on every zero-recall turn (greetings/off-topic/
   // sparse store) and gave RAG-off deployments ZERO injection.
   //
-  // Default-OFF byte-identity (the cost gate): with the knob off OR no store dep,
-  // read() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
-  // store.read scoped to THIS prompt's own (tenant, agent, user) + the pure
-  // buildUserRepresentationBlock formatter (NO model call — the recall hot path stays
-  // LLM-free). The formatter returns null on an empty profile ⇒ nothing pushed ⇒
-  // byte-identity. Non-fatal: a read err is swallowed so the agent proceeds without the
-  // profile. The profile content was redaction-checked + validateMemoryWrite-clean +
+  // Default-OFF byte-identity (the cost gate): with the gate off OR no store dep,
+  // list() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
+  // `list(scope,"profile")` scoped to THIS prompt's own (tenant, agent) + the pure
+  // buildProfileBlock formatter (NO model call — the recall hot path stays LLM-free).
+  // The profile groupKey is the userId, carried on the doc's `topicKey` (LearningScope
+  // has only (tenant, agent)), so the CURRENT user's doc is selected by
+  // `topicKey === sessionKey.userId` — cross-user isolation at read (T-225-09). The
+  // formatter returns undefined on an empty/absent profile ⇒ nothing pushed ⇒
+  // byte-identity. Non-fatal: a list err is swallowed so the agent proceeds without the
+  // profile. The profile content was redaction-checked + validateLearnedDocBody-clean +
   // high-trust at WRITE time. memorySections is seeded by the recall block (or empty),
   // so the profile appends after any retrieved sections + temporal guidance.
-  if (config.memoryUserRepresentation?.enabled && deps.userRepresentationStore) {
+  if (config.learning?.enabled && deps.mentalModelStore) {
     try {
-      const profile = await deps.userRepresentationStore.read({
+      // ONE list of ALL learning docs (kind omitted) — partitioned below for the
+      // user-profile standing block (kind=profile) AND the reuse-attribution topic-match
+      // (kind=skill). A single list keeps the per-turn store cost to ONE read (the
+      // "list runs once" contract) while serving both consumers.
+      const docs = await deps.mentalModelStore.list({
         tenantId: deps.tenantId ?? sessionKey.tenantId,
         agentId: agentId ?? config.name,
-        userId: sessionKey.userId,
       });
-      if (profile.ok && profile.value.length > 0) {
-        const profileBlock = buildUserRepresentationBlock(profile.value);
-        if (profileBlock) memorySections.push(profileBlock);
+      if (docs.ok) {
+        // --- user-profile standing block (kind=profile) ---
+        // The per-user doc: the profile groupKey is the userId on the doc's topicKey.
+        // Select THIS user's doc by `topicKey === userId`. A doc with an EMPTY topicKey
+        // is user-agnostic (a single-user agent whose builder set no per-user groupKey)
+        // and is shown to any user; a doc carrying a DIFFERENT user's topicKey is NEVER
+        // shown (cross-user isolation — no sole-doc fallback that could leak A's profile
+        // to B). When userId is itself absent, only an empty-topicKey doc qualifies.
+        const profiles = docs.value.filter((d) => d.kind === "profile");
+        const userId = sessionKey.userId;
+        const mine =
+          (userId !== undefined ? profiles.find((d) => d.topicKey === userId) : undefined) ??
+          profiles.find((d) => d.topicKey === "");
+        if (mine) {
+          const profileBlock = buildProfileBlock(mine);
+          if (profileBlock) memorySections.push(profileBlock);
+        }
+
+        // --- reuse-attribution by TOPIC MATCH (kind=skill).
+        // Credit any learned skill whose stored common-core (topicTokens) THIS turn instantiates,
+        // so a skill APPLIED from the surfaced `<available_skills>` summary / recall — without an
+        // explicit `read` of its SKILL.md (the ATTR-01 path) — still enters `usedSkillIds` and
+        // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
+        // is unioned into the turn's usedSkillIds by the pi-event-bridge.
+        const skills = docs.value.filter((d) => d.kind === "skill");
+        const matched = topicMatchedSkillNames(
+          msg.text,
+          skills.map((s) => ({ name: s.name, topicTokens: s.structuredBody?.topicTokens })),
+        );
+        sessionPromptTopicMatchedSkills.set(formatSessionKey(sessionKey), matched);
+        // One DEBUG line when a turn TOPIC-CREDITS ≥1 learned skill WITHOUT an explicit read —
+        // otherwise the credit is invisible until a downstream proof bump, so confirming "did
+        // reuse-attribution fire this turn" meant grepping outcome_events. Gated on a non-empty
+        // match (the meaningful, low-volume signal — a no-match turn logs nothing). Counts only,
+        // never the skill body.
+        if (matched.length > 0) {
+          logger.debug(
+            { agentId, step: "skill-topic-match", skillsConsidered: skills.length, matchedCount: matched.length },
+            "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
+          );
+        }
       }
-    } catch (profileErr) {
+    } catch (learningErr) {
       logger.debug(
         {
           agentId,
-          err: profileErr,
-          hint: "user-profile read failed; proceeding without the standing block",
+          err: learningErr,
+          hint: "learning standing-block / skill topic-match read failed; proceeding without",
           errorKind: "dependency" as const,
         },
-        "User-representation standing-block read failed (non-fatal)",
+        "Learning standing-block read failed (non-fatal)",
       );
     }
   }
 
-  // CHANNEL-RELATIONSHIP STANDING BLOCK: the LLM-free channel-relationship block is a
-  // DURABLE standing block ("how participants in this channel relate"), the directional
-  // analog of the user-profile block above. It is injected on its OWN dual gate — the
-  // sign-off (`config.socialModeling.enabled && config.socialModeling.privacyReviewSignedOffBy`,
-  // the knob + a RECORDED privacy-review sign-off) AND the optional store dep —
-  // INDEPENDENT of whether RAG ran, whether recall hit, and independent of `rag.enabled`
-  // (the lesson from the user-profile block: a standing block must not be nested in the
-  // recall-hit branch).
-  //
-  // The sign-off gate is the headline read-side proof: the knob alone does NOT
-  // activate — a non-empty `privacyReviewSignedOffBy` is required. With the gate
-  // closed (off OR no sign-off) OR no store dep, read() is NEVER called and the prompt
-  // is byte-identical (the cost gate + the privacy gate). When open, a DETERMINISTIC
-  // store.read scoped to channelId = sessionKey.channelId (the read-side
-  // boundary — the per-channel privacy axis) + the pure buildRelationshipBlock
-  // formatter (NO model call — the recall hot path stays LLM-free). The formatter
-  // returns null on an empty channel ⇒ nothing pushed ⇒ byte-identity. Non-fatal: a
-  // read err is swallowed so the agent proceeds without the block. The relationship
-  // content was redaction-checked + validateMemoryWrite-clean + high-trust at WRITE
-  // time.
-  if (
-    config.socialModeling?.enabled && config.socialModeling?.privacyReviewSignedOffBy &&
-    deps.relationshipStore
-  ) {
-    try {
-      const rels = await deps.relationshipStore.read({
-        tenantId: deps.tenantId ?? sessionKey.tenantId,
-        agentId: agentId ?? config.name,
-        channelId: sessionKey.channelId,
-      });
-      if (rels.ok && rels.value.length > 0) {
-        const relBlock = buildRelationshipBlock(rels.value);
-        if (relBlock) memorySections.push(relBlock);
-      }
-    } catch (relErr) {
-      logger.debug(
-        {
-          agentId,
-          err: relErr,
-          hint: "channel-relationship read failed; proceeding without the standing block",
-          errorKind: "dependency" as const,
-        },
-        "Channel-relationship standing-block read failed (non-fatal)",
-      );
-    }
-  }
+  // (The CHANNEL-RELATIONSHIP STANDING BLOCK — the LLM-free directional `<channel_relationships>`
+  //  injection, gated on `config.socialModeling.enabled && privacyReviewSignedOffBy` + the store dep —
+  //  was DELETED in Phase 226-04 with the rest of the social-modeling subsystem (the RelationshipStore
+  //  port + adapter, the `relationship` table, the offline directional-edge builder). Deleting the
+  //  injection removes a prompt-injected relationship-model surface; no dormant seam left (I1).)
 
   // 4. Build runtime info
   const runtimeInfo: RuntimeInfo = {

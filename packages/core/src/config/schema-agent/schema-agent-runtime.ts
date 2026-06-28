@@ -22,18 +22,9 @@ import { NotificationConfigSchema } from "../schema-notification.js";
 import { VerbosityConfigSchema } from "../schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "../schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "../schema-memory-review.js";
-import { MemoryConsolidationConfigSchema } from "../schema-memory-consolidation.js";
-import { MemoryReasoningConfigSchema } from "../schema-memory-reasoning.js";
-import { MemoryUserRepresentationConfigSchema } from "../schema-memory-user-representation.js";
-import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
-import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
-import { LearningTuningConfigSchema } from "../schema-learning-tuning.js";
-import { LearningForgettingConfigSchema } from "../schema-learning-forgetting.js";
-import { LearningSkillsConfigSchema } from "../schema-learning-skills.js";
-import { MemoryTripleExtractionConfigSchema } from "../schema-memory-triple-extraction.js";
-import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
+import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
@@ -412,58 +403,35 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   backgroundTasks: BackgroundTasksConfigSchema.optional(),
   /** Periodic memory review configuration (session history extraction). Opt-out posture:
    *  default-ON. A COST feature — force-disabled at its registration site when the
-   *  master kill switch `memory.costFeatures.enabled` is false. */
+   *  master kill switch `memory.enabled` is false. */
   memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
-  /** Periodic memory consolidation configuration (observation clustering). Opt-out
-   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryConsolidation: MemoryConsolidationConfigSchema.default(() => MemoryConsolidationConfigSchema.parse({})),
-  /** Periodic memory reasoning configuration (deductive/inductive observations).
-   *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryReasoning: MemoryReasoningConfigSchema.default(() => MemoryReasoningConfigSchema.parse({})),
-  /** Periodic per-user representation profile-builder configuration. Opt-out
-   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
-  memoryUserRepresentation: MemoryUserRepresentationConfigSchema.default(() => MemoryUserRepresentationConfigSchema.parse({})),
-  /** Directional relationship-modeling configuration (STAYS OFF — privacy/consent gate
-   *  `privacyReviewSignedOffBy`, NOT flipped by the opt-out posture). */
-  socialModeling: SocialModelingConfigSchema.optional(),
+  // (The `socialModeling` key was DELETED in Phase 226 SIMPLIFY-03 — the entire
+  //  social-modeling subsystem (the __SOCIAL_MODELING__ cron + the RelationshipStore port +
+  //  adapter + the `relationship` table + the relationship-block prompt injection) is gone.
+  //  z.strictObject now rejects a config carrying it, the D-01a operator-update path. No alias, I1.)
   /** memory_ask grounded-Q&A tool config — the ONE allowed query-time LLM surface.
    *  Opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
   dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),
-  /** Offline usefulness-judge configuration (an OFFLINE cron, never the
-   *  recall path). Opt-out posture: default-ON; a COST feature gated by the kill switch. */
-  memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
+  // (The `memoryUsefulnessJudge` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant
+  //  usefulness-judge cron is gone. z.strictObject now rejects a config carrying it, the
+  //  D-01a operator-update path. The FORGET-02 recordUsage reward write stays in setup-learning.ts.)
   /** Outcome-signal (Verified Learning WS1) configuration. Opt-OUT posture:
    *  default-ON, so `.parse({})` produces an active block; the master cost switch
-   *  (`memory.costFeatures.enabled`) force-disables it at the registration site. */
+   *  (`memory.enabled`) force-disables it at the registration site. */
   learningOutcome: LearningOutcomeConfigSchema.default(() => LearningOutcomeConfigSchema.parse({})),
-  /** Tuned-alpha learner tuning (Verified Learning WS3 / ranking). Opt-OUT posture:
-   *  default-ON. The on/off switch + bandit/per-intent/exploration knobs the daemon
-   *  reward seam, the bandit cron, and the per-intent recall apply all gate on. Composes
-   *  WITH (does not replace) memoryOnlineTuning + rag.onlineTuning; the master cost switch
-   *  force-disables it at the registration site. */
-  learningTuning: LearningTuningConfigSchema.default(() => LearningTuningConfigSchema.parse({})),
-  /** Soft-eviction policy (Verified Learning WS4 / forgetting). Opt-OUT posture: default-ON
-   *  (safe now that outcome fusion uses recency — a recovered turn no longer wrongly decays the
-   *  memories it used). The on/off switch + failurePenalty/strengthThreshold knobs the lifecycle
-   *  sweep's eviction BEHAVIOR reads. Composes WITH memoryLifecycle + rag.forget; the master
-   *  cost switch force-disables it at the registration site. */
-  learningForgetting: LearningForgettingConfigSchema.default(() =>
-    LearningForgettingConfigSchema.parse({}),
-  ),
-  /** Procedural-learning loop (Verified Learning WS2 / skills). Opt-OUT posture:
-   *  default-ON, so `.parse({})` yields an active block; the master cost switch
-   *  force-disables it at the registration site. The on/off switch + validation /
-   *  approval / minConfidence / promoteAtProofCount knobs the synthesis job,
-   *  sandbox-validation adapter, and admission gate read. */
-  learningSkills: LearningSkillsConfigSchema.default(() => LearningSkillsConfigSchema.parse({})),
-  /** Offline triple-extraction cron (Verified Learning WS7). Opt-OUT posture: default-ON,
-   *  so `.parse({})` yields an active block; the master cost switch force-disables it at
-   *  the registration site. */
-  memoryTripleExtraction: MemoryTripleExtractionConfigSchema.default(() => MemoryTripleExtractionConfigSchema.parse({})),
-  /** Offline tuned-alpha bandit cron (an OFFLINE, DETERMINISTIC, KEYLESS
-   *  cron, never the recall path). Opt-out posture: default-ON; in the operator-facing
-   *  cost-feature set, so gated by the kill switch at its registration site. */
-  memoryOnlineTuning: MemoryOnlineTuningConfigSchema.default(() => MemoryOnlineTuningConfigSchema.parse({})),
+  /** The collapsed per-agent LEARNING layer (Phase 226 / SIMPLIFY-01/05). ONE
+   *  `learning.enabled` master gate (folds the former learningSkills.enabled +
+   *  learningTuning.enabled + learningForgetting.enabled) under the top-level
+   *  `memory.enabled` kill-switch + the reflect/forget cost-bound knobs. Opt-OUT posture:
+   *  default-ON, so `.parse({})` yields an active block; force-disabled when
+   *  `memory.enabled: false`. The RANK-01 reward / FORGET-02 accrual / SURFACE-04 promote
+   *  writes STAY wired behind this one flag. (Replaces learningSkills/learningTuning/
+   *  learningForgetting — those keys are now rejected at parse, the D-01a operator-update path.) */
+  learning: LearningConfigSchema.default(() => LearningConfigSchema.parse({})),
+  // (The `memoryTripleExtraction` key was DELETED in Phase 226 SIMPLIFY-03 — the dormant no-op
+  //  extraction cron is gone (its `extract` returned []). z.strictObject now rejects a config
+  //  carrying it, the D-01a operator-update path. The TripleStorePort graphSpread recall lane
+  //  survives — only the extraction JOB went, not the read lane.)
   /** SCAFFOLD-DORMANT memory-lifecycle sweep cron. Opt-OUT posture: default-ON for consistency
    *  (a KEYLESS cron) — but it still evicts/demotes NOTHING until the deferred live eviction
    *  policy lands, so default-on is a forward-consistent no-op today. */

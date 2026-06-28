@@ -3,8 +3,9 @@
  * Learned-skill surface helper (v2.26 Verified Learning, SURFACE-01/03 + D1).
  *
  * Joins the platform `@comis/skills` registry snapshot with the `@comis/memory`
- * `learned_skills` store into ONE `<available_skills>` listing — platform skills
- * FIRST, promoted read-only learned procedures APPENDED LAST (the cache-stability
+ * `mental_models` store (the `kind='skill'` rows) into ONE `<available_skills>`
+ * listing — platform skills FIRST, promoted read-only learned procedures APPENDED
+ * LAST (the cache-stability
  * keystone: the cached byte-prefix never shifts, so a newly-promoted skill is
  * picked up on the NEXT session via the per-session prompt-skills freeze, never
  * mid-session). Each surfaced procedure is MATERIALIZED to a read-tool-openable
@@ -28,7 +29,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { suppressError } from "@comis/shared";
-import { safePath, PathTraversalError, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
+import { safePath, PathTraversalError, type MentalModel, type MentalModelStorePort, type LearningScope } from "@comis/core";
 import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
@@ -53,7 +54,7 @@ const LEARNED_SKILLS_DIRNAME = ".learned-skills";
  * only after static + (script-)sandbox validation at `trust=learned`, read-only, so
  * trying one is bounded-safe; `active` remains the corroborated (proof≥N) tier.
  */
-function isSurfaceable(skill: LearnedSkill): boolean {
+function isSurfaceable(skill: MentalModel): boolean {
   return (skill.state === "active" || skill.state === "candidate") && !skill.mutating;
 }
 
@@ -82,7 +83,7 @@ function materializedLocation(workspaceDir: string, name: string): string {
  */
 export function mergeLearnedSkillsXml(
   platformDescriptions: readonly PromptSkillDescription[],
-  learnedSkills: readonly LearnedSkill[],
+  learnedSkills: readonly MentalModel[],
   materializedDir: string,
 ): string {
   const learnedDescriptions: PromptSkillDescription[] = learnedSkills
@@ -113,7 +114,7 @@ export function mergeLearnedSkillsXml(
  */
 export function materializeLearnedSkills(
   workspaceDir: string,
-  learnedSkills: readonly LearnedSkill[],
+  learnedSkills: readonly MentalModel[],
   logger?: ComisLogger,
 ): void {
   const root = safePath(workspaceDir, LEARNED_SKILLS_DIRNAME);
@@ -142,7 +143,7 @@ export function materializeLearnedSkills(
           errorKind,
           err: e instanceof Error ? e : new Error(String(e)),
           hint: isTraversal
-            ? "a learned skill name failed path validation (traversal/absolute) — skipped; check the learned_skills row"
+            ? "a learned skill name failed path validation (traversal/absolute) — skipped; check the mental_models row"
             : "writing a learned skill SKILL.md failed (disk full / permissions / collision) — skipped",
         },
         "Learned-skill materialize skipped one skill (non-fatal)",
@@ -151,8 +152,12 @@ export function materializeLearnedSkills(
   }
 }
 
-/** Minimal SKILL.md: a frontmatter the discovery parser would accept + the body. */
-function renderSkillFile(skill: LearnedSkill): string {
+/**
+ * Minimal SKILL.md: a frontmatter the discovery parser would accept + the body.
+ * Exported so the MODEL-03 byte-identity golden can pin the exact rendered bytes
+ * for a `kind='skill'` MentalModel (the no-behavior-change guarantee).
+ */
+export function renderSkillFile(skill: MentalModel): string {
   const fm = [
     "---",
     `name: ${skill.name}`,
@@ -178,7 +183,7 @@ function jsonScalar(value: string): string {
  */
 export function renderLearnedSkillsXml(args: {
   skillRegistry: SkillRegistry;
-  learnedSkills: readonly LearnedSkill[];
+  learnedSkills: readonly MentalModel[];
   workspaceDir: string;
 }): string {
   const { skillRegistry, learnedSkills, workspaceDir } = args;
@@ -199,14 +204,25 @@ export function renderLearnedSkillsXml(args: {
  * The `(tenant, agent)` `scope` is the SAME one the runtime resolved.
  */
 export async function refreshLearnedSkillSurface(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): Promise<readonly LearnedSkill[]> {
+}): Promise<readonly MentalModel[]> {
   const { learnedSkillStore, scope, workspaceDir, logger } = args;
   if (!learnedSkillStore) return [];
 
+  // GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1) + FOLD-02 (Plan 03): KIND-FILTER the
+  // wholesale surface to admit kind:"skill" AND kind:"topic" while EXCLUDING
+  // kind:"profile". The surface materializes into <available_skills>; a
+  // kind:"profile" doc must NOT surface here — it surfaces ONCE, in the rewired
+  // <user_profile> block (prompt-assembly), so its facts are not double-surfaced into
+  // the skills channel. kind:"topic" DOES surface (Plan 03): the design's one-store
+  // unification makes a surfaced topic doc the OBSERVATION recall medium (ranked
+  // top-K is the documented future mitigation, not this phase). The port's single-
+  // kind `list(scope, kind)` filter cannot express "skill OR topic" in one call, so
+  // we list UNFILTERED (one DB round-trip) and AND a code-side kind predicate over
+  // the load-bearing (tenant, agent) scope — never a replacement for it.
   const result = await learnedSkillStore.list(scope);
   if (!result.ok) {
     logger.debug(
@@ -222,14 +238,22 @@ export async function refreshLearnedSkillSurface(args: {
     return [];
   }
 
-  materializeLearnedSkills(workspaceDir, result.value, logger);
-  const surfaced = result.value.filter(isSurfaceable);
-  logger.debug(
+  // Admit skill + topic; exclude profile (the no-double-surface guard).
+  const visible = result.value.filter((d) => d.kind === "skill" || d.kind === "topic");
+  materializeLearnedSkills(workspaceDir, visible, logger);
+  const surfaced = visible.filter(isSurfaceable);
+  // OBS-3 (hindsight-reflection-20260626): INFO, not DEBUG — a once-per-refresh summary so an operator
+  // can see how many learned skills currently surface to the agent WITHOUT setting logLevel:debug
+  // before the incident. Diagnosing SURFACE-RACE ("the learned skill doesn't appear in
+  // <available_skills>") previously needed a DEBUG-level surfacedCount grep + asking the agent.
+  logger.info(
     {
       agentId: scope.agentId,
       submodule: "learned-skill-surface",
       surfacedCount: surfaced.length,
-      totalCount: result.value.length,
+      // The kind-VISIBLE total (skill + topic), so surfacedCount/totalCount reconcile
+      // (profile docs are excluded upstream and are not part of this surface's denom).
+      totalCount: visible.length,
     },
     "Learned-skill surface refreshed",
   );
@@ -247,11 +271,11 @@ export async function refreshLearnedSkillSurface(args: {
  * a later refresh updates `.current` (Plan 05 re-refreshes on promote/demote).
  */
 export function createLearnedSkillSurfaceCache(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): { readonly current: readonly LearnedSkill[] } {
+}): { readonly current: readonly MentalModel[] } {
   return createRefreshableLearnedSkillSurface(args).cache;
 }
 
@@ -265,12 +289,12 @@ export function createLearnedSkillSurfaceCache(args: {
  * nothing (byte-identical). Both the boot refresh and `refresh()` are non-fatal.
  */
 export function createRefreshableLearnedSkillSurface(args: {
-  learnedSkillStore: LearnedSkillStorePort | undefined;
+  learnedSkillStore: MentalModelStorePort | undefined;
   scope: LearningScope;
   workspaceDir: string;
   logger: ComisLogger;
-}): { cache: { readonly current: readonly LearnedSkill[] }; refresh: () => Promise<void> } {
-  const cache: { current: readonly LearnedSkill[] } = { current: [] };
+}): { cache: { readonly current: readonly MentalModel[] }; refresh: () => Promise<void> } {
+  const cache: { current: readonly MentalModel[] } = { current: [] };
   const refresh = async (): Promise<void> => {
     cache.current = await refreshLearnedSkillSurface(args);
   };

@@ -709,29 +709,6 @@ export interface AgentEvents {
   };
 
   /**
-   * RANK-06 (v2.26 WS3): the OFFLINE tuned-alpha bandit applied a (possibly per-intent)
-   * update. PROMOTED from an optional-chained `eventBus?.emit` (which evaded the type
-   * system, the trajectory, AND the EMIT_REGEX gate) to a typed key emitted via PLAIN
-   * `eventBus.emit` (online-tuning-job.ts). Counts/booleans + the closed-union per-intent
-   * dim ONLY — NEVER an alpha VALUE or FEED content (§2.7 / SEC-01; the `.not.toMatch(/alpha/i)`
-   * belt). `intent` = the `classifyIntent` bucket tuned (omitted → global ''). Bridged for
-   * `comis explain` (OBS-02). Adding one is a compile error.
-   */
-  "memory:online_tuning_applied": {
-    agentId: string;
-    /** A next tuned vector was upserted (false when off / no signal / failed). */
-    updated: boolean;
-    /** How many of the four alphas hit a clamp bound (0/1) this run. */
-    clampHits: number;
-    /** Number of FEED-signal ids aggregated this run. */
-    signalCount: number;
-    /** The per-intent bucket tuned (closed-union string); omitted → global ''. */
-    intent?: string;
-    durationMs: number;
-    timestamp: number;
-  };
-
-  /**
    * FORGET-06 (v2.26 WS4): the lifecycle sweep demoted (`learning:memory_demoted`) /
    * SOFT-evicted (`learning:memory_evicted`, set `evicted_at`, never DELETE) N memories
    * this run. Emitted DAEMON-SIDE (the lifecycle store has no bus) from the real sweep
@@ -740,6 +717,32 @@ export interface AgentEvents {
    */
   "learning:memory_demoted": { agentId: string; count: number; timestamp: number };
   "learning:memory_evicted": { agentId: string; count: number; timestamp: number };
+  /**
+   * OBS-2b (reflect-obs-20260627): the once-per-run lifecycle/forget sweep SUMMARY — the parity
+   * event for the forget half of learning (reflection has `reflect:funnel`; the forget sweep had
+   * only the per-category demoted/evicted counts above, invisible to `cron.runs`/fleet/`explain`).
+   * Carries the run breakdown so `cron.runs jobName "Memory lifecycle"` answers "what did the sweep
+   * do" (scanned/evicted/demoted) in one call instead of a `db.mjs` `evicted_at` poll, and the fleet
+   * lens rolls a `memory_lifecycle` finding. Counts ONLY — never an id-list/body (§2.7 / SEC-01).
+   */
+  "learning:lifecycle_swept": {
+    agentId: string;
+    scanned: number;
+    promoted: number;
+    demoted: number;
+    evicted: number;
+    timestamp: number;
+  };
+  /**
+   * OBS-4b (reflect-obs-20260627): N memories accrued a CORROBORATED failure (failure_count++) this
+   * resolve — the eviction-causation PRECURSOR. Eviction needs `failure_count >= failureEvictionFloor`,
+   * but the accrual itself was previously invisible (only the DB column changed over time + a DEBUG
+   * line), so "why did/didn't this memory evict" had no event trail (you had to SEED failure_count to
+   * test eviction). This event makes the corroborated-failure accrual diagnosable from `comis explain`
+   * (bridged) so the path toward eviction is reconstructable. Count ONLY — never a memory id-list/body
+   * (§2.7 / SEC-01); the accrual is already FORGET-03 corroboration-gated (≥2 independent sessions).
+   */
+  "learning:memory_failure_attributed": { agentId: string; count: number; timestamp: number };
 
   /**
    * GENQ-01: a memory-generation pass produced output whose quality diverged from its

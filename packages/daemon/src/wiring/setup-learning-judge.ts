@@ -34,6 +34,7 @@ import {
   type ClockPort,
   type ComisLogger,
   type ContextStorePort,
+  type MemoryConfig,
   type OutcomeSignalPort,
   type ResolvedOutcome,
 } from "@comis/core";
@@ -113,7 +114,11 @@ interface JudgeAgentConfig {
 export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
-    memory?: { costFeatures?: { enabled?: boolean } };
+    // H-1 (Phase 226): the REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
+    // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename. A loose optional type let
+    // the deleted key read as `undefined !== false === true` → SILENTLY force-ENABLED (the kill-switch
+    // inverts); the real type makes a missed rename a compile error, not a fail-open.
+    memory?: Pick<MemoryConfig, "enabled">;
     providers?: {
       entries?: Record<
         string,
@@ -216,7 +221,7 @@ export function buildOutcomeJudgeWiring(
   logger: ComisLogger,
   lcdStore?: Pick<ContextStorePort, "getMessages">,
 ): OutcomeJudgeWiringResult {
-  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  const costFeaturesEnabled = container.config.memory?.enabled !== false;
   const agents = container.config.agents ?? {};
 
   // Judge is DEFAULT-ON (opt-out): ON unless learning-outcome OR the judge is EXPLICITLY
@@ -224,7 +229,8 @@ export function buildOutcomeJudgeWiring(
   // always MATERIALIZE the nested `judge` default for an explicitly-present-but-partial
   // `learningOutcome` block (e.g. `{enabled:true, correction:{enabled:true}}` leaves `judge`
   // undefined) — so a defaulted/absent `judge.enabled` (the common case) MUST read as ON.
-  // The master `memory.costFeatures.enabled` kill-switch still gates everything.
+  // The master `memory.enabled` kill-switch (renamed from costFeatures.enabled in Phase 226)
+  // still gates everything.
   const learningOutcomeJudgeEnabled = (agentId: string): boolean =>
     costFeaturesEnabled &&
     agents[agentId]?.learningOutcome?.enabled !== false &&

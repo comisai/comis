@@ -21,19 +21,70 @@ import type {
 } from "@comis/core";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, normalizeForSearch, validateMemoryWrite } from "@comis/core";
+
+/**
+ * The decided branch of a {@link SqliteMemoryAdapter.supersede} call (FORGET-04),
+ * returned to the caller and logged as metadata (never the content body). A closed
+ * string-literal union (no `kind: string`): `"superseded"` = the incumbent's content
+ * was updated to the new value and its prior state appended to `memories.history`;
+ * `"not-found"` = no incumbent matched the scoped (id, tenant, agent[, user]) key, so
+ * NO row was written (the no-op — e.g. a cross-scope correction the V4 WHERE rejects).
+ */
+export type MemorySupersedeOutcome = "superseded" | "not-found";
+
+/**
+ * The scope a {@link SqliteMemoryAdapter.supersede} runs under. `tenantId` +
+ * `agentId` are the load-bearing 2-way isolation boundary (mirrors store/delete +
+ * the user-rep `revise()` scope); `userId` narrows further when the caller knows it
+ * (a correction targeting one user's fact must not touch another's same-content row).
+ */
+export interface MemorySupersedeScope {
+  tenantId: string;
+  agentId: string;
+  /** Optional 3rd isolation axis; ANDed into every statement when present. */
+  userId?: string;
+}
 
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 // DIST-05 (WR-02) id-projection mapper — the sanctioned typed-read path for the
 // session-scoped id capture (no `as Foo[]` cast — untyped-sqlite gate).
 const idProjectionRowMapper = createRowMapper(IdProjectionRowSchema);
+
+// FORGET-04: the canonical `memories.history` JSON shape — an ordered array of
+// prior contents (MemoryEntrySchema.history + the growObservation precedent). Built
+// once at module scope; parses the nullable TEXT column on read-back inside
+// supersede(). A strictObject mirrors the row-mapper's HistorySchema (the read path),
+// so a malformed/legacy column degrades to "absent" (→ a fresh array) instead of
+// throwing — never blocking a correction on a corrupt history payload.
+const SupersedeHistorySchema = z.array(
+  z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }),
+);
+
+/**
+ * Parse the incumbent's `memories.history` column (JSON TEXT or NULL) into the
+ * typed prior-state array, or `undefined` when the column is NULL / corrupt /
+ * oversized (mirrors row-mapper.ts parseHistory — degrade to "field absent", never
+ * throw). supersede() then starts a fresh array, so a damaged column self-heals on
+ * the next correction rather than aborting it.
+ */
+function parseHistoryColumn(raw: string | null): MemoryEntry["history"] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = SupersedeHistorySchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Minimal pino-compatible logger interface for memory subsystem logging. */
 interface MemoryLogger {
@@ -63,8 +114,8 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       dbPath: config.dbPath,
       walMode: config.walMode,
       initSchema: (db) => {
-        // Initialize schema and capture per-instance vec state
-        const schemaResult = initSchema(db, config.embeddingDimensions);
+        // Initialize schema and capture per-instance vec state (Phase 226: recall keys nest under .recall)
+        const schemaResult = initSchema(db, config.recall.embeddingDimensions);
         vecAvailable = schemaResult.vecAvailable;
       },
     });
@@ -449,6 +500,201 @@ export class SqliteMemoryAdapter implements MemoryPort, MemoryPinnedStore {
       return ok(result.changes > 0);
     } catch (e: unknown) {
       return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  // ── supersede (FORGET-04 — non-destructive contradiction → revise) ─
+
+  /**
+   * Phase 224 (FORGET-04): resolve a user CORRECTION of an existing fact by
+   * SUPERSESSION, NOT deletion. UPDATEs the scoped incumbent's `content` to
+   * `newContent` and APPENDs the prior state (`{ previousContent, changedAt }`) to
+   * the `memories.history` JSON array. The row is UPDATEd, never DELETEd — deletion
+   * stays reserved for the FORGET-02 corroborated-poison security path. The existing
+   * row IS the latest, so recall (search/searchLanes) naturally returns the new
+   * content; there is NO `mentioned_at` column and NO recall-side asOf filter (the
+   * superseded content simply stops being the row's `content`, preserved in history).
+   *
+   * Mirrors the `sqlite-user-representation-store.ts` `revise()` discipline — the
+   * SELECT-incumbent → history-append → UPDATE unit runs inside ONE
+   * `db.transaction(() => {...})()`, so a parse fault (or any in-txn throw) atomic-
+   * ROLLBACKs (the @allow-throw boundary; the outer try/catch converts it to `err`,
+   * exactly like `revise()`). Every statement is scoped
+   * `WHERE id = ? AND tenant_id = ? AND agent_id = ?` (+ `user_id` when supplied),
+   * bound params only (V4 isolation). The incumbent is parsed via the row mapper (no
+   * `as Row`). The NEW content passes the same `validateMemoryWrite` redaction
+   * firewall a write goes through (INV-5) BEFORE the txn — a CRITICAL correction is
+   * rejected, never persisted. The `memories_au AFTER UPDATE OF content` trigger
+   * re-syncs `memory_fts`; the normalized `memory_fts_tri` trigram twin is
+   * re-inserted on the content change (the `growObservation` precedent), and the
+   * stale `vec_memories` embedding is invalidated (deleted + `has_embedding = 0`) so
+   * the background indexer re-embeds C2 — never leaving a C1 vector pointing at the
+   * row (mirrors store()'s no-precomputed-embedding path).
+   *
+   * @param id - The incumbent memory id to correct.
+   * @param newContent - The corrected content (C2). Untrusted → redaction-scanned.
+   * @param scope - The (tenant, agent[, user]) isolation scope.
+   * @param now - The supersede clock (epoch ms; injected, never `Date.now()`).
+   * @returns `"superseded"` on a successful revise, `"not-found"` when no scoped
+   *          incumbent matched (no row written), or an `err` (firewall-rejected,
+   *          parse fault, or DB error — the transaction rolled back).
+   */
+  async supersede(
+    id: string,
+    newContent: string,
+    scope: MemorySupersedeScope,
+    now: number,
+  ): Promise<Result<MemorySupersedeOutcome, Error>> {
+    const startMs = systemNowMs();
+    const { tenantId, agentId, userId } = scope;
+
+    // INV-5 redaction firewall on the untrusted correction, BEFORE the txn — a
+    // CRITICAL classification (dangerous command / secret egress) is REJECTED and
+    // never persisted (mirrors revise()'s rejectUnwritableEntry → err). A `warn`
+    // is permitted (the existing trust_level on the row is unchanged — a correction
+    // re-states the same user fact at the same trust tier; only `critical` blocks).
+    const verdict = validateMemoryWrite(newContent);
+    if (verdict.severity === "critical") {
+      this.logger?.warn(
+        {
+          step: "memory-supersede",
+          errorKind: "validation" as const,
+          severity: verdict.severity,
+          criticalPatterns: verdict.criticalPatterns,
+          hint: "correction content failed validateMemoryWrite (redaction firewall) — supersession not applied",
+          durationMs: systemNowMs() - startMs,
+        },
+        "Memory supersede rejected (redaction firewall)",
+      );
+      return err(new Error("memory supersede: content failed redaction validation"));
+    }
+
+    try {
+      // Scoped statements — the (tenant, agent[, user]) filter is the V4 isolation
+      // boundary; every value a bound `?` (NEVER concatenated). The 3-way userId
+      // axis is ANDed only when the caller supplies it.
+      const scopeSql = userId !== undefined
+        ? "tenant_id = ? AND agent_id = ? AND user_id = ?"
+        : "tenant_id = ? AND agent_id = ?";
+      const scopeArgs: string[] = userId !== undefined ? [tenantId, agentId, userId] : [tenantId, agentId];
+
+      const selectIncumbent = this.db.prepare(
+        `SELECT * FROM memories WHERE id = ? AND ${scopeSql}`,
+      );
+      const updateContent = this.db.prepare(
+        `UPDATE memories SET content = ?, history = ?, updated_at = ? WHERE id = ? AND ${scopeSql}`,
+      );
+
+      const vecAvailable = this.vecAvailable;
+
+      // The revise unit — ONE synchronous transaction (mirror revise()/store()).
+      // better-sqlite3 auto-ROLLBACKs on ANY throw, so SELECT-incumbent →
+      // history-append → UPDATE is atomic; a parse fault THROWS → ROLLBACK (caught
+      // below → err). The decided branch is returned for the metadata log.
+      const tx = this.db.transaction((): MemorySupersedeOutcome => {
+        // 1. SELECT the scoped incumbent; parse via the row mapper (no `as Row`).
+        //    A parse fault THROWS to ROLLBACK.
+        const parsed = memoryRowMapper.parseOptionalRow(selectIncumbent.get(id, ...scopeArgs));
+        if (!parsed.ok) throw new Error(parsed.error.message);
+        const incumbent = parsed.value;
+
+        // 2. No incumbent under THIS scope → no-op (the cross-scope correction the
+        //    V4 WHERE rejects, or an unknown id). NO row written.
+        if (incumbent === undefined) return "not-found";
+
+        // 2'. Did the correction actually rewrite content? A no-change correction
+        //     (newContent === incumbent.content — e.g. a user "re-confirms" a fact)
+        //     is still recorded in history below (the correction is the durable
+        //     signal), but the re-index lanes MUST short-circuit on it: the
+        //     memories_au / memories_tri_au triggers are themselves guarded
+        //     `WHEN old.content IS NOT new.content` (schema-trigram.ts), so on a
+        //     no-change UPDATE they do NOT fire — and the manual re-index work below
+        //     would then either no-op-throw (the trigram INSERT collides on the
+        //     existing twin's PK rowid → caught) or, worse, DESTRUCTIVELY drop the
+        //     still-valid cached vec embedding and force a pointless re-embed. Mirror
+        //     the consolidation-store precedent (sqlite-memory-consolidation-
+        //     store.ts:428), which guards its identical twin re-insert on the same
+        //     `contentChanged` flag.
+        const contentChanged = newContent !== incumbent.content;
+
+        // 3. Append the prior state to history (oldest-first), then update content.
+        //    The shape { previousContent, changedAt } is the canonical history entry
+        //    (MemoryEntrySchema.history + the growObservation precedent) — the row
+        //    mapper's HistorySchema parses exactly this on read-back. History is
+        //    appended REGARDLESS of contentChanged: a re-confirmation is a recorded
+        //    correction even when the value is identical.
+        const prior: MemoryEntry["history"] = [
+          ...(parseHistoryColumn(incumbent.history) ?? []),
+          { previousContent: incumbent.content, changedAt: now },
+        ];
+        // The memories_au AFTER UPDATE OF content trigger re-syncs memory_fts
+        // automatically (delete old.content + insert new.content) — but ONLY when
+        // its `WHEN old.content IS NOT new.content` guard holds, so a no-change
+        // UPDATE here leaves memory_fts untouched (no churn).
+        updateContent.run(newContent, JSON.stringify(prior), now, id, ...scopeArgs);
+
+        // 3'. Re-index the changed content. SKIP entirely on a no-change correction:
+        //     the WHEN-guarded triggers did not fire, so the existing twin / vec rows
+        //     are already correct and must be left alone (matches the trigger path
+        //     and the growObservation precedent).
+        if (contentChanged) {
+          // 3'a. Re-insert the NORMALIZED memory_fts_tri trigram twin for the new
+          //      content: the memories_tri_au trigger (WHEN old.content IS NOT
+          //      new.content) just DELETED the stale twin row, so without this the
+          //      corrected row would be de-indexed in the trigram lane. Same guarded
+          //      shape as the store-path twin write; never re-throw (would ROLLBACK
+          //      the authoritative content update — the fail-safe direction is
+          //      de-indexed, never stale-indexed).
+          try {
+            this.db
+              .prepare(
+                "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
+              )
+              .run(id, normalizeForSearch(newContent));
+          } catch {
+            // Trigram twin absent on this host, or an exceptional twin insert failure
+            // → leave the row de-indexed in the trigram lane (fail-safe). The content
+            // update is authoritative and stands; recall degrades to word + vector.
+          }
+
+          // 3'b. Invalidate the now-stale vec embedding: the vec0 twin still holds the
+          //      C1 vector (vec_memories has no content trigger), which would surface
+          //      the row for C1-similar queries as if it were current. Mirror store()'s
+          //      no-precomputed-embedding path — drop the stale vec row + clear
+          //      has_embedding, so the background indexer re-embeds C2. (store() only
+          //      writes a vec row when the caller pre-supplies entry.embedding; a
+          //      content correction supplies none, so the faithful mirror is
+          //      invalidate-for-reindex, not a synchronous embed.)
+          if (vecAvailable) {
+            this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);
+            this.db.prepare("UPDATE memories SET has_embedding = 0 WHERE id = ?").run(id);
+          }
+        }
+        return "superseded";
+      });
+      const outcome = tx(); // throws → automatic ROLLBACK; nothing committed
+
+      // Counts/metadata + the decided OUTCOME only — NEVER the content body (§2.7).
+      this.logger?.debug(
+        { step: "memory-supersede", op: "supersede", outcome, durationMs: systemNowMs() - startMs },
+        "Memory supersede complete",
+      );
+      return ok(outcome);
+    } catch (e: unknown) {
+      const durationMs = systemNowMs() - startMs;
+      const error = e instanceof Error ? e : new Error(String(e));
+      this.logger?.warn(
+        {
+          step: "memory-supersede",
+          op: "supersede",
+          durationMs,
+          err: error,
+          errorKind: "internal" as const,
+          hint: "memory supersede failed — correction not applied (transaction rolled back)",
+        },
+        "Memory supersede failed",
+      );
+      return err(error);
     }
   }
 

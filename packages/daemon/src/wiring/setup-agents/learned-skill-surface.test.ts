@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ok, err, type Result } from "@comis/shared";
-import { safePath, type LearnedSkill, type LearnedSkillStorePort, type LearningScope } from "@comis/core";
+import { safePath, type MentalModel, type MentalModelStorePort, type LearningScope } from "@comis/core";
 import type { PromptSkillDescription } from "@comis/skills";
 import {
   mergeLearnedSkillsXml,
@@ -25,6 +25,7 @@ import {
   renderLearnedSkillsXml,
   refreshLearnedSkillSurface,
   createRefreshableLearnedSkillSurface,
+  renderSkillFile,
 } from "./learned-skill-surface.js";
 import { createLearnedSkillSurfaceRegistry, wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 
@@ -41,13 +42,15 @@ function platform(name: string): PromptSkillDescription {
   };
 }
 
-/** A LearnedSkill row mirror; defaults are an active, read-only procedure. */
-function learned(over: Partial<LearnedSkill> = {}): LearnedSkill {
+/** A MentalModel (kind='skill') row mirror; defaults are an active, read-only procedure. */
+function learned(over: Partial<MentalModel> = {}): MentalModel {
   return {
     id: `id-${over.name ?? "alpha"}`,
     name: over.name ?? "alpha",
     description: over.description ?? "an alpha procedure",
     body: over.body ?? "# Alpha\n\nStep 1. Do the thing.\n",
+    kind: over.kind ?? "skill",
+    topicKey: over.topicKey ?? "",
     trustLevel: "learned",
     state: over.state ?? "active",
     proofCount: over.proofCount ?? 3,
@@ -164,6 +167,57 @@ describe("mergeLearnedSkillsXml — append after platform", () => {
 });
 
 // ---------------------------------------------------------------------------
+// MODEL-03 byte-identity goldens — a kind='skill' MentalModel renders + materializes
+// BYTE-FOR-BYTE as the pre-migration learned skill did (the no-behavior-change pin).
+// The renderer is byte-deterministic from {name,description,location,source}; a
+// kind='skill' row maps to the same PromptSkillDescription, so no `kind` branch
+// alters the output. A FIXED workspace dir ('/ws') keeps the absolute <location>
+// reproducible in the inline snapshot.
+// ---------------------------------------------------------------------------
+
+describe("MODEL-03: kind='skill' surface render + SKILL.md are byte-identical (golden)", () => {
+  it("mergeLearnedSkillsXml appends a kind='skill' row LAST with <source>learned</source> + absolute SKILL.md location", () => {
+    const xml = mergeLearnedSkillsXml(
+      [platform("platform-a")],
+      [learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" })],
+      "/ws",
+    );
+    expect(xml).toMatchInlineSnapshot(`
+      "<available_skills>
+        <skill>
+          <name>platform-a</name>
+          <description>desc-platform-a</description>
+          <location>/abs/skills/platform-a</location>
+          <source>bundled</source>
+        </skill>
+        <skill>
+          <name>deploy</name>
+          <description>deploy the app</description>
+          <location>/ws/.learned-skills/deploy/SKILL.md</location>
+          <source>learned</source>
+        </skill>
+      </available_skills>"
+    `);
+  });
+
+  it("renderSkillFile emits the exact frontmatter (name/description/source:learned) + body + trailing newline", () => {
+    const file = renderSkillFile(
+      learned({ name: "deploy", description: "deploy the app", body: "1. build\n2. ship" }),
+    );
+    expect(file).toMatchInlineSnapshot(`
+      "---
+      name: deploy
+      description: "deploy the app"
+      source: learned
+      ---
+      1. build
+      2. ship
+      "
+    `);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // materializeLearnedSkills — derive-on-refresh, never a stale file
 // ---------------------------------------------------------------------------
 
@@ -271,8 +325,8 @@ describe("renderLearnedSkillsXml — sync seam reader", () => {
 // refreshLearnedSkillSurface — the ASYNC half (list → materialize → cache)
 // ---------------------------------------------------------------------------
 
-/** A minimal LearnedSkillStorePort stub whose list() returns a fixed Result. */
-function makeStore(listResult: Result<LearnedSkill[], Error>): LearnedSkillStorePort {
+/** A minimal MentalModelStorePort stub whose list() returns a fixed Result. */
+function makeStore(listResult: Result<MentalModel[], Error>): MentalModelStorePort {
   return {
     admit: async () => ok({ id: "x", admitted: true }),
     get: async () => ok(undefined),
@@ -280,7 +334,7 @@ function makeStore(listResult: Result<LearnedSkill[], Error>): LearnedSkillStore
     promote: async () => ok(undefined),
     demote: async () => ok(undefined),
     evict: async () => ok(undefined),
-  } as unknown as LearnedSkillStorePort;
+  } as unknown as MentalModelStorePort;
 }
 
 describe("refreshLearnedSkillSurface — async list + materialize + cache", () => {
@@ -334,6 +388,131 @@ describe("refreshLearnedSkillSurface — async list + materialize + cache", () =
 });
 
 // ---------------------------------------------------------------------------
+// GAP-2 half-2 (Phase 225 Plan 02, Pitfall 1): the wholesale surface MUST be
+// kind-filtered to EXCLUDE kind:"profile" — a profile doc surfaces ONCE (in the
+// rewired <user_profile> block, prompt-assembly), never ALSO in <available_skills>.
+// The fix changes `list(scope)` → `list(scope, "skill")` (the listByKindStmt
+// path). RED on the pre-fix code: the unfiltered list() returns the profile doc,
+// which then materializes into .learned-skills (the double-surface).
+// ---------------------------------------------------------------------------
+
+/**
+ * A KIND-AWARE MentalModelStorePort stub mimicking the real `listByKindStmt`: it
+ * records every `kind` arg `list()` was called with, and FILTERS `docs` by that
+ * kind (an omitted kind ⇒ ALL kinds — the pre-fix, double-surfacing behavior).
+ */
+function makeKindAwareStore(docs: MentalModel[]): {
+  store: MentalModelStorePort;
+  kindCalls: () => Array<"skill" | "profile" | "topic" | undefined>;
+} {
+  const calls: Array<"skill" | "profile" | "topic" | undefined> = [];
+  const store = {
+    admit: async () => ok({ id: "x", admitted: true }),
+    get: async () => ok(undefined),
+    list: async (_scope: LearningScope, kind?: "skill" | "profile" | "topic") => {
+      calls.push(kind);
+      const filtered = kind === undefined ? docs : docs.filter((d) => d.kind === kind);
+      return ok(filtered);
+    },
+    promote: async () => ok(undefined),
+    demote: async () => ok(undefined),
+    promoteByName: async () => ok({ changed: true }),
+    demoteByName: async () => ok({ changed: true }),
+    supersede: async () => ok("superseded" as const),
+    evict: async () => ok(undefined),
+  } as unknown as MentalModelStorePort;
+  return { store, kindCalls: () => calls };
+}
+
+describe("GAP-2 half-2: the wholesale surface kind-filters OUT kind:'profile' (no double-surface)", () => {
+  it("a kind:'profile' doc in the store is NOT materialized into .learned-skills", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      // A profile doc that WOULD surface (active, read-only) on an unfiltered list().
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // The skill still surfaces (regression guard)…
+    expect(existsSync(safePath(workDir, ".learned-skills", "alpha", "SKILL.md"))).toBe(true);
+    // …the profile doc does NOT (the kind filter excludes it — no double-surface).
+    expect(existsSync(safePath(workDir, ".learned-skills", "profile-user-u", "SKILL.md"))).toBe(false);
+  });
+
+  it("a kind:'profile' doc is NOT in the surfaced (cached) set the seam renders", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    const surfaced = await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(surfaced.some((s) => s.name === "alpha")).toBe(true);
+    expect(surfaced.some((s) => s.kind === "profile")).toBe(false);
+  });
+
+  it("calls list() with the 'skill' kind filter (the listByKindStmt path), never an unfiltered list", async () => {
+    const { store, kindCalls } = makeKindAwareStore([learned({ name: "alpha", kind: "skill" })]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // The surface admits skill + topic (Plan 03) while excluding profile. A SINGLE
+    // list() round-trip cannot express "skill OR topic" via the single-kind
+    // listByKindStmt filter, so the surface lists unfiltered (kind === undefined)
+    // and filters in code to skill|topic. Every list() call is unfiltered.
+    expect(kindCalls().length).toBeGreaterThan(0);
+    expect(kindCalls().every((k) => k === undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLD-02 (Phase 225 Plan 03): the wholesale surface BROADENS to admit
+// kind:"topic" (the design's one-store unification — a surfaced topic doc IS the
+// observation recall medium) while STILL excluding kind:"profile" (the Plan-02
+// guard — a profile doc surfaces ONCE, in <user_profile>). The filter becomes
+// `d.kind === "skill" || d.kind === "topic"` over an unfiltered list(scope).
+// RED on the Plan-02 code (list(scope,"skill")): a kind:topic doc does NOT surface.
+// ---------------------------------------------------------------------------
+
+describe("FOLD-02: the wholesale surface admits kind:'topic' (still excludes kind:'profile')", () => {
+  it("a kind:'topic' doc IS materialized into .learned-skills (the observation recall medium)", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    // The skill still surfaces (regression)…
+    expect(existsSync(safePath(workDir, ".learned-skills", "alpha", "SKILL.md"))).toBe(true);
+    // …AND the topic doc now surfaces (the broadened filter admits it).
+    expect(existsSync(safePath(workDir, ".learned-skills", "topic-cluster-x", "SKILL.md"))).toBe(true);
+  });
+
+  it("a kind:'topic' doc IS in the surfaced (cached) set the seam renders; a kind:'profile' doc is NOT", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "alpha", kind: "skill" }),
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    const surfaced = await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(surfaced.some((s) => s.name === "alpha")).toBe(true);
+    expect(surfaced.some((s) => s.kind === "topic")).toBe(true);
+    // The profile doc stays excluded (no double-surface — the Plan-02 guard holds).
+    expect(surfaced.some((s) => s.kind === "profile")).toBe(false);
+  });
+
+  it("a kind:'profile' doc is STILL NOT materialized into .learned-skills (regression of the Plan-02 guard)", async () => {
+    const { store } = makeKindAwareStore([
+      learned({ name: "topic-cluster-x", id: "id-topic", kind: "topic" }),
+      learned({ name: "profile-user-u", id: "id-profile", kind: "profile" }),
+    ]);
+    await refreshLearnedSkillSurface({ learnedSkillStore: store, scope, workspaceDir: workDir, logger: noopLogger });
+
+    expect(existsSync(safePath(workDir, ".learned-skills", "topic-cluster-x", "SKILL.md"))).toBe(true);
+    expect(existsSync(safePath(workDir, ".learned-skills", "profile-user-u", "SKILL.md"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WR-01: createRefreshableLearnedSkillSurface — a re-refresh after a promote
 // picks up the newly-active skill on the NEXT listing (SURFACE-03: it updates
 // cache.current; the next freeze reads it). Without the re-refresh the boot
@@ -349,7 +528,7 @@ describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a prom
   it("a promote (list() now returns the skill active) surfaces it on a subsequent refresh()", async () => {
     // list() starts empty, then returns the skill ACTIVE after a 'promote' — the
     // re-refresh picks up the new surfaceable set (SURFACE-03 next-session pickup).
-    let listed: LearnedSkill[] = [];
+    let listed: MentalModel[] = [];
     const store = {
       admit: async () => ok({ id: "x", admitted: true }),
       get: async () => ok(undefined),
@@ -359,7 +538,7 @@ describe("WR-01: createRefreshableLearnedSkillSurface re-refresh picks up a prom
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
 
     const reg = makeRegistryForSurface();
     const { cache, refresh } = createRefreshableLearnedSkillSurface({
@@ -438,7 +617,7 @@ describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface wor
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
     const registry = createLearnedSkillSurfaceRegistry();
 
     const cache = wireAgentLearnedSkillSurface({
@@ -475,7 +654,7 @@ describe("wireAgentLearnedSkillSurface — WR-03 default-off does no surface wor
       promoteByName: async () => ok({ changed: true }),
       demoteByName: async () => ok({ changed: true }),
       evict: async () => ok(undefined),
-    } as unknown as LearnedSkillStorePort;
+    } as unknown as MentalModelStorePort;
     const registry = createLearnedSkillSurfaceRegistry();
 
     const cache = wireAgentLearnedSkillSurface({

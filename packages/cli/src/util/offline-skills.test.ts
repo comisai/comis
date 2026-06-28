@@ -2,7 +2,7 @@
 /**
  * OBS-02 (Phase 201, P2 skills shadow): tests for the OFFLINE learned-skill
  * funnel reader behind `comis memory skills`. Drives the PRODUCTION write path
- * (`createSqliteLearnedSkillStore.admit` + `promote`/`demote`/`evict`) into a
+ * (`createSqliteMentalModelStore.admit` + `promote`/`demote`/`evict`) into a
  * temp `memory.db`, then asserts the counts-only admission funnel — the per-state
  * roll-up + the per-skill `{ name, state, proofCount, confidence, mutating }`
  * (IDS/COUNTS ONLY) — including the content-free guarantee (no body/script ever
@@ -16,8 +16,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createSqliteLearnedSkillStore, openSqliteDatabase, initSchema } from "@comis/memory";
-import type { AdmitSkillInput, LearningScope } from "@comis/core";
+import { createSqliteMentalModelStore, openSqliteDatabase, initSchema } from "@comis/memory";
+import type { AdmitMentalModelInput, LearningScope } from "@comis/core";
 import { readSkillStatsOffline } from "./offline-skills.js";
 
 const tmpDirs: string[] = [];
@@ -32,7 +32,7 @@ afterEach(() => {
 
 const SCOPE: LearningScope = { tenantId: "default", agentId: "alice", now: 1_000 };
 
-function admission(over: Partial<AdmitSkillInput>): AdmitSkillInput {
+function admission(over: Partial<AdmitMentalModelInput>): AdmitMentalModelInput {
   return {
     name: "skill_a",
     description: "does a thing",
@@ -49,14 +49,14 @@ function admission(over: Partial<AdmitSkillInput>): AdmitSkillInput {
 /** Admit the rows; optionally transition each to a non-candidate state. */
 async function seed(
   dataDir: string,
-  rows: Array<{ input: Partial<AdmitSkillInput>; to?: "active" | "stale" | "archived"; scope?: LearningScope }>,
+  rows: Array<{ input: Partial<AdmitMentalModelInput>; to?: "active" | "stale" | "archived"; scope?: LearningScope }>,
 ): Promise<void> {
   const db = openSqliteDatabase({
     dbPath: path.join(dataDir, "memory.db"),
     initSchema: (d) => void initSchema(d, 384),
   });
   try {
-    const store = createSqliteLearnedSkillStore({ db });
+    const store = createSqliteMentalModelStore({ db });
     for (const r of rows) {
       const scope = r.scope ?? SCOPE;
       const admitR = await store.admit(admission(r.input), scope);
@@ -77,13 +77,13 @@ describe("readSkillStatsOffline", () => {
     expect(readSkillStatsOffline(tmpDataDir())).toBeUndefined();
   });
 
-  it("returns undefined when memory.db exists but has no learned_skills table", () => {
+  it("returns undefined when memory.db exists but has no mental_models table", () => {
     const dir = tmpDataDir();
     fs.writeFileSync(path.join(dir, "memory.db"), "", "utf-8");
     expect(readSkillStatsOffline(dir)).toBeUndefined();
   });
 
-  it("returns undefined when the learned_skills table exists but is empty", async () => {
+  it("returns undefined when the mental_models table exists but is empty", async () => {
     const dir = tmpDataDir();
     await seed(dir, []); // initSchema creates the (empty) table
     expect(readSkillStatsOffline(dir)).toBeUndefined();

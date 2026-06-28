@@ -1043,3 +1043,113 @@ describe("buildFindings — SPEND-05 config_posture:pricing_gap finding (standin
     expect(idxGap).toBeLessThan(idxChimera);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-3b (hindsight-reflection-20260626): the learning_health finding — the
+// reflection funnel rolled up over the window (daemon-wide "is learning admitting").
+// ---------------------------------------------------------------------------
+
+describe("buildFindings — OBS-3b learning_health (reflection funnel rollup)", () => {
+  function learningHealthRow(
+    ts: number,
+    fields: { admissionOutcome: string; admitted?: number; untrustedDrops?: number },
+  ): DiagnosticRow {
+    return {
+      timestamp: ts,
+      category: "learning_health",
+      severity: "info",
+      agentId: "default",
+      message: "reflect:funnel",
+      details: JSON.stringify({
+        signal: "reflect_funnel",
+        admissionOutcome: fields.admissionOutcome,
+        admitted: fields.admitted ?? 0,
+        untrustedDrops: fields.untrustedDrops ?? 0,
+        sourceTrajectoryCount: 0,
+        totalSourceChars: 0,
+      }),
+    };
+  }
+
+  it("emits a learning_health finding: run count + LATEST outcome + summed admitted/untrustedDrops", () => {
+    const older = learningHealthRow(1_000, { admissionOutcome: "uncorroborated", admitted: 0 });
+    const newer = learningHealthRow(5_000, { admissionOutcome: "admitted", admitted: 1 });
+    // newer FIRST → a latest-row scan (max timestamp), not insertion order.
+    const findings = buildFindings([], [], [], [newer, older]);
+    const lh = findings.filter((f) => f.code === "learning_health");
+    expect(lh).toHaveLength(1);
+    expect(lh[0]!.count).toBe(2); // 2 reflection runs in the window
+    expect(lh[0]!.detail).toContain("latest outcome=admitted"); // the ts-5000 row wins
+    expect(lh[0]!.detail).toContain("admitted=1");
+  });
+
+  it("surfaces untrusted_origin magnitude (summed) + folds an off-vocabulary outcome to unknown (digest-only)", () => {
+    const rows: DiagnosticRow[] = [
+      learningHealthRow(2_000, { admissionOutcome: "untrusted_origin", untrustedDrops: 2 }),
+      {
+        timestamp: 3_000, category: "learning_health", severity: "info", message: "reflect:funnel",
+        details: JSON.stringify({ admissionOutcome: "BOGUS_NOT_IN_ENUM", admitted: 0, untrustedDrops: 0 }),
+      },
+    ];
+    const lh = buildFindings([], [], [], rows).filter((f) => f.code === "learning_health");
+    expect(lh).toHaveLength(1);
+    expect(lh[0]!.detail).toContain("untrustedDrops=2");
+    expect(lh[0]!.detail).toContain("latest outcome=unknown"); // off-vocabulary → unknown, never echoed
+  });
+
+  it("no learning_health finding when there are no reflection rows (back-compat with pre-OBS-3b callers)", () => {
+    expect(buildFindings([], [], []).some((f) => f.code === "learning_health")).toBe(false);
+  });
+
+  it("never echoes a doc body even if one is smuggled into details (content-free / H1)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "learning_health", severity: "info", message: "reflect:funnel",
+      details: JSON.stringify({ admissionOutcome: "admitted", admitted: 1, body: "## the reflected procedure\nrm -rf /" }),
+    };
+    const lh = buildFindings([], [], [], [row]).filter((f) => f.code === "learning_health");
+    expect(JSON.stringify(lh)).not.toContain("rm -rf");
+    expect(JSON.stringify(lh)).not.toContain("procedure");
+  });
+});
+
+describe("buildFindings — OBS-2b memory_lifecycle (forget sweep rollup)", () => {
+  function lifecycleRow(ts: number, fields: { evicted?: number; demoted?: number }): DiagnosticRow {
+    return {
+      timestamp: ts,
+      category: "memory_lifecycle",
+      severity: "info",
+      agentId: "default",
+      message: "learning:lifecycle_swept",
+      details: JSON.stringify({
+        signal: "lifecycle_sweep",
+        scanned: 6,
+        promoted: 0,
+        demoted: fields.demoted ?? 0,
+        evicted: fields.evicted ?? 0,
+      }),
+    };
+  }
+
+  it("emits a memory_lifecycle finding: sweep count + summed evicted/demoted", () => {
+    const findings = buildFindings([], [], [], [], [lifecycleRow(1_000, { evicted: 1, demoted: 0 }), lifecycleRow(2_000, { evicted: 2, demoted: 1 })]);
+    const ml = findings.filter((f) => f.code === "memory_lifecycle");
+    expect(ml).toHaveLength(1);
+    expect(ml[0]!.count).toBe(2); // 2 sweeps in the window
+    expect(ml[0]!.detail).toContain("evicted=3"); // 1 + 2
+    expect(ml[0]!.detail).toContain("demoted=1");
+  });
+
+  it("no memory_lifecycle finding when there are no sweep rows (back-compat with pre-OBS-2b callers)", () => {
+    expect(buildFindings([], [], [], []).some((f) => f.code === "memory_lifecycle")).toBe(false);
+  });
+
+  it("never echoes a memory body even if smuggled into details (content-free / H1)", () => {
+    const row: DiagnosticRow = {
+      timestamp: 1, category: "memory_lifecycle", severity: "info", message: "learning:lifecycle_swept",
+      details: JSON.stringify({ evicted: 1, body: "the secret memory content", id: "memory-deadbeef" }),
+    };
+    const ml = buildFindings([], [], [], [], [row]).filter((f) => f.code === "memory_lifecycle");
+    expect(JSON.stringify(ml)).not.toContain("secret memory content");
+    expect(JSON.stringify(ml)).not.toContain("deadbeef");
+  });
+});

@@ -10,28 +10,27 @@
  *
  *   (a) V1 OPT-OUT posture — the capability is in {@link V1_OPT_OUT_CAPABILITIES}.
  *       This is the product decision: ship the memory stack
- *       opt-OUT, so the eight non-privacy capabilities default ON. This path
+ *       opt-OUT, so the non-privacy capabilities default ON. This path
  *       SUPERSEDES the original measured-lift-to-activate premise for those
  *       capabilities (the schema defaults themselves flipped ON — see
  *       `schema-agent-prompt.ts` for the $0 recall toggles and
  *       `schema-agent-runtime.ts` for the cost-bearing subtrees). The
- *       cost-bearing ones (USER / REASON / DIALECTIC, plus LEARN-RANK's offline
- *       bandit) are additionally gated by the master cost-feature kill switch
- *       (`memory.costFeatures.enabled`) at their daemon registration sites — the
+ *       cost-bearing ones (DIALECTIC) are additionally gated by the master
+ *       cost-feature kill switch at their daemon registration sites — the
  *       kill switch beats this default-ON.
  *   (b) MEASURED-LIFT gate — a RECORDED decision in {@link ACTIVATED_CAPABILITIES}
  *       that references a committed measured-lift manifest AND a measured positive delta
- *       (the "nothing flips on faith" rule). This path remains for any capability
- *       NOT in the opt-out set (today: SOCIAL).
+ *       (the "nothing flips on faith" rule). This path is now empty (every registered
+ *       capability is in the opt-out set); it remains as an ahead-of-need mechanism.
  *
  * In BOTH paths the FROZEN safety invariant holds: a capability whose
  * `configPath` is a {@link FROZEN_TRUST_PATHS} path can NEVER resolve ON — no
  * activation may move `trustAlpha` or the trust filter (`includeTrustLevels`),
  * ever. Trust stays frozen throughout.
  *
- * SOCIAL stays OFF: it is NOT in the opt-out set (it carries a privacy/consent
- * gate, `privacyReviewSignedOffBy`) and has no recorded measured-lift decision,
- * so it resolves OFF — the operator opts in explicitly via config + sign-off.
+ * (The SOCIAL directional-relationship capability — the only OFF, privacy-gated
+ * member — was removed with the social-modeling subsystem in Phase 226 SIMPLIFY-03.
+ * No member is OFF anymore.)
  *
  * REVERSIBILITY + OVERRIDE: this framework only resolves the *effective default*.
  * The per-agent config knobs (each `*.enabled` / `rag.*` toggle) remain the
@@ -49,19 +48,15 @@
  * @module
  */
 
-/** Stable identifier for each default-OFF capability. Closed union. */
+/** Stable identifier for each capability. Closed union. */
 export type CapabilityId =
-  | "user" // USER per-user representation
-  | "social" // SOCIAL directional relationship model
   | "dialectic" // memory_ask grounded-Q&A tool
-  | "reason" // offline deductive/inductive reasoning
   | "feed" // recall-utility feedback loop
-  | "learnRank" // learning-to-rank recall-side apply gate
   | "learnIq" // LLM-free intent-reweight query understanding
   | "kg" // graph-spread recall lane
   | "forget"; // FadeMem per-type decay recall gate
 
-/** One capability: where its default-OFF knob lives + how it activates. */
+/** One capability: where its master knob lives + how it activates. */
 export interface CapabilityDescriptor {
   /** Stable id (closed union member). */
   readonly id: CapabilityId;
@@ -70,39 +65,25 @@ export interface CapabilityDescriptor {
   /**
    * Dotted per-agent config path of the capability's master ON/OFF knob,
    * relative to a parsed `PerAgentConfig` (e.g. "rag.forget.enabled",
-   * "socialModeling.enabled"). The as-shipped value at this path is OFF
-   * (an absent optional subtree ⇒ undefined ⇒ OFF, or an explicit `false`).
+   * "dialectic.enabled"). All five resolve ON via the V1 opt-out posture.
    */
   readonly configPath: string;
-  /**
-   * EXTRA operator gate beyond the measured-lift gate, when the capability has
-   * one. SOCIAL carries a recorded
-   * `privacyReviewSignedOffBy` sign-off — even a measured winner would not flip
-   * SOCIAL on without it. Absent for every other capability.
-   */
-  readonly operatorGatePath?: string;
 }
 
 /**
- * The 9 default-OFF capabilities. Each names the real config path of its
- * master toggle; the activation framework resolves each one's effective default.
+ * The five capabilities. Each names the real config path of its master toggle;
+ * the activation framework resolves each one's effective default. All five are in
+ * the V1 opt-out set, so each resolves ON (subject to the frozen-trust invariant).
  *
- * SOCIAL additionally carries `operatorGatePath` — the recorded
- * privacy-review sign-off, an operator gate orthogonal to (and additional to)
- * the measured-lift gate.
+ * (The SOCIAL directional-relationship capability — the only OFF, privacy-gated
+ * member — was removed when the social-modeling subsystem was deleted in Phase 226
+ * SIMPLIFY-03. Its `operatorGatePath` was the sole consumer of that field, so the
+ * field was dropped too. No member is OFF anymore; the measured-lift path stays as
+ * an empty, ahead-of-need mechanism.)
  */
 export const V2_9_CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze([
-  { id: "user", label: "Per-user representation", configPath: "memoryUserRepresentation.enabled" },
-  {
-    id: "social",
-    label: "Directional relationship model",
-    configPath: "socialModeling.enabled",
-    operatorGatePath: "socialModeling.privacyReviewSignedOffBy",
-  },
   { id: "dialectic", label: "memory_ask grounded Q&A", configPath: "dialectic.enabled" },
-  { id: "reason", label: "Offline reasoning", configPath: "memoryReasoning.enabled" },
   { id: "feed", label: "Recall-utility feedback loop", configPath: "rag.feedback.enabled" },
-  { id: "learnRank", label: "Learning-to-rank recall apply", configPath: "rag.onlineTuning.enabled" },
   {
     id: "learnIq",
     label: "Intent-reweight query understanding",
@@ -147,30 +128,31 @@ export interface ActivationDecision {
 
 /**
  * The measured-winner activation set. **EMPTY** — the measured-lift evaluation found no
- * capability meeting the measured-lift-with-no-regression bar. This path now only
- * governs capabilities NOT in {@link V1_OPT_OUT_CAPABILITIES} (today: SOCIAL); the
- * eight opt-out capabilities flip ON via the v1 opt-out posture instead. When a
- * future costed run produces a measured winner for SOCIAL (post privacy sign-off),
- * add its recorded {@link ActivationDecision} here (and only here).
+ * capability meeting the measured-lift-with-no-regression bar, AND every registered
+ * capability is now in {@link V1_OPT_OUT_CAPABILITIES} (the only non-opt-out member,
+ * SOCIAL, was removed with the social-modeling subsystem in Phase 226). The opt-out
+ * capabilities flip ON via the v1 opt-out posture. This path remains as an ahead-of-need
+ * mechanism: a future non-opt-out capability with a recorded {@link ActivationDecision}
+ * (and a measured positive delta) would be added here (and only here).
  */
 export const ACTIVATED_CAPABILITIES: readonly ActivationDecision[] = Object.freeze([]);
 
 /**
- * The V1 OPT-OUT capability set. These eight capabilities ship
+ * The V1 OPT-OUT capability set. These five capabilities ship
  * default-ON because the product decision is an opt-OUT memory posture — their
  * schema defaults flipped false→true in `schema-agent-prompt.ts` (the $0 recall
- * toggles: KG / LEARN-IQ / FORGET / FEED / LEARN-RANK apply-gate) and
- * `schema-agent-runtime.ts` (the cost-bearing subtrees: USER / REASON / DIALECTIC,
- * plus LEARN-RANK's offline bandit). This set supersedes the original
+ * toggles: KG / LEARN-IQ / FORGET / FEED) and `schema-agent-runtime.ts` (the
+ * cost-bearing subtree: DIALECTIC). This set supersedes the original
  * measured-lift-to-activate premise FOR THESE CAPABILITIES — the resolver returns
- * ON for any member (subject only to the frozen-trust invariant).
+ * ON for any member (subject only to the frozen-trust invariant). It is now the
+ * FULL registered set (every capability resolves ON).
  *
- * SOCIAL is DELIBERATELY ABSENT: it carries a privacy/consent gate
- * (`privacyReviewSignedOffBy`) and stays OFF, opt-IN only. Adding a member here
+ * (SOCIAL — the only privacy-gated, opt-IN member — was removed with the
+ * social-modeling subsystem in Phase 226 SIMPLIFY-03.) Adding a member here
  * flips its default ON; removing one reverts it. No back-compat shim, no migration.
  */
 export const V1_OPT_OUT_CAPABILITIES: ReadonlySet<CapabilityId> = Object.freeze(
-  new Set<CapabilityId>(["user", "dialectic", "reason", "feed", "learnRank", "learnIq", "kg", "forget"]),
+  new Set<CapabilityId>(["dialectic", "feed", "learnIq", "kg", "forget"]),
 );
 
 /** How a capability's effective default resolved ON (audit-traceable). */

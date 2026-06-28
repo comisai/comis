@@ -43,6 +43,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import { randomUUID } from "node:crypto";
 import {
   generateStrongToken,
@@ -255,7 +256,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for token listing");
+        throw new AuthorizationError("Admin access required for token listing");
       }
 
       // Strip dispatcher-injected _X internals BEFORE contract parse.
@@ -291,7 +292,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for token creation");
+        throw new AuthorizationError("Admin access required for token creation");
       }
 
       // Bespoke pre-Zod scope guard — produces the legacy "Missing or
@@ -384,7 +385,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for token revocation");
+        throw new AuthorizationError("Admin access required for token revocation");
       }
 
       // Bespoke pre-Zod id guard — produces the legacy "Missing required
@@ -450,7 +451,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // Admin trust check FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for token rotation");
+        throw new AuthorizationError("Admin access required for token rotation");
       }
 
       // Bespoke pre-Zod id guard — same UX as tokens.revoke.

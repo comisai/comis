@@ -26,6 +26,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import * as fs from "node:fs";
 
 import {
@@ -115,7 +116,7 @@ export function bindConfigAuditHandlers(
     // -----------------------------------------------------------------------
     [ConfigAuditListContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ConfigAuditListContract.request.parse(userParams);
@@ -167,7 +168,7 @@ export function bindConfigAuditHandlers(
     // -----------------------------------------------------------------------
     [ConfigAuditScrubContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ConfigAuditScrubContract.request.parse(userParams);

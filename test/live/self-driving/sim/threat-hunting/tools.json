@@ -1,0 +1,90 @@
+{
+  "server": "th-sim",
+  "title": "Threat-Hunting Console (simulated SOC)",
+  "tools": [
+    {
+      "name": "list_open_alerts",
+      "kind": "observe",
+      "terminal": false,
+      "description": "List the open alerts in the SOC queue (may include benign/decoy alerts).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "query_telemetry",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Search raw telemetry events (process/auth/dns/netflow). `filter` matches any field substring; optional `window`.",
+      "inputSchema": { "type": "object", "properties": { "filter": { "type": "string" }, "window": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "lookup_host",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return facts about a host (owner, role, notes).",
+      "inputSchema": { "type": "object", "properties": { "host": { "type": "string" } }, "required": ["host"] }
+    },
+    {
+      "name": "lookup_account",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return facts about an account (privilege level, normal working hours).",
+      "inputSchema": { "type": "object", "properties": { "account": { "type": "string" } }, "required": ["account"] }
+    },
+    {
+      "name": "check_ioc",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Look up reputation for an indicator (hash/IP/domain). Indicator reputation is volatile and not authoritative.",
+      "inputSchema": { "type": "object", "properties": { "indicator": { "type": "string" } }, "required": ["indicator"] }
+    },
+    {
+      "name": "get_baseline",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the known-normal activity pattern for an entity (the established baseline).",
+      "inputSchema": { "type": "object", "properties": { "entity": { "type": "string" } }, "required": ["entity"] }
+    },
+    {
+      "name": "timeline",
+      "kind": "observe",
+      "terminal": false,
+      "description": "Return the ordered activity timeline for one entity (host or account).",
+      "inputSchema": { "type": "object", "properties": { "entity": { "type": "string" }, "window": { "type": "string" } }, "required": ["entity"] }
+    },
+    {
+      "name": "open_investigation",
+      "kind": "act",
+      "terminal": false,
+      "description": "Open an investigation case. Returns a case id used by later actions.",
+      "inputSchema": { "type": "object", "properties": { "summary": { "type": "string" } }, "required": [] }
+    },
+    {
+      "name": "raise_finding",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record a finding on a case: the entity involved, the TTP you believe is in play, and your confidence (0-1).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "entity": { "type": "string" }, "ttp": { "type": "string" }, "confidence": { "type": "number" } }, "required": ["entity", "ttp"] }
+    },
+    {
+      "name": "contain_host",
+      "kind": "act",
+      "terminal": false,
+      "description": "Isolate a host from the network. This has real business cost if the host is benign.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "host": { "type": "string" }, "reason": { "type": "string" } }, "required": ["host"] }
+    },
+    {
+      "name": "escalate",
+      "kind": "act",
+      "terminal": false,
+      "description": "Escalate the case to a higher tier (tier1/tier2/IR).",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "tier": { "type": "string" } }, "required": ["tier"] }
+    },
+    {
+      "name": "close_case",
+      "kind": "act",
+      "terminal": true,
+      "description": "Close the investigation with your verdict. Returns the graded outcome.",
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" }, "verdict": { "type": "string" } }, "required": ["verdict"] }
+    }
+  ]
+}

@@ -30,7 +30,7 @@ describe("LearningOutcomeConfigSchema — per-agent outcome-signal config (defau
     // judge now defaults ON (opt-out) — the conversational-turn fallback source.
     expect(cfg.judge.enabled).toBe(true);
     expect(cfg.minConfidenceToLearn).toBe(0.6);
-    expect(cfg.retentionDays).toBe(30);
+    expect(cfg.retentionDays).toBe(90); // best-out-of-box: larger outcome corpus for reflection (was 30)
     expect(cfg.reactionMap.success).toEqual(["👍", "✅"]);
     expect(cfg.reactionMap.failure).toEqual(["👎", "❌"]);
   });

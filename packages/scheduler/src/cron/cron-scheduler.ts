@@ -113,7 +113,17 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
         job.consecutiveErrors = 0;
         job.lastRunAtMs = endTime;
         job.nextRunAtMs = computeNextRunAtMs(job.schedule, endTime);
-        logger.info({ jobName: job.name, jobId: job.id, durationMs }, "Job completed");
+        // OBS-8 (reflect-obs-20260627): a system_event payload is FIRE-AND-FORGET — executeJob
+        // dispatches the event and returns in ms while the real work (e.g. the ~20s __REFLECT__
+        // run) proceeds async. Logging "Job completed durationMs:15" reads as "finished in 15ms"
+        // and a completion-grep false-matches the dispatch. So distinguish the dispatch: the work's
+        // own completion is its own signal (e.g. reflect:funnel → cron.runs). An agent_turn is
+        // awaited, so "Job completed" with the real durationMs is accurate there.
+        const fireAndForget = job.payload?.kind === "system_event";
+        logger.info(
+          { jobName: job.name, jobId: job.id, durationMs, ...(fireAndForget ? { dispatch: true } : {}) },
+          fireAndForget ? "Job dispatched (fire-and-forget)" : "Job completed",
+        );
       } else {
         job.consecutiveErrors = (job.consecutiveErrors ?? 0) + 1;
         job.lastRunAtMs = endTime;

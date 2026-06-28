@@ -96,7 +96,8 @@ describe("Embedding pipeline integration", () => {
 
     // Create adapter with embedding port
     const adapter = new SqliteMemoryAdapter(
-      { dbPath: ":memory:", walMode: false, embeddingDimensions: DIMS } as any,
+      // Phase 226: embeddingDimensions nests under memory.recall (design §5).
+      { dbPath: ":memory:", walMode: false, recall: { embeddingDimensions: DIMS } } as any,
       mockPort,
     );
 
@@ -239,7 +240,8 @@ describe("Embedding pipeline integration", () => {
   it("graceful degradation: no embedding port uses FTS5 only", async () => {
     // Create SqliteMemoryAdapter WITHOUT embedding port
     const adapter = new SqliteMemoryAdapter(
-      { dbPath: ":memory:", walMode: false, embeddingDimensions: DIMS } as any,
+      // Phase 226: embeddingDimensions nests under memory.recall (design §5).
+      { dbPath: ":memory:", walMode: false, recall: { embeddingDimensions: DIMS } } as any,
     );
     const adapterDb = adapter.getDb();
 

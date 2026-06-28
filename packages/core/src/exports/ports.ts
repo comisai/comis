@@ -39,24 +39,9 @@ export type {
   TripleScope,
   TripleTrust,
   TripleInput,
-  UserRepresentationStore,
-  UserRepresentationScope,
-  UserRepresentationTrust,
-  UserRepresentationEntry,
-  UserRepresentationInput,
-  ReviseOutcome,
-  TunedAlphaStore,
-  TunedAlphaScope,
-  TunedAlphaVector,
   MemoryLifecyclePort,
   MemoryLifecycleScope,
-  MemoryTier,
   LifecycleSweepReport,
-  RelationshipStore,
-  RelationshipScope,
-  RelationshipTrust,
-  RelationshipEntry,
-  RelationshipInput,
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,
@@ -65,20 +50,13 @@ export type {
   OutcomeObservation,
   ResolvedOutcome,
   OutcomePruneResult,
-  SkillSynthesisPort,
-  SynthesisInput,
-  CandidateSkill,
-  SkillValidationPort,
-  SkillValidationResult,
-  SkillValidationFinding,
-  ReplayContext,
-  LearnedSkillStorePort,
-  LearnedSkill,
-  AdmitSkillInput,
+  MentalModelStorePort,
+  MentalModel,
+  AdmitMentalModelInput,
+  DocSection,
+  StructuredBody,
+  DeltaOp,
   MemoryConsolidationStore,
-  ConsolidationCandidate,
-  ConsolidationPlan,
-  ConsolidationFoldPlan,
   SessionStorePort,
   SessionData,
   SessionListEntry,
@@ -194,3 +172,10 @@ export type {
 // Phase 128 ingest consume. The port + DTO TYPES are in the export-type block
 // above; these two functions are the value seam.
 export { messageToParts, partsToMessage } from "../context-store/index.js";
+
+// Reflection delta-ops (v2.31 Phase 223). Runtime VALUES (not types) — the pure
+// `applyDeltaOps` (byte-stable section refresh, REFLECT-04) + `renderStructuredBody`
+// (AST → markdown) the agent reflection job (Plan 04) consumes. They live in the
+// non-ports home module (`core/src/ports/*.ts` is type-only); the DeltaOp /
+// DocSection / StructuredBody TYPES are in the export-type block above.
+export { applyDeltaOps, renderStructuredBody } from "../reflection/delta-ops.js";

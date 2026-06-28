@@ -27,8 +27,67 @@ import {
   resolveHeartbeatSessionKey,
   type CronScheduler,
   type SystemEventQueue,
+  type ExecutionTracker,
 } from "@comis/scheduler";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+
+/**
+ * OBS-2/6b (hindsight-reflection-20260626): record a completed `__REFLECT__` run to the firing
+ * agent's execution tracker, so `cron.runs jobName "Reflection"` surfaces the reflection funnel
+ * VERDICT (the admissionOutcome + counts) AND the run is POLLABLE — instead of a daemon.log grep.
+ *
+ * WHY here (not the cron executeJob path): the reflect sentinel is a fire-and-forget `system_event`,
+ * so executeJob cannot await the ~22s reflection to record its result. Instead we fold the per-run
+ * record off the content-free `reflect:funnel` event (OBS-1 put the full funnel on it). `jobId` mirrors
+ * the reflect cron's id (`reflect-<agentId>`) so `resolveJobByName(scheduler,"Reflection")` resolves to
+ * this history. Content-free: the summary is the closed admissionOutcome enum + counts ONLY (INV-6 —
+ * never a doc body). `durationMs` is 0 (the event carries no duration; the verdict + ts are the value).
+ */
+export async function recordReflectFunnelRun(
+  tracker: ExecutionTracker | undefined,
+  funnel: {
+    agentId: string;
+    admissionOutcome: string;
+    admitted: number;
+    maxClusterCardinality: number;
+    distinctTopicKeys: number;
+    untrustedDrops: number;
+    sourceTrajectoryCount: number;
+    totalSourceChars: number;
+  },
+  nowMs: number,
+): Promise<void> {
+  if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
+  // OBS-7: `topics=N` (distinctTopicKeys) + maxCard makes under-merge readable on `cron.runs`:
+  // admitted=0 with topics>1 & maxCard=1 = successes that didn't merge (vs topics=1 maxCard>=2 = corroborated).
+  const summary =
+    `reflect: outcome=${funnel.admissionOutcome} admitted=${funnel.admitted}` +
+    ` maxCard=${funnel.maxClusterCardinality} topics=${funnel.distinctTopicKeys} untrustedDrops=${funnel.untrustedDrops}` +
+    ` src=${funnel.sourceTrajectoryCount}traj/${funnel.totalSourceChars}ch`;
+  await tracker.record({ ts: nowMs, jobId: `reflect-${funnel.agentId}`, status: "ok", durationMs: 0, summary });
+}
+
+/**
+ * OBS-2b (reflect-obs-20260627): record a completed `__MEMORY_LIFECYCLE__` sweep to the firing agent's
+ * execution tracker, so `cron.runs jobName "Memory lifecycle"` surfaces the sweep result (scanned/
+ * evicted/demoted/promoted) — instead of a `db.mjs` `evicted_at` poll. The parity recorder for the
+ * forget half of learning (reflection has recordReflectFunnelRun). `jobId` mirrors the lifecycle cron's
+ * id (`memory-lifecycle-<agentId>`) so `resolveJobByName(scheduler,"Memory lifecycle")` resolves to this
+ * history. Content-free: counts ONLY (INV-6). Recorded off the content-free `learning:lifecycle_swept`
+ * event (the sentinel is fire-and-forget, so executeJob can't await the sweep). `durationMs` is 0 (the
+ * event carries no duration; the counts + ts are the value).
+ */
+export async function recordLifecycleRun(
+  tracker: ExecutionTracker | undefined,
+  swept: { agentId: string; scanned: number; promoted: number; demoted: number; evicted: number },
+  nowMs: number,
+): Promise<void> {
+  if (tracker === undefined) return; // unknown/unregistered agent → no-op (never throws)
+  const summary =
+    `lifecycle: scanned=${swept.scanned} evicted=${swept.evicted}` +
+    ` demoted=${swept.demoted} promoted=${swept.promoted}`;
+  await tracker.record({ ts: nowMs, jobId: `memory-lifecycle-${swept.agentId}`, status: "ok", durationMs: 0, summary });
+}
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import * as fs from "node:fs/promises";
 import { emitMemoryCostFeatureNotice } from "./setup-memory-cost-notice.js";
@@ -101,16 +160,15 @@ export async function setupSchedulers(deps: {
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
-  // Master cost-feature kill switch (opt-out posture). When the operator sets
-  // memory.costFeatures.enabled:false, EVERY LLM cost-bearing memory cron is force-disabled at
-  // its registration site below — regardless of the agent's own per-feature opt-in. The gated
-  // set is the SIX cost crons: memoryReview, memoryConsolidation, memoryReasoning,
-  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. NOT gated: the $0
-  // keyless memoryLifecycle sweep, and the socialModeling cron (which has its OWN privacy
-  // sign-off gate and stays independent). Default true (schema default) ⇒ byte-identical
-  // registration. Read defensively (`!== false`) so an unexpectedly-absent block fails OPEN to
-  // the prior behavior rather than silently disabling features.
-  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  // Master cost-feature kill switch (opt-out posture; renamed from memory.costFeatures.enabled to
+  // memory.enabled in Phase 226). When the operator sets memory.enabled:false, EVERY LLM
+  // cost-bearing memory cron is force-disabled at its registration site below — regardless of the
+  // agent's own per-feature opt-in. The gated set: memoryReview, memoryUsefulnessJudge, the
+  // __REFLECT__ reflection cron. NOT gated: the $0 keyless memoryLifecycle sweep. (The
+  // socialModeling cron was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem.)
+  // Default true (schema default) ⇒ byte-identical registration. Read defensively (`!== false`) so an
+  // unexpectedly-absent block fails OPEN to the prior behavior rather than silently disabling features.
+  const costFeaturesEnabled = container.config.memory?.enabled !== false;
 
   /** Resolve the formatted session key for an agent's main heartbeat session. */
   function resolveMainSessionKey(agentId: string): string {
@@ -183,8 +241,8 @@ export async function setupSchedulers(deps: {
           if (!job.deliveryTarget) {
             // system_event jobs STILL emit scheduler:job_result (live finding
             // 2026-06-11): the memory crons (review / consolidation /
-            // reasoning / user-representation / usefulness-judge /
-            // online-tuning) are deliveryTarget-less __SENTINEL__ jobs whose
+            // reasoning / user-representation / usefulness-judge) are
+            // deliveryTarget-less __SENTINEL__ jobs whose
             // actual WORK rides the scheduler:job_result listener
             // (setup-channels-credentials). The old return-before-emit made
             // every memory cron complete "ok" nightly while doing NOTHING.
@@ -382,212 +440,37 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory consolidation cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
-    // Registered ONLY when the operator sets memoryConsolidation.enabled; a default
-    // agent registers NO job. Default schedule 30 3 * * * runs AFTER the
-    // memory-review's 0 2 so review-minted memories are consolidation candidates the
-    // same night. Job options mirror the review job 1:1 (isolated / next-heartbeat /
-    // no forward-to-main / fresh session); the __MEMORY_CONSOLIDATION__ sentinel is
-    // intercepted in setup-channels-credentials → runMemoryConsolidation.
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryConsolidationConfig = agentConfig.memoryConsolidation;
-    if (costFeaturesEnabled && memoryConsolidationConfig?.enabled) {
-      const memConsolidationJobId = `memory-consolidation-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memConsolidationJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memConsolidationJobId,
-          name: "Memory consolidation",
-          agentId,
-          schedule: { kind: "cron", expr: memoryConsolidationConfig.schedule ?? "30 3 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_CONSOLIDATION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryConsolidationConfig.schedule ?? "30 3 * * *" }, "Registered memory consolidation cron job");
-      }
-    }
+    // -- (Phase 225 FOLD §3.2) The standalone __MEMORY_CONSOLIDATION__ / __MEMORY_REASONING__ /
+    //    __USER_REPRESENTATION__ cron registrations were REMOVED here: their work folds into the
+    //    ONE __REFLECT__ cron (which now reflects skill + profile + topic in one pass, Plan 04). The
+    //    I1 model — the old crons are GONE, not run in parallel. (Their now-dead job BODIES are
+    //    deleted in Plan 05; this plan removes the registrations + the sentinel intercepts so they
+    //    never fire.) __SOCIAL_MODELING__ was DELETED in Phase 226-04 (the block below).
 
-    // -- Memory reasoning cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
-    // Registered ONLY when the operator sets memoryReasoning.enabled; a default agent
-    // registers NO job → byte-identical behavior with the config absent.
-    // Default schedule 0 4 * * * runs AFTER consolidation's 30 3 so reasoning works
-    // over freshly-consolidated observations the same night. Job options mirror the
-    // consolidation job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh
-    // session); the __MEMORY_REASONING__ sentinel is intercepted in
-    // setup-channels-credentials → runMemoryReasoning (both stores + the reason seam).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryReasoningConfig = agentConfig.memoryReasoning;
-    if (costFeaturesEnabled && memoryReasoningConfig?.enabled) {
-      const memReasoningJobId = `memory-reasoning-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memReasoningJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memReasoningJobId,
-          name: "Memory reasoning",
-          agentId,
-          schedule: { kind: "cron", expr: memoryReasoningConfig.schedule ?? "0 4 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_REASONING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryReasoningConfig.schedule ?? "0 4 * * *" }, "Registered memory reasoning cron job");
-      }
-    }
+    // (The social-modeling cron — __SOCIAL_MODELING__, gated by socialModeling.enabled +
+    // a recorded privacyReviewSignedOffBy — was DELETED in Phase 226 SIMPLIFY-03 with the
+    // ENTIRE social-modeling subsystem (the runRelationshipBuild offline directional-edge
+    // builder, the createRelationshipSeam cheap-model seam, the RelationshipStore port +
+    // sqlite adapter, the `relationship` table, the relationship-block prompt injection).
+    // The per-agent socialModeling config key is gone — a config carrying it is now rejected
+    // at parse (the D-01a operator-update path). Deleting it removes a prompt-injected
+    // relationship-model attack surface; no dormant seam left behind (full delete, I1).
+    // After this, the learning crons are exactly 3: __REFLECT__ + __MEMORY_LIFECYCLE__ +
+    // the event-driven OutcomeSignalPort.resolve path (__MEMORY_REVIEW__ stays accumulate-tier).)
 
-    // -- Per-user representation cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat). Registered ONLY
-    // when the operator sets memoryUserRepresentation.enabled; a default agent registers NO job →
-    // byte-identical behavior with the config absent. Default schedule 0 5 * * * runs AFTER reasoning's
-    // 0 4 so the profile is built over freshly-reasoned memories. Job options mirror the reasoning job
-    // 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session); the __USER_REPRESENTATION__
-    // sentinel is intercepted in setup-channels-credentials → runUserRepresentationBuild (the per-user
-    // offline upsert write, source-scoped via memoryApi.inspect + the createUserRepresentationSeam).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryUserRepresentationConfig = agentConfig.memoryUserRepresentation;
-    if (costFeaturesEnabled && memoryUserRepresentationConfig?.enabled) {
-      const memUserReprJobId = `memory-user-representation-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memUserReprJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memUserReprJobId,
-          name: "Memory user representation",
-          agentId,
-          schedule: { kind: "cron", expr: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" },
-          payload: { kind: "system_event", text: "__USER_REPRESENTATION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" }, "Registered memory user representation cron job");
-      }
-    }
+    // (The usefulness-judge cron — __USEFULNESS_JUDGE__, gated by memoryUsefulnessJudge.enabled
+    // — was DELETED in Phase 226 SIMPLIFY-03 (D-03). It was a dormant cost-gated cheap-model
+    // seam that fed recordUsage; the FORGET-02 reward write lives in setup-learning.ts and is
+    // unaffected. The per-agent memoryUsefulnessJudge config key is gone — a config carrying it
+    // is now rejected at parse, the D-01a operator-update path.)
 
-    // -- Social modeling cron job --
-    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The privacy-review gate is STRICTER than
-    // the other memory crons: register ONLY when the operator BOTH sets socialModeling.enabled AND
-    // records a privacy-review sign-off (privacyReviewSignedOffBy). A knob-on-but-not-signed-off agent
-    // registers NO job → byte-identical with the config absent (the sign-off is the operator gate; the
-    // sentinel handler re-checks the SAME dual gate, defense-in-depth). Default schedule 0 6 * * * runs
-    // AFTER the representation cron's 0 5 so relationships are built over freshly-profiled memories.
-    // The __SOCIAL_MODELING__ sentinel is intercepted in setup-channels-memory-crons → runRelationshipBuild
-    // (the per-channel offline directional-edge upsert, source-grouped via memoryApi.inspect +
-    // parseFormattedSessionKey + the createRelationshipSeam cheap-model seam).
-    const socialModelingConfig = agentConfig.socialModeling;
-    if (socialModelingConfig?.enabled && socialModelingConfig?.privacyReviewSignedOffBy) {
-      const memSocialJobId = `memory-social-modeling-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memSocialJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memSocialJobId,
-          name: "Memory social modeling",
-          agentId,
-          schedule: { kind: "cron", expr: socialModelingConfig.schedule ?? "0 6 * * *" },
-          payload: { kind: "system_event", text: "__SOCIAL_MODELING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: socialModelingConfig.schedule ?? "0 6 * * *" }, "Registered memory social modeling cron job");
-      }
-    }
-
-    // -- Usefulness-judge cron job --
-    // OPT-IN, OFF by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY when the
-    // operator sets memoryUsefulnessJudge.enabled; a default agent registers NO job → byte-identical
-    // with the config absent. Default schedule 0 7 * * * runs AFTER social's 0 6 so the judge scores
-    // recalled-memory usefulness over a fully-settled night. Job options mirror the reasoning/userrep
-    // job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session). The __USEFULNESS_JUDGE__
-    // sentinel's full dispatch (the seam → recordUsage write) is a later costed enablement; this
-    // registration is the default-OFF scaffold (the citation-marker core is keyless).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
-    const memoryUsefulnessJudgeConfig = agentConfig.memoryUsefulnessJudge;
-    if (costFeaturesEnabled && memoryUsefulnessJudgeConfig?.enabled) {
-      const memUsefulnessJudgeJobId = `memory-usefulness-judge-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memUsefulnessJudgeJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memUsefulnessJudgeJobId,
-          name: "Memory usefulness judge",
-          agentId,
-          schedule: { kind: "cron", expr: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" },
-          payload: { kind: "system_event", text: "__USEFULNESS_JUDGE__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" }, "Registered memory usefulness judge cron job");
-      }
-    }
-
-    // -- Online-tuning bandit cron job --
-    // OPT-IN, OFF by default. Unlike the usefulness judge this bandit is DETERMINISTIC +
-    // KEYLESS (no LLM call, no API key — the sentinel dispatch makes NO model resolution),
-    // so enabling it is a behavior opt-in, not a cost opt-in. Registered ONLY when the
-    // operator sets memoryOnlineTuning.enabled; a default agent registers NO job →
-    // byte-identical with the config absent. Default schedule 0 8 * * * runs AFTER the
-    // judge's 0 7 so the FEED signal it reads is fully settled. Job options mirror the
-    // judge/reasoning/userrep job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh).
-    // Gated by the master cost-feature kill switch AND the per-agent opt-in. (Although this
-    // bandit is keyless/deterministic, it is in the operator-facing cost-feature set, so the
-    // kill switch disables it alongside the LLM crons for a single, predictable off-switch.)
-    const memoryOnlineTuningConfig = agentConfig.memoryOnlineTuning;
-    if (costFeaturesEnabled && memoryOnlineTuningConfig?.enabled) {
-      const memOnlineTuningJobId = `memory-online-tuning-${agentId}`;
-      const existingJobs = scheduler.getJobs();
-      const alreadyRegistered = existingJobs.some((j) => j.id === memOnlineTuningJobId);
-      if (!alreadyRegistered) {
-        await scheduler.addJob({
-          id: memOnlineTuningJobId,
-          name: "Memory online tuning",
-          agentId,
-          schedule: { kind: "cron", expr: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" },
-          payload: { kind: "system_event", text: "__ONLINE_TUNING__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" }, "Registered memory online tuning cron job");
-      }
-    }
+    // (The online-tuning bandit cron — __ONLINE_TUNING__, gated by memoryOnlineTuning.enabled
+    // — was DELETED in Phase 224. The UCB recall bandit is gone; recall scoring is the fixed
+    // config.rag.scoring alphas, with no offline tuned-alpha write job.)
 
     // -- Memory lifecycle cron job --
-    // OPT-IN, OFF by default. Like the online-tuning bandit (NOT the LLM crons) this
-    // sweep is DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel dispatch
-    // makes NO model resolution), so enabling it is a behavior opt-in, not a cost opt-in.
+    // OPT-IN, OFF by default. A DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel
+    // dispatch makes NO model resolution) sweep, so enabling it is a behavior opt-in, not a cost opt-in.
     // Registered ONLY when the operator sets memoryLifecycle.enabled; a default agent
     // registers NO job → byte-identical with the config absent. Default schedule 0 9 * * *
     // runs AFTER online-tuning's 0 8 so the FEED + tuned alphas it reads have settled. Job
@@ -619,55 +502,35 @@ export async function setupSchedulers(deps: {
       }
     }
 
-    // -- Memory triple-extraction cron job (WIRE-01) --
-    // OPT-IN, DEFAULT OFF — the lone OFF-by-default learning seam alongside learningOutcome.
-    // Schedules the exported-but-never-wired runMemoryTripleExtraction (S/P/O from raw turns,
-    // COMPLEMENTARY to __MEMORY_REASONING__). A DEFAULT agent registers NO job → zero added cost,
-    // byte-identical with the config absent. Gated by BOTH the master cost kill switch AND the
-    // per-agent opt-in (force-disabled when memory.costFeatures.enabled is false). Default schedule
-    // 0 6 * * *. The __MEMORY_TRIPLE_EXTRACTION__ sentinel is dispatched in
-    // setup-channels-memory-crons-wire.ts → runMemoryTripleExtraction (trust-first upsertTriple).
-    const tripleCfg = agentConfig.memoryTripleExtraction;
-    if (costFeaturesEnabled && tripleCfg?.enabled) {
-      const tripleJobId = `memory-triple-extraction-${agentId}`;
-      if (!scheduler.getJobs().some((j) => j.id === tripleJobId)) {
-        await scheduler.addJob({
-          id: tripleJobId,
-          name: "Memory triple extraction",
-          agentId,
-          schedule: { kind: "cron", expr: tripleCfg.schedule ?? "0 6 * * *" },
-          payload: { kind: "system_event", text: "__MEMORY_TRIPLE_EXTRACTION__" },
-          sessionTarget: "isolated",
-          wakeMode: "next-heartbeat",
-          forwardToMain: false,
-          sessionStrategy: "fresh",
-          consecutiveErrors: 0,
-          enabled: true,
-          createdAtMs: systemNowMs(),
-        });
-        schedulerLogger.info({ agentId, schedule: tripleCfg.schedule ?? "0 6 * * *" }, "Registered memory triple-extraction cron job");
-      }
-    }
+    // (The memory triple-extraction cron — __MEMORY_TRIPLE_EXTRACTION__, gated by
+    // memoryTripleExtraction.enabled — was DELETED in Phase 226 SIMPLIFY-03 (D-03). It scheduled
+    // a no-op scaffold whose `extract` returned [] (no triples were ever written). The per-agent
+    // memoryTripleExtraction config key is gone — a config carrying it is now rejected at parse,
+    // the D-01a operator-update path. The TripleStorePort + its sqlite adapter + the graphSpread
+    // recall lane SURVIVE — only the dormant extraction JOB went, not the read lane.)
 
-    // -- Procedural skill-synthesis cron job (SKILL-08/09, v2.26 Verified Learning WS2) --
+    // -- Reflection cron job (v2.31 Reflection, Phase 223, REFLECT-01) --
+    // The reflect-engine replacement for the dead procedural-synthesis clustering cron.
     // OPT-IN, DEFAULT OFF (the byte-identity guarantee depends on it). Registered ONLY when the
-    // operator sets learningSkills.enabled AND the master cost kill switch is on; a default agent
-    // registers NO job → byte-identical with the config absent. Default schedule 30 9 * * * runs
-    // AFTER the lifecycle sweep's 0 9 (so the outcome/skill-used signals it selects on have
-    // settled). Job options mirror the other memory crons 1:1 (isolated / next-heartbeat / no
-    // forward-to-main / fresh). The __SKILL_SYNTHESIS__ sentinel (setup-channels-memory-crons-wire.ts)
-    // re-checks the knob + injects the @comis/memory store + @comis/skills validation adapter. SHADOW:
-    // even when enabled the synthesized candidate is admitted but NOT surfaced (Phase 202 surfaces it).
-    const learningSkillsCfg = agentConfig.learningSkills;
-    if (costFeaturesEnabled && learningSkillsCfg?.enabled) {
-      const skillSynthJobId = `skill-synthesis-${agentId}`;
-      if (!scheduler.getJobs().some((j) => j.id === skillSynthJobId)) {
+    // operator sets learning.enabled AND the master cost kill switch is on; a default agent
+    // registers NO job → byte-identical with the config absent. The schedule comes from
+    // learning.reflect.schedule (Phase 226 — was a hardcoded 30 9; default every 3h `0 */3 * * *`). Job
+    // options mirror the other memory crons 1:1 (isolated / next-heartbeat / no forward-to-main /
+    // fresh). The __REFLECT__ sentinel (setup-channels-memory-crons-wire.ts) re-checks the knob +
+    // injects the @comis/memory mental-model store + the trusted-origin source into runReflection,
+    // then emits the reflect:* counts (reflect:admitted + reflect:funnel — renamed from the old
+    // learning:skill_* funnel in Phase 226). A reflected candidate is admitted at state:candidate.
+    const learningCfg = agentConfig.learning;
+    if (costFeaturesEnabled && learningCfg?.enabled) {
+      const reflectJobId = `reflect-${agentId}`;
+      const reflectSchedule = learningCfg.reflect?.schedule ?? "0 3 * * *";
+      if (!scheduler.getJobs().some((j) => j.id === reflectJobId)) {
         await scheduler.addJob({
-          id: skillSynthJobId,
-          name: "Skill synthesis",
+          id: reflectJobId,
+          name: "Reflection",
           agentId,
-          schedule: { kind: "cron", expr: "30 9 * * *" },
-          payload: { kind: "system_event", text: "__SKILL_SYNTHESIS__" },
+          schedule: { kind: "cron", expr: reflectSchedule },
+          payload: { kind: "system_event", text: "__REFLECT__" },
           sessionTarget: "isolated",
           wakeMode: "next-heartbeat",
           forwardToMain: false,
@@ -676,7 +539,7 @@ export async function setupSchedulers(deps: {
           enabled: true,
           createdAtMs: systemNowMs(),
         });
-        schedulerLogger.info({ agentId, schedule: "30 9 * * *" }, "Registered skill synthesis cron job");
+        schedulerLogger.info({ agentId, schedule: reflectSchedule }, "Registered reflection cron job");
       }
     }
   }
@@ -688,6 +551,23 @@ export async function setupSchedulers(deps: {
   // here (not daemon.ts, which is at its 3000-line cap) — the natural cron-wiring seam, with the
   // agents map + config + logger already in scope.
   emitMemoryCostFeatureNotice({ agents, costFeaturesEnabled, logger: schedulerLogger });
+
+  // OBS-2/6b (hindsight-reflection-20260626): fold each completed __REFLECT__ run onto the firing
+  // agent's cron run history, so `cron.runs jobName "Reflection"` answers "why did the last reflection
+  // admit / not-admit" in one call (the funnel verdict + counts) AND the run is pollable — instead of
+  // a daemon.log grep for "Reflection complete". The reflect sentinel is fire-and-forget (system_event),
+  // so we record off the content-free `reflect:funnel` event (recordReflectFunnelRun). One subscriber
+  // for all agents (it resolves the agent's tracker per event); the record is non-fatal/best-effort.
+  container.eventBus.on("reflect:funnel", (funnel) => {
+    void recordReflectFunnelRun(executionTrackers.get(funnel.agentId), funnel, systemNowMs());
+  });
+  // OBS-2b (reflect-obs-20260627): the parity recorder for the forget sweep — fold each completed
+  // __MEMORY_LIFECYCLE__ run onto the firing agent's cron run history, so `cron.runs jobName "Memory
+  // lifecycle"` answers "what did the sweep evict/demote" in one call (was a db.mjs evicted_at poll).
+  // Recorded off the content-free `learning:lifecycle_swept` event (the sentinel is fire-and-forget).
+  container.eventBus.on("learning:lifecycle_swept", (swept) => {
+    void recordLifecycleRun(executionTrackers.get(swept.agentId), swept, systemNowMs());
+  });
 
   // OUTCOME-09 boot posture: `learningOutcome` (Verified Learning WS1) is NOT a cron — it is the
   // bus-wired observe/resolve subscriber stood up in setup-memory.ts (wireLearningOutcome). It is

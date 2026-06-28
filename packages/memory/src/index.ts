@@ -105,31 +105,11 @@ export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
-// Per-user representation store (sole UserRepresentationStore impl).
-// Owns ALL the per-user-representation SQL over the additive
-// `user_representation` table: the (tenant, agent, user)-scoped upsert (with the
-// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
-// the LLM-free scoped read. The daemon (composition root) constructs
-// it on the memory adapter's db handle; the UserRepresentationStore port TYPE
-// lives in @comis/core (the agent↛memory cut — the offline profile-builder write
-// path + the prompt-assembly read path consume the type only). AHEAD of its
-// daemon consumer (the factory-orphan dance).
-export { createSqliteUserRepresentationStore } from "./sqlite-user-representation-store.js";
-export type { MemoryUserRepresentationStoreDeps } from "./sqlite-user-representation-store.js";
-
-// Directional relationship store (sole RelationshipStore impl).
-// Owns ALL the directional relationship SQL over the additive
-// `relationship` table: the (tenant, agent, channel)-scoped upsert (with the
-// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
-// the LLM-free scoped read. channel_id is the NEW privacy axis; the
-// (subject_user_id, about_user_id) pair is directional ROW DATA (A→B ≠ B→A). The
-// daemon (composition root) constructs it on the memory adapter's db
-// handle; the RelationshipStore port TYPE lives in @comis/core (the agent↛memory
-// cut — the offline relationship-builder write path + the optional prompt-assembly
-// read path consume the type only). AHEAD of its daemon consumer (the
-// factory-orphan dance).
-export { createSqliteRelationshipStore } from "./sqlite-relationship-store.js";
-export type { MemoryRelationshipStoreDeps } from "./sqlite-relationship-store.js";
+// (The directional relationship store (createSqliteRelationshipStore +
+//  MemoryRelationshipStoreDeps) — the sole RelationshipStore adapter over the
+//  `relationship` table — was DELETED in Phase 226 SIMPLIFY-03 with the rest of the
+//  social-modeling subsystem (the __SOCIAL_MODELING__ cron, the port, the table, the
+//  relationship-block prompt injection). No alias, I1.)
 
 // Scoped embedding-read store (sole MemoryEmbeddingStore impl).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
@@ -169,28 +149,19 @@ export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store
 export { createSqliteOutcomeStore } from "./sqlite-outcome-store.js";
 export type { OutcomeStoreDeps } from "./sqlite-outcome-store.js";
 
-// Learned-skill store (sole LearnedSkillStorePort impl — v2.26 Verified Learning WS2).
+// Mental Model doc store (sole MentalModelStorePort impl — v2.31; generalized
+// from the v2.26 Verified Learning WS2 learned-skill store).
 // Owns the idempotent `admit()` upsert (deterministic-hash id of the
-// (tenant, agent, name) UNIQUE tuple + ON CONFLICT(id) DO UPDATE), the scoped
-// (tenant, agent)-isolated `get`/`list` reads, and the `promote`/`demote`/`evict`
-// lifecycle transitions (evict is SOFT — sets evicted_at, never a hard DELETE).
-// The DB CHECK (trust_level IN ('learned')) + a code coercion make a synthesized
-// procedure structurally incapable of being `system` (SEC-01). The daemon
-// (composition root) constructs it on the memory adapter's db handle (Plan 07);
-// the LearnedSkillStorePort TYPE lives in @comis/core (the agent↛memory cut — the
-// synthesis job consumes the type only).
-export { createSqliteLearnedSkillStore } from "./sqlite-learned-skill-store.js";
-export type { LearnedSkillStoreDeps } from "./sqlite-learned-skill-store.js";
-
-// Tuned-alpha store (sole TunedAlphaStore impl).
-// Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
-// read (undefined when absent → the apply-site default-OFF no-op). The daemon
-// (composition root) constructs it on the memory adapter's db handle; the
-// TunedAlphaStore port TYPE lives in @comis/core (the agent↛memory cut — the
-// offline bandit job + the recall apply overlay consume the type only). The table
-// has NO trust-weight column (the structural trust-freeze belt #3).
-export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
-export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
+// (tenant, agent, kind, topic_key, name) UNIQUE tuple + ON CONFLICT(id) DO
+// UPDATE), the scoped (tenant, agent)-isolated `get`/`list(scope, kind?)` reads,
+// and the `promote`/`demote`/`evict` lifecycle transitions (evict is SOFT — sets
+// evicted_at, never a hard DELETE). The DB CHECK (trust_level IN ('learned')) + a
+// code coercion make a learned doc structurally incapable of being `system`
+// (SEC-01). The daemon (composition root) constructs it on the memory adapter's
+// db handle (Plan 07); the MentalModelStorePort TYPE lives in @comis/core (the
+// agent↛memory cut — the synthesis job consumes the type only).
+export { createSqliteMentalModelStore } from "./sqlite-mental-model-store.js";
+export type { MentalModelStoreDeps } from "./sqlite-mental-model-store.js";
 
 // Memory-lifecycle sweep store (sole MemoryLifecyclePort impl).
 // Owns the (tenant, agent)-scoped candidate scan over the `memories`

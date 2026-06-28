@@ -11,17 +11,13 @@ import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
-import { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
-import { ensureLearnedSkillsTable } from "./schema-learned-skills.js";
-import { ensureTunedAlphaIntent, ensureUsefulnessFailureColumn } from "./schema-tuned-alpha.js";
+import { ensureMentalModelsTable } from "./schema-mental-models.js";
+import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
-
-// Re-export the v2.26 WS5 REVISE-02 bi-temporal column-add (sibling file, keeps schema.ts under the 800-line cap) so existing `./schema.js` importers keep their import site.
-export { ensureUserRepresentationBitemporalColumns } from "./schema-user-representation.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
@@ -347,90 +343,12 @@ export function ensureTripleTable(db: Database.Database): void {
   `);
 }
 
-/**
- * Create the segregated per-user-representation table.
- * Forward-only additive, idempotent, safe on every boot (a fresh DB and
- * a pre-table live `~/.comis` DB both gain the empty table with no backfill; NEVER
- * wipes). One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
- * scoped to one (tenant, agent, user); PK is the per-row `id`; `created_at` is the
- * injected clock. The sole adapter is `createSqliteUserRepresentationStore`.
- *
- * The high-trust floor at the DB layer: the `trust` CHECK admits only
- * `system`/`learned` — `'external'` is DELIBERATELY OMITTED, so an external claim
- * can NEVER enter the profile (layer 1 of the 3-layer anti-poisoning defense; the
- * adapter's write-time reject is layer 3, the port-type floor is layer 2).
- * `entry_type`'s own CHECK pins the four prefix-types — the DISTINCT vocabulary
- * from `memory_type`. Isolation (EXTENDED with
- * `user_id`): every row carries `tenant_id`+`agent_id`+`user_id`,
- * `idx_user_repr_scope` leads with all three, and the adapter filters every
- * statement on them. The `source_memory_id -> memories(id)` `ON DELETE CASCADE`
- * fires via the `PRAGMA foreign_keys = ON` set by `openSqliteDatabase`.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already exists
- *   (the FK target). Call AFTER `ensureTripleTable` in `initSchema`.
- */
-export function ensureUserRepresentationTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS user_representation (
-      id               TEXT NOT NULL,
-      tenant_id        TEXT NOT NULL,
-      agent_id         TEXT NOT NULL,
-      user_id          TEXT NOT NULL,
-      entry_type       TEXT NOT NULL CHECK(entry_type IN ('identity','preference','relationship','instruction')),
-      content          TEXT NOT NULL,
-      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
-      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
-      created_at       INTEGER NOT NULL,
-      updated_at       INTEGER,
-      PRIMARY KEY (id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_user_repr_scope
-      ON user_representation(tenant_id, agent_id, user_id);
-  `);
-}
-
-/**
- * Create the `relationship` table — the sole storage for directional, multi-party
- * relationship modeling. Additive, forward-only,
- * idempotent. One row = the durable, DIRECTIONAL, HIGH-TRUST edge `subjectUser`'s
- * representation OF `aboutUser`, scoped to one (tenant, agent, channel). Sole
- * adapter: `createSqliteRelationshipStore`.
- *
- * The high-trust floor at the DB layer: `CHECK(trust IN
- * ('system','learned'))` — `'external'` STRUCTURALLY ABSENT, so external content
- * can NEVER enter a relationship (defense-in-depth with the adapter write-boundary
- * reject (layer 3) + the port-type floor (layer 2)). Isolation (EXTENDED with
- * `channel_id`, the NEW privacy axis): every row carries
- * `tenant_id`+`agent_id`+`channel_id`, `idx_relationship_scope` leads with all
- * three, the adapter filters every statement on them; the directional
- * `(subject_user_id, about_user_id)` pair is ROW DATA, NOT a security filter (A→B
- * is DISTINCT from B→A, never symmetrized). The `source_memory_id -> memories(id)`
- * `ON DELETE CASCADE` fires via the `PRAGMA foreign_keys = ON` set by
- * `openSqliteDatabase`.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already exists
- *   (the FK target). Call AFTER `ensureUserRepresentationTable` in `initSchema`.
- */
-export function ensureRelationshipTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS relationship (
-      id               TEXT NOT NULL,
-      tenant_id        TEXT NOT NULL,
-      agent_id         TEXT NOT NULL,
-      channel_id       TEXT NOT NULL,
-      subject_user_id  TEXT NOT NULL,
-      about_user_id    TEXT NOT NULL,
-      content          TEXT NOT NULL,
-      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
-      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
-      created_at       INTEGER NOT NULL,
-      updated_at       INTEGER,
-      PRIMARY KEY (id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_relationship_scope
-      ON relationship(tenant_id, agent_id, channel_id);
-  `);
-}
+// (The `relationship` table — the sole storage for the directional social-modeling
+//  subsystem — was DELETED in Phase 226 SIMPLIFY-03 with the rest of that subsystem
+//  (the __SOCIAL_MODELING__ cron, the RelationshipStore port + adapter, the
+//  relationship-block prompt injection). A fresh DB no longer creates it; an existing
+//  DB's orphaned `relationship` table is inert (never read/written) — no migration, no
+//  read path. No alias, I1.)
 
 /**
  * Initialize the full memory schema on the given SQLite database.
@@ -580,17 +498,16 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket + failure_count (v2.26 WS4, FORGET-02)
   ensureCausalTables(db); // causal-edge table
   ensureTripleTable(db); // bi-temporal KG triples
-  ensureUserRepresentationTable(db); // per-user representation
-  ensureUserRepresentationBitemporalColumns(db); // v2.26 WS5 REVISE-02 — bi-temporal columns + current-truth index (forward-only)
-  ensureRelationshipTable(db); // directional relationships
-  ensureTunedAlphaIntent(db); // tuned ranking alphas — per-intent 3-col PK + bandit posterior (v2.26 WS3, RANK-05); rebuilds a legacy 2-col-PK table
+  // (ensureRelationshipTable — the directional social-modeling table — was DELETED in
+  //  Phase 226 SIMPLIFY-03 with the rest of that subsystem; orphaned tables on existing
+  //  DBs are inert, no migration.)
   ensureLcdTables(db); // LCD lossless message + parts store (Phase 127)
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only; design §4.1)
   ensureVideoJobTable(db); // durable async video-job store (Phase 189, JOB-01/JOB-03)
   ensureDurableRunTable(db); // durable run checkpoint store (Phase 216, DUR-01)
   ensureOutwardLedgerTable(db); // exactly-once outward send ledger (Phase 216, ONCE-01)
   ensureOutcomeEventsTable(db); // outcome_events ledger (v2.26 WS1, OUTCOME-01) — no FK, (tenant,agent)-scoped
-  ensureLearnedSkillsTable(db, embeddingDimensions, localVecAvailable); // learned_skills procedural store + FTS/vec/trigram twins (v2.26 WS2, SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped
+  ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (v2.31; generalized from v2.26 WS2 SKILL-01) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
 
   // --- Observation partial indexes (design §4.1) --- created AFTER ensureMemoryColumns (indexed columns must exist first).
   // `idx_memories_unconsol` serves the candidate scan (consolidated_at IS NULL); `idx_memories_observations` serves the observation lookup (proof_count IS NOT NULL).

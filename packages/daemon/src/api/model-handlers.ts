@@ -10,6 +10,7 @@
  * @module
  */
 
+import { AuthorizationError } from "./errors.js";
 import { getProviders } from "@earendil-works/pi-ai";
 import {
   ModelsListContract,
@@ -119,7 +120,7 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
     [ModelsListProvidersContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required");
+        throw new AuthorizationError("Admin access required");
       }
       const userParams = stripInternalFields(rawParams);
       ModelsListProvidersContract.request.parse(userParams);

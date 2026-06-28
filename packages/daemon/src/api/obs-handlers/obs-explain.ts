@@ -28,6 +28,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
 import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport } from "@comis/core";
 import type { RpcHandler } from "../types.js";
@@ -263,7 +264,12 @@ export function bindObsExplainHandlers(
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as
         | string
         | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      // OBS-5 (hindsight-reflection-20260626): name the operator route in the message. obs.explain is
+      // admin-trust-only BY DESIGN (defense-in-depth; the gateway-router is the primary gate, §4.7). An
+      // operator full-access TOKEN is not admin-TRUST, so name the offline route rather than leaving the
+      // caller to guess (the CLI `comis explain` assembles the same report offline from the data dir).
+      if (trustLevel !== "admin")
+        throw new AuthorizationError("Admin access required for obs.explain (admin-trust only; operators use `comis explain`, which assembles the report offline from the data dir)");
 
       // Step 2: stripInternalFields BEFORE contract parse — `_trustLevel`
       // cannot be smuggled into the parsed params.

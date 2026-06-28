@@ -74,6 +74,9 @@ export function registerExplainCommand(program: Command): void {
           // masking the token problem hides a misconfiguration) — the error
           // names COMIS_GATEWAY_TOKEN and --offline remains the explicit out.
           let assembledOffline = options.offline === true;
+          // OBS-5: the reason shown when we assembled offline (set in the catch below). Defaults to the
+          // explicit --offline path; overwritten with the real cause (admin-deny vs unreachable) on fallback.
+          let offlineReason = "report assembled offline from the local data dir (--offline)";
           const report: IncidentReport = await withSpinner(
             assembledOffline
               ? "Assembling incident report (offline)..."
@@ -89,12 +92,18 @@ export function registerExplainCommand(program: Command): void {
               } catch (e) {
                 if (isGatewayAuthRejection(e)) throw e;
                 assembledOffline = true;
+                // OBS-5: distinguish an admin-trust deny (the RPC connected + refused — obs.explain is
+                // admin-only by design) from a truly-unreachable daemon, so the fallback message names
+                // the REAL cause instead of always blaming the daemon.
+                offlineReason = /admin access required/i.test(e instanceof Error ? e.message : String(e))
+                  ? "obs.explain is admin-trust-only — report assembled offline from the local data dir"
+                  : "daemon unreachable — report assembled offline from the local data dir";
                 return assembleIncidentReportOffline(resolveOfflineDataDir(), params);
               }
             },
           );
           if (assembledOffline && options.offline !== true && options.format !== "json") {
-            info("daemon unreachable — report assembled offline from the local data dir");
+            info(offlineReason);
           }
           if (options.format === "json") {
             json(report);

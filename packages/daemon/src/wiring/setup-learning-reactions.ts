@@ -47,6 +47,7 @@ import {
   KEYLESS_PROVIDER_TYPES,
   KEYLESS_API_KEY_SENTINEL,
   type TypedEventBus,
+  type MemoryConfig,
   type OutcomeSignalPort,
   type ClockPort,
   type ComisLogger,
@@ -387,6 +388,19 @@ function observeCorrectionNonFatal(
         { agentId: scope.agentId, outcome: "corrected", source: "correction", durationMs: deps.clock.now() - start },
         "Correction outcome observed for prior trajectory",
       );
+      // Signal wireLearningOutcome to RE-RUN the gated skill-transition for THIS prior trajectory's
+      // credited skills with a `corrected` verdict — so a corroborated correction demotes the wrong
+      // skill (active/candidate→stale). The resolve seam dedups the prior trajectory
+      // (markTrajectoryResolved), so the demote can only happen via this dedicated signal, not the
+      // normal resolve path. Content-free (ids + confidence only).
+      deps.eventBus.emit("learning:correction_observed", {
+        agentId: scope.agentId,
+        tenantId: scope.tenantId,
+        sessionId: scope.sessionId,
+        trajectoryId: scope.trajectoryId,
+        confidence,
+        timestamp: deps.clock.now(),
+      });
     })
     .catch((e: unknown) => {
       deps.logger.warn(
@@ -543,7 +557,10 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
 export interface ReactionWiringContainer {
   config: {
     agents?: Record<string, AgentReactionConfig | undefined>;
-    memory?: { costFeatures?: { enabled?: boolean } };
+    // H-1 (Phase 226): the REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
+    // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename — a missed rename is a
+    // compile error, never a silent `undefined !== false === true` force-ENABLE (the inverted kill-switch).
+    memory?: Pick<MemoryConfig, "enabled">;
     providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
   };
   secretManager: { get(name: string): string | undefined };
@@ -658,7 +675,7 @@ function resolveCorrectionDetector(
  * called in ONE line from the `setupLearningOutcomeWiring` site.
  *
  * Gates (mirror the 198 byte-identity computation):
- *  - `costFeaturesEnabled = memory.costFeatures.enabled !== false` (master switch).
+ *  - `costFeaturesEnabled = memory.enabled !== false` (master switch, renamed from costFeatures.enabled in Phase 226).
  *  - `learningOutcomeEnabled(id) = costFeaturesEnabled && agent.learningOutcome.enabled`.
  *  - `correctionEnabled(id) = learningOutcomeEnabled(id) && agent.learningOutcome.correction.enabled`.
  *  - `recordOutboundMessage` is built ONLY when SOME agent has learning-outcome on
@@ -673,7 +690,7 @@ export function buildReactionWiringDeps(
   timers: TimerPort,
 ): BuildReactionWiringResult {
   const { eventBus, outcomeStore, logger } = container;
-  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
+  const costFeaturesEnabled = container.config.memory?.enabled !== false;
   const agents = container.config.agents ?? {};
 
   const learningOutcomeEnabled = (agentId: string): boolean =>

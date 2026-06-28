@@ -31,10 +31,12 @@ export const MemoryReviewConfigSchema = z.strictObject({
   schedule: z.string().default("0 2 * * *"),
   /** Minimum messages in a session to qualify for review. */
   minMessages: z.number().int().positive().default(5),
-  /** Maximum sessions to process per review cycle. */
-  maxSessionsPerRun: z.number().int().positive().default(10),
-  /** Maximum LLM response tokens for the review call. */
-  maxReviewTokens: z.number().int().positive().default(4096),
+  /** Maximum sessions to process per review cycle. Default 50 (best-out-of-box: broader consolidation
+   *  coverage per run, cost ignored; was 10). Finite — a per-run work bound. */
+  maxSessionsPerRun: z.number().int().positive().default(50),
+  /** Maximum LLM response tokens for the review call. Default 16384 (best-out-of-box: richer
+   *  consolidation per session, cost ignored; was 4096). */
+  maxReviewTokens: z.number().int().positive().default(16384),
   /** Semantic similarity threshold (0-1) for deduplication. */
   dedupThreshold: z.number().min(0).max(1).default(0.85),
   /** Extra tags applied to all extracted memory entries. */

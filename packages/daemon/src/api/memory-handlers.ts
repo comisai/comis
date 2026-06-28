@@ -50,7 +50,7 @@ import {
   systemNowMs,
 } from "@comis/core";
 // ValidationError: typed caller-error → dispatcher logs warn/validation (FIX 2).
-import { ValidationError } from "./errors.js";
+import { ValidationError, AuthorizationError } from "./errors.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -324,7 +324,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory deletion");
+        throw new AuthorizationError("Admin access required for memory deletion");
       }
 
       // Bespoke ids-presence guard FIRST so user-facing message stays
@@ -370,7 +370,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST — separate from the contract schema.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory flush");
+        throw new AuthorizationError("Admin access required for memory flush");
       }
 
       const userParams = stripInternalFields(rawParams);
@@ -433,7 +433,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST — before parse + query.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory observations");
+        throw new AuthorizationError("Admin access required for memory observations");
       }
       const userParams = stripInternalFields(rawParams);
       const params = MemoryObservationsContract.request.parse(userParams);
@@ -472,7 +472,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory entities");
+        throw new AuthorizationError("Admin access required for memory entities");
       }
       const userParams = stripInternalFields(rawParams);
       const params = MemoryEntitiesContract.request.parse(userParams);
@@ -508,7 +508,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory recall stats");
+        throw new AuthorizationError("Admin access required for memory recall stats");
       }
       const userParams = stripInternalFields(rawParams);
       MemoryRecallStatsContract.request.parse(userParams);
@@ -541,7 +541,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
-        throw new Error("Admin access required for memory recall trace");
+        throw new AuthorizationError("Admin access required for memory recall trace");
       }
       const userParams = stripInternalFields(rawParams);
       const params = MemoryRecallTraceContract.request.parse(userParams);

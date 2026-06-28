@@ -541,8 +541,17 @@ describe("assembleExecutionPrompt", () => {
   //     config). The trust FILTER (memory-recall.ts:534-536) stays frozen — that
   //     file is UNTOUCHED by this plan (asserted via the git-diff verify gate).
   // -----------------------------------------------------------------
-  describe("deterministic apply overlay (gated buildScoringAlphas at the recall scoring arg)", () => {
-    /** The static config alphas the overlay merges onto (the SOLE trust-weight source). */
+  describe("recall scoring is fixed config.rag.scoring (RECALL-02/03 — the bandit overlay is deleted)", () => {
+    // Phase 224 (RECALL-02/03): the UCB online-tuning bandit + its tuned-alpha
+    // overlay are DELETED. Recall scoring now reverts to the fixed config.rag.scoring
+    // alphas (fused RRF + the existing cross-encoder reranker, no learned-weight write
+    // path). These tests are the INVERSE of the former "deterministic apply overlay"
+    // suite: the `scoring` arg into createMemoryRecall is exactly config.rag.scoring
+    // (object identity — NO buildScoringAlphas merge), and NO tunedAlphaStore read fires
+    // even when one is (legacy) wired. They FAIL on the pre-deletion overlay code, which
+    // wrapped scoring in buildScoringAlphas(...) and read the store behind an onlineTuning gate.
+
+    /** The static config alphas — now the SOLE scoring source (no overlay). */
     const CONFIG_SCORING = {
       recencyAlpha: 0.2,
       temporalAlpha: 0.2,
@@ -551,25 +560,31 @@ describe("assembleExecutionPrompt", () => {
       usefulnessAlpha: 0.1,
     };
 
-    /** A spy TunedAlphaStore counting read() calls + capturing the read scope. */
-    function makeTunedSpy(
-      vector: import("@comis/core").TunedAlphaVector | undefined,
-    ): {
-      store: import("@comis/core").TunedAlphaStore;
+    /** A learned-vector store spy: counts reads + returns a vector whose alphas DIFFER
+     *  from config — so a surviving overlay would visibly rewrite scoring (the RED signal).
+     *  Typed structurally: the TunedAlphaStore port was DELETED in Phase 224, so this is a
+     *  legacy-shape stub fed through `deps as any` to prove the read path is gone. */
+    function makeLearnedStore(): {
+      store: { upsert: ReturnType<typeof vi.fn>; read: ReturnType<typeof vi.fn> };
       reads: () => number;
-      lastScope: () => { tenantId: string; agentId: string; intent?: string } | undefined;
     } {
       let readCalls = 0;
-      let scope: { tenantId: string; agentId: string; intent?: string } | undefined;
       const store = {
         upsert: vi.fn(),
-        read: vi.fn(async (s: { tenantId: string; agentId: string; intent?: string }) => {
+        read: vi.fn(async () => {
           readCalls += 1;
-          scope = s;
-          return { ok: true as const, value: vector };
+          return {
+            ok: true as const,
+            value: {
+              recencyAlpha: 0.91,
+              temporalAlpha: 0.82,
+              proofAlpha: 0.73,
+              usefulnessAlpha: 0.64,
+            },
+          };
         }),
-      } as unknown as import("@comis/core").TunedAlphaStore;
-      return { store, reads: () => readCalls, lastScope: () => scope };
+      };
+      return { store, reads: () => readCalls };
     }
 
     /** A memoryPort + a non-empty recall result so the recall path runs end-to-end. */
@@ -581,8 +596,10 @@ describe("assembleExecutionPrompt", () => {
       } as any;
     }
 
-    /** Base rag config with the static scoring alphas; `onlineTuning` toggled per test. */
-    function tuningConfig(onlineTuning?: { enabled: boolean }) {
+    /** Base rag config with the static scoring alphas. `onlineTuning` is set ON here so
+     *  these tests EXERCISE the (now-deleted) gated read+overlay path: pre-deletion the
+     *  store is read and the vector overlays scoring; post-deletion neither happens. */
+    function tuningConfig() {
       return makeConfig({
         rag: {
           enabled: true,
@@ -591,12 +608,12 @@ describe("assembleExecutionPrompt", () => {
           includeTrustLevels: ["learned"],
           maxContextChars: 5000,
           scoring: { ...CONFIG_SCORING },
-          ...(onlineTuning !== undefined ? { onlineTuning } : {}),
+          onlineTuning: { enabled: true },
         },
       });
     }
 
-    /** The `scoring` arg captured off the (mocked) createMemoryRecall config object. */
+    /** The `scoring` arg captured off the (mocked) createMemoryRecall options object. */
     function capturedScoring(): {
       recencyAlpha: number;
       temporalAlpha: number;
@@ -608,130 +625,101 @@ describe("assembleExecutionPrompt", () => {
       return (mockCreateMemoryRecall.mock.calls[0][1] as { scoring: any }).scoring;
     }
 
-    it("Test 1 (default-OFF byte-identity): tuning OFF ⇒ read() 0 times AND scoring is byte-identical to config", async () => {
-      // The store is CONSTRUCTED (spy) and WIRED, but onlineTuning is OFF — the
-      // gate must short-circuit BEFORE the read. FAILS on a pre-patch that reads
-      // the store above the enabled gate (the MMR readEmbeddings=0 analog).
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.9,
-        temporalAlpha: 0.8,
-        proofAlpha: 0.7,
-        usefulnessAlpha: 0.6,
-      });
+    it("scoring is the FIXED config alphas even with onlineTuning ON + a learned vector wired (FAILS on the surviving overlay)", async () => {
+      // The binding proof of the deletion. onlineTuning is ON and a learned store returning
+      // DIFFERENT alphas (0.91/0.82/0.73/0.64) is wired. Pre-deletion the overlay reads that
+      // vector and rewrites scoring to those values; post-deletion the read+overlay are gone,
+      // so scoring is the untouched config alphas (0.2/0.2/0.1/0.1/0.1). FAILS on pre-patch.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: false }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            // tunedAlphaStore is no longer a dep field post-deletion → cast through any.
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
         }),
       );
-
-      // THE COST GATE: tuning off ⇒ the store read NEVER fires.
-      expect(spy.reads(), "read() NEVER called when onlineTuning is off").toBe(0);
-      // ...and the static config alphas pass unchanged (byte-identical recall).
+      // The learned vector did NOT reach scoring — the config alphas are untouched.
       expect(capturedScoring()).toEqual(CONFIG_SCORING);
     });
 
-    it("Test 2 (apply): tuning ON + a learned vector ⇒ the four non-trust alphas reach scoring; read() runs ONCE scoped to (tenant, agent)", async () => {
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.91,
-        temporalAlpha: 0.82,
-        proofAlpha: 0.73,
-        usefulnessAlpha: 0.64,
-      });
+    it("scoring is config.rag.scoring by OBJECT IDENTITY — the call site forwards the config ref, no overlay clone (FAILS on pre-patch)", async () => {
+      // Post-deletion the call site passes `config.rag.scoring` straight through, so the
+      // captured arg IS the same reference as the input config's rag.scoring. Pre-deletion,
+      // with onlineTuning ON + a learned vector, buildScoringAlphas BUILDS a NEW object
+      // (the four tuned alphas + config trust) — a different reference. FAILS on pre-patch.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
+      const configScoringRef = config.rag.scoring; // the exact reference the call site must forward
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
           agentId: "agent-1",
         }),
       );
-
-      const scoring = capturedScoring();
-      // The four tuned non-trust alphas overlay the static config alphas.
-      expect(scoring.recencyAlpha).toBe(0.91);
-      expect(scoring.temporalAlpha).toBe(0.82);
-      expect(scoring.proofAlpha).toBe(0.73);
-      expect(scoring.usefulnessAlpha).toBe(0.64);
-      // The read fired exactly once, scoped to the live (tenant, agent) + the per-intent
-      // bucket (RANK-02): the default "Hello" message classifies to the "factual" intent.
-      expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "factual" });
+      expect(capturedScoring()).toBe(configScoringRef);
     });
 
-    it("Test 2b (RANK-02 per-intent read): the read scope carries classifyIntent(query) — a temporal query reads the 'temporal' bucket", async () => {
-      const spy = makeTunedSpy({
-        recencyAlpha: 0.91,
-        temporalAlpha: 0.82,
-        proofAlpha: 0.73,
-        usefulnessAlpha: 0.64,
-      });
+    it("a wired tunedAlphaStore is NEVER read even with onlineTuning ON — the gated overlay read is gone (FAILS on pre-patch)", async () => {
+      // The deletion removes the read entirely. Pre-deletion, onlineTuning ON ⇒ the store is
+      // read once; post-deletion the read never fires. FAILS on the pre-patch read block.
+      const learned = makeLearnedStore();
+      const config = tuningConfig();
       await assembleExecutionPrompt(
         makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
-          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
-          agentId: "agent-1",
-          // A temporal query → classifyIntent → "temporal" → the per-intent bucket read.
-          msg: makeMsg({ text: "what happened yesterday" }),
-        }),
-      );
-      expect(spy.reads()).toBe(1);
-      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1", intent: "temporal" });
-    });
-
-    it("Test 3 (belt #2 at the apply site): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
-      // Even a learned vector that (type-widened) smuggles a trust weight cannot move
-      // the apply-site trust weight — the overlay sources it from config. FAILS if
-      // trustAlpha is taken from the tuned vector.
-      const smuggled = {
-        recencyAlpha: 0.95,
-        temporalAlpha: 0.95,
-        proofAlpha: 0.95,
-        usefulnessAlpha: 0.95,
-        trustAlpha: 0.99,
-      } as unknown as import("@comis/core").TunedAlphaVector;
-      const spy = makeTunedSpy(smuggled);
-      await assembleExecutionPrompt(
-        makeParams({
-          config: tuningConfig({ enabled: true }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          config,
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tunedAlphaStore: learned.store,
+          } as any,
           sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
           agentId: "agent-1",
         }),
       );
-
-      const scoring = capturedScoring();
-      // belt #2: the trust weight is byte-identical to config (0.1), NOT the smuggled 0.99.
-      expect(scoring.trustAlpha).toBe(CONFIG_SCORING.trustAlpha);
-      expect(scoring.trustAlpha).toBe(0.1);
-      // The four non-trust alphas DID overlay (proving the vector was applied, not ignored).
-      expect(scoring.recencyAlpha).toBe(0.95);
+      expect(learned.reads(), "the deleted overlay must never read the store").toBe(0);
+      expect(capturedScoring()).toEqual(CONFIG_SCORING);
     });
   });
 
   // -----------------------------------------------------------------
-  // 4a-bis. The LLM-free per-user-profile standing block.
-  // The profile is read (deterministically) + pushed onto memorySections
-  // exactly like the temporal-guidance block. Its binding proof is
-  // default-OFF byte-identity (the cost gate): with NO userRepresentationStore
-  // dep the prompt is byte-identical AND read() is called 0 times. The block
-  // appears ONLY when the store returns rows, and the injection is LLM-free
-  // (a store.read + the pure formatter — never a model call).
+  // 4a-bis. The LLM-free per-user-profile standing block (FOLD-01, Phase 225).
+  // The fold REWIRES the source: the <user_profile> block now reads from the
+  // mental-model store (`mentalModelStore.list(scope, "profile")` → buildProfileBlock),
+  // NOT the deleted userRepresentationStore. The per-user doc is selected by
+  // `topicKey === sessionKey.userId` (the profile groupKey is the userId; LearningScope
+  // carries only (tenant, agent), so the user axis lives in the doc's topicKey). The
+  // gate is the collapsed `learning.enabled` flag (Phase 226 / SIMPLIFY-05; was
+  // `learningSkills.enabled`, NOT the deleted `memoryUserRepresentation`) + the store
+  // dep. Binding proofs: default-OFF
+  // byte-identity (no store dep ⇒ list() 0 times, byte-identical prompt), the cost
+  // gate (knob off ⇒ list() 0 times), the standing block injects on a zero-recall turn
+  // and with rag.enabled=false (it lives OUTSIDE the recall `if`), and the injection is
+  // LLM-free (a store.list + the pure formatter — never a model call). GAP-2 half-1: the
+  // <user_profile> content is DISJOINT from <available_skills> (no double-surface).
   // -----------------------------------------------------------------
-  describe("per-user-profile injection (LLM-free standing block)", () => {
+  describe("per-user-profile injection (LLM-free standing block, mental-model store)", () => {
     /**
-     * The standing-block config: the profile's OWN gate
-     * (`memoryUserRepresentation.enabled`) is ON. The profile push
-     * site is gated on this knob + the store dep, INDEPENDENT of recall hits and
-     * independent of `rag.enabled`. `rag.enabled` is left ON here only so the
-     * recall path also runs (the prior tests asserted recall is still constructed
-     * exactly once); the standing block no longer NEEDS a recall hit to inject.
+     * The standing-block config: the collapsed gate `learning.enabled` is ON
+     * (it defaults on, but set it explicitly). `rag.enabled` is left ON only so the
+     * recall path also runs (the recall-construction assertions still hold); the
+     * standing block does NOT need a recall hit to inject.
      */
     function ragConfig() {
       return makeConfig({
-        memoryUserRepresentation: { enabled: true },
+        learning: { enabled: true },
         rag: {
           enabled: true,
           maxResults: 5,
@@ -742,14 +730,13 @@ describe("assembleExecutionPrompt", () => {
       });
     }
     /**
-     * The standing-block config WITHOUT a recall hit: the profile knob is ON but
-     * `rag.enabled` is OFF (no recall, no recall hits). The durable
-     * profile MUST still inject on a zero-recall turn. The push must NOT be nested
-     * inside the recall-hit branch.
+     * The standing-block config WITHOUT a recall hit: `learning` ON but
+     * `rag.enabled` OFF (no recall). The durable profile MUST still inject on a
+     * zero-recall turn — the push must NOT be nested inside the recall-hit branch.
      */
-    function userReprOnlyConfig() {
+    function learningOnlyConfig() {
       return makeConfig({
-        memoryUserRepresentation: { enabled: true },
+        learning: { enabled: true },
         rag: { enabled: false },
       });
     }
@@ -773,22 +760,67 @@ describe("assembleExecutionPrompt", () => {
         store: vi.fn(),
       } as any;
     }
-    /** A spy UserRepresentationStore counting read() calls, returning a fixed set. */
+    /** A kind:profile MentalModel for user `userId` carrying the 4 prefix-type facts. */
+    function profileDoc(userId: string): import("@comis/core").MentalModel {
+      return {
+        id: `mm-profile-${userId}`,
+        name: `profile-${userId}`,
+        description: `Durable profile for ${userId}`,
+        body: "(rendered)",
+        kind: "profile",
+        topicKey: userId, // the profile groupKey IS the userId (the per-user axis)
+        trustLevel: "learned",
+        state: "active",
+        proofCount: 2,
+        confidence: 0.7,
+        mutating: false,
+        sourceTrajIds: ["s1", "s2"],
+        structuredBody: {
+          sections: [
+            { id: "identity", heading: "Identity", body: "- name is Sam" },
+            { id: "preference", heading: "Preferences", body: "- likes terse replies" },
+          ],
+        },
+        createdAt: 1_000,
+      };
+    }
+    /**
+     * A spy MentalModelStorePort counting list() calls + recording the (scope, kind)
+     * each call received, returning a fixed doc set.
+     */
     function makeSpyStore(
-      entries: import("@comis/core").UserRepresentationEntry[],
-    ): { store: import("@comis/core").UserRepresentationStore; reads: () => number } {
-      let readCalls = 0;
+      docs: import("@comis/core").MentalModel[],
+    ): {
+      store: import("@comis/core").MentalModelStorePort;
+      lists: () => number;
+      lastScope: () => import("@comis/core").LearningScope | undefined;
+      lastKind: () => string | undefined;
+    } {
+      let listCalls = 0;
+      let scope: import("@comis/core").LearningScope | undefined;
+      let kind: string | undefined;
       const store = {
-        upsert: vi.fn(),
-        read: vi.fn(async () => {
-          readCalls += 1;
-          return { ok: true as const, value: entries };
+        admit: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(async (s: import("@comis/core").LearningScope, k?: string) => {
+          listCalls += 1;
+          scope = s;
+          kind = k;
+          // Mimic listByKindStmt: filter by kind when supplied.
+          const filtered = k === undefined ? docs : docs.filter((d) => d.kind === k);
+          return { ok: true as const, value: filtered };
         }),
-      } as unknown as import("@comis/core").UserRepresentationStore;
-      return { store, reads: () => readCalls };
+        promote: vi.fn(),
+        demote: vi.fn(),
+        promoteByName: vi.fn(),
+        demoteByName: vi.fn(),
+        supersede: vi.fn(),
+        evict: vi.fn(),
+      } as unknown as import("@comis/core").MentalModelStorePort;
+      return { store, lists: () => listCalls, lastScope: () => scope, lastKind: () => kind };
     }
 
-    it("default-OFF: with NO userRepresentationStore dep the prompt is byte-identical (no <user_profile> block)", async () => {
+    it("default-OFF: with NO mentalModelStore dep the prompt is byte-identical (no <user_profile> block)", async () => {
       const params = makeParams({
         config: ragConfig(),
         deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
@@ -796,24 +828,14 @@ describe("assembleExecutionPrompt", () => {
       });
       const result = await assembleExecutionPrompt(params);
 
-      // No store dep ⇒ no profile read ⇒ no block ⇒ byte-identity preserved.
+      // No store dep ⇒ no profile list ⇒ no block ⇒ byte-identity preserved.
       expect(result.dynamicPreamble).not.toContain("<user_profile>");
       expect(result.systemPrompt).not.toContain("<user_profile>");
     });
 
-    it("default-OFF cost gate: with NO store dep, read() is called 0 times AND the prompt equals the no-store baseline", async () => {
+    it("default-OFF cost gate: with NO store dep, list() is called 0 times AND the prompt equals the no-store baseline", async () => {
       // The store is CONSTRUCTED (spy) but NOT wired into deps — the off config.
-      // Mirror recall-iq-contribution.bench.test.ts:633-640: the off config never
-      // reads (the cost gate) and is byte-identical to the feature-absent path.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+      const spy = makeSpyStore([profileDoc("u")]);
 
       const baseline = await assembleExecutionPrompt(
         makeParams({
@@ -823,20 +845,20 @@ describe("assembleExecutionPrompt", () => {
         }),
       );
 
-      // THE COST GATE: the store was never wired, so its read() was never called.
-      expect(spy.reads(), "read() NEVER called in the off (no-store-dep) config").toBe(0);
+      // THE COST GATE: the store was never wired, so its list() was never called.
+      expect(spy.lists(), "list() NEVER called in the off (no-store-dep) config").toBe(0);
       expect(baseline.dynamicPreamble).not.toContain("<user_profile>");
     });
 
-    it("store present but empty: read() runs, the formatter returns null, nothing is pushed → byte-identical prompt", async () => {
-      const emptySpy = makeSpyStore([]); // the user has no profile rows
+    it("store present but no profile for this user: list() runs, the formatter yields nothing → byte-identical prompt", async () => {
+      const emptySpy = makeSpyStore([]); // no profile docs at all
       const withStore = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
           deps: {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
-            userRepresentationStore: emptySpy.store,
+            mentalModelStore: emptySpy.store,
           },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
@@ -849,84 +871,69 @@ describe("assembleExecutionPrompt", () => {
         }),
       );
 
-      // The read ran (store present) but found nothing → no block → identical prompt.
-      expect(emptySpy.reads(), "read() runs once when the store is present").toBe(1);
+      // The list ran (store present) but found nothing → no block → identical prompt.
+      expect(emptySpy.lists(), "list() runs once when the store is present").toBe(1);
       expect(withStore.dynamicPreamble).not.toContain("<user_profile>");
       expect(withStore.dynamicPreamble).toEqual(withoutStore.dynamicPreamble);
       expect(withStore.systemPrompt).toEqual(withoutStore.systemPrompt);
     });
 
-    it("LLM-free injection ON: a store returning rows injects the <user_profile> block via store.read + the pure formatter (no model call)", async () => {
-      const spy = makeSpyStore([
-        {
-          id: "p2",
-          entryType: "preference",
-          content: "likes terse replies",
-          trust: "learned",
-          createdAt: 2_000,
-        },
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("LLM-free injection ON: a profile doc injects the <user_profile> block via list() + buildProfileBlock (no model call)", async () => {
+      const spy = makeSpyStore([profileDoc("u")]);
       const result = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
           deps: {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
-            userRepresentationStore: spy.store,
+            mentalModelStore: spy.store,
           },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
-      // The block + every entry's content appear; the read drove it (LLM-free).
+      // The block + the doc's facts appear; the list drove it (LLM-free).
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
       expect(result.dynamicPreamble).toContain("likes terse replies");
-      expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
-      // The injection adds NO extra model/recall seam: recall is still constructed
-      // exactly once (the profile path is a store.read + the pure formatter, never a
-      // second createMemoryRecall / reasoning call).
+      expect(spy.lists(), "the injection is a store.list (deterministic, LLM-free)").toBe(1);
+      // The profile block now reads from ONE unfiltered list
+      // (kind omitted) shared with the skill topic-match, filtering kind=profile in-process — so
+      // the list is no longer kind-filtered, but it still runs exactly ONCE (the cost contract above).
+      expect(spy.lastKind()).toBeUndefined();
+      // The injection adds NO extra model/recall seam: recall is still constructed once.
       expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
     });
 
-    it("standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
-      // RED-first: the profile <user_profile> block was wrongly NESTED inside
-      // the `recalled.value.length > 0` recall-hit branch, so it silently dropped on
-      // every zero-recall turn (greetings/off-topic/sparse store). The durable per-user
-      // profile is a STANDING block — it must inject whenever its OWN knob is on + the
-      // store has rows, independent of whether THIS turn's recall hit. This test wires a
-      // populated store + a recall that returns ok([]) (the beforeEach default) and asserts
-      // the block IS present. On the pre-fix (nested) code this FAILS (the push site is
-      // unreachable when recalled.value.length === 0).
-      const memoryPort = ragMemoryPort(); // builds the port (and sets a recall hit)
-      // Force ZERO recall hits AFTER ragMemoryPort() (which set a non-empty result):
-      // recall succeeds but returns nothing this turn — the recall-hit branch is NOT
-      // entered, so the pre-fix (nested) profile push is unreachable here.
-      mockRecall.mockResolvedValue({ ok: true, value: [] });
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("selects the CURRENT user's profile doc by topicKey===userId (cross-user isolation at read)", async () => {
+      // Two users' profile docs in the (tenant, agent) scope; only THIS user's renders.
+      const mine = profileDoc("user-me");
+      const theirs: import("@comis/core").MentalModel = {
+        ...profileDoc("user-other"),
+        structuredBody: { sections: [{ id: "identity", heading: "Identity", body: "- SECRET other-user fact" }] },
+      };
+      const spy = makeSpyStore([theirs, mine]);
       const result = await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort,
-            userRepresentationStore: spy.store,
-          },
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), mentalModelStore: spy.store },
+          sessionKey: { tenantId: "t", userId: "user-me", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam"); // mine
+      expect(result.dynamicPreamble).not.toContain("SECRET other-user fact"); // theirs
+    });
+
+    it("standing block: a profile injects on a ZERO-recall turn (recall returns ok([])) — NOT recall-conditional", async () => {
+      const memoryPort = ragMemoryPort();
+      mockRecall.mockResolvedValue({ ok: true, value: [] }); // zero recall hits this turn
+      const spy = makeSpyStore([profileDoc("u")]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort, mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
@@ -934,114 +941,121 @@ describe("assembleExecutionPrompt", () => {
       // The standing block injects even though recall returned NOTHING this turn.
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
-      expect(spy.reads(), "the standing-block read runs on a zero-recall turn").toBe(1);
+      expect(spy.lists(), "the standing-block list runs on a zero-recall turn").toBe(1);
     });
 
     it("standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
-      // The other half: the block was ALSO gated behind `rag.enabled` +
-      // `deps.memoryPort` (the outer recall guard). An operator who enables
-      // `memoryUserRepresentation` but runs `rag.enabled: false` got ZERO profile
-      // injection (the offline builder wrote rows nothing ever read). The standing
-      // block must inject on its OWN knob + store, with NO RAG/memoryPort at all.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+      const spy = makeSpyStore([profileDoc("u")]);
       const result = await assembleExecutionPrompt(
         makeParams({
-          config: userReprOnlyConfig(), // rag.enabled = false, NO memoryPort wired
-          deps: {
-            workspaceDir: "/workspace",
-            userRepresentationStore: spy.store,
-          },
+          config: learningOnlyConfig(), // rag.enabled = false, NO memoryPort wired
+          deps: { workspaceDir: "/workspace", mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
       expect(result.dynamicPreamble).toContain("<user_profile>");
       expect(result.dynamicPreamble).toContain("name is Sam");
-      expect(spy.reads(), "the standing-block read runs even with rag.enabled=false").toBe(1);
+      expect(spy.lists(), "the standing-block list runs even with rag.enabled=false").toBe(1);
     });
 
-    it("cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
-      // The gate moved from store-presence-only to (knob && store). Prove the
-      // knob is load-bearing — and that this is a true regression guard: wire the store
-      // AND drive a recall HIT (so the OLD nested push site WOULD have run), but leave
-      // `memoryUserRepresentation` OFF. The cost gate must hold: read() is NEVER called
-      // and the prompt equals the knob-off baseline (default-OFF byte-identity). On the
-      // pre-fix code (gated on store-presence inside the recall-hit branch) this FAILS —
-      // it would read once and inject. The recall block itself still runs (rag.enabled),
-      // so the baseline includes the recalled section; only the profile is gated off.
-      const memoryPort = ragMemoryPort(); // sets a non-empty recall hit
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
-      const knobOff = await assembleExecutionPrompt(
+    it("cost gate: learning OFF + store present + recall HIT ⇒ list() NEVER called and the prompt is byte-identical", async () => {
+      // Prove the collapsed gate is load-bearing: wire the store AND drive a recall
+      // HIT, but set learning.enabled=false. list() must NEVER fire and the
+      // prompt must equal the gate-off baseline (default-OFF byte-identity).
+      const memoryPort = ragMemoryPort();
+      const spy = makeSpyStore([profileDoc("u")]);
+      const gateOff = await assembleExecutionPrompt(
         makeParams({
-          // knobOffRagConfig: rag.enabled ON (recall hits) but the profile knob OFF.
           config: makeConfig({
-            rag: {
-              enabled: true,
-              maxResults: 5,
-              minScore: 0.3,
-              includeTrustLevels: ["learned"],
-              maxContextChars: 5000,
-            },
+            learning: { enabled: false },
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort,
-            userRepresentationStore: spy.store,
-          },
+          deps: { workspaceDir: "/workspace", memoryPort, mentalModelStore: spy.store },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
       const baseline = await assembleExecutionPrompt(
         makeParams({
           config: makeConfig({
-            rag: {
-              enabled: true,
-              maxResults: 5,
-              minScore: 0.3,
-              includeTrustLevels: ["learned"],
-              maxContextChars: 5000,
-            },
+            learning: { enabled: false },
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
           }),
           deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
           sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
         }),
       );
 
-      expect(spy.reads(), "knob off ⇒ read() NEVER called even on a recall hit (the cost gate)").toBe(0);
-      expect(knobOff.dynamicPreamble).not.toContain("<user_profile>");
-      expect(knobOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
-      expect(knobOff.systemPrompt).toEqual(baseline.systemPrompt);
+      expect(spy.lists(), "gate off ⇒ list() NEVER called even on a recall hit (the cost gate)").toBe(0);
+      expect(gateOff.dynamicPreamble).not.toContain("<user_profile>");
+      expect(gateOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(gateOff.systemPrompt).toEqual(baseline.systemPrompt);
     });
 
-    it("forward-presence: deps.userRepresentationStore reaches the read site with the prompt's own (tenant, agent, user) scope", async () => {
-      // The threading guard (a dropped thread is a silent no-op). Mirror
-      // the deps.tripleStore forward-presence test (lines 310-337): assert the dep the
-      // caller passed is the one whose read() fires, scoped to THIS prompt's identity.
-      const spy = makeSpyStore([
-        {
-          id: "p1",
-          entryType: "identity",
-          content: "name is Sam",
-          trust: "learned",
-          createdAt: 1_000,
-        },
-      ]);
+    it("GAP-2 half-1: the <user_profile> content is DISJOINT from the <available_skills> source (no double-surface)", async () => {
+      // The profile facts surface ONCE — in the <user_profile> block — never ALSO in
+      // the <available_skills> source (which prompt-assembly reads via the SEPARATE
+      // getPromptSkillsXml seam). The two channels are disjoint by SOURCE: the profile
+      // comes from mentalModelStore.list(scope,"profile"); the skills surface is
+      // daemon-materialized from list(scope,"skill") (kind-filtered — GAP-2 half-2). This
+      // asserts the two sources never share content (the harness mocks the rich-prompt
+      // assembler, so assert the disjointness at the source, not the assembled string).
+      const skillsXml =
+        "<available_skills>\n<skill><name>alpha</name><description>a skill</description></skill>\n</available_skills>";
+      const spy = makeSpyStore([profileDoc("u")]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            mentalModelStore: spy.store,
+            getPromptSkillsXml: () => skillsXml,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The profile facts are in the <user_profile> block (the dynamic preamble)…
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      // …and the <available_skills> SOURCE carries NEITHER profile fact (disjoint).
+      expect(skillsXml).toContain("<available_skills>");
+      expect(skillsXml).not.toContain("name is Sam");
+      expect(skillsXml).not.toContain("likes terse replies");
+      // ONE unfiltered list serves both consumers (profile + reuse-attribution); the
+      // profile/skill sources stay DISJOINT via in-process kind partition (kind=profile vs
+      // kind=skill), proven by the content assertions above (profile facts absent from the
+      // skills XML). The list call itself is no longer kind-filtered.
+      expect(spy.lastKind()).toBeUndefined();
+    });
+
+    it("non-fatal: a list() err is swallowed → no block, the agent proceeds (no throw)", async () => {
+      const store = {
+        admit: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(async () => ({ ok: false as const, error: new Error("unresolved scope") })),
+        promote: vi.fn(),
+        demote: vi.fn(),
+        promoteByName: vi.fn(),
+        demoteByName: vi.fn(),
+        supersede: vi.fn(),
+        evict: vi.fn(),
+      } as unknown as import("@comis/core").MentalModelStorePort;
+
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), mentalModelStore: store },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).not.toContain("<user_profile>");
+    });
+
+    it("forward-presence: deps.mentalModelStore reaches the list site with the prompt's own (tenant, agent) scope", async () => {
+      const spy = makeSpyStore([profileDoc("user-Q")]);
       await assembleExecutionPrompt(
         makeParams({
           config: ragConfig(),
@@ -1049,271 +1063,30 @@ describe("assembleExecutionPrompt", () => {
             workspaceDir: "/workspace",
             memoryPort: ragMemoryPort(),
             tenantId: "tenant-X",
-            userRepresentationStore: spy.store,
+            mentalModelStore: spy.store,
           },
           agentId: "agent-Z",
           sessionKey: { tenantId: "tenant-X", userId: "user-Q", channelId: "chat-1" } as any,
         }),
       );
 
-      // The exact dep the caller passed is the one that ran (forward-presence).
-      expect(spy.reads()).toBe(1);
-      const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
-      const scopeArg = readMock.mock.calls[0][0] as {
-        tenantId: string;
-        agentId: string;
-        userId: string;
-      };
+      // The exact dep the caller passed is the one that ran (forward-presence), scoped
+      // to THIS prompt's (tenant, agent) — the load-bearing isolation boundary.
+      expect(spy.lists()).toBe(1);
+      const scopeArg = spy.lastScope()!;
       expect(scopeArg.tenantId).toBe("tenant-X");
       expect(scopeArg.agentId).toBe("agent-Z");
-      expect(scopeArg.userId).toBe("user-Q");
+      // The single shared list is unfiltered (kind omitted) —
+      // partitioned in-process for the profile block + the skill topic-match.
+      expect(spy.lastKind()).toBeUndefined();
     });
   });
 
   // -----------------------------------------------------------------
-  // 4a-ter. The LLM-free channel-relationship standing block.
-  // The directional analog of the user-profile block above.
-  // The channel's relationship edges are read (deterministically) + pushed onto
-  // memorySections, exactly like the temporal-guidance / user-profile blocks.
-  // Two binding proofs:
-  //   - default-OFF byte-identity (the cost gate): with NO relationshipStore dep
-  //     OR socialModeling off, the prompt is byte-identical AND read() is 0 times.
-  //   - sign-off gate (the headline read-side proof): socialModeling.enabled
-  //     === true but NO privacyReviewSignedOffBy ⇒ STILL 0 reads + byte-identical (the
-  //     knob alone does not activate — a recorded sign-off is required).
-  // The active path reads scoped to channelId = sessionKey.channelId (the
-  // read-side boundary) and the injection is LLM-free (a store.read + the pure
-  // formatter — never a model call).
+  // 4a-ter. (The LLM-free channel-relationship standing-block tests were DELETED in
+  // Phase 226-04 with the rest of the social-modeling subsystem — the <channel_relationships>
+  // injection, the RelationshipStore port, the socialModeling gate are all gone. No alias, I1.)
   // -----------------------------------------------------------------
-  describe("channel-relationship injection (LLM-free, sign-off gated)", () => {
-    /** socialModeling ON + a recorded sign-off (the ACTIVE gate) + rag for parity. */
-    function signedOffConfig() {
-      return makeConfig({
-        socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
-        rag: {
-          enabled: true,
-          maxResults: 5,
-          minScore: 0.3,
-          includeTrustLevels: ["learned"],
-          maxContextChars: 5000,
-        },
-      });
-    }
-    /** socialModeling ON but NO sign-off (the RED gate — knob alone). */
-    function enabledNoSignOffConfig() {
-      return makeConfig({
-        socialModeling: { enabled: true },
-        rag: {
-          enabled: true,
-          maxResults: 5,
-          minScore: 0.3,
-          includeTrustLevels: ["learned"],
-          maxContextChars: 5000,
-        },
-      });
-    }
-    /** A memoryPort + a non-empty recall result so `recalled.value.length > 0`. */
-    function ragMemoryPort() {
-      const mockSearchResult = {
-        entry: {
-          id: "m1",
-          tenantId: "t",
-          content: "Test memory",
-          createdAt: 1_000,
-          tags: [],
-          trustLevel: "learned",
-          source: { channel: "test" },
-        },
-        score: 0.85,
-      };
-      mockRecall.mockResolvedValue({ ok: true, value: [mockSearchResult] });
-      return {
-        search: vi.fn().mockResolvedValue({ ok: true, value: [mockSearchResult] }),
-        store: vi.fn(),
-      } as any;
-    }
-    /** A spy RelationshipStore counting read() calls, returning a fixed edge set. */
-    function makeSpyRelationshipStore(
-      entries: import("@comis/core").RelationshipEntry[],
-    ): { store: import("@comis/core").RelationshipStore; reads: () => number } {
-      let readCalls = 0;
-      const store = {
-        upsert: vi.fn(),
-        read: vi.fn(async () => {
-          readCalls += 1;
-          return { ok: true as const, value: entries };
-        }),
-      } as unknown as import("@comis/core").RelationshipStore;
-      return { store, reads: () => readCalls };
-    }
-    /** A single directional edge fixture. */
-    function edge(): import("@comis/core").RelationshipEntry {
-      return {
-        id: "r1",
-        subjectUserId: "alice",
-        aboutUserId: "bob",
-        content: "trusts on logistics",
-        trust: "learned",
-        createdAt: 1_000,
-      };
-    }
-
-    it("default-OFF: with NO relationshipStore dep the prompt is byte-identical (no <channel_relationships> block)", async () => {
-      const result = await assembleExecutionPrompt(
-        makeParams({
-          config: signedOffConfig(),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-
-      // No store dep ⇒ no relationship read ⇒ no block ⇒ byte-identity preserved.
-      expect(result.dynamicPreamble).not.toContain("<channel_relationships>");
-      expect(result.systemPrompt).not.toContain("<channel_relationships>");
-    });
-
-    it("default-OFF cost gate: with NO store dep, read() is called 0 times AND the prompt equals the no-store baseline", async () => {
-      // The store is CONSTRUCTED (spy) but NOT wired into deps — the off config.
-      const spy = makeSpyRelationshipStore([edge()]);
-
-      const baseline = await assembleExecutionPrompt(
-        makeParams({
-          config: signedOffConfig(),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-
-      // THE COST GATE: the store was never wired, so its read() was never called.
-      expect(spy.reads(), "read() NEVER called in the off (no-store-dep) config").toBe(0);
-      expect(baseline.dynamicPreamble).not.toContain("<channel_relationships>");
-    });
-
-    it("socialModeling OFF (undefined): store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical", async () => {
-      // socialModeling is undefined entirely (makeConfig default). The store IS wired
-      // and recall hits, so the only thing gating the read is the socialModeling knob.
-      const memoryPort = ragMemoryPort();
-      const spy = makeSpyRelationshipStore([edge()]);
-      const off = await assembleExecutionPrompt(
-        makeParams({
-          config: makeConfig({
-            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
-          }),
-          deps: { workspaceDir: "/workspace", memoryPort, relationshipStore: spy.store },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-      const baseline = await assembleExecutionPrompt(
-        makeParams({
-          config: makeConfig({
-            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
-          }),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-
-      expect(spy.reads(), "socialModeling undefined ⇒ read() NEVER called (the cost gate)").toBe(0);
-      expect(off.dynamicPreamble).not.toContain("<channel_relationships>");
-      expect(off.dynamicPreamble).toEqual(baseline.dynamicPreamble);
-      expect(off.systemPrompt).toEqual(baseline.systemPrompt);
-    });
-
-    it("sign-off gate: enabled=true but NO privacyReviewSignedOffBy ⇒ 0 reads + byte-identical prompt (the headline sign-off RED)", async () => {
-      // THE HEADLINE READ-SIDE PROOF: the knob is ON but there is NO recorded
-      // sign-off. The store IS wired and recall HITS (so a store-presence-only or
-      // enabled-only gate WOULD read and inject). The dual gate must hold: a recorded
-      // privacyReviewSignedOffBy is REQUIRED — without it read() is NEVER called and the
-      // prompt is byte-identical to the no-relationship baseline.
-      const memoryPort = ragMemoryPort();
-      const spy = makeSpyRelationshipStore([edge()]);
-      const noSignOff = await assembleExecutionPrompt(
-        makeParams({
-          config: enabledNoSignOffConfig(),
-          deps: { workspaceDir: "/workspace", memoryPort, relationshipStore: spy.store },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-      const baseline = await assembleExecutionPrompt(
-        makeParams({
-          config: enabledNoSignOffConfig(),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-
-      expect(spy.reads(), "knob on but NO sign-off ⇒ read() NEVER called").toBe(0);
-      expect(noSignOff.dynamicPreamble).not.toContain("<channel_relationships>");
-      expect(noSignOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
-      expect(noSignOff.systemPrompt).toEqual(baseline.systemPrompt);
-    });
-
-    it("store present but empty: read() runs, the formatter returns null, nothing is pushed → byte-identical prompt", async () => {
-      const emptySpy = makeSpyRelationshipStore([]); // the channel has no edges
-      const withStore = await assembleExecutionPrompt(
-        makeParams({
-          config: signedOffConfig(),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort: ragMemoryPort(),
-            relationshipStore: emptySpy.store,
-          },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-      const withoutStore = await assembleExecutionPrompt(
-        makeParams({
-          config: signedOffConfig(),
-          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
-          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
-        }),
-      );
-
-      // The read ran (store present, gate open) but found nothing → no block → identical.
-      expect(emptySpy.reads(), "read() runs once when the store is present and the gate is open").toBe(1);
-      expect(withStore.dynamicPreamble).not.toContain("<channel_relationships>");
-      expect(withStore.dynamicPreamble).toEqual(withoutStore.dynamicPreamble);
-      expect(withStore.systemPrompt).toEqual(withoutStore.systemPrompt);
-    });
-
-    it("active path: enabled + signed off + a store returning edges injects the <channel_relationships> block scoped to channelId = sessionKey.channelId (LLM-free)", async () => {
-      const spy = makeSpyRelationshipStore([edge()]);
-      const result = await assembleExecutionPrompt(
-        makeParams({
-          config: signedOffConfig(),
-          deps: {
-            workspaceDir: "/workspace",
-            memoryPort: ragMemoryPort(),
-            tenantId: "tenant-X",
-            relationshipStore: spy.store,
-          },
-          agentId: "agent-Z",
-          sessionKey: { tenantId: "tenant-X", userId: "user-Q", channelId: "chan-77" } as any,
-        }),
-      );
-
-      // The block + the edge's directional content appear; the read drove it (LLM-free).
-      expect(result.dynamicPreamble).toContain("<channel_relationships>");
-      expect(result.dynamicPreamble).toContain("alice");
-      expect(result.dynamicPreamble).toContain("bob");
-      expect(result.dynamicPreamble).toContain("trusts on logistics");
-      expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
-
-      // The read-side boundary: the scope's channelId is the session's channel.
-      const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
-      const scopeArg = readMock.mock.calls[0][0] as {
-        tenantId: string;
-        agentId: string;
-        channelId: string;
-      };
-      expect(scopeArg.tenantId).toBe("tenant-X");
-      expect(scopeArg.agentId).toBe("agent-Z");
-      expect(scopeArg.channelId).toBe("chan-77");
-
-      // The injection adds NO extra model/recall seam: recall is still constructed once.
-      expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
-    });
-  });
 
   // -----------------------------------------------------------------
   // 4b. memory:injected event emit

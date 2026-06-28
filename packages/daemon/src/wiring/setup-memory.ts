@@ -32,11 +32,8 @@ import {
   createSqliteMemoryCausalStore,
   createSqliteTripleStore,
   createSqliteMemoryEmbeddingStore,
-  createSqliteUserRepresentationStore,
-  createSqliteRelationshipStore,
-  createSqliteTunedAlphaStore,
   createSqliteMemoryLifecycleStore,
-  createSqliteOutcomeStore, createSqliteLearnedSkillStore,
+  createSqliteOutcomeStore, createSqliteMentalModelStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -44,7 +41,6 @@ import {
   type RecallCountersWiring,
 } from "../observability/recall-counters-wiring.js";
 import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
-import { resolveUserRepresentationHistoryCapOption } from "./setup-memory-history-cap.js";
 import { setupLearningOutcomeWiring } from "./setup-learning.js";
 import { buildReactionWiringDeps, wireLearningReactions, wireLearningCorrection } from "./setup-learning-reactions.js";
 import { buildOutcomeJudgeWiring } from "./setup-learning-judge.js";
@@ -145,33 +141,9 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
-  /** Per-user representation store. The SOLE adapter for the
-   *  segregated `UserRepresentationStore` port (the `(tenant, agent, user)`-scoped upsert/read over
-   *  the additive `user_representation` table) — built UNCONDITIONALLY on the SAME shared `db`
-   *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE — which fires ONLY
-   *  for single-source rows; the offline builder omits `sourceMemoryId`, see the adapter's
-   *  provenance caveat — and the 3-way isolation scope stay consistent with the memory rows the
-   *  profile is distilled from — a read on a DIFFERENT handle would silently return empty).
-   *  No model/IO cost, so it is always
-   *  present; the LLM-free `<user_profile>` injection stays dormant until the offline builder writes
-   *  rows (its own default-OFF cost gate). Threaded into the recall read path (setup-agents-*) as the
-   *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one
-   *  place this @comis/memory adapter and the @comis/agent consumers are joined (the agent↛memory cut). */
-  userRepresentationStore: import("@comis/core").UserRepresentationStore;
-  /** Directional relationship store. The SOLE adapter for the
-   *  segregated `RelationshipStore` port (the `(tenant, agent, channel)`-scoped upsert/read over the
-   *  additive `relationship` table of directional `(subjectUserId, aboutUserId)` edges) — built
-   *  UNCONDITIONALLY on the SAME shared `db` handle the memory adapter owns (so the
-   *  `source_memory_id` ON DELETE CASCADE + the channel-scoped isolation stay consistent with the
-   *  memory rows the edges are distilled from — a read on a DIFFERENT handle would silently return
-   *  empty). No model/IO cost, so it is always present; the LLM-free
-   *  `<channel_relationships>` injection stays dormant until the offline builder writes rows AND an
-   *  operator both enables `agents.<id>.socialModeling.enabled` AND records a privacy-review sign-off
-   *  (`privacyReviewSignedOffBy`) — the dual gate. Threaded into the recall read path
-   *  (setup-agents-*) as the port TYPE only AND into the offline-builder `__SOCIAL_MODELING__` cron —
-   *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
-   *  consumers are joined (the agent↛memory cut). */
-  relationshipStore: import("@comis/core").RelationshipStore;
+  // (The directional relationship store was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the RelationshipStore port + sqlite adapter, the `relationship`
+  //  table, the offline directional-edge builder, the prompt injection are all gone.)
   /** Consolidation store. SOLE `MemoryConsolidationStore` adapter; built unconditionally on
    *  the shared `db` (no model/IO cost). Cron dormant until `memoryConsolidation.enabled`
    *  (default OFF). Construction-site comment has the full rationale; the agent gets the port TYPE only. */
@@ -180,14 +152,11 @@ export interface MemoryResult {
    *  the shared `db` (no model/IO cost). Feedback loop dormant until `rag.feedback.enabled` (default OFF);
    *  the write-back subscriber is wired separately. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Tuned-alpha store. SOLE `TunedAlphaStore` adapter; shared `db`, no model/IO cost. Dormant
-   *  until BOTH `rag.onlineTuning.enabled` (read) AND `memoryOnlineTuning.enabled` (keyless write). */
-  tunedAlphaStore: import("@comis/core").TunedAlphaStore;
   /** Outcome-signal store (Verified Learning WS1). SOLE `OutcomeSignalPort` adapter; shared `db`,
    *  no model/IO cost; gated at observe/resolve (agent never receives it — SEC-01). Returned so the
    *  daemon can `prune(retentionDays)` at startup (OUTCOME-07); the observe/resolve subscriber is wired here. */
   outcomeStore: import("@comis/core").OutcomeSignalPort;
-  learnedSkillStore: import("@comis/core").LearnedSkillStorePort; // WS2/skills (SKILL-01): SOLE LearnedSkillStorePort adapter, shared db (trust=learned); the daemon injects it into the __SKILL_SYNTHESIS__ cron admit (DORMANT until learningSkills.enabled).
+  learnedSkillStore: import("@comis/core").MentalModelStorePort; // WS2/skills (SKILL-01): SOLE MentalModelStorePort adapter, shared db (trust=learned); the daemon injects it into the __REFLECT__ cron get/admit (DORMANT until learningSkills.enabled).
   /** REACT-02 (Phase 199): outbound-message → trajectory capture callback, threaded into the delivery drain. `undefined` when learning-outcome is off for all agents (byte-identity: zero extra work). `participantId` (FLAG-2) is the conversation participant (inbound sender) so a reaction from an unmapped group bystander is inert. */
   recordOutboundMessage?: (messageId: string, scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string }) => void;
   /** WR-01 (Phase 199): tear down the reaction/session trajectory maps + the dedicated reaction rate limiter (cancels their unref'd TTL timers). Invoked from the daemon shutdown path. */
@@ -384,11 +353,11 @@ export async function setupMemory(deps: {
   // into daemon startup — it just stays OFF and recall degrades to fusion.
   let rerankerModelsDir: string | undefined;
   let modelPresent = false;
-  if (memoryConfig.rerankerModel) {
+  if (memoryConfig.recall.rerankerModel) {
     try {
       rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
       modelPresent = await rerankerModelPresent({
-        modelUri: memoryConfig.rerankerModel,
+        modelUri: memoryConfig.recall.rerankerModel,
         modelsDir: rerankerModelsDir,
       });
     } catch (e) {
@@ -448,7 +417,7 @@ export async function setupMemory(deps: {
     }
     if (modelsDirForBuild !== undefined) {
       const rr = await createLocalRerankerProvider({
-        modelUri: memoryConfig.rerankerModel,
+        modelUri: memoryConfig.recall.rerankerModel,
         modelsDir: modelsDirForBuild,
         gpu: memoryConfig.rerankerGpu,
         threads: memoryConfig.rerankerThreads,
@@ -461,7 +430,7 @@ export async function setupMemory(deps: {
         disposeReranker = port.dispose
           ? async () => { await port.dispose?.(); }
           : undefined;
-        memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+        memoryLogger.debug({ model: memoryConfig.recall.rerankerModel }, "Reranker provider initialized");
       } else {
         memoryLogger.warn(
           { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
@@ -474,8 +443,9 @@ export async function setupMemory(deps: {
   // 6.5.2. Create memory adapter with raw provider dimensions
   // Adapter uses embedding port only at query time (search()), not during construction.
   // Created BEFORE cache wiring because createSqliteEmbeddingCache needs the db handle.
-  const effectiveDimensions = embeddingPort ? embeddingPort.dimensions : memoryConfig.embeddingDimensions;
-  const adjustedMemoryConfig = { ...memoryConfig, embeddingDimensions: effectiveDimensions };
+  const effectiveDimensions = embeddingPort ? embeddingPort.dimensions : memoryConfig.recall.embeddingDimensions;
+  // Phase 226: the recall keepers nest under memory.recall — override the nested dimension.
+  const adjustedMemoryConfig = { ...memoryConfig, recall: { ...memoryConfig.recall, embeddingDimensions: effectiveDimensions } };
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
 
@@ -530,27 +500,10 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
-  // 6.5.2b'''''. Per-user representation store. Built on the SAME shared `db` handle the memory
-  // adapter owns — NEVER a second Database: the `source_memory_id` ON DELETE CASCADE + the
-  // `(tenant, agent, user)` 3-way isolation scope must stay consistent with the memory rows the
-  // profile is distilled from (a DIFFERENT handle silently returns empty — the embedding-store hazard).
-  // Always constructed (no model/IO cost); the LLM-free `<user_profile>` injection stays dormant until
-  // the offline builder writes rows (`memoryUserRepresentation.enabled`, default OFF). Composition-root
-  // join — the agent receives the port TYPE only (agent↛memory cut). Threaded into the recall read path
-  // (setup-agents-*) AND the offline-builder cron (setup-channels). REVISE-02 (203): the MAX per-agent historyCap → this SINGLE store (resolver in setup-memory-history-cap.ts; absent ⇒ default 10).
-  const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger, ...resolveUserRepresentationHistoryCapOption(container.config.agents) });
-
-  // 6.5.2b''''''. Directional relationship store. Built on the
-  // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the
-  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, channel)` channel-scoped isolation
-  // must stay consistent with the memory rows the directional edges are distilled from; a read on a
-  // DIFFERENT handle would silently return empty (the same hazard as the embedding / user-representation
-  // stores above). Always constructed (no model/IO cost); the LLM-free `<channel_relationships>`
-  // injection stays dormant until the offline builder writes rows AND the operator enables the
-  // dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
-  // root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded into the recall
-  // read path (setup-agents-*) AND the `__SOCIAL_MODELING__` offline-builder cron (setup-channels).
-  const relationshipStore = createSqliteRelationshipStore({ db, logger: memoryLogger });
+  // (6.5.2b''''''. The directional relationship store construction was DELETED in Phase 226-04
+  //  with the rest of the social-modeling subsystem — the createSqliteRelationshipStore adapter,
+  //  the `relationship` table, the offline `__SOCIAL_MODELING__` builder cron, the prompt injection
+  //  are all gone. No alias, I1.)
 
   // 6.5.2c. Consolidation store. Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
@@ -575,22 +528,12 @@ export async function setupMemory(deps: {
   // (it depends on a recall-attribution bus event not yet declared at this point).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-bis. Tuned-alpha store. Built on the SAME
-  // shared `db` handle the memory adapter owns — NOT a second Database — so the
-  // tuned_alpha table and the memories table share one connection and the (tenant, agent)
-  // isolation scope is consistent. Always constructed (no model/IO cost, like the
-  // usefulness store); it stays dormant until BOTH the recall-side gate
-  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read) AND the offline
-  // KEYLESS bandit cron (`agents.<id>.memoryOnlineTuning.enabled` — the __ONLINE_TUNING__
-  // write) are on. This is the composition-root join: the daemon builds the @comis/memory
-  // adapter here and threads the port TYPE into BOTH the recall read path (setup-agents-*
-  // -> createPiExecutor -> prompt-assembly's buildScoringAlphas) AND the __ONLINE_TUNING__
-  // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
-  const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
+  // 6.5.2d-bis. (The tuned-alpha store was DELETED in Phase 224 — the UCB recall bandit is
+  // gone; recall scoring is the fixed config.rag.scoring alphas, no tuned_alpha read/write.)
   // 6.5.2d-quater. Outcome-signal store (Verified Learning WS1, OUTCOME-01). UNCONDITIONAL on the shared `db` (no model/IO cost; gated at observe/resolve). SOLE OutcomeSignalPort adapter; agent never receives it (SEC-01); only wireLearningOutcome + the startup prune consume it (closed-graph).
   const outcomeStore = createSqliteOutcomeStore({ db, logger: memoryLogger });
-  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE LearnedSkillStorePort adapter; agent↛memory cut — the daemon injects it into the __SKILL_SYNTHESIS__ cron. DORMANT until learningSkills.enabled.
-  const learnedSkillStore = createSqliteLearnedSkillStore({ db, logger: memoryLogger });
+  // 6.5.2d-quinquies. Learned-skill store (WS2/skills, SKILL-01). UNCONDITIONAL on the shared `db` (DB-CHECK forces trust=learned). SOLE MentalModelStorePort adapter; agent↛memory cut — the daemon injects it into the __REFLECT__ cron. DORMANT until learningSkills.enabled.
+  const learnedSkillStore = createSqliteMentalModelStore({ db, logger: memoryLogger });
 
   // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the SAME shared `db` (NOT a second Database) so the sweep
   // scans the SAME `memories` rows under one (tenant, agent)-scoped FK-enabled connection. Always constructed (no
@@ -780,11 +723,8 @@ export async function setupMemory(deps: {
     causalStore,
     tripleStore,
     embeddingStore,
-    userRepresentationStore,
-    relationshipStore,
     consolidationStore,
     usefulnessStore,
-    tunedAlphaStore,
     outcomeStore,
     learnedSkillStore,
     recordOutboundMessage,

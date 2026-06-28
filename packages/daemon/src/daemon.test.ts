@@ -42,15 +42,16 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         ...gatewayOverrides,
       },
       memory: {
+        // Master kill switch (Phase 226 — renamed from costFeatures.enabled; schema default true).
+        // Present here because the real bootstrap always defaults it; the daemon's first-run
+        // notice + dialectic wiring read it.
+        enabled: true,
         dbPath: ":memory:",
         walMode: false,
-        embeddingModel: "text-embedding-3-small",
-        embeddingDimensions: 1536,
+        // Phase 226: the recall keepers nest under memory.recall.
+        recall: { embeddingModel: "text-embedding-3-small", embeddingDimensions: 1536 },
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
         retention: { maxAgeDays: 0 },
-        // Master cost-feature kill switch (schema default true). Present here because the real
-        // bootstrap always defaults it; the daemon's first-run notice + dialectic wiring read it.
-        costFeatures: { enabled: true },
       },
       embedding: {
         enabled: false,

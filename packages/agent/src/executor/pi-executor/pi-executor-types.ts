@@ -25,9 +25,7 @@ import type {
   MemoryUsefulnessStore,
   MemoryPinnedStore,
   LcdProvenanceReadStore,
-  TunedAlphaStore,
-  UserRepresentationStore,
-  RelationshipStore,
+  MentalModelStorePort,
   RerankerPort,
   HookRunner,
   SecretManager,
@@ -169,24 +167,14 @@ export interface PiExecutorDeps {
    *  absent OR no lcd_distilled result -> no read, recall order unchanged. TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   provenanceStore?: LcdProvenanceReadStore;
-  /** Optional learned-alpha store. Built in the daemon on the shared memory db handle;
-   *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
-   *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass
-   *  unchanged (byte-identical recall). TYPE-only from @comis/core — the agent never imports the
-   *  memory package (the agent↛memory cut). */
-  tunedAlphaStore?: TunedAlphaStore;
-  /** Optional per-user representation store. Built in the daemon on the shared memory db
-   *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
-   *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
-   *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
-  userRepresentationStore?: UserRepresentationStore;
-  /** Optional directional relationship store. Built in the daemon on the shared memory
-   *  db handle; threaded into prompt-assembly's LLM-free `<channel_relationships>` injection via
-   *  ToolAssemblyDeps. Absent -> no relationship read, no push, byte-identical prompt (the default-OFF
-   *  + sign-off-gated cost gate). TYPE-only from @comis/core — the agent never imports the memory
-   *  package (the agent↛memory cut). A missing forward here is a silent no-op even with the store wired
-   *  in the daemon (the documented latent field-plumbing drop — Pitfall 6). */
-  relationshipStore?: RelationshipStore;
+  /** Optional mental-model store (v2.31 Reflection doc store; the SAME store feeding the
+   *  learned-skill surface). FOLD-01 (Phase 225): threaded into prompt-assembly's
+   *  LLM-free `<user_profile>` injection via ToolAssemblyDeps as the kind:"profile" read source
+   *  (the standalone userRepresentationStore was deleted in Plan 05). Absent -> no profile list,
+   *  byte-identical prompt (cost gate). TYPE-only from @comis/core (the agent↛memory cut). */
+  mentalModelStore?: MentalModelStorePort;
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;

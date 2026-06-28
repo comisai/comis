@@ -166,13 +166,23 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
   const { db, logger } = deps;
 
   // --- Prepared statements (parameterized; reused across calls) ---
-  // Idempotent insert keyed on the (tenant_id, agent_id, trajectory_id, source,
-  // observed_at) UNIQUE tuple: a replay is a no-op (DO NOTHING). All 12 columns
-  // are bound `?` params — never string-built SQL.
+  // Insert keyed on the (tenant_id, agent_id, trajectory_id, source, observed_at) UNIQUE
+  // tuple. On conflict, MERGE the two attribution columns rather than drop the row:
+  // `recalled_ids` (memory:recall_used) and `used_skill_ids` (memory:skill_used) are written
+  // as SEPARATE source:"explicit" carriers at post-execution, so when their `observed_at`
+  // lands in the SAME millisecond they collide on this tuple — a plain DO NOTHING then
+  // SILENTLY dropped whichever lost the race, intermittently losing one credit on any turn
+  // that BOTH recalled memory AND reused a skill (the ~1/3 reuse-credit miss). COALESCE keeps
+  // each column's first non-null value, so the two carriers MERGE onto one row instead of one
+  // dropping. A genuine replay (identical tuple, same columns) COALESCEs to the same values —
+  // still a no-op; a tool/pipeline collision (both id-columns null) is a no-op on these SETs and
+  // never touches outcome/confidence, so fusion is byte-identical. All columns are bound `?`.
   const insertStmt = db.prepare(
     "INSERT INTO outcome_events (id, tenant_id, agent_id, session_id, trajectory_id, outcome, source, confidence, sender_trust, recalled_ids, used_skill_ids, observed_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(tenant_id, agent_id, trajectory_id, source, observed_at) DO NOTHING",
+      "ON CONFLICT(tenant_id, agent_id, trajectory_id, source, observed_at) DO UPDATE SET " +
+      "recalled_ids = COALESCE(excluded.recalled_ids, recalled_ids), " +
+      "used_skill_ids = COALESCE(excluded.used_skill_ids, used_skill_ids)",
   );
 
   // Scoped read for resolve(): the `tenant_id = ? AND agent_id = ?` filter is the

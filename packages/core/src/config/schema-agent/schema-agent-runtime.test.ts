@@ -117,7 +117,8 @@ describe("top-level verbosity stays unchanged alongside activity.verbosity (no-B
 
 // ---------------------------------------------------------------------------
 // The SCAFFOLD-DORMANT memory-lifecycle cron knob wired
-// onto the per-agent RUNTIME config (alongside memoryOnlineTuning). `.optional()`
+// onto the per-agent RUNTIME config (the memoryOnlineTuning bandit sibling was
+// deleted in Phase 224). `.optional()`
 // so a default agent registers NO lifecycle block (byte-identical) — the cron is
 // default-OFF and even when enabled the dormant adapter evicts nothing.
 // These cases fail on the pre-patch schema (no `memoryLifecycle` field) — RED.
@@ -129,14 +130,12 @@ describe("per-agent memoryLifecycle config block", () => {
     expect(cfg.memoryLifecycle!.enabled).toBe(true);
   });
 
-  it("accepts a memoryLifecycle subtree on a per-agent config and applies the dormant defaults", () => {
+  it("accepts a memoryLifecycle subtree on a per-agent config and applies the trimmed defaults", () => {
     const cfg = PerAgentConfigSchema.parse({ memoryLifecycle: { enabled: true } });
     expect(cfg.memoryLifecycle).toBeDefined();
     expect(cfg.memoryLifecycle!.enabled).toBe(true);
-    // The dormant policy constants default through from MemoryLifecycleConfigSchema.
+    // Phase 226 trimmed the schema to {enabled,schedule}; the FadeMem constants were deleted.
     expect(cfg.memoryLifecycle!.schedule).toBe("0 9 * * *");
-    expect(cfg.memoryLifecycle!.thetaPromote).toBe(0.7);
-    expect(cfg.memoryLifecycle!.thetaDemote).toBe(0.3);
   });
 
   it("rejects a stray field on the per-agent memoryLifecycle subtree (z.strictObject)", () => {

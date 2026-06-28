@@ -35,31 +35,10 @@ export type {
   TripleInput,
 } from "./triple-store.js";
 export type {
-  UserRepresentationStore,
-  UserRepresentationScope,
-  UserRepresentationTrust,
-  UserRepresentationEntry,
-  UserRepresentationInput,
-  ReviseOutcome,
-} from "./user-representation-store.js";
-export type {
-  TunedAlphaStore,
-  TunedAlphaScope,
-  TunedAlphaVector,
-} from "./tuned-alpha-store.js";
-export type {
   MemoryLifecyclePort,
   MemoryLifecycleScope,
-  MemoryTier,
   LifecycleSweepReport,
 } from "./memory-lifecycle.js";
-export type {
-  RelationshipStore,
-  RelationshipScope,
-  RelationshipTrust,
-  RelationshipEntry,
-  RelationshipInput,
-} from "./relationship-store.js";
 export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
@@ -73,27 +52,16 @@ export type {
   OutcomePruneResult,
 } from "./outcome-signal-port.js";
 export type {
-  SkillSynthesisPort,
-  SynthesisInput,
-  CandidateSkill,
-} from "./skill-synthesis-port.js";
-export type {
-  SkillValidationPort,
-  SkillValidationResult,
-  SkillValidationFinding,
-  ReplayContext,
-} from "./skill-validation-port.js";
-export type {
-  LearnedSkillStorePort,
-  LearnedSkill,
-  AdmitSkillInput,
+  MentalModelStorePort,
+  MentalModel,
+  AdmitMentalModelInput,
 } from "./learned-skill-store.js";
 export type {
-  MemoryConsolidationStore,
-  ConsolidationCandidate,
-  ConsolidationPlan,
-  ConsolidationFoldPlan,
-} from "./memory-consolidation.js";
+  DocSection,
+  StructuredBody,
+  DeltaOp,
+} from "./reflection-port.js";
+export type { MemoryConsolidationStore } from "./memory-consolidation.js";
 export type { SessionStorePort } from "./session-store.js";
 export type {
   SessionData,

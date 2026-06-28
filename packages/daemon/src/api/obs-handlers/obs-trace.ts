@@ -17,6 +17,7 @@
  * @module
  */
 
+import { AuthorizationError } from "../errors.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import {
@@ -278,7 +279,7 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     // @contract-deferred-fields: chatId
     [ObsTraceSearchContract.method]: async (rawParams) => {
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const params = ObsTraceSearchContract.request.parse(stripInternalFields(rawParams));
       const limit = params.limit ?? 200;
@@ -308,7 +309,7 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     // -----------------------------------------------------------------------
     [ObsTraceTailContract.method]: async (rawParams) => {
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const params = ObsTraceTailContract.request.parse(stripInternalFields(rawParams));
       const limit = params.limit ?? 50;
@@ -333,7 +334,7 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
     // -----------------------------------------------------------------------
     [ObsTraceExportContract.method]: async (rawParams) => {
       const trustLevel = (rawParams as Record<string, unknown>)._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin access required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin access required");
 
       const params = ObsTraceExportContract.request.parse(stripInternalFields(rawParams));
 

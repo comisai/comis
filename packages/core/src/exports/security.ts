@@ -93,6 +93,11 @@ export { createInputSecurityGuard } from "../security/index.js";
 export type { InputSecurityGuard, InputSecurityGuardResult, InputSecurityGuardConfig } from "../security/index.js";
 export { validateMemoryWrite } from "../security/index.js";
 export type { MemoryWriteValidationResult } from "../security/index.js";
+// Learned-doc static scan (v2.31 Reflection) — surfaced on the public @comis/core
+// barrel so the agent reflection job (223-04) and the daemon reflect path (223-05)
+// consume it directly (the static scan is ALL the validation an advisory doc gets).
+export { validateLearnedDocBody, MAX_DOC_NAME_LENGTH } from "../security/index.js";
+export type { LearnedDocValidation, LearnedDocFinding } from "../security/index.js";
 export { createInjectionRateLimiter } from "../security/index.js";
 export type { InjectionRateLimiter, InjectionRateLimiterConfig, RateLimitResult } from "../security/index.js";
 export { resolveSecretRef, resolveConfigSecretRefs } from "../security/index.js";

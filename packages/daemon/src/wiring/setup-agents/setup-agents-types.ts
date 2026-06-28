@@ -146,33 +146,15 @@ export interface SingleAgentDeps {
    *  hit 3×). Byte-identical no-op when absent OR when no lcd_distilled result is
    *  present. The core LcdProvenanceReadStore TYPE only (the agent↛memory cut). */
   provenanceStore?: import("@comis/core").LcdProvenanceReadStore;
-  /** Per-user representation store. Threaded into each per-agent
-   *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
-   *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port
-   *  TYPE (agent↛memory cut). Dormant until the offline builder writes rows (default-OFF cost gate);
-   *  absent ⇒ no read, no push, byte-identical prompt. */
-  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
-  /** Directional relationship store. Threaded into each per-agent
-   *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>`
-   *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port TYPE
-   *  (agent↛memory cut). Dormant until the offline builder writes rows AND the operator enables the
-   *  dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
-   *  no read, no push, byte-identical prompt. */
-  relationshipStore?: import("@comis/core").RelationshipStore;
-  /** Tuned-alpha store. Threaded into each per-agent createPiExecutor
-   *  (the executor recall read path -> prompt-assembly's buildScoringAlphas overlay; the four learned
-   *  non-trust alphas, the trust weight stays config-sourced — belt #2). Built in setup-memory on the
-   *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until BOTH the recall-side
-   *  gate (`rag.onlineTuning.enabled`) AND the OFFLINE bandit cron (`memoryOnlineTuning.enabled`) are on;
-   *  absent ⇒ no read, byte-identical recall. */
-  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — the <channel_relationships> injection it fed is gone.)
   /** Learned-skill store (v2.26 SURFACE-01/03). Threaded into setupSingleAgent so the
    *  `getPromptSkillsXml` seam can surface promoted read-only learned procedures
-   *  (append-after-platform, materialized read-only). The segregated `LearnedSkillStorePort`
+   *  (append-after-platform, materialized read-only). The segregated `MentalModelStorePort`
    *  TYPE from @comis/core (the agent↛memory cut); the daemon injects the concrete
    *  @comis/memory adapter. Default-OFF byte-identity: absent ⇒ the listing is the
    *  platform-only snapshot, unchanged. */
-  learnedSkillStore?: import("@comis/core").LearnedSkillStorePort;
+  learnedSkillStore?: import("@comis/core").MentalModelStorePort;
   /** WR-01: the shared per-agent learned-skill SURFACE registry. setupSingleAgent
    *  registers this agent's surface refresh closure into it (only when learningSkills
    *  is enabled — WR-03); the resolve-seam promote/demote loop (wireLearningOutcome,

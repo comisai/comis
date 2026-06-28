@@ -81,7 +81,7 @@ export function bindMemoryAskHandler(deps: MemoryHandlerDeps): Record<string, Rp
             reason,
             hint:
               reason === "dialectic_unavailable"
-                ? "memory.ask abstained because the dialectic seam is not wired — check dialectic.enabled / memory.costFeatures.enabled and the agent's provider key"
+                ? "memory.ask abstained because the dialectic seam is not wired — check dialectic.enabled / memory.enabled and the agent's provider key"
                 : "memory.ask abstained because no agent scope was resolvable (no _agentId and no defaultAgentId)",
           },
           "memory.ask abstained (dialectic unavailable)",

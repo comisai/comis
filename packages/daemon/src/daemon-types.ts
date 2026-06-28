@@ -432,33 +432,16 @@ export interface BootContext {
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
-  /** Per-user representation store — threaded into setupAgents (the
-   *  executor recall read path -> prompt-assembly's LLM-free `<user_profile>` standing-block injection)
-   *  AND the offline-builder cron (setup-channels -> the __USER_REPRESENTATION__ sentinel). Built in
-   *  setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
-   *  offline builder writes rows (default-OFF cost gate). */
-  userRepresentationStore: Awaited<ReturnType<typeof setupMemory>>["userRepresentationStore"];
-  /** Directional relationship store — threaded into setupAgents
-   *  (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>` standing-block
-   *  injection) AND the offline-builder cron (setup-channels -> the __SOCIAL_MODELING__ sentinel). Built
-   *  in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
-   *  offline builder writes rows AND the operator enables the social-modeling dual gate (default-OFF +
-   *  sign-off-gated). */
-  relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
-  /** Tuned-alpha store — threaded into setupAgents (the executor
-   *  recall read path -> prompt-assembly's buildScoringAlphas overlay) AND the OFFLINE bandit cron
-   *  (setup-channels -> the __ONLINE_TUNING__ sentinel). Built in setup-memory on the shared db;
-   *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
-   *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
-  tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
+  // (The directional relationshipStore field was DELETED in Phase 226-04 with the rest of the
+  //  social-modeling subsystem — setupMemory no longer returns it; the cron + injection it fed are gone.)
   /** Memory-lifecycle sweep store — cron path ONLY (KEYLESS __MEMORY_LIFECYCLE__ → DORMANT
    *  runLifecycleSweep; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut).
    *  Dormant — even with `memoryLifecycle.enabled` (default OFF) the sweep evicts/demotes 0 rows. */
   memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
-  /** Consolidation store — cron path ONLY (registerCronEventListeners → runMemoryConsolidation sentinel; NOT the executor recall path). Shared db; port TYPE only (agent↛memory cut). */
+  /** Consolidation store — ORPHANED in Phase 225-05 (the runMemoryConsolidation job + its cron were deleted); port retired in Phase 226. Shared db; port TYPE only (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
-  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __SKILL_SYNTHESIS__ cron success gate (agent↛memory cut)
-  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __SKILL_SYNTHESIS__ admit target
+  outcomeStore: Awaited<ReturnType<typeof setupMemory>>["outcomeStore"]; // WS1 — the __REFLECT__ cron success gate (agent↛memory cut)
+  learnedSkillStore: Awaited<ReturnType<typeof setupMemory>>["learnedSkillStore"]; // WS2/skills — the __REFLECT__ get/admit target
   learnedSkillSurfaceRegistry: import("./wiring/setup-agents/learned-skill-surface-registry.js").LearnedSkillSurfaceRegistry; // WR-01 — shared per-agent surface registry created in bootFoundation; bootAgents registers each agent + the promote/demote loop re-refreshes
   /** Live recall-counter wiring — the single `wireRecallCounters(eventBus)` subscriber (setup-memory holds the bus); threaded into MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
   recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];

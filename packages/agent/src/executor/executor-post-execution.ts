@@ -29,9 +29,9 @@ import {
   // Secret-egress guard (the keystone). Used to gate the paired-conversation
   // memory write so user-pasted secrets never reach the memories table / vector
   // index — the SAME guard the derived-memory writes on this file already apply
-  // (memory-user-representation-job.ts, memory-relationship-job.ts,
-  // memory-consolidation-job.ts). validateMemoryWrite REJECTS (severity
-  // "critical") when the secret-egress scan finds a redaction.
+  // (memory-user-representation-job.ts, memory-consolidation-job.ts).
+  // validateMemoryWrite REJECTS (severity "critical") when the secret-egress scan
+  // finds a redaction.
   validateMemoryWrite,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -488,7 +488,7 @@ export interface StorePairedConversationMemoryArgs {
  * written VERBATIM to the `memories` table AND embedded into the vector index —
  * recallable across sessions — even though the explicit `memory_store` tool
  * refuses it (cosmetic for data-at-rest). The DERIVED-memory writes
- * (user-representation, relationship, consolidation) all run `validateMemoryWrite`
+ * (user-representation, consolidation) all run `validateMemoryWrite`
  * FIRST; this helper applies the SAME guard to the paired write for parity.
  *
  * `validateMemoryWrite` REJECTS (returns severity `critical`) when the secret-
@@ -1554,7 +1554,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     } else {
       // SECURITY (FIX 1): route the paired-conversation write through the
       // secret-egress firewall (validateMemoryWrite) — the SAME guard the
-      // derived-memory writes (user-representation/relationship/consolidation)
+      // derived-memory writes (user-representation/consolidation)
       // apply. A user-pasted secret is REJECTED (verdict critical) so it is
       // never persisted to the memories table nor embedded into the vector index
       // (recallable across sessions). The skip is content-free. Non-secret

@@ -29,9 +29,8 @@ import {
   applyMediaRecord,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillSynthesizedRecord,
-  accumulateSkillValidatedRecord, accumulateToolSchemaRecord, buildLearningSignal,
-  accumulateUserModelRevisedRecord, accumulateMemoryGeneralizedRecord, emptyLearningFold,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
+  accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord,
 } from "./obs-explain-signal-folds.js";
@@ -316,13 +315,25 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
-    // OBS-02: fold learning-family records → the learning block — outcome (198) / skills (201) / revision+generalization (203); ids/counts only (SEC-01).
+    // OBS-02 / REFLECT (Phase 226): fold learning-family records → the learning block —
+    // outcome (198) / skill invocation (201) / the reflection funnel (reflect.admitted +
+    // reflect.funnel, renamed Phase 226); ids/counts only (SEC-01). The 3 vestigial dispatch
+    // cases (sandbox-validation + user-rep-revision + generalization) were DELETED with their
+    // 0-emit events.
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
-    case "learning.skill_validated": accumulateSkillValidatedRecord(acc.learning, data); return;
-    case "learning.skill_synthesized": accumulateSkillSynthesizedRecord(acc.learning, data); return;
-    case "learning.user_model_revised": accumulateUserModelRevisedRecord(acc.learning, data); return;
-    case "learning.memory_generalized": accumulateMemoryGeneralizedRecord(acc.learning, data); return;
+    case "reflect.admitted":
+    case "reflect.funnel":
+      // The reflection funnel records contribute the BENIGN abstain flag (the payload is
+      // counts only); bump count so a reflection-only session still yields a learning block.
+      accumulateReflectFunnelRecord(acc.learning, data);
+      return;
+    // OBS-4 (hindsight-reflection-20260626): the reuse→promote chain. With skill.prompt_invoked
+    // (skillsUsed) this surfaces "used skill X → promoted N" on the per-session learning block.
+    case "learning.skill_promoted": accumulateSkillTransitionRecord(acc.learning, data, "promoted"); return;
+    case "learning.skill_demoted": accumulateSkillTransitionRecord(acc.learning, data, "demoted"); return;
+    // OBS-4b: the corroborated-failure accrual (eviction-causation precursor) → the learning block.
+    case "learning.memory_failure_attributed": accumulateMemoryFailureRecord(acc.learning, data); return;
     case "execution.tool_schema_unsupported":
       // GBNF-02 (175): the strip-retry self-heal record (LAST wins — terminal
       // repair state). Content-free fold (see obs-explain-signal-folds.ts).

@@ -68,7 +68,8 @@ import {
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
 // OBS-02 (Phase 201): the two BENIGN learning verdicts (sibling — subdir cap).
-import { learnedSkillFailingVerdict, synthesisAbstainedVerdict, userModelRevisedVerdict } from "./obs-explain-learning-verdicts.js";
+// userModelRevisedVerdict was deleted in Phase 226 (its 0-emit signal was removed).
+import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // WR-4: NAMED spend verdict (sibling — subdir cap)
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // RECALL-01 (sibling — subdir cap)
 
@@ -460,11 +461,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 11/12/12b) the BENIGN learning verdicts (sibling): after the acute tier, before #13
+  // 11/12) the BENIGN learning verdicts (sibling): after the acute tier, before #13
   // (specific-over-generic, yet Defer ≠ Retry — never masks an acute error).
+  // (userModelRevisedVerdict was deleted in Phase 226 with its 0-emit signal.)
   learnedSkillFailingVerdict,
   synthesisAbstainedVerdict,
-  userModelRevisedVerdict, // OBS-02 (Phase 203): routine user-model revision; zero/absent ⇒ no verdict.
 
   // 13) outcome_unresolved (OBS-02, Phase 198 — LOWEST-priority, BENIGN, the
   //     generic learning catch-all). A finished trajectory the learning shadow saw
