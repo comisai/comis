@@ -48,7 +48,13 @@ export default defineConfig({
       // is strictly ≤ measured (no off-by-one fail on first run). The
       // `comis` umbrella package (re-export-only, no test files) is
       // intentionally floored at 0/0/0/0 — no enforcement.
-      thresholds: {
+      //
+      // Floors are enforced on a COMPLETE coverage set only: a local
+      // `test:coverage` run, or the CI `coverage` job that merges the unit
+      // shards (`vitest --merge-reports --coverage`). Sharded CI runs export
+      // VITEST_NO_THRESHOLDS=1 so each ~25%-coverage shard collects into its
+      // blob WITHOUT tripping the floors; the merge re-applies them on the union.
+      thresholds: process.env.VITEST_NO_THRESHOLDS ? undefined : {
         "packages/shared/src/**/*.ts":       { lines: 97, branches: 91, functions: 96,  statements: 97 },
         "packages/core/src/**/*.ts":         { lines: 91, branches: 79, functions: 91,  statements: 91 },
         "packages/infra/src/**/*.ts":        { lines: 95, branches: 92, functions: 100, statements: 95 },

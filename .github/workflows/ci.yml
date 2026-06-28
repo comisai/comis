@@ -104,6 +104,13 @@ jobs:
         # carries this shard's coverage data; the `coverage` job merges all four
         # and enforces the per-package floors. Each shard runs a disjoint slice
         # of the test files (vitest distributes by file).
+        #
+        # VITEST_NO_THRESHOLDS disables the per-package floors for THIS run — a
+        # single shard only covers ~25% of the source, so enforcing the floors
+        # here would always fail. The floors are checked once, on the merged
+        # full-coverage set, in the `coverage` job below.
+        env:
+          VITEST_NO_THRESHOLDS: "1"
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
 
       - name: Upload coverage blob
