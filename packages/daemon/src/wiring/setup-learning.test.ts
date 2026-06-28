@@ -1147,7 +1147,7 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
     expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "timestamp"]);
   });
 
-  it("SURFACE-06: a demote emits learning:skill_demoted with plain emit, COUNTS ONLY", async () => {
+  it("SURFACE-06 + finding C: a demote emits learning:skill_demoted with the NAME + trigger trajectory (content-free ids, no body)", async () => {
     const ls = mockLearnedSkillStore();
     const bus = new TypedEventBus();
     const emitSpy = vi.spyOn(bus, "emit");
@@ -1159,9 +1159,13 @@ describe("wireLearningOutcome — learned-skill promote/demote at resolve() (SUR
 
     const demoted = emitSpy.mock.calls.find((c) => c[0] === "learning:skill_demoted");
     expect(demoted, "a demote must emit learning:skill_demoted").toBeDefined();
-    const payload = demoted![1] as { agentId: string; count: number; timestamp: number };
+    const payload = demoted![1] as { agentId: string; count: number; demotedSkillNames?: string[]; triggerTrajectoryId?: string; timestamp: number };
     expect(payload.count).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "timestamp"]);
+    // Finding C: the demoted skill NAME + the trigger trajectory id now ride alongside the count.
+    expect(payload.demotedSkillNames).toContain("s1");
+    expect(typeof payload.triggerTrajectoryId).toBe("string");
+    // Still content-free: ONLY ids/counts/trajectory-id cross — never a body/script/description (SEC-01).
+    expect(Object.keys(payload).sort()).toEqual(["agentId", "count", "demotedSkillNames", "timestamp", "triggerTrajectoryId"]);
   });
 
   it("byte-identity: learningSkills disabled (default) → a success/failure resolve calls NEITHER promote/demote NOR the 2 emits", async () => {
