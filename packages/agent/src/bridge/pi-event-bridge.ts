@@ -555,6 +555,77 @@ export interface PiEventBridgeResult {
  * - compaction_end -> INFO/WARN log + compaction:flush event
  * - error (from turn_end with stopReason) -> circuit breaker failure
  */
+/**
+ * Tool self-grade convention (PD-OUTCOME-1, codex package-delivery live-test).
+ *
+ * A tool may report its own SEMANTIC outcome via an explicit
+ * `{ graded: true, outcome: "success" | "failure" }` envelope, so an action that
+ * logically FAILED while the CALL returned cleanly (no SDK `isError` — e.g. an MCP
+ * delivery to a non-existent recipient, a search that found nothing, a rejected write)
+ * is recorded as a failure rather than a transport success. The learning loop then
+ * credits/promotes a skill on the real task outcome, not on "the tool returned".
+ *
+ * The envelope is read from BOTH shapes a result can arrive in:
+ *  1. a top-level structured object `{ graded, outcome }`, and
+ *  2. the MCP wire shape `{ content: [{ type:"text", text:"<json>" }], isError }` — the
+ *     JSON-stringified result sits inside `content[].text` (see the :79 note above).
+ *
+ * OPT-IN by design: only an explicit `graded:true` result is honored, so an arbitrary
+ * result is NEVER false-flagged (the c53ab0f no-false-flag invariant). Total + bounded:
+ * only text blocks are parsed, length-capped, with a cheap `"graded"` pre-filter before
+ * `JSON.parse`, and a non-JSON / non-object / unknown-`outcome` input returns `undefined`.
+ */
+export function extractSelfGradedOutcome(result: unknown): "success" | "failure" | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const readEnvelope = (o: Record<string, unknown>): "success" | "failure" | undefined =>
+    o.graded === true && (o.outcome === "success" || o.outcome === "failure") ? o.outcome : undefined;
+  // 1. Top-level structured envelope.
+  const top = readEnvelope(result as Record<string, unknown>);
+  if (top !== undefined) return top;
+  // 2. MCP shape: the result text sits in content[].text. Comis SECURITY-WRAPS untrusted
+  //    MCP content (wrapExternalContent: a "SECURITY NOTICE…" preamble + <<<UNTRUSTED_…>>>
+  //    markers around the payload), so a whole-text JSON.parse FAILS — the envelope is
+  //    EMBEDDED after the preamble. parseEmbeddedJsonObject handles both the wrapped and
+  //    the bare case (verified live, PD-OUTCOME-1: the preamble/markers carry no braces, so
+  //    the first-'{'…last-'}' slice is the JSON payload).
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    if (block === null || typeof block !== "object") continue;
+    const text = (block as { text?: unknown }).text;
+    // Cheap guards: only a bounded text block that even mentions the marker is parsed.
+    if (typeof text !== "string" || text.length === 0 || text.length > 16384) continue;
+    if (!text.includes('"graded"')) continue;
+    const parsed = parseEmbeddedJsonObject(text);
+    if (parsed !== undefined) {
+      const r = readEnvelope(parsed);
+      if (r !== undefined) return r;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Parse a JSON OBJECT out of `text`: the whole string first (a bare result), else the
+ * `{`…`}` slice (a security-wrapped payload whose preamble + markers carry no braces).
+ * Returns the parsed object or `undefined` (non-JSON / array / scalar). Total + bounded.
+ */
+function parseEmbeddedJsonObject(text: string): Record<string, unknown> | undefined {
+  const tryParse = (s: string): Record<string, unknown> | undefined => {
+    try {
+      const p: unknown = JSON.parse(s);
+      return p !== null && typeof p === "object" && !Array.isArray(p) ? (p as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const whole = tryParse(text);
+  if (whole !== undefined) return whole;
+  const lb = text.indexOf("{");
+  const rb = text.lastIndexOf("}");
+  return lb >= 0 && rb > lb ? tryParse(text.slice(lb, rb + 1)) : undefined;
+}
+
 export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResult {
   // Internal accumulation state (managed by bridge-metrics module)
   const m = createBridgeMetrics();
@@ -906,6 +977,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // Original success preserved (no mutation of toolSuccess).
               }
             }
+          }
+
+          // PD-OUTCOME-1: honor an explicit tool self-grade. A tool that reports
+          // { graded:true, outcome:"failure" } while returning cleanly (no SDK isError)
+          // is a LOGICAL failure — flip the transport-success so the learning loop credits
+          // the real task outcome (not "the tool returned"). transportOk stays true (the
+          // call returned; the CONTENT failed — the failure_detector semantics). Opt-in
+          // marker ⇒ never a false-flag (mirrors the c53ab0f invariant). Runs only while
+          // still success, so an SDK/exit-code/detector failure already classified wins.
+          if (toolSuccess && extractSelfGradedOutcome(endEvent.result) === "failure") {
+            toolSuccess = false;
+            toolErrorKind = toolErrorKind ?? "validation";
+            classifiedFailureBy = "failure_detector";
+            matchedRule = matchedRule ?? "self_grade";
+            matchedToken = matchedToken ?? "failure";
           }
 
           // Retrieve stored args and extract error text for failure diagnostics
