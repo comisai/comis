@@ -8,6 +8,7 @@
  */
 
 import type { AppContainer } from "@comis/core";
+import { LoggingConfigSchema, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createTracingLogger } from "../observability/trace-logger.js";
 import type { createLogLevelManager, LogLevelManager } from "../observability/log-infra.js";
@@ -15,6 +16,7 @@ import { createFileTransport, isPm2Managed } from "../observability/log-infra.js
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -66,9 +68,20 @@ export function setupLogging(deps: {
         maxFiles: container.config.observability.logRotation.maxFiles,
       }
     : undefined;
-  const fileTransport = loggingConfig
-    ? createFileTransport(loggingConfig, configLogLevel, logRotation)
-    : undefined;
+  // B (obs-sweep): when no `daemon.logging` block is configured, DEFAULT the structured log
+  // to a FILE at <dataDir>/logs/daemon.log rather than stdout-only. Without this, a config
+  // omitting daemon.logging writes structured logs to stdout ONLY — silently LOST for any
+  // backgrounded / systemd / `>/dev/null` daemon — yet the docs promise the authoritative log
+  // is always at <dataDir>/logs/daemon.*.log. The audit + session-index sinks already write
+  // under <dataDir>/logs via safePath; this aligns the daemon logger. dataDir is resolved the
+  // same way as daemon.ts (config.dataDir, else COMIS_DATA_DIR, else ~/.comis).
+  const resolvedDataDir =
+    container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : (process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis"));
+  const effectiveLoggingConfig =
+    loggingConfig ?? LoggingConfigSchema.parse({ filePath: safePath(resolvedDataDir, "logs", "daemon.log") });
+  const fileTransport = createFileTransport(effectiveLoggingConfig, configLogLevel, logRotation);
 
   // 2. Create tracing logger (use config logLevel or default to "debug")
   const rawLogger = _createTracingLogger({
@@ -80,11 +93,19 @@ export function setupLogging(deps: {
   // Bind instanceId to root logger — all children inherit it
   const logger = rawLogger.child({ instanceId }) as ComisLogger;
 
-  // Log transport mode so operators can verify PM2-aware selection
+  // Log transport mode so operators can verify PM2-aware selection. INFO (not DEBUG): an
+  // operator who can't find the structured log must see WHERE it went without flipping to
+  // debug first — names the resolved file path + whether it was defaulted (no daemon.logging
+  // block) so the "where are my logs?" question is answered from the boot line itself.
   const pm2Detected = isPm2Managed();
-  logger.debug(
-    { pm2Detected, fileTransportEnabled: !!loggingConfig, stdoutEnabled: !pm2Detected },
-    "Log transport configured",
+  logger.info(
+    {
+      structuredLogPath: effectiveLoggingConfig.filePath,
+      defaultedLogPath: !loggingConfig,
+      pm2Detected,
+      stdoutEnabled: !pm2Detected,
+    },
+    "Structured logging configured",
   );
 
   // 3. Create log level manager
