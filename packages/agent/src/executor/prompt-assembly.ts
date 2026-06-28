@@ -232,6 +232,30 @@ export function clearSessionPromptSkillSurfacedCensus(snapshotKey: string): void
   sessionPromptSkillSurfacedCensus.delete(snapshotKey);
 }
 
+/** The per-turn memory-injection (RAG) summary — content-free counts + closed trust-level tags.
+ *  STORED here during assembly, emitted as `memory:injected` by postExecution (the inline assembly
+ *  runs BEFORE the trajectory bridge subscribes — the same pre-bridge timing bug as the surfaced
+ *  census, so an inline emit was lost on EVERY turn). Overwritten per turn; set only when the
+ *  injector produced content. */
+export interface MemoryInjectedSummary {
+  hitCount: number;
+  charsInjected: number;
+  trustTags: string[];
+  pinnedCount: number;
+}
+const sessionPromptMemoryInjected = new Map<string, MemoryInjectedSummary>();
+
+/** Read (for postExecution) the per-turn memory-injection summary. Undefined when no injection. */
+export function getSessionPromptMemoryInjected(snapshotKey: string): MemoryInjectedSummary | undefined {
+  return sessionPromptMemoryInjected.get(snapshotKey);
+}
+
+/** Clear the stored injection summary after postExecution emits it (avoids a stale re-emit on a
+ *  later no-injection turn). */
+export function clearSessionPromptMemoryInjected(snapshotKey: string): void {
+  sessionPromptMemoryInjected.delete(snapshotKey);
+}
+
 /**
  * Parse a frozen `<available_skills>` XML block (the exact shape emitted by
  * `formatAvailableSkillsXml` in @comis/skills: a sequence of `<skill>` blocks
@@ -1250,38 +1274,19 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
 
-        // Emit memory:injected observability event so the trajectory bridge
-        // can record one line per RAG injection. Fires only on turns where
-        // the injector actually produced content (inline OR sections) —
-        // no-injection turns produce no event. Best-effort: any failure in
-        // the emit is swallowed via try/catch so it never aborts assembly.
-        if (deps.eventBus) {
-          try {
-            // Retrieved memory only (inline + retrieved sections), never
-            // the guidance block — keeps charsInjected consistent with hitCount.
-            const charsInjected = (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars;
-            const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
-            deps.eventBus.emit("memory:injected", {
-              agentId: agentId ?? config.name,
-              sessionKey: formatSessionKey(sessionKey),
-              traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
-              hitCount: ranked.length,
-              charsInjected,
-              trustTags,
-              pinnedCount: pinnedSet.length,
-              timestamp: systemNowMs(),
-            });
-          } catch (emitErr) {
-            logger.debug(
-              {
-                err: emitErr,
-                hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
-                errorKind: "internal" as const,
-              },
-              "Failed to emit memory:injected",
-            );
-          }
-        }
+        // STORE the memory-injection summary (do NOT emit here): postExecution emits memory:injected
+        // AFTER the trajectory bridge has subscribed. The inline assembly runs inside assembleTools,
+        // BEFORE attachTrajectoryToEventBus (pi-executor), so an inline emit fired to NO listener and
+        // the trajectory missed the RAG record on every turn — the same pre-bridge timing bug fixed
+        // for memory:skill_surfaced (finding A). Fires only on turns where the injector produced
+        // content (this block is reached only then). Retrieved memory ONLY (inline + retrieved
+        // sections), never the guidance block — keeps charsInjected consistent with hitCount.
+        sessionPromptMemoryInjected.set(formatSessionKey(sessionKey), {
+          hitCount: ranked.length,
+          charsInjected: (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars,
+          trustTags: Array.from(new Set(ranked.map((r) => r.entry.trustLevel))),
+          pinnedCount: pinnedSet.length,
+        });
       }
       logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {

@@ -121,7 +121,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, getSessionPromptSkillLocations, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, parseSkillLocationIndex, getSessionPromptSkillLocations, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // GEN-03 source-grep chokepoint below.
@@ -1091,7 +1091,8 @@ describe("assembleExecutionPrompt", () => {
   // -----------------------------------------------------------------
   // 4b. memory:injected event emit
   // -----------------------------------------------------------------
-  it("emits_memory_injected_when_inline_memory_set with hitCount/charsInjected/trustTags", async () => {
+  it("STORES the memory-injection summary (hitCount/charsInjected/trustTags) for postExecution to emit — finding-A timing fix", async () => {
+    clearSessionPromptMemoryInjected(DEFAULT_SESSION_KEY);
     const mockSearchResults = [
       {
         entry: { id: "m1", tenantId: "t", content: "Inline pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
@@ -1122,10 +1123,13 @@ describe("assembleExecutionPrompt", () => {
     });
     await assembleExecutionPrompt(params);
 
+    // Finding A timing fix: assembly STORES the summary (it does NOT emit inline — the bridge
+    // isn't subscribed yet); postExecution emits memory:injected from the store after the bridge.
     const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
-    expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
-    const payload = memoryEmit![1];
-    expect(payload.hitCount).toBe(2);
+    expect(memoryEmit, "assembly must NOT emit memory:injected inline (pre-bridge — it would be lost)").toBeUndefined();
+    const summary = getSessionPromptMemoryInjected(DEFAULT_SESSION_KEY);
+    expect(summary, "the injection summary must be stored for postExecution to emit").toBeTruthy();
+    expect(summary!.hitCount).toBe(2);
     // ranked.length === 2 -> the §7.3 guidance block IS injected into the
     // prompt, but it is FIXED guidance text, NOT a retrieved memory. The
     // memory:injected telemetry must count retrieved memory ONLY (inline +
@@ -1134,17 +1138,16 @@ describe("assembleExecutionPrompt", () => {
     // means. Pin that charsInjected reflects ONLY the retrieved memory.
     const guidanceLen = buildTemporalGuidanceBlock(mockSearchResults as unknown as MemorySearchResult[])!.length;
     expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
-    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    expect(summary!.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
     // Consistency with hitCount: charsInjected must NOT carry the guidance block.
-    expect(payload.charsInjected).not.toBe(
+    expect(summary!.charsInjected).not.toBe(
       "[inline rag chunk]".length + "section body".length + guidanceLen,
     );
-    expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
-    expect(typeof payload.timestamp).toBe("number");
-    expect(typeof payload.traceId).toBe("string");
+    expect(new Set(summary!.trustTags)).toEqual(new Set(["learned", "system"]));
   });
 
-  it("does_not_emit_when_no_injection (deduped is empty, the if-block is skipped)", async () => {
+  it("does_not_store_when_no_injection (deduped is empty, the if-block is skipped)", async () => {
+    clearSessionPromptMemoryInjected(DEFAULT_SESSION_KEY);
     const memoryPort = {
       // Empty results — deduplicateResults will produce an empty array
       // and the injector block is skipped entirely.
@@ -1162,6 +1165,7 @@ describe("assembleExecutionPrompt", () => {
 
     const memoryEmit = emit.mock.calls.find((c: any[]) => c[0] === "memory:injected");
     expect(memoryEmit, "memory:injected must not fire when no injection occurred").toBeUndefined();
+    expect(getSessionPromptMemoryInjected(DEFAULT_SESSION_KEY), "nothing stored when no injection").toBeUndefined();
   });
 
   // -----------------------------------------------------------------

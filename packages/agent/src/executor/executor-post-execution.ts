@@ -54,7 +54,12 @@ import {
 } from "./executor-session-state.js";
 // Finding A: the surfaced-skill census is STORED during assembly and emitted HERE (post-execution,
 // after the trajectory bridge subscribes) — see the prompt-assembly note on SkillSurfacedCensus.
-import { getSessionPromptSkillSurfacedCensus, clearSessionPromptSkillSurfacedCensus } from "./prompt-assembly.js";
+import {
+  getSessionPromptSkillSurfacedCensus,
+  clearSessionPromptSkillSurfacedCensus,
+  getSessionPromptMemoryInjected,
+  clearSessionPromptMemoryInjected,
+} from "./prompt-assembly.js";
 // Import directly from the leaf module (not the barrel) to keep the cycle
 // detector happy — pi-executor.ts imports executor-post-execution.ts in the
 // finally block, so going through the barrel would create
@@ -1882,6 +1887,30 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       });
     } catch {
       // Census emit is non-fatal — it must never fail the turn.
+    }
+  }
+
+  // memory:injected (finding A follow-on): emit the RAG-injection summary stored during assembly.
+  // Like the census above, this is emitted HERE — not inline in prompt-assembly — because the
+  // assembly runs BEFORE the trajectory bridge subscribes, so the prior inline emit was lost on
+  // EVERY turn (the trajectory never recorded a RAG injection). Content-free: counts + closed
+  // trust-level tags only.
+  const memoryInjected = getSessionPromptMemoryInjected(formattedKey);
+  if (memoryInjected !== undefined) {
+    clearSessionPromptMemoryInjected(formattedKey);
+    try {
+      deps.eventBus.emit("memory:injected", {
+        agentId: effectiveAgentId,
+        sessionKey: formattedKey,
+        traceId: tryGetContext()?.traceId ?? formattedKey,
+        hitCount: memoryInjected.hitCount,
+        charsInjected: memoryInjected.charsInjected,
+        trustTags: memoryInjected.trustTags,
+        pinnedCount: memoryInjected.pinnedCount,
+        timestamp: deps.clock.now(),
+      });
+    } catch {
+      // Injection-telemetry emit is non-fatal — it must never fail the turn.
     }
   }
 
