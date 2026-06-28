@@ -68,7 +68,7 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
-import { topicMatchScores } from "../memory/topic-key.js";
+import { topicMatchScores, type TopicMatchScore } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
@@ -206,6 +206,30 @@ const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>()
  *  calls this when assembling the turn's `usedSkillIds`. Undefined when nothing matched this turn. */
 export function getSessionPromptTopicMatchedSkills(snapshotKey: string): ReadonlyArray<string> | undefined {
   return sessionPromptTopicMatchedSkills.get(snapshotKey);
+}
+
+/** The per-turn topic-match reuse CENSUS (finding A): every surfaced skill that overlapped the
+ *  turn, with its coverage + credited flag. STORED here during assembly (overwritten per turn) and
+ *  emitted as `memory:skill_surfaced` by postExecution — NOT emitted inline, because the standing-block
+ *  assembly runs BEFORE the trajectory bridge subscribes (assembleTools precedes
+ *  attachTrajectoryToEventBus in pi-executor), so an inline emit fires to no listener (proven live,
+ *  package-delivery-20260628). Same store→read-at-postExecution pattern as the usedSkillIds carrier above. */
+export interface SkillSurfacedCensus {
+  surfacedCount: number;
+  creditedCount: number;
+  scores: TopicMatchScore[];
+}
+const sessionPromptSkillSurfacedCensus = new Map<string, SkillSurfacedCensus>();
+
+/** Read (for postExecution) the per-turn surfaced-skill census. Undefined when no skill overlapped. */
+export function getSessionPromptSkillSurfacedCensus(snapshotKey: string): SkillSurfacedCensus | undefined {
+  return sessionPromptSkillSurfacedCensus.get(snapshotKey);
+}
+
+/** Clear the stored census after postExecution emits it — so a later turn that assembles no
+ *  standing-block (e.g. skipRag) never re-emits a stale prior-turn census. */
+export function clearSessionPromptSkillSurfacedCensus(snapshotKey: string): void {
+  sessionPromptSkillSurfacedCensus.delete(snapshotKey);
 }
 
 /**
@@ -1349,25 +1373,20 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // silent ("why wasn't my skill reused?" needed a debugger). Emit per turn when ≥1 learned
         // skill has ANY token overlap (sharedCount>0) or is credited; carry a content-free score
         // (name=id, rest=numbers; zero-overlap skills omitted as noise; capped). Best-effort.
-        if (deps.eventBus && skills.length > 0) {
-          try {
-            const relevant = scores
-              .filter((s) => s.sharedCount > 0 || s.credited)
-              .sort((a, b) => b.coverage - a.coverage || b.sharedCount - a.sharedCount)
-              .slice(0, 25);
-            if (relevant.length > 0) {
-              deps.eventBus.emit("memory:skill_surfaced", {
-                agentId: agentId ?? config.name,
-                sessionKey: formatSessionKey(sessionKey),
-                traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
-                surfacedCount: skills.length,
-                creditedCount: matched.length,
-                scores: relevant,
-                timestamp: systemNowMs(),
-              });
-            }
-          } catch {
-            /* best-effort: a telemetry emit must never abort prompt assembly */
+        // STORE the census (do NOT emit here): postExecution emits memory:skill_surfaced after the
+        // trajectory bridge has subscribed. Keep only the skills with token overlap (credited +
+        // near-misses); zero-overlap skills are noise. Capped at 25 (coverage desc).
+        if (skills.length > 0) {
+          const relevant = scores
+            .filter((s) => s.sharedCount > 0 || s.credited)
+            .sort((a, b) => b.coverage - a.coverage || b.sharedCount - a.sharedCount)
+            .slice(0, 25);
+          if (relevant.length > 0) {
+            sessionPromptSkillSurfacedCensus.set(formatSessionKey(sessionKey), {
+              surfacedCount: skills.length,
+              creditedCount: matched.length,
+              scores: relevant,
+            });
           }
         }
       }
