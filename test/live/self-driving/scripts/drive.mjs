@@ -91,8 +91,15 @@ const turnEndedSince = (p, baseLines) => {
   return false;
 };
 
-const trajPath = resolveTraj();
-const trajBase = trajPath ? trajLineCount(trajPath) : 0;
+// `let` (not const): on a FRESH session the trajectory file does not exist until the turn
+// STARTS — which is AFTER inject() below — so this one-shot pre-inject resolve returns null and
+// the drive would stay in wire-only mode for the WHOLE first turn, silently abandoning the
+// AUTHORITATIVE turn-end signal in favour of wire-quiescence (premature-quiesce risk on a slow
+// model that pauses > quiesceMs between tool calls with no wire output). The loop re-resolves
+// lazily once the file appears. (package-delivery-20260628 IMP-3 live-verify: first delivery on
+// a clean slate logged `trajectory=NONE (wire-only)`.)
+let trajPath = resolveTraj();
+let trajBase = trajPath ? trajLineCount(trajPath) : 0;
 
 const initial = await getOutbound(0, 1);
 let after = initial.reduce((m, o) => Math.max(m, o.messageId || 0), 0);
@@ -112,6 +119,13 @@ while (Date.now() - start < maxMs) {
       if (o.method === 'sendMessage' && !isProgress(o.text)) sawAnswer = true;
     }
     lastNew = Date.now();
+  }
+  // Lazily pick up the trajectory once the turn creates it (fresh-session first turn — see the
+  // `let trajPath` note). base=0 is correct here: we only land here when the pre-inject resolve
+  // found nothing, i.e. a brand-new session with no prior turn's session.summary to false-match.
+  if (!trajPath) {
+    const late = resolveTraj();
+    if (late) { trajPath = late; trajBase = 0; process.stderr.write(`trajectory resolved late: ${late.split('/').pop()} — switching to authoritative turn-end watch\n`); }
   }
   // Authoritative stop: the agent TURN ended in the trajectory (work done, incl. empty-final / abort).
   if (trajPath && turnEndedSince(trajPath, trajBase)) { turnEnded = true; }
