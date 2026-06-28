@@ -17,7 +17,9 @@
 // Adjust the import path if the daemon src tree isn't at /root/comis-src.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { withClient } from "/root/comis-src/packages/cli/dist/client/rpc-client.js";
+// COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
+// LOCAL daemon run — package-delivery-20260628). Dynamic import so the path is env-resolvable.
+const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
 
 const [, , jobName = "Reflection", maxWaitArg, agentId] = process.argv;
 const maxWaitS = Number.parseInt(maxWaitArg ?? "120", 10);
