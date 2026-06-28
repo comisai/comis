@@ -1763,6 +1763,9 @@ async function bootAgents(
     providerEntries: container.config.providers?.entries ?? {},
     fetchFn: (url: string, init: RequestInit) => fetch(url, init),
     timeoutMs: 5_000,
+    // IMP-2a: also LOAD-warm each ollama model (fire-and-forget) so a cold model's first inference
+    // doesn't exceed the per-inference stall budget and abort the first user turn after a (re)start.
+    prewarm: true,
     logger: agentLogger,
   }).catch((err: unknown) => {
     agentLogger.warn(

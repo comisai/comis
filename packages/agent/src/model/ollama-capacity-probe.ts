@@ -290,6 +290,13 @@ export interface ProbeAllOllamaProvidersParams {
   fetchFn: (url: string, init: RequestInit) => Promise<Response>;
   /** Timeout per provider probe in ms. */
   timeoutMs: number;
+  /**
+   * IMP-2a (package-delivery-20260628): also fire a fire-and-forget LOAD-ONLY warm-up
+   * (`prewarmOllamaModel`) per ollama provider so the model is resident before the first user
+   * turn — a cold model's first inference can exceed the per-inference stall budget and abort the
+   * first turn after a (re)start "request took too long". Default false (byte-identical when unset).
+   */
+  prewarm?: boolean;
   /** Logger for probe outcome (INFO on success, WARN on failure). */
   logger: {
     info(obj: Record<string, unknown>, msg: string): void;
@@ -325,10 +332,66 @@ export function resolveProbedModelId(
  *
  * @returns Map<providerId, servedWindow>. Missing key → use configured window.
  */
+/**
+ * Generous default warm-up timeout — loading a multi-GB local model takes tens of seconds; unlike the
+ * metadata probe (5s), the warm-up must NOT abort the load. Fire-and-forget, so a long run never blocks boot.
+ */
+const PREWARM_TIMEOUT_MS = 300_000;
+
+/**
+ * Fire-and-forget LOAD-ONLY warm-up: POST {nativeBaseUrl}/api/generate with the model + keep_alive and an
+ * EMPTY prompt, which loads the model into memory WITHOUT generating (the Ollama preload idiom).
+ *
+ * Why (IMP-2a, package-delivery-20260628, local qwen3.6:35b): a cold local model's FIRST inference —
+ * prompt-processing the full tool-corpus prompt — emits no tokens for a long time and can exceed the
+ * per-inference stall budget (`agents.<id>.promptTimeout.promptTimeoutMs`, default 180s), so the FIRST
+ * user turn after a daemon (re)start aborts "request took too long" BEFORE any tool call. Warming at boot
+ * loads the model in parallel with the rest of boot so the first real turn runs warm.
+ *
+ * Best-effort + non-fatal (a failure just means the model loads on first use, as before). NEVER throws.
+ */
+export async function prewarmOllamaModel(
+  nativeBaseUrl: string,
+  modelId: string,
+  deps: {
+    fetchFn: (url: string, init: RequestInit) => Promise<Response>;
+    timeoutMs?: number;
+    logger?: { info(o: Record<string, unknown>, m: string): void; warn(o: Record<string, unknown>, m: string): void };
+  },
+): Promise<void> {
+  if (!modelId) return; // empty = the probe's "any loaded model" sentinel — nothing specific to warm
+  const url = `${nativeBaseUrl}/api/generate`;
+  const controller = new AbortController();
+  const timer = systemSetTimeout(() => controller.abort(), deps.timeoutMs ?? PREWARM_TIMEOUT_MS);
+  try {
+    await deps.fetchFn(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Empty prompt → Ollama loads the model and returns (done:true) WITHOUT generating.
+      body: JSON.stringify({ model: modelId, prompt: "", stream: false, keep_alive: "30m" }),
+      signal: controller.signal,
+    });
+    deps.logger?.info({ modelId, submodule: "ollama-prewarm" }, "Ollama model warm-up dispatched");
+  } catch (error: unknown) {
+    deps.logger?.warn(
+      {
+        modelId,
+        err: error instanceof Error ? error.message : String(error),
+        errorKind: "dependency" as const,
+        hint: "best-effort warm-up failed; the model loads on first use (a cold first turn may be slow)",
+        submodule: "ollama-prewarm",
+      },
+      "Ollama model warm-up failed (non-fatal)",
+    );
+  } finally {
+    systemClearTimeout(timer);
+  }
+}
+
 export async function probeAllOllamaProviders(
   params: ProbeAllOllamaProvidersParams,
 ): Promise<Map<string, number>> {
-  const { providerEntries, fetchFn, timeoutMs, logger } = params;
+  const { providerEntries, fetchFn, timeoutMs, logger, prewarm } = params;
   const resultMap = new Map<string, number>();
 
   const tasks: Array<Promise<void>> = [];
@@ -345,6 +408,14 @@ export async function probeAllOllamaProviders(
 
     const nativeBase = deriveOllamaNativeBase(entry.baseUrl ?? "http://localhost:11434");
     const modelId = resolveProbedModelId(entry);
+
+    // IMP-2a: fire-and-forget LOAD-ONLY warm-up (NOT awaited — must not block boot; the model loads in
+    // the background so the first user turn runs warm). Non-fatal; detached from the probe `tasks`.
+    if (prewarm) {
+      void prewarmOllamaModel(nativeBase, modelId, { fetchFn, logger }).catch(() => {
+        /* prewarmOllamaModel never throws; this .catch is belt-and-suspenders for the void promise */
+      });
+    }
 
     const task = probeOllamaServedWindow(nativeBase, modelId, { fetchFn, timeoutMs }).then(
       (result) => {
