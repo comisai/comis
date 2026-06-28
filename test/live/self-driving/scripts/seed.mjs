@@ -23,9 +23,13 @@
 // Echoes the written row. NEVER seeds a `scripts` column (none exists — advisory docs only, INV-3).
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-const require = createRequire("/root/comis-src/packages/daemon/package.json");
+// COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
+// checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a non-default data dir; VPS
+// default stays ~/.comis/memory.db. (package-delivery-20260628 — seed.mjs was missed in the first pass.)
+const require = createRequire((process.env.COMIS_SRC || "/root/comis-src") + "/packages/daemon/package.json");
 const Database = require("better-sqlite3");
-const dbpath = (process.env.HOME || "/home/comis") + "/.comis/memory.db";
+const dbpath = process.env.COMIS_DB_PATH
+  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + "/memory.db" : (process.env.HOME || "/home/comis") + "/.comis/memory.db");
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
