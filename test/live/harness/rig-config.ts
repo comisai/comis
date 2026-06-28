@@ -59,10 +59,10 @@ export const MEMORY_DB_FILE = "test-memory-channel-emu.db";
  *
  * LEARNING (REACT-03 / Plan 206-03, GOTCHA C+D): the Verified-Learning loop is
  * byte-identical-OFF by default (setup-learning-reactions.ts:651-656,720). The
- * `agents.default` block ENABLES it (learningOutcome/learningSkills/
- * learningTuning) and grants the reactor trust ≥ `known`
- * (`elevatedReply.defaultTrustLevel`), and the `memory` block enables
- * `costFeatures` — so a 👍 on an agent reply persists an `outcome_events` row
+ * `agents.default` block ENABLES it (learningOutcome/learning) and grants
+ * the reactor trust ≥ `known`
+ * (`elevatedReply.defaultTrustLevel`), and the `memory` block sets
+ * `memory.enabled` — so a 👍 on an agent reply persists an `outcome_events` row
  * (the `0.6 × trustWeight("known") 0.4 = 0.24 ≥ 0.05` write floor) and drives
  * synthesis. This is RIG-config ONLY — it does NOT flip a product default; the
  * scenario's git-porcelain guard re-asserts zero product source change.
@@ -130,15 +130,13 @@ agents:
     rag:
       enabled: false
     # REACT-03 GOTCHA C — learning is byte-identical-OFF until BOTH
-    # memory.costFeatures.enabled (below) AND these per-agent toggles are on
+    # memory.enabled (below) AND these per-agent toggles are on
     # (setup-learning-reactions.ts:651-656,720). Without learningOutcome the
     # reaction observe is gated off (and recordOutboundMessage is undefined → no
-    # ReactionTrajectoryMap binding); without learningSkills synthesis never runs.
+    # ReactionTrajectoryMap binding); without learning the reflection cron never runs.
     learningOutcome:
       enabled: true
-    learningSkills:
-      enabled: true
-    learningTuning:
+    learning:
       enabled: true
     # REACT-03 GOTCHA D — the reactor trust floor (the #1 REACT-03 trap). The DM
     # reactor (fromUserId 111) defaults to "external"
@@ -168,12 +166,11 @@ gateway:
 
 memory:
   dbPath: "${MEMORY_DB_FILE}"
-  # REACT-03 GOTCHA C — someLearningOn requires costFeatures (the master
+  # REACT-03 GOTCHA C — someLearningOn requires memory.enabled (the master
   # cost-feature switch, default ON but explicit here for the config-shape test);
   # without it learningOutcomeEnabled is false for every agent ->
   # recordOutboundMessage undefined -> no reaction map binding at all.
-  costFeatures:
-    enabled: true
+  enabled: true
 
 security:
   agentToAgent:
@@ -285,14 +282,12 @@ agents:
     rag:
       enabled: false
     # REACT-03 GOTCHA C — learning is byte-identical-OFF until BOTH
-    # memory.costFeatures.enabled (below) AND these per-agent toggles are on
+    # memory.enabled (below) AND these per-agent toggles are on
     # (setup-learning-reactions.ts:651-656,720). Carried over from buildConfigYaml
     # so the Signal rig exercises the SAME learning bed.
     learningOutcome:
       enabled: true
-    learningSkills:
-      enabled: true
-    learningTuning:
+    learning:
       enabled: true
     # REACT-03 GOTCHA D — the reactor trust floor (the #1 REACT-03 trap):
     # 0.6 (REACTION_BASE_CONFIDENCE) x 0.4 (trustWeight known) = 0.24 >=
@@ -319,10 +314,9 @@ gateway:
 
 memory:
   dbPath: "${MEMORY_DB_FILE}"
-  # REACT-03 GOTCHA C — someLearningOn requires costFeatures (the master
+  # REACT-03 GOTCHA C — someLearningOn requires memory.enabled (the master
   # cost-feature switch, default ON but explicit here for the config-shape test).
-  costFeatures:
-    enabled: true
+  enabled: true
 
 security:
   agentToAgent:

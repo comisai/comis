@@ -106,18 +106,18 @@ describe("buildMemConfig — Behavior A: embedding patched at TOP level", () => 
 });
 
 describe("buildMemConfig — Behavior B/C: memory.* patched at TOP level", () => {
-  it("writes memory.embeddingDimensions at top level", () => {
+  it("writes memory.recall.embeddingDimensions (Phase 226 nested it under memory.recall)", () => {
     const p = build({ label: "dims", embeddingDimensions: 768 });
     const cfg = loadValid(p);
-    expect(cfg.memory.embeddingDimensions).toBe(768);
+    expect(cfg.memory.recall.embeddingDimensions).toBe(768);
     // preserves the base config's other memory keys (dbPath)
     expect(cfg.memory.dbPath).toBe("test-memory-default.db");
   });
 
-  it("writes memory.costFeatures.enabled at top level", () => {
+  it("writes memory.enabled (Phase 226 renamed it from memory.costFeatures.enabled)", () => {
     const p = build({ label: "cost-off", costFeaturesEnabled: false });
     const cfg = loadValid(p);
-    expect(cfg.memory.costFeatures.enabled).toBe(false);
+    expect(cfg.memory.enabled).toBe(false);
   });
 });
 
@@ -197,12 +197,12 @@ describe("buildMemConfig — operator model-path env knobs (no per-boot HF downl
     }
   });
 
-  it("applies COMIS_LIVE_RERANKER_MODEL_PATH to memory.rerankerModel", () => {
+  it("applies COMIS_LIVE_RERANKER_MODEL_PATH to memory.recall.rerankerModel", () => {
     const prior = process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
     process.env["COMIS_LIVE_RERANKER_MODEL_PATH"] = "/abs/path/rerank.gguf";
     try {
       const p = build({ label: "rr-path", embeddingProvider: "local" });
-      expect(loadValid(p).memory.rerankerModel).toBe("/abs/path/rerank.gguf");
+      expect(loadValid(p).memory.recall.rerankerModel).toBe("/abs/path/rerank.gguf");
     } finally {
       if (prior === undefined) delete process.env["COMIS_LIVE_RERANKER_MODEL_PATH"];
       else process.env["COMIS_LIVE_RERANKER_MODEL_PATH"] = prior;
@@ -220,7 +220,8 @@ describe("buildMemConfig — operator model-path env knobs (no per-boot HF downl
       const embedding = doc["embedding"] as Record<string, Record<string, unknown>> | undefined;
       expect(embedding?.["local"]?.["modelUri"]).toBeUndefined();
       const memory = doc["memory"] as Record<string, unknown>;
-      expect(memory["rerankerModel"]).toBeUndefined();
+      const recall = memory["recall"] as Record<string, unknown> | undefined;
+      expect(recall?.["rerankerModel"]).toBeUndefined();
     } finally {
       if (priorE !== undefined) process.env["COMIS_LIVE_EMBED_MODEL_PATH"] = priorE;
       if (priorR !== undefined) process.env["COMIS_LIVE_RERANKER_MODEL_PATH"] = priorR;
