@@ -87,7 +87,12 @@ export async function resolveCronJobCredential(
   const direct = container.secretManager.get(apiKeyName);
   if (direct) return { apiKey: direct, apiKeyName, source: "secret", hasOAuthProfile };
 
-  if (KEYLESS_PROVIDER_TYPES.has(provider)) {
+  // Keyless-ness is a property of the provider TYPE (ollama / lm-studio), not its config NAME. A
+  // user-NAMED entry (providers.entries["local-ollama"] = { type: "ollama" }) must still resolve
+  // keyless — else the reflection/memory-review crons skip ("no API key") on a local keyless daemon,
+  // silently disabling the learning loop (package-delivery-20260628). Mirrors the agent completion
+  // path + setup-dialectic, which key off entry.type. Guarded by test/architecture/keyless-provider-by-type.
+  if (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? provider)) {
     return { apiKey: KEYLESS_API_KEY_SENTINEL, apiKeyName, source: "keyless", hasOAuthProfile };
   }
 

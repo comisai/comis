@@ -561,7 +561,7 @@ export interface ReactionWiringContainer {
     // so tsc ENFORCES the `costFeatures.enabled`→`enabled` master-gate rename — a missed rename is a
     // compile error, never a silent `undefined !== false === true` force-ENABLE (the inverted kill-switch).
     memory?: Pick<MemoryConfig, "enabled">;
-    providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+    providers?: { entries?: Record<string, { apiKeyName?: string; type?: string } | undefined> };
   };
   secretManager: { get(name: string): string | undefined };
   /** The daemon bus (stored on the wiring deps; not invoked at build time). */
@@ -652,7 +652,10 @@ function resolveCorrectionDetector(
   const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
   const apiKey =
     container.secretManager.get(apiKeyName) ??
-    (KEYLESS_PROVIDER_TYPES.has(resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
+    // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
+    // correction detector (DRIFT/supersede) is a silent no-op on a local keyless daemon
+    // (package-delivery-20260628). Guarded by test/architecture/keyless-provider-by-type.
+    (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? resolved.provider) ? KEYLESS_API_KEY_SENTINEL : "");
   if (!apiKey) return undefined; // no key → no-op detector (Defer != Retry)
   // Custom YAML providers (ollama/lm-studio/…) aren't in pi-ai's catalog → the
   // seam would skip; build a spec so correction detection runs locally too.
