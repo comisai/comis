@@ -195,6 +195,17 @@ export function translatePayload(
         usedCount: payload.usedCount,
       };
 
+    // Finding A: the per-turn topic-match reuse census. Content-free — skill NAMES (id-class) +
+    // coverage/sharedCount NUMBERS + credited/hasTopicTokens flags; never a procedure body (SEC-01).
+    // The fold (accumulateSkillSurfacedRecord) reads the uncredited-with-overlap entries into
+    // explain.learning.skillsSurfacedButUncredited.
+    case "memory:skill_surfaced":
+      return {
+        surfacedCount: payload.surfacedCount,
+        creditedCount: payload.creditedCount,
+        scores: payload.scores,
+      };
+
     case "prompt:submitted":
       return {
         promptChars: payload.promptChars,

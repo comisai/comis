@@ -68,7 +68,7 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
-import { topicMatchedSkillNames } from "../memory/topic-key.js";
+import { topicMatchScores } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
@@ -1326,10 +1326,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
         // is unioned into the turn's usedSkillIds by the pi-event-bridge.
         const skills = docs.value.filter((d) => d.kind === "skill");
-        const matched = topicMatchedSkillNames(
+        const scores = topicMatchScores(
           msg.text,
           skills.map((s) => ({ name: s.name, topicTokens: s.structuredBody?.topicTokens })),
         );
+        const matched = [...new Set(scores.filter((s) => s.credited).map((s) => s.name))];
         sessionPromptTopicMatchedSkills.set(formatSessionKey(sessionKey), matched);
         // One DEBUG line when a turn TOPIC-CREDITS ≥1 learned skill WITHOUT an explicit read —
         // otherwise the credit is invisible until a downstream proof bump, so confirming "did
@@ -1341,6 +1342,33 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
             { agentId, step: "skill-topic-match", skillsConsidered: skills.length, matchedCount: matched.length },
             "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
           );
+        }
+        // memory:skill_surfaced (finding A): the full reuse-attribution census. memory:skill_used
+        // (post-execution) fires only when ≥1 skill is CREDITED, so a NEAR-MISS — a skill that
+        // overlapped the turn but missed the credit bar, or a legacy doc with no topicTokens — was
+        // silent ("why wasn't my skill reused?" needed a debugger). Emit per turn when ≥1 learned
+        // skill has ANY token overlap (sharedCount>0) or is credited; carry a content-free score
+        // (name=id, rest=numbers; zero-overlap skills omitted as noise; capped). Best-effort.
+        if (deps.eventBus && skills.length > 0) {
+          try {
+            const relevant = scores
+              .filter((s) => s.sharedCount > 0 || s.credited)
+              .sort((a, b) => b.coverage - a.coverage || b.sharedCount - a.sharedCount)
+              .slice(0, 25);
+            if (relevant.length > 0) {
+              deps.eventBus.emit("memory:skill_surfaced", {
+                agentId: agentId ?? config.name,
+                sessionKey: formatSessionKey(sessionKey),
+                traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
+                surfacedCount: skills.length,
+                creditedCount: matched.length,
+                scores: relevant,
+                timestamp: systemNowMs(),
+              });
+            }
+          } catch {
+            /* best-effort: a telemetry emit must never abort prompt assembly */
+          }
         }
       }
     } catch (learningErr) {

@@ -29,7 +29,7 @@ import {
   applyMediaRecord,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord,
@@ -325,6 +325,9 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // IMP-3 / PD-OBS-1: inline-surfaced reuse credit (memory:skill_used → used_skill_ids) — surfaces
     // the credited skill ids on explain.skillsUsed (was DB-only, invisible to a one-call explain).
     case "memory.skill_used": accumulateSkillUsedRecord(acc.learning, data); return;
+    // Finding A: the topic-match reuse census — folds the UNCREDITED near-misses (surfaced skills
+    // that overlapped the turn but missed the bar) into explain.learning.skillsSurfacedButUncredited.
+    case "memory.skill_surfaced": accumulateSkillSurfacedRecord(acc.learning, data); return;
     case "reflect.admitted":
     case "reflect.funnel":
       // The reflection funnel records contribute the BENIGN abstain flag (the payload is

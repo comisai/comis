@@ -20,6 +20,7 @@ import {
   accumulateLearningRecord,
   accumulateSkillInvokedRecord,
   accumulateSkillUsedRecord,
+  accumulateSkillSurfacedRecord,
   accumulateReflectFunnelRecord,
   accumulateSkillTransitionRecord,
   accumulateMemoryFailureRecord,
@@ -63,6 +64,43 @@ describe("obs-explain-signal-folds — EXTENDED learning fold (OBS-02, P2 skills
     accumulateSkillUsedRecord(state, { usedSkillIds: [123, "skill-ok", { body: "leak" }] });
     const sig = buildLearningSignal(state);
     expect(sig ? [...sig.skillsUsed] : []).toEqual(["skill-ok"]);
+  });
+
+  // Finding A (obs-sweep package-delivery-20260628): surfaced-but-uncredited reuse near-misses.
+  it("finding A: skill_surfaced folds UNCREDITED scores into skillsSurfacedButUncredited (credited ones excluded)", () => {
+    const state = emptyLearningFold();
+    // A credited record co-occurs (so the learning block exists — count>0); the census carries one near-miss.
+    accumulateSkillUsedRecord(state, { usedSkillIds: ["skill-credited"], usedCount: 1 });
+    accumulateSkillSurfacedRecord(state, {
+      surfacedCount: 2,
+      creditedCount: 1,
+      scores: [
+        { name: "skill-credited", coverage: 1.0, sharedCount: 9, credited: true, hasTopicTokens: true },
+        { name: "skill-nearmiss", coverage: 0.45, sharedCount: 5, credited: false, hasTopicTokens: true },
+      ],
+    });
+    const sig = buildLearningSignal(state);
+    expect(sig!.skillsUsed).toEqual(["skill-credited"]);
+    expect(sig!.skillsSurfacedButUncredited).toEqual([{ name: "skill-nearmiss", coverage: 0.45 }]);
+  });
+
+  it("finding A: skill_surfaced does NOT build a learning block on its own (no count bump → no verdict perturbation)", () => {
+    const state = emptyLearningFold();
+    accumulateSkillSurfacedRecord(state, {
+      scores: [{ name: "skill-nearmiss", coverage: 0.3, sharedCount: 3, credited: false, hasTopicTokens: true }],
+    });
+    // count stayed 0 → no learning block forced onto a session that had no real learning record.
+    expect(buildLearningSignal(state)).toBeUndefined();
+  });
+
+  it("finding A: keeps the BEST coverage across turns + drops non-string names (SEC-01)", () => {
+    const state = emptyLearningFold();
+    accumulateSkillUsedRecord(state, { usedSkillIds: ["x"], usedCount: 1 }); // build the block
+    accumulateSkillSurfacedRecord(state, { scores: [{ name: "skill-a", coverage: 0.3, sharedCount: 3, credited: false }] });
+    accumulateSkillSurfacedRecord(state, { scores: [{ name: "skill-a", coverage: 0.48, sharedCount: 4, credited: false }] });
+    accumulateSkillSurfacedRecord(state, { scores: [{ name: 123, coverage: 0.4, credited: false }, "not-an-object"] });
+    const sig = buildLearningSignal(state);
+    expect(sig!.skillsSurfacedButUncredited).toEqual([{ name: "skill-a", coverage: 0.48 }]);
   });
 
   it("OBS-4: the reuse→promote chain surfaces — skill.prompt_invoked + learning.skill_promoted ⇒ skillsUsed + skillsPromoted", () => {

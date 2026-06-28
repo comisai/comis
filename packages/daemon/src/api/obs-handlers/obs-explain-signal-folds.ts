@@ -76,6 +76,10 @@ export interface LearningFoldState {
   skillsDemoted: number;
   /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
   failuresAttributed: number;
+  /** Finding A: surfaced-but-uncredited reuse NEAR-MISSES (`memory.skill_surfaced`) — skill name → best
+   *  coverage seen this session. Does NOT bump `count`/`everResolved` (telemetry-only; must not perturb
+   *  the outcome_unresolved verdict), so it surfaces only when a real learning record already built the block. */
+  skillsSurfacedButUncredited: Map<string, number>;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -89,6 +93,7 @@ export function emptyLearningFold(): LearningFoldState {
     skillsPromoted: 0,
     skillsDemoted: 0,
     failuresAttributed: 0,
+    skillsSurfacedButUncredited: new Map(),
   };
 }
 
@@ -165,6 +170,31 @@ export function accumulateSkillUsedRecord(state: LearningFoldState, data: Record
     }
   }
   readAbstainSignal(state, data);
+}
+
+/**
+ * Fold one `memory.skill_surfaced` record's `data` into the state (mutating; finding A,
+ * package-delivery-20260628): record the UNCREDITED entries (the reuse near-misses — a skill that
+ * overlapped the turn but missed the credit bar) by NAME → best `coverage` seen. So `explain` can
+ * answer "why wasn't my skill reused?" (it surfaced at coverage 0.45) instead of a debugger.
+ *
+ * Deliberately does NOT bump `count` or touch `everResolved`/`outcome`: this census fires on most
+ * turns, and forcing a learning block (with outcomeResolved=false) onto sessions that had none could
+ * perturb the `outcome_unresolved` verdict. Near-misses therefore surface only when a real learning
+ * record (skill_used/promote/outcome) already built the block — exactly the reuse-investigation case.
+ * Names/numbers only; non-string names and non-number coverage are dropped (SEC-01).
+ */
+export function accumulateSkillSurfacedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  if (!Array.isArray(data.scores)) return;
+  for (const s of data.scores) {
+    if (s === null || typeof s !== "object") continue;
+    const score = s as { name?: unknown; coverage?: unknown; credited?: unknown };
+    if (score.credited === true) continue; // credited skills are already in skillsUsed
+    if (typeof score.name !== "string") continue;
+    const coverage = typeof score.coverage === "number" && Number.isFinite(score.coverage) ? score.coverage : 0;
+    const prior = state.skillsSurfacedButUncredited.get(score.name);
+    if (prior === undefined || coverage > prior) state.skillsSurfacedButUncredited.set(score.name, coverage);
+  }
 }
 
 /**
@@ -247,6 +277,15 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
     // OBS-4b: additive — present only when a corroborated failure accrued this session.
     ...(state.failuresAttributed > 0 ? { failuresAttributed: state.failuresAttributed } : {}),
+    // Finding A: additive — the reuse near-misses (uncredited surfaced skills), best coverage desc.
+    // Present only when ≥1 near-miss was seen (and the block exists at all — count>0 from a real record).
+    ...(state.skillsSurfacedButUncredited.size > 0
+      ? {
+          skillsSurfacedButUncredited: [...state.skillsSurfacedButUncredited.entries()]
+            .map(([name, coverage]) => ({ name, coverage }))
+            .sort((a, b) => b.coverage - a.coverage),
+        }
+      : {}),
   };
 }
 

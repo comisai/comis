@@ -25,6 +25,7 @@ import {
   openingRequestTokens,
   jaccardSimilarity,
   topicMatchedSkillNames,
+  topicMatchScores,
   tokenSetCoverage,
   commonCoreTokens,
 } from "./topic-key.js";
@@ -256,5 +257,58 @@ describe("topicMatchedSkillNames", () => {
     expect(topicMatchedSkillNames("soc triage host phishing email harvested a user credential account", big)).not.toContain("skill-ttp");
     // Unrelated → no credit.
     expect(topicMatchedSkillNames("please summarize the quarterly sales report for finance", big)).not.toContain("skill-ttp");
+  });
+});
+
+// topicMatchScores (obs-sweep finding A): the OBSERVABILITY companion to topicMatchedSkillNames.
+// Returns a score PER surfaced skill (coverage + sharedCount + credited + hasTopicTokens) so the
+// reuse-attribution NEAR-MISSES — a surfaced skill that just missed the credit bar, or a legacy
+// doc with no topicTokens — become visible (a memory.skill_surfaced trajectory record), instead of
+// silently producing nothing. topicMatchedSkillNames is the credited subset of these scores.
+describe("topicMatchScores", () => {
+  const ROUTING_CORE = ["across", "avoiding", "bridge", "dispatch", "evening", "river", "rush"];
+  const surfaced = [
+    { name: "skill-routing", topicTokens: ROUTING_CORE },
+    { name: "skill-legacy", topicTokens: undefined }, // legacy/seeded doc with no stored topic set
+  ];
+
+  it("returns one score per surfaced skill: a credited match + a hasTopicTokens=false legacy doc", () => {
+    const scores = topicMatchScores(
+      "dispatch the nearest engine across the river at evening rush avoiding the bridge for a structure fire",
+      surfaced,
+    );
+    expect(scores).toHaveLength(2);
+    const routing = scores.find((s) => s.name === "skill-routing")!;
+    expect(routing.credited).toBe(true);
+    expect(routing.coverage).toBeGreaterThanOrEqual(0.5);
+    expect(routing.hasTopicTokens).toBe(true);
+    const legacy = scores.find((s) => s.name === "skill-legacy")!;
+    expect(legacy.credited).toBe(false);
+    expect(legacy.hasTopicTokens).toBe(false);
+    expect(legacy.coverage).toBe(0);
+    expect(legacy.sharedCount).toBe(0);
+  });
+
+  it("scores a NEAR-MISS (coverage below threshold AND shared below the absolute floor) as uncredited-but-visible", () => {
+    // 3 of the 7 routing-core tokens present → 0.43 coverage, 3 shared (< 8) → NOT credited, but scored.
+    const scores = topicMatchScores("dispatch across the river only", surfaced);
+    const routing = scores.find((s) => s.name === "skill-routing")!;
+    expect(routing.credited).toBe(false);
+    expect(routing.sharedCount).toBe(3);
+    expect(routing.coverage).toBeCloseTo(3 / 7, 5);
+  });
+
+  it("topicMatchedSkillNames is exactly the credited names of topicMatchScores (no behavior drift)", () => {
+    const turn = "dispatch the nearest engine across the river at evening rush avoiding the bridge";
+    const creditedNames = topicMatchScores(turn, surfaced)
+      .filter((s) => s.credited)
+      .map((s) => s.name);
+    expect(topicMatchedSkillNames(turn, surfaced)).toEqual(creditedNames);
+  });
+
+  it("credits nothing (but still scores every skill) for an empty/ungroupable turn", () => {
+    const scores = topicMatchScores("please could you the a an", surfaced);
+    expect(scores).toHaveLength(2);
+    expect(scores.every((s) => !s.credited)).toBe(true);
   });
 });

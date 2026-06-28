@@ -83,6 +83,12 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ids + count ONLY (same id-class as skill.prompt_invoked.skillName; never a procedure body — SEC-01).
   "memory:skill_used": "memory.skill_used",
 
+  // Finding A (obs-sweep package-delivery-20260628): the full per-turn topic-match reuse CENSUS,
+  // so a surfaced-but-uncredited NEAR-MISS is diagnosable (memory:skill_used only fires on a
+  // credit). Content-free: skill NAMES (id-class) + coverage/sharedCount NUMBERS + flags — never a
+  // procedure body (SEC-01). Mapped → REMOVED from the arch NOT-MAPPED allowlist (disjoint invariant).
+  "memory:skill_surfaced": "memory.skill_surfaced",
+
   // ---- Session + prompt lifecycle ----
   "prompt:submitted": "prompt.submitted",
   "session:started": "session.started",

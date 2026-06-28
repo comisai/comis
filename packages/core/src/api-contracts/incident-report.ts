@@ -334,6 +334,15 @@ export const IncidentReportSchema = z.object({
       // "is this session pushing a memory toward eviction" is one `explain` field. Optional + additive
       // (present only when >0; schemaVersion stays 1).
       failuresAttributed: z.number().optional(),
+      // Finding A (obs-sweep package-delivery-20260628): learned skills that SURFACED for
+      // topic-match reuse and overlapped the turn but missed the credit bar — the reuse NEAR-MISSES,
+      // folded from the `memory.skill_surfaced` census. Answers "why wasn't my skill reused?" (it
+      // surfaced at coverage 0.45, just under 0.5) in ONE `explain` call instead of a debugger.
+      // Each entry: skill NAME (id) + the best `coverage` seen this session. Optional + additive
+      // (present only when ≥1 near-miss; schemaVersion stays 1). Names/numbers only — no body.
+      skillsSurfacedButUncredited: z
+        .array(z.object({ name: z.string(), coverage: z.number() }))
+        .optional(),
       // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
       // were DELETED with their 0-emit events (the user-rep revision + generalization paths
       // folded into the reflection engine in Phase 225). The block stays counts/ids-only.

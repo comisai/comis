@@ -238,23 +238,60 @@ export function topicMatchedSkillNames(
   surfaced: ReadonlyArray<{ name: string; topicTokens: readonly string[] | undefined }>,
   threshold: number = DEFAULT_TOPIC_MATCH_THRESHOLD,
 ): string[] {
-  const turnTokens = openingRequestTokens(turnSignature);
-  if (turnTokens.length === 0) return [];
-  const turnSet = new Set(turnTokens);
+  // The CREDITED subset of topicMatchScores (de-duplicated, input order) — the carrier the
+  // pi-event-bridge merges into the turn's usedSkillIds. Output is byte-identical to the
+  // pre-refactor loop; the scoring now lives in topicMatchScores so the NEGATIVE path
+  // (surfaced-but-uncredited) is observable too (finding A).
   const matched = new Set<string>();
-  for (const s of surfaced) {
-    if (!s.topicTokens || s.topicTokens.length === 0) continue; // legacy/seeded doc with no topic set — never false-credit
-    const coreSet = new Set(s.topicTokens);
+  for (const s of topicMatchScores(turnSignature, surfaced, threshold)) if (s.credited) matched.add(s.name);
+  return [...matched];
+}
+
+/** A per-surfaced-skill reuse-attribution score — the OBSERVABILITY companion to
+ *  {@link topicMatchedSkillNames}. Content-free (the skill NAME is an id, the rest are numbers),
+ *  so it is safe to carry on a `memory.skill_surfaced` trajectory record. */
+export interface TopicMatchScore {
+  /** The surfaced skill's name (an opaque id, never its body). */
+  name: string;
+  /** |core ∩ turn| / |core| ∈ [0,1]; 0 when the skill has no stored topicTokens. */
+  coverage: number;
+  /** |core ∩ turn| — the absolute shared-token count (feeds the MIN_ABSOLUTE_CORE_MATCH floor). */
+  sharedCount: number;
+  /** Whether this turn CREDITS the skill (coverage ≥ threshold OR sharedCount ≥ MIN_ABSOLUTE_CORE_MATCH,
+   *  gated on the skill having topicTokens and the turn having content tokens). */
+  credited: boolean;
+  /** Whether the skill has a stored topicTokens core at all (a legacy/seeded doc has none → never credited). */
+  hasTopicTokens: boolean;
+}
+
+/**
+ * Score EVERY surfaced skill against the turn — not just the credited ones {@link topicMatchedSkillNames}
+ * returns. Pure; one {@link TopicMatchScore} per input skill, in input order. The reuse-attribution
+ * decision was otherwise invisible on the NEGATIVE path: a skill that surfaced but missed the credit
+ * bar (coverage just under threshold, or below the absolute floor), or a legacy doc with no topicTokens,
+ * produced NO signal — so "why wasn't my skill reused?" needed a debugger. These scores feed a
+ * content-free `memory.skill_surfaced` trajectory record + `explain.learning.skillsSurfacedButUncredited`.
+ */
+export function topicMatchScores(
+  turnSignature: string,
+  surfaced: ReadonlyArray<{ name: string; topicTokens: readonly string[] | undefined }>,
+  threshold: number = DEFAULT_TOPIC_MATCH_THRESHOLD,
+): TopicMatchScore[] {
+  const turnTokens = openingRequestTokens(turnSignature);
+  const turnSet = new Set(turnTokens);
+  return surfaced.map((s) => {
+    const hasTopicTokens = !!s.topicTokens && s.topicTokens.length > 0;
+    const coreSet = new Set(s.topicTokens ?? []);
     let shared = 0;
     for (const t of coreSet) if (turnSet.has(t)) shared += 1;
     const coverage = coreSet.size === 0 ? 0 : shared / coreSet.size;
     // Credit on a strong FRACTION (the turn contains most of the core) OR a strong ABSOLUTE count
-    // (a short on-topic turn shares many distinctive core tokens against a large/verbose core) —
-    // the latter rescues a one-line triage reuse a fraction-only bar would miss (otherwise that
-    // uncredited turn's later correction would have no skill to demote).
-    if (coverage >= threshold || shared >= MIN_ABSOLUTE_CORE_MATCH) matched.add(s.name);
-  }
-  return [...matched];
+    // (a short on-topic turn shares many distinctive core tokens against a large/verbose core).
+    // A no-topicTokens legacy doc and an empty/ungroupable turn never credit (the original guards).
+    const credited =
+      hasTopicTokens && turnTokens.length > 0 && (coverage >= threshold || shared >= MIN_ABSOLUTE_CORE_MATCH);
+    return { name: s.name, coverage, sharedCount: shared, credited, hasTopicTokens };
+  });
 }
 
 /** The common-CORE token-set of a corroboration cluster — the INTERSECTION of its members'
