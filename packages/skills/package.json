@@ -60,7 +60,7 @@
     "file-type": "21.3.4",
     "iconv-lite": "0.7.2",
     "ignore": "7.0.5",
-    "impit": "0.14.1",
+    "impit": "0.14.2",
     "linkedom": "0.18.12",
     "music-metadata": "11.12.3",
     "openai": "6.39.1",
@@ -77,6 +77,6 @@
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "4.1.8"
+    "vitest": "4.1.9"
   }
 }
