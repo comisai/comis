@@ -17,7 +17,7 @@
 
 import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, suppressError, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -412,9 +412,8 @@ export async function probeAllOllamaProviders(
     // IMP-2a: fire-and-forget LOAD-ONLY warm-up (NOT awaited — must not block boot; the model loads in
     // the background so the first user turn runs warm). Non-fatal; detached from the probe `tasks`.
     if (prewarm) {
-      void prewarmOllamaModel(nativeBase, modelId, { fetchFn, logger }).catch(() => {
-        /* prewarmOllamaModel never throws; this .catch is belt-and-suspenders for the void promise */
-      });
+      // prewarmOllamaModel never throws; suppressError satisfies the no-empty-catch rule for the void promise.
+      suppressError(prewarmOllamaModel(nativeBase, modelId, { fetchFn, logger }), "ollama prewarm is best-effort; must never block boot");
     }
 
     const task = probeOllamaServedWindow(nativeBase, modelId, { fetchFn, timeoutMs }).then(

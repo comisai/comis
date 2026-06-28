@@ -79,10 +79,12 @@ export function setupLogging(deps: {
   // only the audit + session-index sinks, which DO resolve via safePath). Rebase the
   // un-customized default onto <dataDir>; an EXPLICIT custom filePath is honored verbatim.
   // dataDir is resolved the same way as daemon.ts (config.dataDir, else COMIS_DATA_DIR, else ~/.comis).
+  // eslint-disable-next-line no-restricted-syntax -- COMIS_DATA_DIR path resolution before SecretManager is initialized (mirrors daemon.ts:1170)
+  const dataDirEnv = process.env["COMIS_DATA_DIR"];
   const resolvedDataDir =
     container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
-      : (process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis"));
+      : (dataDirEnv ?? safePath(os.homedir(), ".comis"));
   const effectiveLoggingConfig = loggingConfig ?? LoggingConfigSchema.parse({});
   const schemaDefaultLogPath = LoggingConfigSchema.parse({}).filePath;
   const resolvedLogPath =
