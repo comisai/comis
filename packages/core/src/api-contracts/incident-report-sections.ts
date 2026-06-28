@@ -57,6 +57,24 @@ export const IncidentContextBudgetSchema = z.object({
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
 
 /**
+ * E2 (obs-sweep package-delivery-20260628): one COMPACT per-turn budget-check entry — the cascade
+ * shape. `IncidentReport.contextBudget` keeps only the TERMINAL fit-check; a `context_exhausted`
+ * abort needs the PROGRESSION (each turn's assembled-input growth + eviction + verdict) to see the
+ * tightening toward exhaustion. The history folds these (dedup'd on transition, most-recent capped) so
+ * the cascade is one `explain` field away. The four fields that move turn-to-turn — the window is
+ * fixed per session, S is ~fixed, so assembledInputTokens + keptCount + verdict carry the signal.
+ */
+export const IncidentContextBudgetHistoryEntrySchema = z.object({
+  windowTokens: z.number(),
+  assembledInputTokens: z.number(),
+  keptCount: z.number(),
+  verdict: z.enum(["fits", "downshifted", "exhausted"]),
+});
+
+/** One per-turn context-budget cascade entry (see {@link IncidentContextBudgetHistoryEntrySchema}). */
+export type IncidentContextBudgetHistoryEntry = z.infer<typeof IncidentContextBudgetHistoryEntrySchema>;
+
+/**
  * LAT-04 (177): the terminal prompt-timeout attribution record — the LAST
  * `execution.prompt_timeout` trajectory row. Content-free: numbers + closed
  * enums + the pre-rendered config-KEY string (`bindingKnob` — knob NAME + ids

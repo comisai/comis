@@ -392,6 +392,8 @@ export function assembleIncidentReport(
     ...((signals.spawnTree ?? []).length > 0 ? { spawnTree: signals.spawnTree } : {}),
     // W3: the terminal per-call budget equation (absent for pre-W2 sessions).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
+    // E2: the per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
+    ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
     // PERSIST-01 (176-05): the per-reason cache breaks (absent when the session

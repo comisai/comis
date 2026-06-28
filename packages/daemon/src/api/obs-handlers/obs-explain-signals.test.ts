@@ -734,6 +734,35 @@ describe("context.budget extraction (W3 obs-llm-troubleshooting)", () => {
     expect(s.contextBudget?.assembledInputTokens).toBe(31_572);
   });
 
+  // E2 (obs-sweep): the per-turn CASCADE alongside the terminal fit-check.
+  it("E2: builds a contextBudgetHistory cascade (deduped on transition) showing the tightening toward exhaustion", () => {
+    const s = toIncidentSignals([
+      budgetEvent("fits", 10_000, 1),
+      budgetEvent("fits", 10_000, 2), // consecutive-identical → deduped (no transition)
+      budgetEvent("fits", 20_000, 3), // transition: assembled grew
+      budgetEvent("downshifted", 28_000, 4), // transition: verdict + assembled
+      budgetEvent("exhausted", 31_572, 5), // terminal
+    ]);
+    expect(s.contextBudget?.verdict).toBe("exhausted"); // terminal still last-wins
+    const hist = s.contextBudgetHistory!;
+    expect(hist.map((h) => h.assembledInputTokens)).toEqual([10_000, 20_000, 28_000, 31_572]); // 2nd deduped
+    expect(hist.map((h) => h.verdict)).toEqual(["fits", "fits", "downshifted", "exhausted"]);
+    expect(hist.every((h) => h.windowTokens === 32_000)).toBe(true);
+  });
+
+  it("E2: a single budget check yields NO contextBudgetHistory (adds nothing over contextBudget)", () => {
+    const s = toIncidentSignals([budgetEvent("fits", 10_000, 1)]);
+    expect(s.contextBudget).toBeDefined();
+    expect(s.contextBudgetHistory).toBeUndefined();
+  });
+
+  it("E2: caps the cascade at the most recent 40 transitions (no unbounded growth)", () => {
+    const events = Array.from({ length: 50 }, (_, i) => budgetEvent("fits", 1_000 + i * 100, i + 1));
+    const s = toIncidentSignals(events);
+    expect(s.contextBudgetHistory).toHaveLength(40);
+    expect(s.contextBudgetHistory![39].assembledInputTokens).toBe(1_000 + 49 * 100); // the most-recent retained
+  });
+
   it("ignores a malformed context.budget record missing its numeric fields", () => {
     const s = toIncidentSignals([
       { traceSchema: "comis-trajectory", type: "context.budget", data: { verdict: "exhausted" } },

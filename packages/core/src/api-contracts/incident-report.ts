@@ -20,11 +20,13 @@ import { defineContract } from "./types.js";
 // so the public barrel surface is unchanged.
 import {
   IncidentContextBudgetSchema,
+  IncidentContextBudgetHistoryEntrySchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
 } from "./incident-report-sections.js";
 import type {
   IncidentContextBudget,
+  IncidentContextBudgetHistoryEntry,
   IncidentPromptTimeout,
   SpawnTreeNode,
 } from "./incident-report-sections.js";
@@ -53,7 +55,7 @@ export {
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
 };
-export type { IncidentContextBudget, IncidentPromptTimeout, SpawnTreeNode };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout, SpawnTreeNode };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -146,6 +148,12 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** E2 (obs-sweep): the per-turn context-budget CASCADE — the progression of budget checks toward
+   *  the terminal `contextBudget`. Present only when ≥2 distinct budget states occurred (a single
+   *  check adds nothing over `contextBudget`). Dedup'd on transition + capped to the most recent 40,
+   *  so a `context_exhausted` abort shows the tightening (assembled-input growth + eviction) in one
+   *  `explain` field instead of the terminal fit-check alone. Optional + additive (schemaVersion 1). */
+  contextBudgetHistory: z.array(IncidentContextBudgetHistoryEntrySchema).optional(),
   /** RECALL-01 (observability-excellence): memory-recall outcome aggregated over the
    *  session's `memory.recalled` trajectory records (the #1 blind spot — recall was
    *  invisible to obs.explain). Counts/booleans ONLY — never query text or memory bodies
@@ -634,6 +642,9 @@ export interface IncidentSignals {
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
+  /** E2: the per-turn context-budget cascade toward the terminal `contextBudget` (≥2 distinct states;
+   *  deduped on transition, most-recent-40 capped). The assembler folds it onto IncidentReport. */
+  contextBudgetHistory?: IncidentContextBudgetHistoryEntry[];
   /**
    * LAT-04 (177): the LAST `execution.prompt_timeout` trajectory record (the
    * terminal kill explains the end state). Lets the `prompt_timeout` heuristic

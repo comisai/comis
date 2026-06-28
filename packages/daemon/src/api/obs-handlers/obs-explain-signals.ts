@@ -246,7 +246,30 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // undefined parse leaves acc.* unchanged (malformed/partial ignored, fwd-compat).
     case "context.budget": {
       const b = parseContextBudgetRecord(data);
-      if (b !== undefined) acc.contextBudget = b;
+      if (b !== undefined) {
+        acc.contextBudget = b; // W3 terminal fit-check (LAST wins) — unchanged.
+        // E2: also record the per-turn CASCADE. Dedup on transition (the window is fixed per session
+        // + S is ~fixed, so push only when assembled-input/eviction/verdict MOVES) so a stable
+        // multi-turn session adds nothing; cap to the most-recent 40 (the tightening toward an
+        // exhaustion is at the tail). Surfaced only when ≥2 states (see the assemble guard).
+        const entry = {
+          windowTokens: b.windowTokens,
+          assembledInputTokens: b.assembledInputTokens,
+          keptCount: b.keptCount,
+          verdict: b.verdict,
+        };
+        const prev = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
+        if (
+          prev === undefined ||
+          prev.assembledInputTokens !== entry.assembledInputTokens ||
+          prev.keptCount !== entry.keptCount ||
+          prev.verdict !== entry.verdict ||
+          prev.windowTokens !== entry.windowTokens
+        ) {
+          acc.contextBudgetHistory.push(entry);
+          if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
+        }
+      }
       return;
     }
     case "execution.prompt_timeout": {
@@ -402,6 +425,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     turnTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     learning: emptyLearningFold(),
     sessionKey: "",
@@ -502,6 +526,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    // E2: surface the cascade ONLY when ≥2 distinct budget states occurred (a single state adds
+    // nothing over `contextBudget`; the dedup already collapsed a stable session to ≤1).
+    ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }

@@ -10,6 +10,7 @@
  */
 import type {
   IncidentContextBudget,
+  IncidentContextBudgetHistoryEntry,
   IncidentFailure,
   IncidentPromptTimeout,
   IncidentSignals,
@@ -54,6 +55,9 @@ export interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** W3: the LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** E2: the per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
+   *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
+  contextBudgetHistory: IncidentContextBudgetHistoryEntry[];
   /** LAT-04: the LAST execution.prompt_timeout record (the terminal kill
    *  explains the end state — a retry-path kill earlier in the session is
    *  superseded by the kill that actually ended it). */
