@@ -88,6 +88,26 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The unit suite includes the Linux-only sandbox/jail (`*.linux.test.ts`) and
+      # daemon config-versioning tests, which need bubblewrap + a relaxed apparmor
+      # sysctl + a git identity (just like the integration/e2e jobs). The pre-sharding
+      # single test job had these; the sharded `unit` job must too, else those tests
+      # fail across all shards (regression from CI commit 91585f61).
+      - name: Install system dependencies (ffmpeg, bubblewrap)
+        # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
+        # OS-level exec sandbox the sandbox/jail suites exercise.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
+      - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
+        # Ubuntu 24.04 runner images strip CAP_NET_ADMIN from bwrap user
+        # namespaces; relaxing the sysctl restores the sandbox suites.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Configure git identity for daemon config-versioning tests
+        run: |
+          git config --global user.email "ci@comis.local"
+          git config --global user.name "Comis CI"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
