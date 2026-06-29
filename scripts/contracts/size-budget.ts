@@ -75,7 +75,15 @@ import { gzipSync } from "node:zlib";
 // (the proven optional-section family — one nested object), and the gzipped total
 // (13,173) stays far under the 38 KB gzipped wire budget — ample headroom; only the
 // minified cap needs the bump.
-export const BUDGET_MINIFIED_BYTES = 132_000;
+// 2026-06-29: the obs.explain IncidentReport grew via several additive sections on
+// the learning/obs branch — the per-turn `contextBudget` cascade (596173fa), the
+// learning reuse/demote names (skillsSurfacedButUncredited, skillsDemotedNames), and
+// `failures[].matchedRule` (self-grade visibility) — pushing obs.explain 9,890→10,545 B
+// and minified 131,738→132,321, overflowing 132,000. Bumped to 133,000 with headroom;
+// all are bounded, additive, content-free (the proven optional-section family + closed-
+// enum string fields), and the gzipped total (13,327) stays far under the 38 KB
+// gzipped wire budget (the real wire cost) — only the minified cap needs the bump.
+export const BUDGET_MINIFIED_BYTES = 133_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

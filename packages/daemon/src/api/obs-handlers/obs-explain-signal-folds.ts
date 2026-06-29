@@ -76,6 +76,13 @@ export interface LearningFoldState {
   skillsDemoted: number;
   /** OBS-4b: memories that accrued a corroborated failure this session (`learning.memory_failure_attributed`). Counts only — eviction precursor. */
   failuresAttributed: number;
+  /** Finding A: surfaced-but-uncredited reuse NEAR-MISSES (`memory.skill_surfaced`) — skill name → best
+   *  coverage seen this session. Does NOT bump `count`/`everResolved` (telemetry-only; must not perturb
+   *  the outcome_unresolved verdict), so it surfaces only when a real learning record already built the block. */
+  skillsSurfacedButUncredited: Map<string, number>;
+  /** Finding C: the NAMES of skills demoted this session (`learning.skill_demoted.demotedSkillNames`) — so
+   *  `explain` answers WHICH skill demoted, not just how many. Ids only (SEC-01). */
+  skillsDemotedNames: Set<string>;
 }
 
 /** A fresh, empty fold state (no learning records seen yet). */
@@ -89,6 +96,8 @@ export function emptyLearningFold(): LearningFoldState {
     skillsPromoted: 0,
     skillsDemoted: 0,
     failuresAttributed: 0,
+    skillsSurfacedButUncredited: new Map(),
+    skillsDemotedNames: new Set(),
   };
 }
 
@@ -146,6 +155,53 @@ export function accumulateSkillInvokedRecord(state: LearningFoldState, data: Rec
 }
 
 /**
+ * Fold one `memory.skill_used` record's `data` into the state (mutating): the per-turn
+ * attributed `usedSkillIds` join `skillsUsed` (deduped). IDS ONLY — non-string entries are
+ * dropped (SEC-01; a body smuggled as an id never enters the surface).
+ *
+ * IMP-3 / PD-OBS-1 (package-delivery-20260628): a reuse via INLINE skill-surfacing credits the
+ * skill through `memory:skill_used` → `outcome_events.used_skill_ids` (the topic-match path), NOT
+ * an explicit `skill.prompt_invoked` file-read — so `skillsUsed` was `[]` while `skillsPromoted>0`
+ * (an internally-inconsistent explain view; the credit was visible only via a DB hand-join). With
+ * `memory:skill_used` now trajectory-bridged, this surfaces the credited skill ids on `explain`.
+ * Bumps `count` (a skill-only session still yields a learning block).
+ */
+export function accumulateSkillUsedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  state.count += 1;
+  if (Array.isArray(data.usedSkillIds)) {
+    for (const id of data.usedSkillIds) {
+      if (typeof id === "string") state.skillsUsed.add(id);
+    }
+  }
+  readAbstainSignal(state, data);
+}
+
+/**
+ * Fold one `memory.skill_surfaced` record's `data` into the state (mutating; finding A,
+ * package-delivery-20260628): record the UNCREDITED entries (the reuse near-misses — a skill that
+ * overlapped the turn but missed the credit bar) by NAME → best `coverage` seen. So `explain` can
+ * answer "why wasn't my skill reused?" (it surfaced at coverage 0.45) instead of a debugger.
+ *
+ * Deliberately does NOT bump `count` or touch `everResolved`/`outcome`: this census fires on most
+ * turns, and forcing a learning block (with outcomeResolved=false) onto sessions that had none could
+ * perturb the `outcome_unresolved` verdict. Near-misses therefore surface only when a real learning
+ * record (skill_used/promote/outcome) already built the block — exactly the reuse-investigation case.
+ * Names/numbers only; non-string names and non-number coverage are dropped (SEC-01).
+ */
+export function accumulateSkillSurfacedRecord(state: LearningFoldState, data: Record<string, unknown>): void {
+  if (!Array.isArray(data.scores)) return;
+  for (const s of data.scores) {
+    if (s === null || typeof s !== "object") continue;
+    const score = s as { name?: unknown; coverage?: unknown; credited?: unknown };
+    if (score.credited === true) continue; // credited skills are already in skillsUsed
+    if (typeof score.name !== "string") continue;
+    const coverage = typeof score.coverage === "number" && Number.isFinite(score.coverage) ? score.coverage : 0;
+    const prior = state.skillsSurfacedButUncredited.get(score.name);
+    if (prior === undefined || coverage > prior) state.skillsSurfacedButUncredited.set(score.name, coverage);
+  }
+}
+
+/**
  * Fold one reflection-funnel record's `data` into the state (mutating; REFLECT,
  * renamed Phase 226 from `learning.skill_synthesized` — handles BOTH `reflect.admitted`
  * and `reflect.funnel`): the only signal it contributes is the BENIGN abstain flag
@@ -173,7 +229,13 @@ export function accumulateSkillTransitionRecord(
   state.count += 1;
   const n = typeof data.count === "number" && Number.isFinite(data.count) ? data.count : 0;
   if (direction === "promoted") state.skillsPromoted += n;
-  else state.skillsDemoted += n;
+  else {
+    state.skillsDemoted += n;
+    // Finding C: collect WHICH skills demoted (names; ids only — non-string entries dropped, SEC-01).
+    if (Array.isArray(data.demotedSkillNames)) {
+      for (const name of data.demotedSkillNames) if (typeof name === "string") state.skillsDemotedNames.add(name);
+    }
+  }
   readAbstainSignal(state, data);
 }
 
@@ -223,8 +285,19 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
     // OBS-4: additive — present only when a promote/demote fired this session (keeps schemaVersion 1).
     ...(state.skillsPromoted > 0 ? { skillsPromoted: state.skillsPromoted } : {}),
     ...(state.skillsDemoted > 0 ? { skillsDemoted: state.skillsDemoted } : {}),
+    // Finding C: additive — the demoted skill NAMES (which), present only when ≥1 named demote folded.
+    ...(state.skillsDemotedNames.size > 0 ? { skillsDemotedNames: [...state.skillsDemotedNames] } : {}),
     // OBS-4b: additive — present only when a corroborated failure accrued this session.
     ...(state.failuresAttributed > 0 ? { failuresAttributed: state.failuresAttributed } : {}),
+    // Finding A: additive — the reuse near-misses (uncredited surfaced skills), best coverage desc.
+    // Present only when ≥1 near-miss was seen (and the block exists at all — count>0 from a real record).
+    ...(state.skillsSurfacedButUncredited.size > 0
+      ? {
+          skillsSurfacedButUncredited: [...state.skillsSurfacedButUncredited.entries()]
+            .map(([name, coverage]) => ({ name, coverage }))
+            .sort((a, b) => b.coverage - a.coverage),
+        }
+      : {}),
   };
 }
 

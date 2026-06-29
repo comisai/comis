@@ -150,10 +150,69 @@ export function openingRequestTokens(signature: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-  // 3. Tokenize; drop stopwords and tokens of length <= 1.
-  const tokens = cleaned.length === 0 ? [] : cleaned.split(/\s+/).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (REFLECT-02b: collapse
+  //    morphological variants so two genuinely-same-task openings worded differently — "deliver"/"delivered"/
+  //    "delivering", "package"/"packages", "report"/"reports" — share tokens and reach the corroboration /
+  //    reuse-credit overlap they otherwise miss). Keyless + deterministic + pure (no embeddings — the v2.31
+  //    invariant holds). Stem AFTER the stopword check (stopwords are base forms).
+  const tokens =
+    cleaned.length === 0
+      ? []
+      : cleaned
+          .split(/\s+/)
+          .filter((t) => t.length > 1 && !STOPWORDS.has(t))
+          .map(stemToken);
   // 4. De-duplicate into a Set, then SORT — order-insensitive (the collision-maximizing decision, A1).
   return [...new Set(tokens)].sort();
+}
+
+/**
+ * A deliberately CONSERVATIVE inflectional stemmer (REFLECT-02b) — collapses the common,
+ * low-risk English inflections so morphological variants of the same word land on ONE token,
+ * widening the corroboration / reuse-credit overlap beyond byte-identical phrasings WITHOUT
+ * re-introducing embeddings (keyless + deterministic + pure). It strips ONLY regular inflections
+ * (verb `-ing`/`-ed`, plural `-ies`→`y`, `-(s|x|z|ch|sh)es`, plural `-s`), never derivational
+ * suffixes (`-tion`/`-ment`/`-ity` change meaning → over-merge), and is heavily guarded against
+ * the dangerous failure mode — two DISTINCT words collapsing to one token (false corroboration):
+ *  - tokens of length <= 4 are NEVER stemmed (avoids "ring"→"r", "buses"→… degenerate stems);
+ *  - `-ss`/`-us`/`-is` endings are NOT treated as plurals ("across", "status", "analysis" survive);
+ *  - each rule keeps a minimum stem length so a short root is never over-stripped.
+ * It is intentionally imperfect (base-vs-inflected like "navigate"/"navigated" may not fully
+ * reconcile) — applied UNIFORMLY at admit-core and reuse-turn time, so inflected↔inflected and
+ * base↔base variants match; the win is monotone (more true merges, guarded against false ones).
+ * NOTE: changing the token shape changes the topicKey hash — skills learned on the PRE-stemming
+ * build store an un-stemmed core and re-accrue after an upgrade (a learning system re-learns; not a
+ * code regression). Pure: no IO/clock/random.
+ */
+export function stemToken(token: string): string {
+  // Guard: never stem a short token — the over-merge risk (distinct short words colliding) and the
+  // degenerate-stem risk both concentrate here. 5+ chars only.
+  if (token.length <= 4) return token;
+  // Verb -ing (delivering→deliver, navigating→navigat). Keep a >=3-char stem.
+  if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
+  // Verb/adjective -ed (delivered→deliver, navigated→navigat). Keep a >=3-char stem.
+  if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
+  // Plural -ies → y (deliveries→delivery, categories→category).
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  // Plural -es after a sibilant (boxes→box, dishes→dish, classes→class, addresses→address).
+  if (
+    token.length > 4 &&
+    (token.endsWith("ses") || token.endsWith("xes") || token.endsWith("zes") || token.endsWith("ches") || token.endsWith("shes"))
+  ) {
+    return token.slice(0, -2);
+  }
+  // Plural -s (packages→package, reports→report, tools→tool) — but NOT a -ss/-us/-is ending
+  // ("across", "business", "status", "analysis", "this") and never below a 4-char stem.
+  if (
+    token.endsWith("s") &&
+    !token.endsWith("ss") &&
+    !token.endsWith("us") &&
+    !token.endsWith("is") &&
+    token.length > 4
+  ) {
+    return token.slice(0, -1);
+  }
+  return token;
 }
 
 /**
@@ -238,23 +297,60 @@ export function topicMatchedSkillNames(
   surfaced: ReadonlyArray<{ name: string; topicTokens: readonly string[] | undefined }>,
   threshold: number = DEFAULT_TOPIC_MATCH_THRESHOLD,
 ): string[] {
-  const turnTokens = openingRequestTokens(turnSignature);
-  if (turnTokens.length === 0) return [];
-  const turnSet = new Set(turnTokens);
+  // The CREDITED subset of topicMatchScores (de-duplicated, input order) — the carrier the
+  // pi-event-bridge merges into the turn's usedSkillIds. Output is byte-identical to the
+  // pre-refactor loop; the scoring now lives in topicMatchScores so the NEGATIVE path
+  // (surfaced-but-uncredited) is observable too (finding A).
   const matched = new Set<string>();
-  for (const s of surfaced) {
-    if (!s.topicTokens || s.topicTokens.length === 0) continue; // legacy/seeded doc with no topic set — never false-credit
-    const coreSet = new Set(s.topicTokens);
+  for (const s of topicMatchScores(turnSignature, surfaced, threshold)) if (s.credited) matched.add(s.name);
+  return [...matched];
+}
+
+/** A per-surfaced-skill reuse-attribution score — the OBSERVABILITY companion to
+ *  {@link topicMatchedSkillNames}. Content-free (the skill NAME is an id, the rest are numbers),
+ *  so it is safe to carry on a `memory.skill_surfaced` trajectory record. */
+export interface TopicMatchScore {
+  /** The surfaced skill's name (an opaque id, never its body). */
+  name: string;
+  /** |core ∩ turn| / |core| ∈ [0,1]; 0 when the skill has no stored topicTokens. */
+  coverage: number;
+  /** |core ∩ turn| — the absolute shared-token count (feeds the MIN_ABSOLUTE_CORE_MATCH floor). */
+  sharedCount: number;
+  /** Whether this turn CREDITS the skill (coverage ≥ threshold OR sharedCount ≥ MIN_ABSOLUTE_CORE_MATCH,
+   *  gated on the skill having topicTokens and the turn having content tokens). */
+  credited: boolean;
+  /** Whether the skill has a stored topicTokens core at all (a legacy/seeded doc has none → never credited). */
+  hasTopicTokens: boolean;
+}
+
+/**
+ * Score EVERY surfaced skill against the turn — not just the credited ones {@link topicMatchedSkillNames}
+ * returns. Pure; one {@link TopicMatchScore} per input skill, in input order. The reuse-attribution
+ * decision was otherwise invisible on the NEGATIVE path: a skill that surfaced but missed the credit
+ * bar (coverage just under threshold, or below the absolute floor), or a legacy doc with no topicTokens,
+ * produced NO signal — so "why wasn't my skill reused?" needed a debugger. These scores feed a
+ * content-free `memory.skill_surfaced` trajectory record + `explain.learning.skillsSurfacedButUncredited`.
+ */
+export function topicMatchScores(
+  turnSignature: string,
+  surfaced: ReadonlyArray<{ name: string; topicTokens: readonly string[] | undefined }>,
+  threshold: number = DEFAULT_TOPIC_MATCH_THRESHOLD,
+): TopicMatchScore[] {
+  const turnTokens = openingRequestTokens(turnSignature);
+  const turnSet = new Set(turnTokens);
+  return surfaced.map((s) => {
+    const hasTopicTokens = !!s.topicTokens && s.topicTokens.length > 0;
+    const coreSet = new Set(s.topicTokens ?? []);
     let shared = 0;
     for (const t of coreSet) if (turnSet.has(t)) shared += 1;
     const coverage = coreSet.size === 0 ? 0 : shared / coreSet.size;
     // Credit on a strong FRACTION (the turn contains most of the core) OR a strong ABSOLUTE count
-    // (a short on-topic turn shares many distinctive core tokens against a large/verbose core) —
-    // the latter rescues a one-line triage reuse a fraction-only bar would miss (otherwise that
-    // uncredited turn's later correction would have no skill to demote).
-    if (coverage >= threshold || shared >= MIN_ABSOLUTE_CORE_MATCH) matched.add(s.name);
-  }
-  return [...matched];
+    // (a short on-topic turn shares many distinctive core tokens against a large/verbose core).
+    // A no-topicTokens legacy doc and an empty/ungroupable turn never credit (the original guards).
+    const credited =
+      hasTopicTokens && turnTokens.length > 0 && (coverage >= threshold || shared >= MIN_ABSOLUTE_CORE_MATCH);
+    return { name: s.name, coverage, sharedCount: shared, credited, hasTopicTokens };
+  });
 }
 
 /** The common-CORE token-set of a corroboration cluster — the INTERSECTION of its members'

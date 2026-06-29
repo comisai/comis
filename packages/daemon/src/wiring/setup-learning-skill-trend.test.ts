@@ -148,3 +148,25 @@ describe("createSkillTrendTracker — decay-aware learned-skill standing", () =>
     expect(() => trend.updateSkillTrend("x", "success")).toBeTypeOf("function");
   });
 });
+
+describe("peekSkillTrend (REFLECT-03 — non-mutating standing read for the value-gated promote)", () => {
+  it("returns 'stable' for a never-seen skill (neutral) — the gate never blocks an un-failed skill", () => {
+    const trend = createSkillTrendTracker();
+    expect(trend.peekSkillTrend("unseen", 1000)).toBe("stable");
+  });
+  it("a SINGLE failure peeks 'stable' (matches updateSkillTrend's classification)", () => {
+    const trend = createSkillTrendTracker();
+    expect(trend.updateSkillTrend("s", "failure", 1000)).toBe("stable");
+    expect(trend.peekSkillTrend("s", 1000)).toBe("stable");
+  });
+  it("SUSTAINED failure peeks 'weakening' — and the peek does NOT MUTATE (repeatable; a later success still recovers)", () => {
+    const trend = createSkillTrendTracker();
+    trend.updateSkillTrend("s", "failure", 1000);
+    trend.updateSkillTrend("s", "failure", 1000);
+    // Peek is idempotent + non-mutating: reading it many times never changes the standing.
+    expect(trend.peekSkillTrend("s", 1000)).toBe("weakening");
+    expect(trend.peekSkillTrend("s", 1000)).toBe("weakening");
+    // A real success then folds from the SAME weakening standing (peek didn't consume it).
+    expect(trend.updateSkillTrend("s", "success", 1000)).not.toBe("strengthening");
+  });
+});

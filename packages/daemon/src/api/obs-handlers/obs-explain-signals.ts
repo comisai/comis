@@ -29,7 +29,7 @@ import {
   applyMediaRecord,
 } from "./obs-explain-signals-fields.js";
 import {
-  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
+  accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord, accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
   accumulateToolSchemaRecord, buildLearningSignal, emptyLearningFold,
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord,
   parseContextBudgetRecord, parsePromptTimeoutRecord,
@@ -182,6 +182,13 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         ...(asString(data.matchedToken) !== undefined
           ? { matchedToken: asString(data.matchedToken) }
           : {}),
+        // #4 (self-grade visibility): the failure-detector sub-rule that flipped the
+        // call — "self_grade" (the #1 {graded:true,outcome} envelope, a clean DOMAIN
+        // task-failure) vs an error-token rule. Lets `explain.failures` distinguish an
+        // honest task-failure from a transport error. Content-free (a closed rule label).
+        ...(asString(data.matchedRule) !== undefined
+          ? { matchedRule: asString(data.matchedRule) }
+          : {}),
         // Prefer an event-supplied digest; otherwise digest the body.
         resultDigest: asString(data.resultDigest) ?? fingerprint(errorText ?? ""),
         resultBytes,
@@ -246,7 +253,30 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // undefined parse leaves acc.* unchanged (malformed/partial ignored, fwd-compat).
     case "context.budget": {
       const b = parseContextBudgetRecord(data);
-      if (b !== undefined) acc.contextBudget = b;
+      if (b !== undefined) {
+        acc.contextBudget = b; // W3 terminal fit-check (LAST wins) — unchanged.
+        // E2: also record the per-turn CASCADE. Dedup on transition (the window is fixed per session
+        // + S is ~fixed, so push only when assembled-input/eviction/verdict MOVES) so a stable
+        // multi-turn session adds nothing; cap to the most-recent 40 (the tightening toward an
+        // exhaustion is at the tail). Surfaced only when ≥2 states (see the assemble guard).
+        const entry = {
+          windowTokens: b.windowTokens,
+          assembledInputTokens: b.assembledInputTokens,
+          keptCount: b.keptCount,
+          verdict: b.verdict,
+        };
+        const prev = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
+        if (
+          prev === undefined ||
+          prev.assembledInputTokens !== entry.assembledInputTokens ||
+          prev.keptCount !== entry.keptCount ||
+          prev.verdict !== entry.verdict ||
+          prev.windowTokens !== entry.windowTokens
+        ) {
+          acc.contextBudgetHistory.push(entry);
+          if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
+        }
+      }
       return;
     }
     case "execution.prompt_timeout": {
@@ -304,6 +334,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // verdict names `autonomy.budget.<limb>` + the numbers in their unit, instead
     // of an operator grepping the "Per-root … budget exceeded" daemon-log line.
     case "execution.aborted": {
+      // BUDGET-LIMB-OBS: capture the abort `reason` (LAST wins) — the assembler
+      // uses it as the `endReason` fallback when a hard abort skipped the clean
+      // sessionEnd rollup, so the spend-verdict can fire + name the limb.
+      const reason = asString(data.reason);
+      if (reason !== undefined && reason.length > 0) acc.abortReason = reason;
       const prb = (data as { perRootBudget?: Record<string, unknown> }).perRootBudget;
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);
@@ -322,6 +357,12 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // 0-emit events.
     case "learning.outcome_observed": accumulateLearningRecord(acc.learning, data); return;
     case "skill.prompt_invoked": accumulateSkillInvokedRecord(acc.learning, data); return;
+    // IMP-3 / PD-OBS-1: inline-surfaced reuse credit (memory:skill_used → used_skill_ids) — surfaces
+    // the credited skill ids on explain.skillsUsed (was DB-only, invisible to a one-call explain).
+    case "memory.skill_used": accumulateSkillUsedRecord(acc.learning, data); return;
+    // Finding A: the topic-match reuse census — folds the UNCREDITED near-misses (surfaced skills
+    // that overlapped the turn but missed the bar) into explain.learning.skillsSurfacedButUncredited.
+    case "memory.skill_surfaced": accumulateSkillSurfacedRecord(acc.learning, data); return;
     case "reflect.admitted":
     case "reflect.funnel":
       // The reflection funnel records contribute the BENIGN abstain flag (the payload is
@@ -396,6 +437,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     turnTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
+    contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     learning: emptyLearningFold(),
     sessionKey: "",
@@ -496,6 +538,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    // E2: surface the cascade ONLY when ≥2 distinct budget states occurred (a single state adds
+    // nothing over `contextBudget`; the dedup already collapsed a stable session to ≤1).
+    ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     ...(acc.promptTimeout !== undefined ? { promptTimeout: acc.promptTimeout } : {}),
     ...(acc.toolSchemaUnsupported !== undefined
       ? { toolSchemaUnsupported: acc.toolSchemaUnsupported }
@@ -532,6 +577,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // OBS-3: the per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // OBS-4: surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.

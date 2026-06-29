@@ -256,6 +256,12 @@ export function assembleIncidentReport(
   const endReason =
     (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ??
     (metadata !== null ? asString(metadata.endReason) : undefined) ??
+    // BUDGET-LIMB-OBS: a HARD abort (per-root budget / loop) skips the clean
+    // sessionEnd rollup, so the metadata endReason is absent — fall back to the
+    // terminal `execution.aborted` reason captured from the trajectory. Without
+    // this a per-root spend abort surfaced endReason:"unknown" → the spend-verdict
+    // (gated on "spend_exceeded") never fired + perRootBudget stayed off the verdict.
+    signals.abortReason ??
     "unknown";
   const isHardFailure = HARD_FAILURE_END_REASONS.has(endReason);
   const explicitDegraded =
@@ -392,6 +398,8 @@ export function assembleIncidentReport(
     ...((signals.spawnTree ?? []).length > 0 ? { spawnTree: signals.spawnTree } : {}),
     // W3: the terminal per-call budget equation (absent for pre-W2 sessions).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
+    // E2: the per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
+    ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
     // RECALL-01: the memory-recall outcome (absent when the trajectory has no recall records).
     ...(signals.recall !== undefined ? { recall: signals.recall } : {}),
     // PERSIST-01 (176-05): the per-reason cache breaks (absent when the session

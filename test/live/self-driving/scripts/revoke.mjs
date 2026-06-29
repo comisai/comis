@@ -30,7 +30,9 @@
 // indexes objects + arrays: `report.findings.0.code`, `runs.0.summary`, `triggered`. Prints `PICK:<json>`
 // (or `PICK:undefined` for a missing path). Errors still print `ERROR:…` unchanged.
 import { readFileSync } from "node:fs";
-import { withClient } from "/root/comis-src/packages/cli/dist/client/rpc-client.js";
+// COMIS_SRC overrides the daemon src root (VPS default /root/comis-src; set to a local checkout for a
+// LOCAL daemon run — package-delivery-20260628). Dynamic import so the path is env-resolvable.
+const { withClient } = await import((process.env.COMIS_SRC || "/root/comis-src") + "/packages/cli/dist/client/rpc-client.js");
 const rawArgv = process.argv.slice(2);
 let pickPath;
 const pIdx = rawArgv.indexOf("--pick");

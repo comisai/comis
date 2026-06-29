@@ -99,6 +99,16 @@ export interface SkillTrendTracker {
    * injected caller clock (NEVER an ambient wall-clock read).
    */
   updateSkillTrend(skillId: string, outcome: "success" | "failure", nowMs: number): SkillTrend;
+  /**
+   * READ-ONLY (REFLECT-03): the skill's CURRENT standing decayed to `nowMs`, WITHOUT
+   * folding a new outcome — does NOT mutate the score, failureCount, recency, or the
+   * Map. A never-seen skill returns `"stable"` (the neutral starting standing). The
+   * promote path peeks this BEFORE applying a success so a skill in a SUSTAINED-failure
+   * (`"weakening"`) standing does not accrue promotion credit on an interleaved success
+   * (it must earn back trust first) — the value-gated-promotion counterpart to the
+   * demote-on-weakening gate. `nowMs` is the injected caller clock.
+   */
+  peekSkillTrend(skillId: string, nowMs: number): SkillTrend;
 }
 
 /** Clamp to [0, 1] (the bounded score range). */
@@ -181,5 +191,18 @@ export function createSkillTrendTracker(opts?: { maxTracked?: number }): SkillTr
     return classify(s.score);
   }
 
-  return { updateSkillTrend };
+  function peekSkillTrend(skillId: string, nowMs: number): SkillTrend {
+    const s = standings.get(skillId);
+    // Never-seen skill → neutral starting standing (a fresh/clean skill is "stable", so the
+    // promote gate never blocks a skill that has not yet failed — no regression on the normal loop).
+    if (s === undefined) return "stable";
+    if (s.lastUpdateMs <= 0) return classify(s.score);
+    // Apply the SAME recency decay updateSkillTrend would, but to a COPY — never persist it
+    // (the next real update decays from the stored lastUpdateMs unchanged).
+    const elapsed = Math.max(0, nowMs - s.lastUpdateMs);
+    const decayed = NEUTRAL_SCORE + (s.score - NEUTRAL_SCORE) * decayFactor(elapsed, SCORE_HALF_LIFE_MS);
+    return classify(decayed);
+  }
+
+  return { updateSkillTrend, peekSkillTrend };
 }

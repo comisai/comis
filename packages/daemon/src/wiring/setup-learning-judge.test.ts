@@ -115,14 +115,14 @@ describe("maybeUpgradeWithJudge — OUTCOME-04 conversational-breadth fallback",
 // ===========================================================================
 
 describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate (OUTCOME-04)", () => {
-  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string> } = {}) {
+  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string>; entries?: Record<string, unknown> } = {}) {
     const secrets = over.secrets ?? {};
     return {
       config: {
         agents: over.agents ?? {},
         // Phase 226: the master kill-switch is `memory.enabled` (was memory.costFeatures.enabled).
         memory: { enabled: over.costFeatures ?? true },
-        providers: { entries: {} },
+        providers: { entries: over.entries ?? {} },
       },
       secretManager: { get: (name: string): string | undefined => secrets[name] },
     } as never;
@@ -137,6 +137,24 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
       ]),
     } as never;
   }
+
+  it("KEYLESS-CUSTOM-NAME: a custom-NAMED keyless provider (type: ollama) BUILDS the judge keyless (not a no-op)", () => {
+    // package-delivery-20260628 (local qwen3.6:35b): keyless was checked by provider NAME, but
+    // KEYLESS_PROVIDER_TYPES holds TYPEs. A user-named ollama entry failed the check → no apiKey →
+    // resolveOutcomeJudge returned undefined → the outcome judge was a silent no-op on a local keyless
+    // daemon. The completion path keys keyless-ness off entry.type, so this must too.
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: { default: { provider: "local-ollama", model: "qwen3.6:35b", learningOutcome: { enabled: true, judge: { enabled: true } } } },
+        entries: { "local-ollama": { type: "ollama", baseUrl: "http://localhost:11434", models: [{ id: "qwen3.6:35b" }] } },
+        secrets: {},
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+    );
+    expect(built.outcomeJudge).toBeDefined(); // PRE-FIX: undefined (keyless-by-name fails) → the silent no-op
+  });
 
   it("byte-identity: NO agent has the judge on → outcomeJudge + readTurnTranscript are undefined (no construction)", () => {
     const built = buildOutcomeJudgeWiring(

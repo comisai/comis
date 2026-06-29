@@ -938,6 +938,18 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       invokedBy: "user",
       args: {},
     },
+    "memory:skill_used": {
+      usedSkillIds: ["skill-a", "skill-b"],
+      usedCount: 2,
+    },
+    "memory:skill_surfaced": {
+      surfacedCount: 3,
+      creditedCount: 1,
+      scores: [
+        { name: "skill-a", coverage: 1.0, sharedCount: 9, credited: true, hasTopicTokens: true },
+        { name: "skill-b", coverage: 0.45, sharedCount: 5, credited: false, hasTopicTokens: true },
+      ],
+    },
     "prompt:submitted": {
       promptChars: 100,
       provider: "a",
@@ -3661,7 +3673,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
     //   needed; the mapping is for operator trajectory visibility + arch closure.
     //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(108); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only)
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(110); // +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only); +1 IMP-3/PD-OBS-1 memory:skill_used bridged (package-delivery-20260628 — inline-surfaced reuse credit, ids+count only); +1 finding A memory:skill_surfaced bridged (package-delivery-20260628 — topic-match reuse census, names+numbers only)
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {
@@ -3893,6 +3905,29 @@ describe("SURFACE-06 learning:skill_promoted / skill_demoted (counts-only, bridg
     expect(Object.keys(data)).toEqual(["count"]);
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
+  });
+
+  it("finding C: learning:skill_demoted carries demotedSkillNames + triggerTrajectoryId (ids), still strips a smuggled body", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("learning:skill_demoted", {
+      agentId: "default",
+      count: 2,
+      demotedSkillNames: ["skill-a", "skill-b"],
+      triggerTrajectoryId: "traj-9",
+      body: "the demoted procedure markdown", // hostile extra — must NOT cross
+      timestamp: 1000,
+    } as never);
+
+    expect(recorder.calls).toHaveLength(1);
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.count).toBe(2);
+    expect(data.demotedSkillNames).toEqual(["skill-a", "skill-b"]);
+    expect(data.triggerTrajectoryId).toBe("traj-9");
+    expect(data.body).toBeUndefined(); // SEC-01: only the declared fields cross
+    expect(Object.keys(data).sort()).toEqual(["count", "demotedSkillNames", "triggerTrajectoryId"]);
   });
 
   it("never forwards a body/script/id-list even if present on the payload (SEC-01 firewall)", () => {

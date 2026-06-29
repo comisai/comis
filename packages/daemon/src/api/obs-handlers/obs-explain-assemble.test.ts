@@ -37,6 +37,7 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 // PERSIST-01 + AUDIT-05 (176-05): the cacheBreaks? fold rides toIncidentSignals;
 // the audit? fold rides assembleIncidentReportFromSources (reader-sourced).
 import { toIncidentSignals } from "./obs-explain-signals.js";
+import { spendExceededVerdict } from "./obs-explain-spend-verdict.js";
 import { assembleIncidentReportFromSources } from "./obs-explain.js";
 import type { IncidentSourceReader } from "./obs-explain-readers.js";
 
@@ -384,6 +385,104 @@ describe("assembleIncidentReport — outcome", () => {
     expect(report.outcome.endReason).toBe("completed_with_tool_errors");
     expect(report.outcome.degraded).toBe(true);
     expect(report.outcome.severity).toBe("degraded");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUDGET-LIMB-OBS (memory-learning-stress-catalog-codex-20260629): a per-root
+// autonomy.budget abort whose turn HARD-aborts skips the clean sessionEnd rollup,
+// so the metadata carries no spend endReason — but the trajectory carries the
+// terminal `execution.aborted` record with `reason` + `perRootBudget`. The
+// assembler must derive `endReason` (and surface `perRootBudget`) from that record
+// when the rollup is silent, else `explain` returns endReason:"unknown" +
+// perRootBudget:null and the spend-verdict heuristic (gated on endReason==
+// "spend_exceeded") never names the tripped limb (live repro: a tokens-limb abort
+// returned likelyRootCause:null despite the trajectory carrying the data).
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — per-root budget abort (BUDGET-LIMB-OBS)", () => {
+  it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {
+    const records: Array<Record<string, unknown>> = [
+      // an EARLIER non-spend turn in the same (multi-turn) session
+      { traceSchema: "comis-trajectory", type: "session.summary", seq: 10, agentId: "default", traceId: "t-earlier", data: {} },
+      // the terminal per-root TOKEN-limb abort (the live repro shape)
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.aborted",
+        seq: 20,
+        agentId: "default",
+        traceId: "t-abort",
+        data: {
+          reason: "spend_exceeded",
+          perRootBudget: { limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" },
+        },
+      },
+    ];
+    const signals = toIncidentSignals(records);
+    // metadata WITHOUT a spend endReason (the hard abort skipped the clean rollup)
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata({ sessionEnd: { type: "session_end" } }),
+      null,
+      SESSION_KEY,
+      records.length,
+    );
+    // The per-root abort is surfaced, not swallowed as endReason:"unknown".
+    expect(report.outcome.endReason).toBe("spend_exceeded");
+    expect(report.perRootBudget).toEqual({ limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" });
+  });
+
+  it("the spend-verdict names the tripped limb once endReason+perRootBudget are surfaced", () => {
+    // The verdict reads s.endReason (threaded from report.outcome.endReason) + s.perRootBudget.
+    // Once the assembler derives them from the abort record, the verdict names the limb.
+    const verdict = spendExceededVerdict({
+      ...makeSignals({ failures: [], toolStats: {}, hasMisclassificationSignal: false }),
+      endReason: "spend_exceeded",
+      perRootBudget: { limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" },
+    });
+    expect(verdict?.code).toBe("spend_exceeded");
+    expect(verdict?.detail).toContain("tokens");
+    expect(verdict?.detail).toContain("autonomy.budget");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SELF-GRADE VISIBILITY (#4, memory-learning-stress-catalog-codex-20260629): a
+// self-graded tool failure (the #1 `{graded:true,outcome:"failure"}` envelope)
+// sets classifiedFailureBy:"failure_detector" + matchedRule:"self_grade" and rides
+// the trajectory tool.result record (translate-payload carries both). But the
+// explain failure-fold dropped `matchedRule`, so `explain.failures` showed only
+// "failure_detector" — an operator couldn't tell a clean DOMAIN task-failure
+// (self_grade) from an error-token heuristic match or a transport error. Thread
+// matchedRule onto explain.failures (mirrors matchedToken) so the self-grade is
+// visible in one call (the per-session companion to the deferred funnel count).
+// ---------------------------------------------------------------------------
+
+describe("assembleIncidentReport — failure matchedRule (self_grade visibility, #4)", () => {
+  it("surfaces matchedRule on explain.failures so a self-graded task-failure is distinguishable", () => {
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 5,
+        agentId: "default",
+        traceId: "t-self-grade",
+        data: {
+          toolName: "mcp__cs-sim--close_quarter",
+          toolCallId: "call-1",
+          success: false,
+          transportOk: true, // the call returned cleanly; the DOMAIN graded it a failure
+          classifiedFailureBy: "failure_detector",
+          matchedRule: "self_grade", // the #1 self-grade envelope drove the failure flip
+          errorKind: "validation",
+        },
+      },
+    ];
+    const signals = toIncidentSignals(records);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, records.length);
+    const f = report.failures.find((x) => x.toolName === "mcp__cs-sim--close_quarter");
+    expect(f?.classifiedFailureBy).toBe("failure_detector");
+    expect(f?.matchedRule).toBe("self_grade");
   });
 });
 

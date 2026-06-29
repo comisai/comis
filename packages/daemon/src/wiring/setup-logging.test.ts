@@ -114,11 +114,20 @@ describe("setupLogging", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 3. Skips file transport when logging config is undefined
+  // 3. Defaults the file transport to <dataDir>/logs/daemon.log when
+  //    daemon.logging is omitted — B: a config without a daemon.logging block
+  //    must NOT silently drop structured logs to stdout-only (lost under
+  //    systemd / `>/dev/null` / any discarded-stdout deployment). The
+  //    documented "authoritative log at <dataDir>/logs/daemon.*.log" must hold
+  //    unconditionally. (package-delivery-20260628 obs-sweep finding B.)
   // -------------------------------------------------------------------------
 
-  it("skips file transport when daemon.logging is undefined", async () => {
-    const container = createMinimalContainer({ daemon: { logging: undefined } });
+  it("rebases the default log path onto <dataDir>/logs/daemon.log when daemon.logging is undefined", async () => {
+    const container = createMinimalContainer({
+      daemon: { logging: undefined },
+      dataDir: "/test/data",
+      logLevel: "debug",
+    });
 
     const setupLogging = await getSetupLogging();
     setupLogging({
@@ -128,7 +137,60 @@ describe("setupLogging", () => {
       _createLogLevelManager: mockCreateLogLevelManager,
     });
 
-    expect(mockCreateFileTransport).not.toHaveBeenCalled();
+    expect(mockCreateFileTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: "/test/data/logs/daemon.log" }),
+      "debug",
+      undefined,
+    );
+  });
+
+  // The real production path: the root `daemon` field is ALWAYS schema-defaulted, so
+  // daemon.logging carries the hardcoded `~/.comis/logs/daemon.log` default. With a custom
+  // data dir that must be rebased to <dataDir>/logs — else the log lands in the SHARED
+  // ~/.comis/logs (cross-instance collision; not where the docs say). (obs-sweep finding B,
+  // corrected by the live ground-truth check.)
+  it("rebases the schema-default filePath onto <dataDir> even when daemon.logging is present", async () => {
+    const container = createMinimalContainer({
+      daemon: { logging: { filePath: "~/.comis/logs/daemon.log" } },
+      dataDir: "/custom/data",
+      logLevel: "debug",
+    });
+
+    const setupLogging = await getSetupLogging();
+    setupLogging({
+      container,
+      instanceId: "test-inst",
+      _createTracingLogger: mockCreateTracingLogger,
+      _createLogLevelManager: mockCreateLogLevelManager,
+    });
+
+    expect(mockCreateFileTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: "/custom/data/logs/daemon.log" }),
+      "debug",
+      undefined,
+    );
+  });
+
+  it("honors an EXPLICIT custom filePath verbatim (does not rebase)", async () => {
+    const container = createMinimalContainer({
+      daemon: { logging: { filePath: "/var/log/comis/custom.log" } },
+      dataDir: "/custom/data",
+      logLevel: "debug",
+    });
+
+    const setupLogging = await getSetupLogging();
+    setupLogging({
+      container,
+      instanceId: "test-inst",
+      _createTracingLogger: mockCreateTracingLogger,
+      _createLogLevelManager: mockCreateLogLevelManager,
+    });
+
+    expect(mockCreateFileTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: "/var/log/comis/custom.log" }),
+      "debug",
+      undefined,
+    );
   });
 
   // -------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import {
   deriveOllamaNativeBase,
   probeOllamaServedWindow,
   probeAllOllamaProviders,
+  prewarmOllamaModel,
   type OllamaCapacityProbeDeps,
 } from "./ollama-capacity-probe.js";
 
@@ -634,5 +635,76 @@ describe("resolveProbedModelId", () => {
     expect(resolveProbedModelId?.({ defaultModel: "a", models: [{ id: "b" }] })).toBe("a");
     expect(resolveProbedModelId?.({ models: [{ id: "b" }] })).toBe("b");
     expect(resolveProbedModelId?.({})).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prewarmOllamaModel — IMP-2a (package-delivery-20260628): a cold local model's
+// FIRST inference (prompt-processing the full tool-corpus prompt) can exceed the
+// per-inference stall budget → the first user turn after a daemon (re)start aborts
+// "request took too long" BEFORE any tool call. A boot-time load-only warm-up loads
+// the model in the background so the first real turn runs warm.
+// ---------------------------------------------------------------------------
+describe("prewarmOllamaModel (IMP-2a)", () => {
+  it("POSTs /api/generate with the model + keep_alive (load-only) to warm a cold model", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> | undefined }> = [];
+    const fetchFn = createMockFetch(async (url, init) => {
+      calls.push({ url, body: init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined });
+      return jsonResponse({ done: true });
+    });
+    await prewarmOllamaModel("http://localhost:11434", "qwen3.6:35b", { fetchFn, timeoutMs: 5_000 });
+    const gen = calls.find((c) => c.url.endsWith("/api/generate"));
+    expect(gen, "should POST /api/generate to load the model").toBeDefined();
+    expect(gen!.body!.model).toBe("qwen3.6:35b");
+    expect(gen!.body!.keep_alive, "keep_alive keeps the model resident past the warm-up").toBeDefined();
+  });
+
+  it("is a no-op for an empty modelId (probe's 'any loaded model' sentinel — nothing specific to warm)", async () => {
+    let called = false;
+    const fetchFn = createMockFetch(async () => { called = true; return jsonResponse({}); });
+    await prewarmOllamaModel("http://localhost:11434", "", { fetchFn, timeoutMs: 5_000 });
+    expect(called).toBe(false);
+  });
+
+  it("is non-fatal on a fetch error (best-effort — never throws)", async () => {
+    const fetchFn = createMockFetch(async () => { throw new Error("connection refused"); });
+    await expect(
+      prewarmOllamaModel("http://localhost:11434", "m", { fetchFn, timeoutMs: 5_000 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("probeAllOllamaProviders({prewarm:true}) issues the warm-up for an ollama provider", async () => {
+    const calls: string[] = [];
+    const fetchFn = createMockFetch(async (url) => {
+      calls.push(url);
+      if (url.endsWith("/api/ps")) return jsonResponse({ models: [] });
+      return jsonResponse({ done: true });
+    });
+    await probeAllOllamaProviders({
+      providerEntries: { "local-ollama": { type: "ollama", baseUrl: "http://localhost:11434", models: [{ id: "qwen3.6:35b" }] } },
+      fetchFn,
+      timeoutMs: 5_000,
+      prewarm: true,
+      logger: { info() {}, warn() {} },
+    });
+    await Promise.resolve();
+    expect(calls.some((u) => u.endsWith("/api/generate")), "prewarm:true must POST /api/generate").toBe(true);
+  });
+
+  it("probeAllOllamaProviders WITHOUT prewarm issues NO warm-up (byte-identical to pre-IMP-2a)", async () => {
+    const calls: string[] = [];
+    const fetchFn = createMockFetch(async (url) => {
+      calls.push(url);
+      if (url.endsWith("/api/ps")) return jsonResponse({ models: [] });
+      return jsonResponse({});
+    });
+    await probeAllOllamaProviders({
+      providerEntries: { "local-ollama": { type: "ollama", baseUrl: "http://localhost:11434", models: [{ id: "m" }] } },
+      fetchFn,
+      timeoutMs: 5_000,
+      logger: { info() {}, warn() {} },
+    });
+    await Promise.resolve();
+    expect(calls.some((u) => u.endsWith("/api/generate"))).toBe(false);
   });
 });

@@ -9,9 +9,13 @@
 //   node db.mjs pickw <t> <c1,..> <col> <val> [n]  filter col=val (val BOUND as a param — no quote-hell)
 //   node db.mjs sql <raw...>                 raw read-only SQL (argv joined) — use only when canned won't do
 import { createRequire } from 'node:module';
-const require = createRequire('/root/comis-src/packages/daemon/package.json');
+// COMIS_SRC overrides the better-sqlite3 resolution root (VPS default /root/comis-src; set to a local
+// checkout for a LOCAL daemon run). COMIS_DB_PATH / COMIS_DATA_DIR target a NON-default data dir (a local
+// isolated daemon — package-delivery-20260628); VPS default stays ~/.comis/memory.db.
+const require = createRequire((process.env.COMIS_SRC || '/root/comis-src') + '/packages/daemon/package.json');
 const Database = require('better-sqlite3');
-const dbpath = (process.env.HOME || '/home/comis') + '/.comis/memory.db';
+const dbpath = process.env.COMIS_DB_PATH
+  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + '/memory.db' : (process.env.HOME || '/home/comis') + '/.comis/memory.db');
 const [cmd, a, b, c, d, e] = process.argv.slice(2);
 const ident = (s) => { if (!/^[A-Za-z0-9_,]+$/.test(s || '')) throw new Error('bad identifier: ' + s); return s; };
 try {

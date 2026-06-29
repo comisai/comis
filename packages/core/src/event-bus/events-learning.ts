@@ -55,8 +55,9 @@ export interface LearningEvents {
    * gated on a non-empty `usedSkillIds` (absent/empty ⇒ no emit, byte-identical
    * to pre-patch). The daemon subscriber (setup-learning.ts, Plan 07) threads
    * `usedSkillIds` into `observe()` → the `used_skill_ids` column. Mirrors the
-   * counts/ids-only `memory:recall_used`; NOT trajectory-bridged (it joins
-   * EVENTS_NOT_TRAJECTORY_MAPPED).
+   * counts/ids-only `memory:recall_used`. Trajectory-bridged → `memory.skill_used`
+   * since IMP-3/PD-OBS-1 (package-delivery-20260628), so `explain.learning.skillsUsed`
+   * surfaces the inline-credited ids without a DB hand-join.
    */
   "memory:skill_used": {
     agentId: string;
@@ -67,6 +68,29 @@ export interface LearningEvents {
     usedSkillIds: string[];
     /** == usedSkillIds.length (parity with the counts-only family). */
     usedCount: number;
+    timestamp: number;
+  };
+
+  /**
+   * The full per-turn topic-match reuse-attribution CENSUS (finding A, obs-sweep
+   * package-delivery-20260628). `memory:skill_used` fires only when ≥1 skill is CREDITED, so a
+   * surfaced skill that JUST missed the bar (coverage under threshold, or below the absolute
+   * floor) or a legacy doc with no topicTokens left NO signal — "why wasn't my skill reused?"
+   * needed a debugger. Emitted per turn when ≥1 learned skill is surfaced for topic-match, with a
+   * content-free score per surfaced skill (the NAME is an opaque id; the rest are numbers — never
+   * a procedure body). Bridged to the `memory.skill_surfaced` trajectory record; folded into
+   * `explain.learning.skillsSurfacedButUncredited` so the near-miss is diagnosable in one call.
+   */
+  "memory:skill_surfaced": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Learned skills surfaced (recall + standing block) and scored for topic-match reuse this turn. */
+    surfacedCount: number;
+    /** How many of them this turn CREDITED (== the usedSkillIds the topic-match leg contributes). */
+    creditedCount: number;
+    /** Per-surfaced-skill score — content-free (name is an id; coverage/sharedCount are numbers). */
+    scores: Array<{ name: string; coverage: number; sharedCount: number; credited: boolean; hasTopicTokens: boolean }>;
     timestamp: number;
   };
 
@@ -175,12 +199,22 @@ export interface LearningEvents {
 
   /**
    * SURFACE-06: a corroboration-gated decay-aware-trend WEAKENING demoted N skills
-   * this resolve (active→stale→archived). Emitted DAEMON-SIDE — counts ONLY.
+   * this resolve (active→stale→archived). Emitted DAEMON-SIDE.
+   *
+   * Finding C (obs-sweep package-delivery-20260628): carries the demoted skill NAMES + the
+   * trigger trajectory id alongside the count, so `explain` answers "WHICH skill demoted and WHY"
+   * in one call (it was count-only → "2 demoted" with no name, forcing a daemon.log + mental_models
+   * hand-join). Content-free: skill NAMES are the same opaque id-class as `skill.prompt_invoked.skillName`
+   * + a trajectory id — never a procedure body/script (SEC-01).
    */
   "learning:skill_demoted": {
     agentId: string;
     /** How many skills were demoted (active→stale→archived) this resolve (count only). */
     count: number;
+    /** The demoted skill NAMES (id-class; == count entries). Finding C. */
+    demotedSkillNames?: string[];
+    /** The trajectory whose failure/correction outcome drove this demote (the WHY). Finding C. */
+    triggerTrajectoryId?: string;
     timestamp: number;
   };
 

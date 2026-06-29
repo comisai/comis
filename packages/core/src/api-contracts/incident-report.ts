@@ -20,11 +20,13 @@ import { defineContract } from "./types.js";
 // so the public barrel surface is unchanged.
 import {
   IncidentContextBudgetSchema,
+  IncidentContextBudgetHistoryEntrySchema,
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
 } from "./incident-report-sections.js";
 import type {
   IncidentContextBudget,
+  IncidentContextBudgetHistoryEntry,
   IncidentPromptTimeout,
   SpawnTreeNode,
 } from "./incident-report-sections.js";
@@ -53,7 +55,7 @@ export {
   IncidentPromptTimeoutSchema,
   SpawnTreeNodeSchema,
 };
-export type { IncidentContextBudget, IncidentPromptTimeout, SpawnTreeNode };
+export type { IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentPromptTimeout, SpawnTreeNode };
 
 export const IncidentReportSchema = z.object({
   schemaVersion: z.literal(1),
@@ -92,6 +94,10 @@ export const IncidentReportSchema = z.object({
       httpStatus: z.number().optional(),
       errorKind: z.string(),
       matchedToken: z.string().optional(),
+      /** #4: the failure-detector sub-rule that flipped the call — "self_grade" (a
+       *  clean DOMAIN task-failure via the #1 {graded:true,outcome} envelope) vs an
+       *  error-token rule. Distinguishes an honest task-failure from a transport error. */
+      matchedRule: z.string().optional(),
       resultDigest: z.string(),
       // The size of the ORIGINAL, pre-bound tool body (a "how big was the thing
       // we digested" breadcrumb) — NOT the size of the emitted `errorPreview`
@@ -146,6 +152,12 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** E2 (obs-sweep): the per-turn context-budget CASCADE — the progression of budget checks toward
+   *  the terminal `contextBudget`. Present only when ≥2 distinct budget states occurred (a single
+   *  check adds nothing over `contextBudget`). Dedup'd on transition + capped to the most recent 40,
+   *  so a `context_exhausted` abort shows the tightening (assembled-input growth + eviction) in one
+   *  `explain` field instead of the terminal fit-check alone. Optional + additive (schemaVersion 1). */
+  contextBudgetHistory: z.array(IncidentContextBudgetHistoryEntrySchema).optional(),
   /** RECALL-01 (observability-excellence): memory-recall outcome aggregated over the
    *  session's `memory.recalled` trajectory records (the #1 blind spot — recall was
    *  invisible to obs.explain). Counts/booleans ONLY — never query text or memory bodies
@@ -329,11 +341,26 @@ export const IncidentReportSchema = z.object({
       // (present only when a promote/demote fired this session; schemaVersion stays 1).
       skillsPromoted: z.number().optional(),
       skillsDemoted: z.number().optional(),
+      // Finding C (obs-sweep package-delivery-20260628): the NAMES of skills demoted this session,
+      // folded from `learning.skill_demoted.demotedSkillNames`. Answers "WHICH skill demoted" (was
+      // count-only → "2 demoted" forced a daemon.log + mental_models hand-join). With the session's
+      // outcome (failure/corrected) this gives "this session's failure demoted skill X" in one call.
+      // Optional + additive (present only when ≥1 named demote; schemaVersion stays 1). Ids only.
+      skillsDemotedNames: z.array(z.string()).optional(),
       // OBS-4b (reflect-obs-20260627): memories that accrued a CORROBORATED failure this session
       // (count only) — the eviction-causation precursor (`learning.memory_failure_attributed`), so
       // "is this session pushing a memory toward eviction" is one `explain` field. Optional + additive
       // (present only when >0; schemaVersion stays 1).
       failuresAttributed: z.number().optional(),
+      // Finding A (obs-sweep package-delivery-20260628): learned skills that SURFACED for
+      // topic-match reuse and overlapped the turn but missed the credit bar — the reuse NEAR-MISSES,
+      // folded from the `memory.skill_surfaced` census. Answers "why wasn't my skill reused?" (it
+      // surfaced at coverage 0.45, just under 0.5) in ONE `explain` call instead of a debugger.
+      // Each entry: skill NAME (id) + the best `coverage` seen this session. Optional + additive
+      // (present only when ≥1 near-miss; schemaVersion stays 1). Names/numbers only — no body.
+      skillsSurfacedButUncredited: z
+        .array(z.object({ name: z.string(), coverage: z.number() }))
+        .optional(),
       // Phase 226 SIMPLIFY-04: the Phase-203 userModelRevised / memoriesGeneralized counts
       // were DELETED with their 0-emit events (the user-rep revision + generalization paths
       // folded into the reflection engine in Phase 225). The block stays counts/ids-only.
@@ -503,6 +530,10 @@ export interface IncidentFailure {
   httpStatus?: number;
   errorKind: string;
   matchedToken?: string;
+  /** #4: the failure-detector sub-rule ("self_grade" = a clean domain task-failure
+   *  via the #1 self-grade envelope, vs an error-token rule) — surfaced on
+   *  `explain.failures` so an honest task-failure is distinguishable from a transport error. */
+  matchedRule?: string;
   resultDigest: string;
   resultBytes: number;
   errorPreview: string;
@@ -604,6 +635,16 @@ export interface IncidentSignals {
    */
   endReason?: string;
   /**
+   * BUDGET-LIMB-OBS: the terminal `execution.aborted` record's `reason` (e.g.
+   * "spend_exceeded"), captured by `toIncidentSignals` from the trajectory. UNLIKE
+   * `endReason` (metadata-derived), this IS in the record stream — so when a HARD
+   * abort skipped the clean `sessionEnd` rollup (leaving metadata's endReason
+   * absent), the assembler uses it as the `endReason` fallback. Without it a
+   * per-root budget abort surfaced endReason:"unknown" + a null spend-verdict
+   * despite the trajectory carrying the limb (memory-learning-stress-catalog-20260629).
+   */
+  abortReason?: string;
+  /**
    * RECALL-01: the report's authoritative `outcome.degraded` flag (derived by the
    * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by
    * the handler alongside `endReason`. Lets the `recall_miss` heuristic gate on
@@ -619,6 +660,9 @@ export interface IncidentSignals {
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
+  /** E2: the per-turn context-budget cascade toward the terminal `contextBudget` (≥2 distinct states;
+   *  deduped on transition, most-recent-40 capped). The assembler folds it onto IncidentReport. */
+  contextBudgetHistory?: IncidentContextBudgetHistoryEntry[];
   /**
    * LAT-04 (177): the LAST `execution.prompt_timeout` trajectory record (the
    * terminal kill explains the end state). Lets the `prompt_timeout` heuristic

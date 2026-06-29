@@ -75,6 +75,19 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // ---- Skill observability ----
   "skill:prompt_loaded": "skill.prompt_loaded",
   "skill:prompt_invoked": "skill.prompt_invoked",
+  // IMP-3 / PD-OBS-1 (package-delivery-20260628): the per-turn used-skill attribution (ATTR-02) — the
+  // INLINE-surfaced reuse credit. Previously DB-only (outcome_events.used_skill_ids, allowlisted in
+  // EVENTS_NOT_TRAJECTORY_MAPPED), so explain.skillsUsed was [] for an inline reuse while skillsPromoted>0.
+  // Now bridged so the credit shows on a one-call `comis explain`. AGENT-emitted (postExecution) → it IS
+  // arch-scanned, so REMOVED from the arch allowlist (the disjoint invariant). Content-free: opaque skill
+  // ids + count ONLY (same id-class as skill.prompt_invoked.skillName; never a procedure body — SEC-01).
+  "memory:skill_used": "memory.skill_used",
+
+  // Finding A (obs-sweep package-delivery-20260628): the full per-turn topic-match reuse CENSUS,
+  // so a surfaced-but-uncredited NEAR-MISS is diagnosable (memory:skill_used only fires on a
+  // credit). Content-free: skill NAMES (id-class) + coverage/sharedCount NUMBERS + flags — never a
+  // procedure body (SEC-01). Mapped → REMOVED from the arch NOT-MAPPED allowlist (disjoint invariant).
+  "memory:skill_surfaced": "memory.skill_surfaced",
 
   // ---- Session + prompt lifecycle ----
   "prompt:submitted": "prompt.submitted",

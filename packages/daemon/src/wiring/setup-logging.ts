@@ -8,6 +8,7 @@
  */
 
 import type { AppContainer } from "@comis/core";
+import { LoggingConfigSchema, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createTracingLogger } from "../observability/trace-logger.js";
 import type { createLogLevelManager, LogLevelManager } from "../observability/log-infra.js";
@@ -15,6 +16,7 @@ import { createFileTransport, isPm2Managed } from "../observability/log-infra.js
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -66,9 +68,34 @@ export function setupLogging(deps: {
         maxFiles: container.config.observability.logRotation.maxFiles,
       }
     : undefined;
-  const fileTransport = loggingConfig
-    ? createFileTransport(loggingConfig, configLogLevel, logRotation)
-    : undefined;
+  // B (obs-sweep): the structured-log filePath must track the RESOLVED data dir. The schema
+  // default (`~/.comis/logs/daemon.log`, schema-daemon.ts) is hardcoded to the DEFAULT home and
+  // does NOT honor a custom COMIS_DATA_DIR / config.dataDir — and the root `daemon` field is
+  // ALWAYS schema-defaulted (schema.ts), so `daemon.logging` is never undefined and that default
+  // path is always in force. Left as-is, a daemon with a custom data dir writes its structured
+  // log to the SHARED ~/.comis/logs — colliding with other instances and NOT landing at
+  // <dataDir>/logs/daemon.*.log as docs/operations/data-directory.mdx promises (proven live: a
+  // <dataDir>-configured daemon wrote 50MB to the real ~/.comis/logs while <dataDir>/logs held
+  // only the audit + session-index sinks, which DO resolve via safePath). Rebase the
+  // un-customized default onto <dataDir>; an EXPLICIT custom filePath is honored verbatim.
+  // dataDir is resolved the same way as daemon.ts (config.dataDir, else COMIS_DATA_DIR, else ~/.comis).
+  // eslint-disable-next-line no-restricted-syntax -- COMIS_DATA_DIR path resolution before SecretManager is initialized (mirrors daemon.ts:1170)
+  const dataDirEnv = process.env["COMIS_DATA_DIR"];
+  const resolvedDataDir =
+    container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : (dataDirEnv ?? safePath(os.homedir(), ".comis"));
+  const effectiveLoggingConfig = loggingConfig ?? LoggingConfigSchema.parse({});
+  const schemaDefaultLogPath = LoggingConfigSchema.parse({}).filePath;
+  const resolvedLogPath =
+    effectiveLoggingConfig.filePath === schemaDefaultLogPath
+      ? safePath(resolvedDataDir, "logs", "daemon.log")
+      : effectiveLoggingConfig.filePath;
+  const loggingConfigForTransport =
+    resolvedLogPath === effectiveLoggingConfig.filePath
+      ? effectiveLoggingConfig
+      : { ...effectiveLoggingConfig, filePath: resolvedLogPath };
+  const fileTransport = createFileTransport(loggingConfigForTransport, configLogLevel, logRotation);
 
   // 2. Create tracing logger (use config logLevel or default to "debug")
   const rawLogger = _createTracingLogger({
@@ -80,11 +107,19 @@ export function setupLogging(deps: {
   // Bind instanceId to root logger — all children inherit it
   const logger = rawLogger.child({ instanceId }) as ComisLogger;
 
-  // Log transport mode so operators can verify PM2-aware selection
+  // Log transport mode so operators can verify PM2-aware selection. INFO (not DEBUG): an
+  // operator who can't find the structured log must see WHERE it went without flipping to
+  // debug first — names the resolved file path + whether it was defaulted (no daemon.logging
+  // block) so the "where are my logs?" question is answered from the boot line itself.
   const pm2Detected = isPm2Managed();
-  logger.debug(
-    { pm2Detected, fileTransportEnabled: !!loggingConfig, stdoutEnabled: !pm2Detected },
-    "Log transport configured",
+  logger.info(
+    {
+      structuredLogPath: resolvedLogPath,
+      rebasedFromDefault: resolvedLogPath !== effectiveLoggingConfig.filePath,
+      pm2Detected,
+      stdoutEnabled: !pm2Detected,
+    },
+    "Structured logging configured",
   );
 
   // 3. Create log level manager

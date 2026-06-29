@@ -117,7 +117,8 @@ export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-s
 
 // Ollama capacity probe (CWF-03: boot-time served num_ctx discovery)
 // Only probeAllOllamaProviders is consumed cross-package (daemon boot);
-// the remaining probe symbols are intra-package only.
+// the remaining probe symbols (prewarmOllamaModel et al.) are intra-package
+// only — invoked internally by probeAllOllamaProviders, never re-exported.
 export { probeAllOllamaProviders } from "./model/ollama-capacity-probe.js";
 
 // Served-window comparator (KNOB-01: boot-time served<configured WARN).

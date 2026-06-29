@@ -25,8 +25,10 @@ import {
   openingRequestTokens,
   jaccardSimilarity,
   topicMatchedSkillNames,
+  topicMatchScores,
   tokenSetCoverage,
   commonCoreTokens,
+  stemToken,
 } from "./topic-key.js";
 
 // A representative executor-injected envelope (envelope-wrapper.ts shape): a
@@ -130,6 +132,51 @@ describe("openingRequestTokens", () => {
   });
 });
 
+describe("stemToken + morphological collapse (REFLECT-02b — the keyless semantic-matching slice)", () => {
+  it("collapses verb inflections to one stem (deliver/delivered/delivering)", () => {
+    expect(stemToken("delivering")).toBe("deliver");
+    expect(stemToken("delivered")).toBe("deliver");
+    expect(stemToken("deliver")).toBe("deliver");
+  });
+  it("collapses regular plurals (packages/reports/tools/deliveries/boxes/dishes)", () => {
+    expect(stemToken("packages")).toBe("package");
+    expect(stemToken("reports")).toBe("report");
+    expect(stemToken("tools")).toBe("tool");
+    expect(stemToken("deliveries")).toBe("delivery");
+    expect(stemToken("boxes")).toBe("box");
+    expect(stemToken("dishes")).toBe("dish");
+  });
+  it("DOES NOT over-merge: distinct words + -ss/-us/-is endings + short tokens survive (the false-corroboration guard)", () => {
+    // The dangerous failure mode is two DISTINCT words collapsing to one token. These must stay distinct.
+    expect(stemToken("police")).not.toBe(stemToken("policy")); // police vs policy
+    expect(stemToken("across")).toBe("across"); // -ss is not a plural
+    expect(stemToken("business")).toBe("business"); // -ss
+    expect(stemToken("status")).toBe("status"); // -us is not a plural
+    expect(stemToken("analysis")).toBe("analysis"); // -is is not a plural
+    expect(stemToken("fire")).toBe("fire"); // <=4 chars never stemmed
+    expect(stemToken("ring")).toBe("ring"); // <=4 chars (no "ring"→"r")
+    // A curated distinct-pair set: none may collide after stemming.
+    const distinct = ["deploy", "report", "summary", "schedule", "channel", "credential", "lateral", "finance", "harbor", "tunnel"];
+    const stems = distinct.map(stemToken);
+    expect(new Set(stems).size).toBe(distinct.length); // all still unique
+  });
+  it("two genuinely-same-task openings worded with morphology variation now collide on ONE topicKey (the whole point)", () => {
+    // Pre-stemming these carried DIFFERENT token sets ({deliver,package} vs {delivering,packages}) and
+    // landed on separate topicKeys → never reached the corroboration gate. Now they collide.
+    const a = normalizeOpeningRequest("deliver the package");
+    const b = normalizeOpeningRequest("delivering the packages");
+    expect(a).toBe(b);
+    expect(a.length).toBeGreaterThan(0);
+  });
+  it("a behavioral reuse worded with morphology variation now CREDITS the skill", () => {
+    // Core stored from openings that said "deliver"/"package"/"office"; a reuse says the inflected forms.
+    const core = openingRequestTokens("deliver the package to the office"); // ["deliver","office","package"]
+    const surfaced = [{ name: "skill-deliver", topicTokens: core }];
+    // The reuse turn uses delivering/packages/offices — all stem to the core tokens → full coverage.
+    expect(topicMatchedSkillNames("delivering the packages to the offices", surfaced)).toContain("skill-deliver");
+  });
+});
+
 describe("jaccardSimilarity", () => {
   it("is 1 for identical token sets and 0 for disjoint sets", () => {
     expect(jaccardSimilarity(["a", "b", "c"], ["c", "b", "a"])).toBe(1);
@@ -191,7 +238,7 @@ describe("commonCoreTokens", () => {
 
 describe("topicMatchedSkillNames", () => {
   // A skill's stored topicTokens are the CORE (the shared procedure) — what commonCoreTokens yields.
-  const ROUTING_CORE = ["across", "avoiding", "bridge", "dispatch", "evening", "river", "rush"];
+  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding" (REFLECT-02b)
   const surfaced = [
     { name: "skill-routing", topicTokens: ROUTING_CORE },
     { name: "skill-legacy", topicTokens: undefined }, // a legacy/seeded doc with no stored topic set
@@ -245,7 +292,7 @@ describe("topicMatchedSkillNames", () => {
     const bigCore = [
       "lsass", "credential", "dump", "dwell", "weekend", "psexec", "pivot", "fileserver", "domainadmin", "stolen",
       "lateral", "movement", "campaign", "contain", "sequence", "offhours", "soc", "triage", "host", "verdict",
-      "artifacts", "rotating", "record", "memory", "rely", "change", "week", "test", "account", "tools",
+      "artifact", "rotat", "record", "memory", "rely", "change", "week", "test", "account", "tool", // "artifact"/"rotat"/"tool": stemmed (REFLECT-02b)
     ]; // 30 tokens
     const big = [{ name: "skill-ttp", topicTokens: bigCore }];
     // A SHORT triage turn: shares ~10 DISTINCTIVE behavioral tokens but only ~0.33 of the 30-token core —
@@ -256,5 +303,58 @@ describe("topicMatchedSkillNames", () => {
     expect(topicMatchedSkillNames("soc triage host phishing email harvested a user credential account", big)).not.toContain("skill-ttp");
     // Unrelated → no credit.
     expect(topicMatchedSkillNames("please summarize the quarterly sales report for finance", big)).not.toContain("skill-ttp");
+  });
+});
+
+// topicMatchScores (obs-sweep finding A): the OBSERVABILITY companion to topicMatchedSkillNames.
+// Returns a score PER surfaced skill (coverage + sharedCount + credited + hasTopicTokens) so the
+// reuse-attribution NEAR-MISSES — a surfaced skill that just missed the credit bar, or a legacy
+// doc with no topicTokens — become visible (a memory.skill_surfaced trajectory record), instead of
+// silently producing nothing. topicMatchedSkillNames is the credited subset of these scores.
+describe("topicMatchScores", () => {
+  const ROUTING_CORE = ["across", "avoid", "bridge", "dispatch", "evening", "river", "rush"]; // "avoid": commonCoreTokens stems "avoiding" (REFLECT-02b)
+  const surfaced = [
+    { name: "skill-routing", topicTokens: ROUTING_CORE },
+    { name: "skill-legacy", topicTokens: undefined }, // legacy/seeded doc with no stored topic set
+  ];
+
+  it("returns one score per surfaced skill: a credited match + a hasTopicTokens=false legacy doc", () => {
+    const scores = topicMatchScores(
+      "dispatch the nearest engine across the river at evening rush avoiding the bridge for a structure fire",
+      surfaced,
+    );
+    expect(scores).toHaveLength(2);
+    const routing = scores.find((s) => s.name === "skill-routing")!;
+    expect(routing.credited).toBe(true);
+    expect(routing.coverage).toBeGreaterThanOrEqual(0.5);
+    expect(routing.hasTopicTokens).toBe(true);
+    const legacy = scores.find((s) => s.name === "skill-legacy")!;
+    expect(legacy.credited).toBe(false);
+    expect(legacy.hasTopicTokens).toBe(false);
+    expect(legacy.coverage).toBe(0);
+    expect(legacy.sharedCount).toBe(0);
+  });
+
+  it("scores a NEAR-MISS (coverage below threshold AND shared below the absolute floor) as uncredited-but-visible", () => {
+    // 3 of the 7 routing-core tokens present → 0.43 coverage, 3 shared (< 8) → NOT credited, but scored.
+    const scores = topicMatchScores("dispatch across the river only", surfaced);
+    const routing = scores.find((s) => s.name === "skill-routing")!;
+    expect(routing.credited).toBe(false);
+    expect(routing.sharedCount).toBe(3);
+    expect(routing.coverage).toBeCloseTo(3 / 7, 5);
+  });
+
+  it("topicMatchedSkillNames is exactly the credited names of topicMatchScores (no behavior drift)", () => {
+    const turn = "dispatch the nearest engine across the river at evening rush avoiding the bridge";
+    const creditedNames = topicMatchScores(turn, surfaced)
+      .filter((s) => s.credited)
+      .map((s) => s.name);
+    expect(topicMatchedSkillNames(turn, surfaced)).toEqual(creditedNames);
+  });
+
+  it("credits nothing (but still scores every skill) for an empty/ungroupable turn", () => {
+    const scores = topicMatchScores("please could you the a an", surfaced);
+    expect(scores).toHaveLength(2);
+    expect(scores.every((s) => !s.credited)).toBe(true);
   });
 });

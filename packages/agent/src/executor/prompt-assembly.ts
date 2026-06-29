@@ -68,7 +68,7 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
-import { topicMatchedSkillNames } from "../memory/topic-key.js";
+import { topicMatchScores, type TopicMatchScore } from "../memory/topic-key.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { formatMemorySection } from "../rag/rag-retriever.js";
@@ -206,6 +206,54 @@ const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>()
  *  calls this when assembling the turn's `usedSkillIds`. Undefined when nothing matched this turn. */
 export function getSessionPromptTopicMatchedSkills(snapshotKey: string): ReadonlyArray<string> | undefined {
   return sessionPromptTopicMatchedSkills.get(snapshotKey);
+}
+
+/** The per-turn topic-match reuse CENSUS (finding A): every surfaced skill that overlapped the
+ *  turn, with its coverage + credited flag. STORED here during assembly (overwritten per turn) and
+ *  emitted as `memory:skill_surfaced` by postExecution — NOT emitted inline, because the standing-block
+ *  assembly runs BEFORE the trajectory bridge subscribes (assembleTools precedes
+ *  attachTrajectoryToEventBus in pi-executor), so an inline emit fires to no listener (proven live,
+ *  package-delivery-20260628). Same store→read-at-postExecution pattern as the usedSkillIds carrier above. */
+export interface SkillSurfacedCensus {
+  surfacedCount: number;
+  creditedCount: number;
+  scores: TopicMatchScore[];
+}
+const sessionPromptSkillSurfacedCensus = new Map<string, SkillSurfacedCensus>();
+
+/** Read (for postExecution) the per-turn surfaced-skill census. Undefined when no skill overlapped. */
+export function getSessionPromptSkillSurfacedCensus(snapshotKey: string): SkillSurfacedCensus | undefined {
+  return sessionPromptSkillSurfacedCensus.get(snapshotKey);
+}
+
+/** Clear the stored census after postExecution emits it — so a later turn that assembles no
+ *  standing-block (e.g. skipRag) never re-emits a stale prior-turn census. */
+export function clearSessionPromptSkillSurfacedCensus(snapshotKey: string): void {
+  sessionPromptSkillSurfacedCensus.delete(snapshotKey);
+}
+
+/** The per-turn memory-injection (RAG) summary — content-free counts + closed trust-level tags.
+ *  STORED here during assembly, emitted as `memory:injected` by postExecution (the inline assembly
+ *  runs BEFORE the trajectory bridge subscribes — the same pre-bridge timing bug as the surfaced
+ *  census, so an inline emit was lost on EVERY turn). Overwritten per turn; set only when the
+ *  injector produced content. */
+export interface MemoryInjectedSummary {
+  hitCount: number;
+  charsInjected: number;
+  trustTags: string[];
+  pinnedCount: number;
+}
+const sessionPromptMemoryInjected = new Map<string, MemoryInjectedSummary>();
+
+/** Read (for postExecution) the per-turn memory-injection summary. Undefined when no injection. */
+export function getSessionPromptMemoryInjected(snapshotKey: string): MemoryInjectedSummary | undefined {
+  return sessionPromptMemoryInjected.get(snapshotKey);
+}
+
+/** Clear the stored injection summary after postExecution emits it (avoids a stale re-emit on a
+ *  later no-injection turn). */
+export function clearSessionPromptMemoryInjected(snapshotKey: string): void {
+  sessionPromptMemoryInjected.delete(snapshotKey);
 }
 
 /**
@@ -1226,38 +1274,19 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
 
-        // Emit memory:injected observability event so the trajectory bridge
-        // can record one line per RAG injection. Fires only on turns where
-        // the injector actually produced content (inline OR sections) —
-        // no-injection turns produce no event. Best-effort: any failure in
-        // the emit is swallowed via try/catch so it never aborts assembly.
-        if (deps.eventBus) {
-          try {
-            // Retrieved memory only (inline + retrieved sections), never
-            // the guidance block — keeps charsInjected consistent with hitCount.
-            const charsInjected = (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars;
-            const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
-            deps.eventBus.emit("memory:injected", {
-              agentId: agentId ?? config.name,
-              sessionKey: formatSessionKey(sessionKey),
-              traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
-              hitCount: ranked.length,
-              charsInjected,
-              trustTags,
-              pinnedCount: pinnedSet.length,
-              timestamp: systemNowMs(),
-            });
-          } catch (emitErr) {
-            logger.debug(
-              {
-                err: emitErr,
-                hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
-                errorKind: "internal" as const,
-              },
-              "Failed to emit memory:injected",
-            );
-          }
-        }
+        // STORE the memory-injection summary (do NOT emit here): postExecution emits memory:injected
+        // AFTER the trajectory bridge has subscribed. The inline assembly runs inside assembleTools,
+        // BEFORE attachTrajectoryToEventBus (pi-executor), so an inline emit fired to NO listener and
+        // the trajectory missed the RAG record on every turn — the same pre-bridge timing bug fixed
+        // for memory:skill_surfaced (finding A). Fires only on turns where the injector produced
+        // content (this block is reached only then). Retrieved memory ONLY (inline + retrieved
+        // sections), never the guidance block — keeps charsInjected consistent with hitCount.
+        sessionPromptMemoryInjected.set(formatSessionKey(sessionKey), {
+          hitCount: ranked.length,
+          charsInjected: (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars,
+          trustTags: Array.from(new Set(ranked.map((r) => r.entry.trustLevel))),
+          pinnedCount: pinnedSet.length,
+        });
       }
       logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
@@ -1326,10 +1355,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
         // is unioned into the turn's usedSkillIds by the pi-event-bridge.
         const skills = docs.value.filter((d) => d.kind === "skill");
-        const matched = topicMatchedSkillNames(
+        const scores = topicMatchScores(
           msg.text,
           skills.map((s) => ({ name: s.name, topicTokens: s.structuredBody?.topicTokens })),
         );
+        const matched = [...new Set(scores.filter((s) => s.credited).map((s) => s.name))];
         sessionPromptTopicMatchedSkills.set(formatSessionKey(sessionKey), matched);
         // One DEBUG line when a turn TOPIC-CREDITS ≥1 learned skill WITHOUT an explicit read —
         // otherwise the credit is invisible until a downstream proof bump, so confirming "did
@@ -1341,6 +1371,28 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
             { agentId, step: "skill-topic-match", skillsConsidered: skills.length, matchedCount: matched.length },
             "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
           );
+        }
+        // memory:skill_surfaced (finding A): the full reuse-attribution census. memory:skill_used
+        // (post-execution) fires only when ≥1 skill is CREDITED, so a NEAR-MISS — a skill that
+        // overlapped the turn but missed the credit bar, or a legacy doc with no topicTokens — was
+        // silent ("why wasn't my skill reused?" needed a debugger). Emit per turn when ≥1 learned
+        // skill has ANY token overlap (sharedCount>0) or is credited; carry a content-free score
+        // (name=id, rest=numbers; zero-overlap skills omitted as noise; capped). Best-effort.
+        // STORE the census (do NOT emit here): postExecution emits memory:skill_surfaced after the
+        // trajectory bridge has subscribed. Keep only the skills with token overlap (credited +
+        // near-misses); zero-overlap skills are noise. Capped at 25 (coverage desc).
+        if (skills.length > 0) {
+          const relevant = scores
+            .filter((s) => s.sharedCount > 0 || s.credited)
+            .sort((a, b) => b.coverage - a.coverage || b.sharedCount - a.sharedCount)
+            .slice(0, 25);
+          if (relevant.length > 0) {
+            sessionPromptSkillSurfacedCensus.set(formatSessionKey(sessionKey), {
+              surfacedCount: skills.length,
+              creditedCount: matched.length,
+              scores: relevant,
+            });
+          }
         }
       }
     } catch (learningErr) {

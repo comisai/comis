@@ -83,6 +83,12 @@ export interface GlobalsViolation {
  */
 const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   /packages\/daemon\/src\/daemon\.ts$/,
+  // The logging-subsystem wiring helper EXTRACTED from daemon.ts (it carries the
+  // same bootstrap role): it builds the structured-log file transport BEFORE the
+  // SecretManager/EnvPort seam exists, so it resolves COMIS_DATA_DIR exactly as
+  // daemon.ts does (mirrors daemon.ts:1170; the single env read is also guarded by
+  // an inline no-restricted-syntax eslint-disable). Bootstrap, not a port shortcut.
+  /packages\/daemon\/src\/wiring\/setup-logging\.ts$/,
   /packages\/cli\/src\/cli\.ts$/,
   /packages\/cli\/src\/index\.ts$/,
   /packages\/cli\/src\/commands\/[^/]+\.ts$/,

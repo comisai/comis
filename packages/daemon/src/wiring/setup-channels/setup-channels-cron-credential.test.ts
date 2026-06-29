@@ -20,13 +20,16 @@ function makeContainer(opts: {
   secrets?: Record<string, string>;
   oauthProfiles?: Record<string, string>;
   apiKeyName?: string;
+  entries?: Record<string, unknown>;
 }): AppContainer {
   return {
     secretManager: { get: (k: string) => opts.secrets?.[k] },
     config: {
-      providers: opts.apiKeyName
-        ? { entries: { "some-provider": { apiKeyName: opts.apiKeyName } } }
-        : undefined,
+      providers: opts.entries
+        ? { entries: opts.entries }
+        : opts.apiKeyName
+          ? { entries: { "some-provider": { apiKeyName: opts.apiKeyName } } }
+          : undefined,
       agents: { default: { oauthProfiles: opts.oauthProfiles } },
     },
   } as unknown as AppContainer;
@@ -73,6 +76,31 @@ describe("resolveCronJobCredential", () => {
     const cred = await resolveCronJobCredential(container, "default", "ollama");
     expect(cred.source).toBe("keyless");
     expect(cred.apiKey).toBeTruthy();
+  });
+
+  it("KEYLESS-CUSTOM-NAME: a custom-NAMED keyless entry (type: ollama) gets the sentinel by TYPE, not name", async () => {
+    // package-delivery-20260628 (local qwen3.6:35b): the keyless check keyed off the provider NAME,
+    // but KEYLESS_PROVIDER_TYPES holds TYPEs ("ollama"). A user-named ollama entry
+    // (providers.entries["local-ollama"] = { type: "ollama" }) failed the check, so the
+    // reflection/memory-review crons SKIPPED ("Skipping reflection -- no API key") on a local keyless
+    // daemon — blocking the learning loop. The completion path keys off entry.type, so this gate must too.
+    const container = makeContainer({
+      secrets: {},
+      entries: { "local-ollama": { type: "ollama", baseUrl: "http://localhost:11434" } },
+    });
+    const cred = await resolveCronJobCredential(container, "default", "local-ollama");
+    expect(cred.source).toBe("keyless"); // PRE-FIX: "none" (apiKey "") → the silent skip
+    expect(cred.apiKey).toBeTruthy();
+  });
+
+  it("a custom-NAMED non-keyless entry (type: anthropic) without a key still skips honestly (no over-broadening)", async () => {
+    const container = makeContainer({
+      secrets: {},
+      entries: { "my-anthropic": { type: "anthropic" } },
+    });
+    const cred = await resolveCronJobCredential(container, "default", "my-anthropic");
+    expect(cred.source).toBe("none");
+    expect(cred.apiKey).toBe("");
   });
 
   it("OAuth resolver returning undefined (expired/no creds) → no credential, honest", async () => {

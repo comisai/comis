@@ -186,6 +186,26 @@ export function translatePayload(
         args: payload.args,
       };
 
+    // IMP-3 / PD-OBS-1: the per-turn used-skill attribution (inline-surfaced reuse credit). IDS + COUNT
+    // ONLY — opaque skill ids (same id-class as skill.prompt_invoked.skillName), never a procedure body
+    // (§2.7 / SEC-01). The fold (accumulateSkillUsedRecord) reads usedSkillIds into explain.skillsUsed.
+    case "memory:skill_used":
+      return {
+        usedSkillIds: payload.usedSkillIds,
+        usedCount: payload.usedCount,
+      };
+
+    // Finding A: the per-turn topic-match reuse census. Content-free — skill NAMES (id-class) +
+    // coverage/sharedCount NUMBERS + credited/hasTopicTokens flags; never a procedure body (SEC-01).
+    // The fold (accumulateSkillSurfacedRecord) reads the uncredited-with-overlap entries into
+    // explain.learning.skillsSurfacedButUncredited.
+    case "memory:skill_surfaced":
+      return {
+        surfacedCount: payload.surfacedCount,
+        creditedCount: payload.creditedCount,
+        scores: payload.scores,
+      };
+
     case "prompt:submitted":
       return {
         promptChars: payload.promptChars,
@@ -298,9 +318,17 @@ export function translatePayload(
     case "learning:memory_failure_attributed": // OBS-4b: corroborated-failure accrual COUNT ONLY — the eviction-causation precursor (never a memory id-list/body, SEC-01).
     case "reflect:admitted": // REFLECT (Phase 226): admitted COUNT ONLY (renamed from learning:skill_synthesized)
     case "learning:skill_promoted": // SURFACE-06: counts ONLY (SEC-01)
-    case "learning:skill_demoted": // SURFACE-06: counts ONLY (SEC-01)
-      // FORGET-06 / REFLECT / SURFACE-06: the soft-eviction / failure-accrual / admitted / promoted / demoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
+      // FORGET-06 / REFLECT / SURFACE-06: the soft-eviction / failure-accrual / admitted / promoted COUNT ONLY — never an id-list, procedure body, or script (§2.7 / SEC-01); the record TYPE conveys which transition.
       return { count: payload.count };
+    case "learning:skill_demoted":
+      // SURFACE-06 + finding C: count + the demoted skill NAMES (id-class, same as
+      // skill.prompt_invoked.skillName) + the trigger trajectory id, so `explain` answers "which
+      // skill demoted and why" in one call (was count-only). NAMES/ids ONLY — never a body (SEC-01).
+      return {
+        count: payload.count,
+        ...(Array.isArray(payload.demotedSkillNames) ? { demotedSkillNames: payload.demotedSkillNames } : {}),
+        ...(typeof payload.triggerTrajectoryId === "string" ? { triggerTrajectoryId: payload.triggerTrajectoryId } : {}),
+      };
     case "reflect:funnel": // REFLECT (Phase 226, renamed from the old synthesis funnel): the reflection FUNNEL COUNTS + the acute admissionOutcome verdict (RC-4) — never a procedure body/script (SEC-01). Answers "why 0 admitted" from the trajectory in ONE field. OBS-1: the funnel MAGNITUDES (untrustedDrops / source counts) ride too — all counts, never bodies.
       return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
     // Phase 226 SIMPLIFY-04: the 3 vestigial translator cases (sandbox-validation + user-rep-revision

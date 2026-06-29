@@ -86,6 +86,9 @@ export interface AgentBootWindowInfo {
   modelProfile: ModelProfile;
   /** bootstrapTotalMaxChars ?? bootstrapMaxChars from resolveScaffoldDefaults (A2). */
   scaffoldBootstrapChars: number;
+  /** E1: the class's active-tool ceiling from resolveScaffoldDefaults (small→24, nano/mid/frontier→
+   *  undefined). Makes the floor's toolSchemaTokens term deferral-aware (see computeMinViableEquation). */
+  activeToolCeiling?: number;
   /** contextEngine.budget.minVisibleOutputTokens when configured. */
   minVisibleOutputTokens?: number;
   /** WR-03 (176 review): convert the raw boot toolset to the SAME
@@ -171,6 +174,7 @@ export function collectAgentBootWindowInfo(params: {
     windowSource: source,
     modelProfile,
     scaffoldBootstrapChars,
+    ...(scaffold.activeToolCeiling !== undefined && { activeToolCeiling: scaffold.activeToolCeiling }),
     minVisibleOutputTokens,
     ...(params.convertTools !== undefined && { convertTools: params.convertTools }),
   };
@@ -215,11 +219,33 @@ export function computeMinViableEquation(params: {
   capabilityClass: string;
   effectiveWindow: number;
   minVisibleOutputTokens?: number;
+  /** E1 (obs-sweep): the class's active-tool ceiling (scaffold-defaults). When finite and the
+   *  toolset exceeds it, the floor measures only the deferred (active) corpus — see below. */
+  activeToolCeiling?: number;
 }): MinViableEquation {
   // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction) (TOK-01)
   const bootstrapTotalTokens = Math.ceil(params.scaffoldBootstrapChars / CHARS_PER_TOKEN_RATIO);
-  // flat-by-design: boot viable-floor over machine bootstrap/tool-schema chars (Latin by construction) (TOK-01)
-  const toolSchemaTokens = Math.ceil(toolDefOverheadChars(params.tools) / CHARS_PER_TOKEN_RATIO);
+  // E1 (obs-sweep package-delivery-20260628): DEFERRAL-AWARE tool-schema floor. At turn time
+  // applyToolDeferral (tool-deferral.ts) defers by COUNT against `activeToolCeiling`, shipping only
+  // ~ceiling active tools + a wire-stripped discover_tools stub (toolDefOverheadChars already skips
+  // the stubs). The boot floor was fed the RAW full toolset, so it counted the FULL pre-deferral
+  // corpus (~26K tokens) and false-WARNed a small-class agent that runs fine via discover_tools.
+  // Mirror the deferral: when a finite ceiling is exceeded, count only the `ceiling` LARGEST tools by
+  // individual overhead — a CONSERVATIVE upper bound on the active set (applyToolDeferral chooses by
+  // COUNT, not size, so the real active corpus is ≤ this), so the floor tracks deferral without ever
+  // under-warning a genuinely-infeasible window. Single-sources the ceiling from scaffold-defaults
+  // (the same knob the turn uses). flat-by-design (TOK-01).
+  const ceiling = params.activeToolCeiling;
+  const toolChars =
+    ceiling !== undefined && Number.isFinite(ceiling) && params.tools.length > ceiling
+      ? params.tools
+          .map((t) => toolDefOverheadChars([t]))
+          .sort((a, b) => b - a)
+          .slice(0, ceiling)
+          .reduce((sum, n) => sum + n, 0)
+      : toolDefOverheadChars(params.tools);
+  // flat-by-design: tool-schema overhead chars (machine-rendered JSON, Latin by construction) (TOK-01)
+  const toolSchemaTokens = Math.ceil(toolChars / CHARS_PER_TOKEN_RATIO);
 
   // Post-downshift minimum thinking level: native → "low", none → "off".
   // When minVisibleOutputTokens is not configured, call with TWO args so
@@ -307,6 +333,9 @@ export function evaluateViableFloorForAgent(params: {
     capabilityClass: info.modelProfile.capabilityClass,
     effectiveWindow: info.effectiveWindow,
     minVisibleOutputTokens: info.minVisibleOutputTokens,
+    // E1: deferral-aware — when the class pins a finite ceiling, the floor measures the deferred
+    // (active) corpus, not the full pre-deferral toolset (which false-WARNed small-class agents).
+    ...(info.activeToolCeiling !== undefined && { activeToolCeiling: info.activeToolCeiling }),
   });
   if (info.effectiveWindow >= eq.minViable) {
     return undefined; // R-4: healthy boots stay silent.
@@ -327,7 +356,11 @@ export function evaluateViableFloorForAgent(params: {
         : `Raise the model's configured window: providers.entries.${info.providerId}.models[].contextWindow. `;
   const dominanceSentence =
     eq.dominantTerm === "toolSchemaTokens"
-      ? `Tool schemas dominate the floor — reduce the active tool surface: pin capabilityClass (small defers to a 24-tool active ceiling via discover_tools) or disable unused MCP servers / builtin tool groups.`
+      ? info.activeToolCeiling !== undefined
+        ? // E1: the floor is already deferral-aware (measures the ${ceiling}-tool active corpus), so a
+          // WARN here means even the DEFERRED surface does not fit — "pin small" is already in effect.
+          `Tool schemas dominate the floor EVEN AFTER deferral to the ${info.activeToolCeiling}-tool active ceiling — the deferred active corpus still does not fit. Disable unused MCP servers / builtin tool groups, or raise the window.`
+        : `Tool schemas dominate the floor — reduce the active tool surface: pin capabilityClass (small defers to a 24-tool active ceiling via discover_tools) or disable unused MCP servers / builtin tool groups.`
       : "";
 
   params.logger.warn(

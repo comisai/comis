@@ -173,6 +173,32 @@ describe("computeMinViableEquation — FLOOR-01 equation terms", () => {
     });
     expect(eq.terms.outputHeadroomFloor).toBe(1_024 + 1_500); // native@low + operator floor
   });
+
+  // E1 (obs-sweep): deferral-aware toolSchemaTokens. At turn time applyToolDeferral ships only
+  // `activeToolCeiling` active tools + a wire-stripped discover_tools stub; the boot floor must
+  // mirror that or it counts the FULL pre-deferral corpus and false-WARNs on a small-class agent
+  // that runs fine via discover_tools. Conservatively counts the `ceiling` LARGEST tools.
+  const DEFERRAL_TOOLS = [
+    { name: "a", description: "x".repeat(10), parameters: {} },   // 1 + 10 + 2 = 13
+    { name: "b", description: "x".repeat(100), parameters: {} },  // 1 + 100 + 2 = 103
+    { name: "c", description: "x".repeat(1000), parameters: {} }, // 1 + 1000 + 2 = 1003
+    { name: "d", description: "x".repeat(5), parameters: {} },    // 1 + 5 + 2 = 8
+  ];
+  it("FLOOR-01-13 (E1): activeToolCeiling < tools.length counts ONLY the ceiling largest tools", () => {
+    const base = { scaffoldBootstrapChars: 5_000, reasoningStyle: "none" as const, capabilityClass: "small", effectiveWindow: 8_192 };
+    const full = computeMinViableEquation({ ...base, tools: DEFERRAL_TOOLS });
+    const deferred = computeMinViableEquation({ ...base, tools: DEFERRAL_TOOLS, activeToolCeiling: 2 });
+    expect(full.terms.toolSchemaTokens).toBe(Math.ceil((13 + 103 + 1003 + 8) / 3.5)); // 322 — all 4
+    expect(deferred.terms.toolSchemaTokens).toBe(Math.ceil((1003 + 103) / 3.5)); // 316 — the 2 LARGEST only
+    expect(deferred.terms.toolSchemaTokens).toBeLessThan(full.terms.toolSchemaTokens);
+  });
+
+  it("FLOOR-01-14 (E1): activeToolCeiling >= tools.length (or undefined) counts the full corpus (no deferral)", () => {
+    const base = { scaffoldBootstrapChars: 5_000, reasoningStyle: "none" as const, capabilityClass: "small", effectiveWindow: 8_192, tools: DEFERRAL_TOOLS };
+    const full = computeMinViableEquation(base);
+    expect(computeMinViableEquation({ ...base, activeToolCeiling: 10 }).terms.toolSchemaTokens).toBe(full.terms.toolSchemaTokens);
+    expect(computeMinViableEquation({ ...base, activeToolCeiling: undefined }).terms.toolSchemaTokens).toBe(full.terms.toolSchemaTokens);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,6 +240,22 @@ describe("evaluateViableFloorForAgent — WARN emission", () => {
     expect(hint).toContain("capabilityClass");
     expect(hint).toContain("discover_tools");
     expect(hint).toContain("MCP");
+  });
+
+  it("FLOOR-01-15 (E1): deferral-active — the floor measures the ceiling corpus + advises POST-deferral (not 'pin small')", () => {
+    const { logger, warnCalls } = makeRecordingLogger();
+    // 5 big tools, ceiling 2 → the floor counts only the 2 LARGEST (the turn defers the other 3 via
+    // discover_tools). Each tool: name(2) + desc(14000) + params(0) = 14002 chars.
+    const bigTools = Array.from({ length: 5 }, (_, i) => ({ name: `t${i}`, description: "z".repeat(14_000) }));
+    const result = evaluateViableFloorForAgent({ info: makeInfo({ activeToolCeiling: 2 }), tools: bigTools, logger });
+    expect(warnCalls).toHaveLength(1);
+    // toolSchemaTokens reflects the 2-tool DEFERRED corpus, NOT all 5 (deferral-aware floor).
+    expect(result!.terms.toolSchemaTokens).toBe(Math.ceil((2 * (2 + 14_000)) / 3.5));
+    const hint = warnCalls[0].obj.hint as string;
+    // The advice no longer says "pin small" (already deferred) — it names the post-deferral levers.
+    expect(hint).toContain("EVEN AFTER deferral");
+    expect(hint).toContain("2-tool active ceiling");
+    expect(hint).not.toContain("pin capabilityClass");
   });
 
   it("FLOOR-01-6: a healthy window (effectiveWindow >= minViable) returns undefined and emits ZERO warns", () => {
