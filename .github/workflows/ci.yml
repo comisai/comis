@@ -104,9 +104,21 @@ jobs:
         # carries this shard's coverage data; the `coverage` job merges all four
         # and enforces the per-package floors. Each shard runs a disjoint slice
         # of the test files (vitest distributes by file).
+        # VITEST_SHARD_COLLECT_ONLY=1 makes this shard COLLECT-ONLY: it gathers its
+        # ~25% coverage slice into the blob WITHOUT enforcing the per-package
+        # thresholds (a single shard can never meet them — vitest.config.ts gates
+        # the thresholds on this env). The `coverage` merge job below is the gate:
+        # it enforces on the FULL merged coverage. (Without this, every shard fails
+        # `ERROR: Coverage for … does not meet threshold` on its partial slice.)
+        env:
+          VITEST_SHARD_COLLECT_ONLY: "1"
         run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
 
       - name: Upload coverage blob
+        # always(): keep the blob even when the shard's tests FAIL, so the failure
+        # is reconstructable (the blob reporter prints nothing to the job log; on a
+        # failed shard the blob is the only record of which test failed).
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-blob-${{ matrix.shard }}
