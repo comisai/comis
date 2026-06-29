@@ -14,8 +14,18 @@ import { createRequire } from 'node:module';
 // isolated daemon — package-delivery-20260628); VPS default stays ~/.comis/memory.db.
 const require = createRequire((process.env.COMIS_SRC || '/root/comis-src') + '/packages/daemon/package.json');
 const Database = require('better-sqlite3');
+// ROOT-HOME GUARD (memory-learning-stress-catalog-20260629 framework loop): the daemon runs as the
+// `comis` user, so its data dir is /home/comis/.comis. If this helper is invoked as ROOT (HOME=/root —
+// the common `ssh root@vps 'node db.mjs …'` mistake) WITHOUT an explicit override, HOME resolution would
+// point at /root/.comis (which throws fileMustExist here, and SILENTLY returns 0 rows in the obs assembler
+// — the "explain blind" false-negative that cost a cycle). Resolve to the comis data dir + warn instead.
+const resolvedHome =
+  typeof process.getuid === 'function' && process.getuid() === 0 ? '/home/comis' : process.env.HOME || '/home/comis';
+if (typeof process.getuid === 'function' && process.getuid() === 0 && !process.env.COMIS_DATA_DIR && !process.env.COMIS_DB_PATH) {
+  console.error('[db.mjs] running as root → using /home/comis/.comis (the daemon\'s comis-user data dir, NOT /root/.comis); set COMIS_DATA_DIR to override');
+}
 const dbpath = process.env.COMIS_DB_PATH
-  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + '/memory.db' : (process.env.HOME || '/home/comis') + '/.comis/memory.db');
+  || (process.env.COMIS_DATA_DIR ? process.env.COMIS_DATA_DIR + '/memory.db' : resolvedHome + '/.comis/memory.db');
 const [cmd, a, b, c, d, e] = process.argv.slice(2);
 const ident = (s) => { if (!/^[A-Za-z0-9_,]+$/.test(s || '')) throw new Error('bad identifier: ' + s); return s; };
 try {

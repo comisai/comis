@@ -77,12 +77,42 @@ ssh root@$VPS 'printf "%s" "{\"agents\":{\"default\":{\"skills\":{\"discoveryPat
 ```
 A from-scratch memory/learning drive restarts anyway (next section), so the skill comes up with it.
 
+> **Driving ALL 14 (or several) workloads? Set EVERY sim dir in `discoveryPaths` ONCE + restart ONCE**
+> (memory-learning-stress-catalog-20260629 RUN2 cadence — far less friction than a per-workload
+> discoveryPath+restart). The skills are namespaced + distinctly-described, so a capable model picks the
+> right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
+> workload. Patch all 14: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 14 … ]}}}}`.
+
+> **Not wiping `memory.db` between workloads (accumulating tools in ONE session) is a useful STRESS** — it
+> surfaced OBS-TOOLSTATS-SENTINEL (a >64-distinct-tool `toolStats` tripped the bounding backstop's
+> object-key cap → schema-invalid `explain`; since FIXED by the toolStats count-cap). But it makes per-session
+> reads noisier (the trajectory unions every workload's tools). For a CLEAN per-workload admit read, use the
+> mental_models count DELTA (before/after — `drive-sim-workload.sh` prints it) or reflect-per-workload.
+
 ---
 
 ## Worked end-to-end: drive ONE memory/learning test on the running daemon
+
+> **The one-command path (use this — born memory-learning-stress-catalog-20260629).** The whole per-workload
+> ACC→REFLECT loop below is now `scripts/drive-sim-workload.sh`:
+> ```bash
+> ssh root@$VPS 'export COMIS_GATEWAY_TOKEN=<GWTOKEN> COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml; \
+>                bash /root/drive-sim-workload.sh threat-hunting'        # restart→connect→reset→2 feeders→reflect→read
+> # for the REUSE/TRANSFER step, re-run on a rotated variant: … drive-sim-workload.sh threat-hunting B
+> # flaky link? wrap it: bash /root/bg.sh th 'bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
+> ```
+> It embeds the canonical byte-identical feeder prompt per workload, restarts-m1 (fresh per-root meter — the
+> RUN1 spurious-abort lesson), connects ONE sim server at a time, and reads the ground truth (mm delta + the
+> newest skill + a grounding grep). The manual walkthrough below is the breakdown of what it does.
+>
+> Read the per-session diagnosis with `scripts/explain.mjs <sessionKey>` (the offline IncidentReport oracle —
+> failures w/ `matchedRule`, `perRootBudget`, `likelyRootCause`, the learning block; ROOT-HOME-guarded so it
+> never silently reads `/root/.comis`).
+
 The point of these sims: make the **A→B→reuse loop** real. Walkthrough with `threat-hunting`; the same shape
-applies to any workload. Oracle = ground truth (`db.mjs` / `comis explain` / the `reflect:*` events), **never
-the chat reply** — model [`../targets/EXAMPLE-verified-learning.md`](../targets/EXAMPLE-verified-learning.md)
+applies to any workload. Oracle = ground truth (`db.mjs` / `comis explain` / `scripts/explain.mjs` / the
+`reflect:*` events), **never the chat reply** — model
+[`../targets/EXAMPLE-verified-learning.md`](../targets/EXAMPLE-verified-learning.md)
 and the spec [`../targets/adaptive-threat-hunting.md`](../targets/adaptive-threat-hunting.md).
 
 **0. Deploy + a true from-scratch daemon** (fresh `memory.db` so the agent starts with NOTHING learned, and
