@@ -244,6 +244,7 @@ export function computeMinViableEquation(params: {
           .slice(0, ceiling)
           .reduce((sum, n) => sum + n, 0)
       : toolDefOverheadChars(params.tools);
+  // flat-by-design: tool-schema overhead chars (machine-rendered JSON, Latin by construction) (TOK-01)
   const toolSchemaTokens = Math.ceil(toolChars / CHARS_PER_TOKEN_RATIO);
 
   // Post-downshift minimum thinking level: native → "low", none → "off".

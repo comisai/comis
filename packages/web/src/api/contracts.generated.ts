@@ -7926,6 +7926,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "matchedToken": {
                 "type": "string"
               },
+              "matchedRule": {
+                "type": "string"
+              },
               "resultDigest": {
                 "type": "string"
               },
@@ -8152,6 +8155,38 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "verdict"
           ],
           "additionalProperties": false
+        },
+        "contextBudgetHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "windowTokens": {
+                "type": "number"
+              },
+              "assembledInputTokens": {
+                "type": "number"
+              },
+              "keptCount": {
+                "type": "number"
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "fits",
+                  "downshifted",
+                  "exhausted"
+                ]
+              }
+            },
+            "required": [
+              "windowTokens",
+              "assembledInputTokens",
+              "keptCount",
+              "verdict"
+            ],
+            "additionalProperties": false
+          }
         },
         "recall": {
           "type": "object",
@@ -8395,8 +8430,33 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "skillsDemoted": {
               "type": "number"
             },
+            "skillsDemotedNames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "failuresAttributed": {
               "type": "number"
+            },
+            "skillsSurfacedButUncredited": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "coverage": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "coverage"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
