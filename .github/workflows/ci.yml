@@ -130,9 +130,13 @@ jobs:
         # the thresholds on this env). The `coverage` merge job below is the gate:
         # it enforces on the FULL merged coverage. (Without this, every shard fails
         # `ERROR: Coverage for … does not meet threshold` on its partial slice.)
+        # The `default` reporter is added alongside `blob` so a FAILING test prints its
+        # name + assertion to the job log — the blob reporter alone is silent on failures
+        # (and the blob isn't uploaded when the step exits non-zero), which made an earlier
+        # shard failure undiagnosable from the logs. blob still writes the file the merge needs.
         env:
           VITEST_SHARD_COLLECT_ONLY: "1"
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob --reporter=default
 
       - name: Upload coverage blob
         # always(): keep the blob even when the shard's tests FAIL, so the failure
