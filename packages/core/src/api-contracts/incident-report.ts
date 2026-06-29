@@ -94,6 +94,10 @@ export const IncidentReportSchema = z.object({
       httpStatus: z.number().optional(),
       errorKind: z.string(),
       matchedToken: z.string().optional(),
+      /** #4: the failure-detector sub-rule that flipped the call — "self_grade" (a
+       *  clean DOMAIN task-failure via the #1 {graded:true,outcome} envelope) vs an
+       *  error-token rule. Distinguishes an honest task-failure from a transport error. */
+      matchedRule: z.string().optional(),
       resultDigest: z.string(),
       // The size of the ORIGINAL, pre-bound tool body (a "how big was the thing
       // we digested" breadcrumb) — NOT the size of the emitted `errorPreview`
@@ -526,6 +530,10 @@ export interface IncidentFailure {
   httpStatus?: number;
   errorKind: string;
   matchedToken?: string;
+  /** #4: the failure-detector sub-rule ("self_grade" = a clean domain task-failure
+   *  via the #1 self-grade envelope, vs an error-token rule) — surfaced on
+   *  `explain.failures` so an honest task-failure is distinguishable from a transport error. */
+  matchedRule?: string;
   resultDigest: string;
   resultBytes: number;
   errorPreview: string;
@@ -626,6 +634,16 @@ export interface IncidentSignals {
    * them. Absent ⇒ those rules do not fire (a clean session names no cause).
    */
   endReason?: string;
+  /**
+   * BUDGET-LIMB-OBS: the terminal `execution.aborted` record's `reason` (e.g.
+   * "spend_exceeded"), captured by `toIncidentSignals` from the trajectory. UNLIKE
+   * `endReason` (metadata-derived), this IS in the record stream — so when a HARD
+   * abort skipped the clean `sessionEnd` rollup (leaving metadata's endReason
+   * absent), the assembler uses it as the `endReason` fallback. Without it a
+   * per-root budget abort surfaced endReason:"unknown" + a null spend-verdict
+   * despite the trajectory carrying the limb (memory-learning-stress-catalog-20260629).
+   */
+  abortReason?: string;
   /**
    * RECALL-01: the report's authoritative `outcome.degraded` flag (derived by the
    * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by

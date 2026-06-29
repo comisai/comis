@@ -182,6 +182,13 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
         ...(asString(data.matchedToken) !== undefined
           ? { matchedToken: asString(data.matchedToken) }
           : {}),
+        // #4 (self-grade visibility): the failure-detector sub-rule that flipped the
+        // call — "self_grade" (the #1 {graded:true,outcome} envelope, a clean DOMAIN
+        // task-failure) vs an error-token rule. Lets `explain.failures` distinguish an
+        // honest task-failure from a transport error. Content-free (a closed rule label).
+        ...(asString(data.matchedRule) !== undefined
+          ? { matchedRule: asString(data.matchedRule) }
+          : {}),
         // Prefer an event-supplied digest; otherwise digest the body.
         resultDigest: asString(data.resultDigest) ?? fingerprint(errorText ?? ""),
         resultBytes,
@@ -327,6 +334,11 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
     // verdict names `autonomy.budget.<limb>` + the numbers in their unit, instead
     // of an operator grepping the "Per-root … budget exceeded" daemon-log line.
     case "execution.aborted": {
+      // BUDGET-LIMB-OBS: capture the abort `reason` (LAST wins) — the assembler
+      // uses it as the `endReason` fallback when a hard abort skipped the clean
+      // sessionEnd rollup, so the spend-verdict can fire + name the limb.
+      const reason = asString(data.reason);
+      if (reason !== undefined && reason.length > 0) acc.abortReason = reason;
       const prb = (data as { perRootBudget?: Record<string, unknown> }).perRootBudget;
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);
@@ -565,6 +577,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // OBS-3: the per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     // OBS-4: surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.

@@ -86,6 +86,13 @@ export interface Acc {
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** BUDGET-LIMB-OBS (memory-learning-stress-catalog-20260629): the terminal
+   *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
+   *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived
+   *  `endReason` falls through to "unknown" and the spend-verdict (gated on
+   *  endReason==="spend_exceeded") never fires; this lets the assembler use the
+   *  abort reason as the endReason fallback. Content-free (a closed reason enum). */
+  abortReason?: string;
   learning: LearningFoldState; // OBS-02 (198): see obs-explain-learning-fold.ts
   /** The image (186) / vision (187) / video (192) / voice (196) turns reconstructed
    *  from the session's image.* / media.vision.* / video.* / media.stt / media.tts

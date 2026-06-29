@@ -296,7 +296,10 @@ export function checkSpendLimit(
  * route their `exceeded` outcome through here, but they live in DIFFERENT config
  * trees — a per-root trip that points the operator at `observability.spend`
  * misdirects them. `per_root` names `autonomy.budget.*` instead; the exact limb
- * ($/token/wall-clock) is in the adjacent `Per-root … budget exceeded` log line.
+ * ($/token/wall-clock) + its numbers are surfaced by `comis explain <session>`
+ * (the spend-verdict reads the `execution.aborted.perRootBudget` this event carries
+ * and names `autonomy.budget.<limb>` — BUDGET-LIMB-OBS). The token/wall-clock limbs
+ * ALSO log an adjacent `Per-root <limb> budget exceeded` line; the $ limb does not.
  */
 export function emitSpendAbort(
   deps: {
@@ -324,7 +327,7 @@ export function emitSpendAbort(
   deps.logger.warn(
     {
       hint: perRoot
-        ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); the exact limb is named in the adjacent 'Per-root … budget exceeded' log line"
+        ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); run `comis explain <session>` for the exact limb + numbers (the spend-verdict names autonomy.budget.<limb>)"
         : "Spend ceiling exceeded; raise observability.spend.* or set action:'warn'",
       errorKind: "resource" as const,
     },

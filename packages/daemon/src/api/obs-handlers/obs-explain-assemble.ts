@@ -256,6 +256,12 @@ export function assembleIncidentReport(
   const endReason =
     (sessionEnd !== undefined ? asString(sessionEnd.endReason) : undefined) ??
     (metadata !== null ? asString(metadata.endReason) : undefined) ??
+    // BUDGET-LIMB-OBS: a HARD abort (per-root budget / loop) skips the clean
+    // sessionEnd rollup, so the metadata endReason is absent — fall back to the
+    // terminal `execution.aborted` reason captured from the trajectory. Without
+    // this a per-root spend abort surfaced endReason:"unknown" → the spend-verdict
+    // (gated on "spend_exceeded") never fired + perRootBudget stayed off the verdict.
+    signals.abortReason ??
     "unknown";
   const isHardFailure = HARD_FAILURE_END_REASONS.has(endReason);
   const explicitDegraded =
