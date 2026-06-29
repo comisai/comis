@@ -88,6 +88,26 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The unit suite includes the Linux-only sandbox/jail (`*.linux.test.ts`) and
+      # daemon config-versioning tests, which need bubblewrap + a relaxed apparmor
+      # sysctl + a git identity (just like the integration/e2e jobs). The pre-sharding
+      # single test job had these; the sharded `unit` job must too, else those tests
+      # fail across all shards (regression from CI commit 91585f61).
+      - name: Install system dependencies (ffmpeg, bubblewrap)
+        # ffmpeg/ffprobe drive the media-conversion skill; bubblewrap is the
+        # OS-level exec sandbox the sandbox/jail suites exercise.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
+      - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
+        # Ubuntu 24.04 runner images strip CAP_NET_ADMIN from bwrap user
+        # namespaces; relaxing the sysctl restores the sandbox suites.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Configure git identity for daemon config-versioning tests
+        run: |
+          git config --global user.email "ci@comis.local"
+          git config --global user.name "Comis CI"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -104,9 +124,25 @@ jobs:
         # carries this shard's coverage data; the `coverage` job merges all four
         # and enforces the per-package floors. Each shard runs a disjoint slice
         # of the test files (vitest distributes by file).
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
+        # VITEST_SHARD_COLLECT_ONLY=1 makes this shard COLLECT-ONLY: it gathers its
+        # ~25% coverage slice into the blob WITHOUT enforcing the per-package
+        # thresholds (a single shard can never meet them — vitest.config.ts gates
+        # the thresholds on this env). The `coverage` merge job below is the gate:
+        # it enforces on the FULL merged coverage. (Without this, every shard fails
+        # `ERROR: Coverage for … does not meet threshold` on its partial slice.)
+        # The `default` reporter is added alongside `blob` so a FAILING test prints its
+        # name + assertion to the job log — the blob reporter alone is silent on failures
+        # (and the blob isn't uploaded when the step exits non-zero), which made an earlier
+        # shard failure undiagnosable from the logs. blob still writes the file the merge needs.
+        env:
+          VITEST_SHARD_COLLECT_ONLY: "1"
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --coverage --reporter=blob --reporter=default
 
       - name: Upload coverage blob
+        # always(): keep the blob even when the shard's tests FAIL, so the failure
+        # is reconstructable (the blob reporter prints nothing to the job log; on a
+        # failed shard the blob is the only record of which test failed).
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-blob-${{ matrix.shard }}

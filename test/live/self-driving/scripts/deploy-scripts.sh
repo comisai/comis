@@ -17,9 +17,13 @@ VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or th
 # hardcoded list silently DROPPED new helpers — reflect-run.mjs/seed.mjs didn't deploy; a glob means a
 # new helper auto-deploys, no list to maintain). restart-m1/daemon-supervisor are comis-side (below),
 # deploy-scripts itself is local-only — both excluded from this /root push.
+# GLOB the root-run *.sh too (the comment above's stated intent — it was previously a hardcoded list that
+# silently DROPPED new .sh helpers, e.g. drive-sim-workload.sh; memory-learning-stress-catalog-20260629).
+# Exclude the comis-side launcher/supervisor (installed below) + deploy-scripts itself (local-only). Paths
+# under $HERE have no spaces, so the unquoted command-substitution word-splits cleanly into scp args.
 scp -o ConnectTimeout=15 \
   "$HERE"/*.mjs \
-  "$HERE"/clean-restart.sh "$HERE"/models-sweep.sh "$HERE"/deploy-dist.sh "$HERE"/setup-vps.sh "$HERE"/restart-emu.sh \
+  $(ls "$HERE"/*.sh | grep -vE '/(restart-m1|daemon-supervisor|deploy-scripts)\.sh$') \
   "$VPS:/root/"
 
 # /home/comis — the comis-run launcher + SIGUSR2 supervisor (must be comis-owned + executable)

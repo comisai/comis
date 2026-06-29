@@ -72,6 +72,8 @@ import {
   FULL_MAX_CACHE_BREAKS,
   SUMMARY_MAX_SPAWN_NODES,
   FULL_MAX_SPAWN_NODES,
+  SUMMARY_MAX_TOOLSTATS,
+  FULL_MAX_TOOLSTATS,
   MAX_SHED_ITERATIONS,
   SHED_SUMMARY_CHARS,
 } from "./obs-explain-bound-caps.js";
@@ -244,6 +246,32 @@ export function boundIncidentReport(
       reason: `oversized tool name(s) replaced with digest key(s)`,
     });
     toolStats = rekeyed;
+  }
+
+  // OBS-TOOLSTATS-SENTINEL: cap the NUMBER of tools. `toolStats` is a RECORD (not an
+  // array), so it is NOT exempted from the structural backstop's plain-object KEY cap —
+  // a >maxObjectKeys(64) session (long, or a multi-workload trajectory) would have its
+  // WHOLE toolStats replaced with a `{__bounded__, originalKeyCount}` sentinel whose
+  // values are not `{ok,failed}` objects → IncidentReportSchema.parse throws. Keep the
+  // top-N tools FAILURES-FIRST (the diagnostic priority — the report exists to explain
+  // failures), then by total activity, as proper objects, recording the dropped tail.
+  const maxToolStats = depth === "summary" ? SUMMARY_MAX_TOOLSTATS : FULL_MAX_TOOLSTATS;
+  const toolKeys = Object.keys(toolStats);
+  if (toolKeys.length > maxToolStats) {
+    const ranked = Object.entries(toolStats).sort(([, a], [, b]) => {
+      const af = a.failed ?? 0;
+      const bf = b.failed ?? 0;
+      if (bf !== af) return bf - af; // most failures first
+      return (b.ok ?? 0) + bf - ((a.ok ?? 0) + af); // then most-active
+    });
+    const kept: IncidentReport["toolStats"] = {};
+    for (const [tool, stat] of ranked.slice(0, maxToolStats)) kept[tool] = stat;
+    truncations.push({
+      field: "toolStats",
+      reason: `capped at ${maxToolStats} tools (failures-first) — had ${toolKeys.length}`,
+      pointer: "obs.explain depth=full",
+    });
+    toolStats = kept;
   }
 
   // Per-pointer digest sweep over the ALREADY length-capped offloads (step 2b).

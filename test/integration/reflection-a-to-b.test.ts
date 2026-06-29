@@ -98,23 +98,50 @@ const SIGNATURE_BOB = "deploy staging service"; // same {deploy, service, stagin
 
 /** The deterministic doc NAME the reflection job admits a topic under: `skill-<full-topicKey>`. */
 function docNameFor(signature: string): string {
-  // Mirror reflection-job.ts `docNameForTopic(normalizeOpeningRequest(signature))`.
+  // Mirror reflection-job.ts `docNameForTopic("skill", normalizeOpeningRequest(signature))`:
+  // lowercase → strip non-alphanumerics → drop stopwords + len<=1 → STEM each survivor
+  // (REFLECT-02b) → de-dupe + sort → sha256. Kept in sync with topic-key.ts
+  // (`openingRequestTokens` + `stemToken`); these signatures carry no executor envelope,
+  // so the envelope-strip pre-step is a no-op and is omitted here.
   const tokens = signature
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(/\s+/)
-    .filter((t) => t.length > 1 && !STOPWORDS.has(t));
+    .filter((t) => t.length > 1 && !STOPWORDS.has(t))
+    .map(stemToken);
   const topicKey = createHash("sha256").update([...new Set(tokens)].sort().join(" ")).digest("hex");
   // WR-01: the FULL topicKey (not a 16-char truncation) — name↔topicKey is bijective,
   // so `(tenant, agent, name)` is unique (no 64-bit-truncation collision can coexist).
   return `skill-${topicKey}`;
 }
 
+/** MIRROR of topic-key.ts `stemToken` (REFLECT-02b) — keep in sync. A conservative
+ *  inflectional stemmer collapsing regular -ing/-ed/-ies/-(s|x|z|ch|sh)es/-s inflections
+ *  (5+-char tokens only; never -ss/-us/-is) so morphological variants share one topicKey token. */
+function stemToken(token: string): string {
+  if (token.length <= 4) return token;
+  if (token.endsWith("ing") && token.length > 5) return token.slice(0, -3);
+  if (token.endsWith("ed") && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (
+    token.length > 4 &&
+    (token.endsWith("ses") || token.endsWith("xes") || token.endsWith("zes") || token.endsWith("ches") || token.endsWith("shes"))
+  ) {
+    return token.slice(0, -2);
+  }
+  if (token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("us") && !token.endsWith("is") && token.length > 4) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
 /** The exact STOPWORDS the topicKey normalizer strips (kept in sync with topic-key.ts). */
 const STOPWORDS = new Set([
   "the", "a", "an", "to", "of", "for", "and", "or", "please", "can", "could",
   "would", "you", "i", "my", "our", "this", "that", "is", "are", "be", "do",
+  // Generic function/filler words (topic-key.ts extended set) — no topic signal.
+  "it", "with", "then", "them", "these", "those", "on", "not", "will",
 ]);
 
 /** A fixed reflect playbook — the ONLY mock. A non-empty `{ sections }` so the job admits. */

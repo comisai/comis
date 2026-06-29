@@ -39,6 +39,15 @@ function manySpawnNodes(count: number): NonNullable<IncidentReport["spawnTree"]>
   }));
 }
 
+/** Build a toolStats record with `count` distinct tool entries (each a valid {ok,failed} object). */
+function manyToolStats(count: number): IncidentReport["toolStats"] {
+  const out: IncidentReport["toolStats"] = {};
+  for (let i = 0; i < count; i++) {
+    out[`mcp__sim-${String(i).padStart(3, "0")}--tool`] = { ok: i % 3, failed: i % 2 };
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Local factories — build a VALID §6.3 IncidentReport (no real session data).
 // ---------------------------------------------------------------------------
@@ -467,5 +476,52 @@ describe("boundIncidentReport — X2 report-level bounding pass", () => {
     // 80 < FULL_MAX_SPAWN_NODES (200) → full retains all, no spawnTree truncation.
     expect(bounded.spawnTree!.length).toBe(80);
     expect(bounded.truncations.some((t) => t.field === "spawnTree")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-TOOLSTATS-SENTINEL (memory-learning-stress-catalog-codex-20260629 RUN2):
+// `toolStats` is a RECORD, not an array — so it is NOT in REPORT_ARRAY_FIELDS and
+// the structural backstop's plain-object key cap applies. On a MANY-tool session
+// (>PAYLOAD_BOUNDS.maxObjectKeys=64 distinct tools — a long session, or an
+// accumulated multi-workload trajectory), the backstop replaced the WHOLE
+// toolStats record with a `{__bounded__:<string>, originalKeyCount:<number>}`
+// sentinel, whose values are NOT `{ok,failed}` objects → IncidentReportSchema /
+// the DEV response.parse threw at `toolStats.originalKeyCount`. The report-level
+// sweep must cap the tool COUNT (keeping the top-N as proper objects) so the
+// record stays schema-valid and never reaches the backstop's key cap.
+// ---------------------------------------------------------------------------
+
+describe("boundIncidentReport — toolStats count cap (OBS-TOOLSTATS-SENTINEL)", () => {
+  it("caps a >64-tool toolStats to proper {ok,failed} objects (no {__bounded__} sentinel) so the report stays schema-valid", () => {
+    const report = makeReport({ toolStats: manyToolStats(140) });
+    const bounded = boundIncidentReport(report, "full");
+    // Pre-fix the structural backstop replaced toolStats wholesale with a sentinel
+    // → these threw. The cap keeps toolStats a valid record under the 64-key cap.
+    expect(() => IncidentReportSchema.parse(bounded)).not.toThrow();
+    const keys = Object.keys(bounded.toolStats);
+    expect(keys.length).toBeLessThanOrEqual(64);
+    expect(keys).not.toContain("__bounded__");
+    expect(keys).not.toContain("originalKeyCount");
+    for (const stat of Object.values(bounded.toolStats)) {
+      expect(typeof stat).toBe("object");
+      expect(stat).toHaveProperty("ok");
+      expect(stat).toHaveProperty("failed");
+    }
+    expect(bounded.truncations.some((t) => t.field === "toolStats")).toBe(true);
+  });
+
+  it("keeps the highest-failure tools when capping (diagnostic priority)", () => {
+    const toolStats: IncidentReport["toolStats"] = {};
+    for (let i = 0; i < 100; i++) toolStats[`benign-tool-${i}`] = { ok: 1, failed: 0 };
+    toolStats["the-failing-tool"] = { ok: 0, failed: 99 };
+    const bounded = boundIncidentReport(makeReport({ toolStats }), "full");
+    expect(Object.keys(bounded.toolStats)).toContain("the-failing-tool");
+  });
+
+  it("leaves a small toolStats untouched (no cap, no truncation)", () => {
+    const bounded = boundIncidentReport(makeReport({ toolStats: manyToolStats(10) }), "full");
+    expect(Object.keys(bounded.toolStats).length).toBe(10);
+    expect(bounded.truncations.some((t) => t.field === "toolStats")).toBe(false);
   });
 });
