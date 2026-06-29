@@ -75,6 +75,20 @@ export const FULL_MAX_CACHE_BREAKS = 20;
  */
 export const SUMMARY_MAX_SPAWN_NODES = 40;
 export const FULL_MAX_SPAWN_NODES = 200;
+/**
+ * toolStats cap (OBS-TOOLSTATS-SENTINEL). UNLIKE spawnTree/failures (arrays exempt
+ * from the structural backstop via REPORT_ARRAY_FIELDS), `toolStats` is a RECORD —
+ * so the backstop's plain-object KEY cap applies, and a >64-tool session (a long
+ * session touching many tools, or an accumulated multi-workload trajectory) had its
+ * WHOLE toolStats replaced with a `{__bounded__, originalKeyCount}` sentinel whose
+ * values are NOT `{ok,failed}` objects → schema-invalid → `comis explain` parse
+ * throws/degrades on exactly the heavy session it exists to diagnose. The
+ * report-level sweep keeps the top-N tools (failures-first, the diagnostic priority)
+ * as proper objects. Both caps stay STRICTLY UNDER `PAYLOAD_BOUNDS.maxObjectKeys`
+ * (64) so the backstop never touches toolStats. Relaxed at full depth.
+ */
+export const SUMMARY_MAX_TOOLSTATS = 30;
+export const FULL_MAX_TOOLSTATS = 50;
 /** Bound on the progressive-shed loop — never spin forever. */
 export const MAX_SHED_ITERATIONS = 8;
 /** Short form the shed loop collapses the summary prose to (chars, + ellipsis). */
