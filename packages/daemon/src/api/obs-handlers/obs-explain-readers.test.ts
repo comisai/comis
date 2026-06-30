@@ -235,6 +235,132 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
   });
 });
 
+describe("makeRealReader webhook (multi-colon userId) resolution — OBS-WEBHOOK-EXPLAIN-RESOLVE", () => {
+  // A webhook session is created with SessionKey
+  //   {tenantId:"default", userId:"hook:devtask:wh1", channelId:"webhook"}
+  // → formatSessionKey ⇒ "default:hook:devtask:wh1:webhook" and sessionKeyToPath
+  // ⇒ default/webhook/hook@3adevtask@3awh1.jsonl (channel=dir, encoded userId=file).
+  // But parseFormattedSessionKey GREEDILY joins the multi-segment span into
+  // channelId ({userId:"hook", channelId:"devtask:wh1:webhook"}) — the inverse of
+  // the writer's intent — because a colon-bearing userId is genuinely ambiguous in
+  // the "tenant:user:channel" string. So resolveSessionFile computes a path that
+  // does not exist and the readers return nothing — a false "nothing happened" for
+  // a session that SUCCEEDED (the exact DAG-async webhook diagnostic lens).
+  //
+  // The fix: when the fast-path artifacts are absent, resolveSessionFile falls back
+  // to the AUTHORITATIVE on-disk record — the <file>.jsonl.trajectory-path.json
+  // pointer whose `sessionId` carries the verbatim formatted key. These tests build
+  // that exact layout and FAIL on the pre-fix code (mis-parsed path → []/null).
+  const WH_KEY = "default:hook:devtask:wh1:webhook";
+  const WH_TENANT = "default";
+  const WH_CHANNEL = "webhook";
+  // sessionKeyToPath encoding of userId "hook:devtask:wh1" (":" → "@3a").
+  const WH_FILE = "hook@3adevtask@3awh1.jsonl";
+
+  function makeWebhookSessionDir(dataDir: string): string {
+    const dir = path.join(dataDir, "workspace", "sessions", WH_TENANT, WH_CHANNEL);
+    fs.mkdirSync(dir, { recursive: true });
+    const sessionFile = path.join(dir, WH_FILE);
+    fs.writeFileSync(sessionFile, "", "utf-8"); // the session JSONL (message log).
+    return sessionFile;
+  }
+
+  function writePointer(sessionFile: string, sessionId: string): void {
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId,
+        runtimeFile: `${sessionFile}.trajectory.jsonl`,
+      }),
+      "utf-8",
+    );
+  }
+
+  it("readSessionMetadata resolves the webhook rollup via the pointer's sessionId (RED pre-fix: parse mis-splits the colon-bearing userId → null)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeWebhookSessionDir(dataDir);
+    writePointer(sessionFile, WH_KEY);
+    fs.writeFileSync(
+      sessionFile.replace(/\.jsonl$/, "_session-metadata.json"),
+      JSON.stringify({
+        sessionEnd: {
+          type: "session_end",
+          endReason: "success",
+          degraded: false,
+          costUsd: 0.8444,
+          totalTokens: 495290,
+        },
+      }),
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const meta = await reader.readSessionMetadata(WH_KEY);
+    expect(meta).not.toBeNull();
+    expect((meta!.sessionEnd as Record<string, unknown>).endReason).toBe("success");
+    expect((meta!.sessionEnd as Record<string, unknown>).totalTokens).toBe(495290);
+  });
+
+  it("readSessionRecords resolves the webhook trajectory via the pointer (RED pre-fix: [])", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeWebhookSessionDir(dataDir);
+    writePointer(sessionFile, WH_KEY);
+    fs.writeFileSync(
+      `${sessionFile}.trajectory.jsonl`,
+      JSON.stringify({ traceSchema: "comis-trajectory", type: "model.completed", seq: 1, data: {} }) + "\n",
+      "utf-8",
+    );
+
+    const reader = makeRealReader(dataDir);
+    const records = await reader.readSessionRecords(WH_KEY);
+    expect(records.length).toBe(1);
+    expect(records[0]!.type).toBe("model.completed");
+  });
+
+  it("matches the pointer's sessionId EXACTLY — a different webhook key gets no cross-session bleed (null)", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeWebhookSessionDir(dataDir); // pointer sessionId = WH_KEY
+    writePointer(sessionFile, WH_KEY);
+    fs.writeFileSync(
+      sessionFile.replace(/\.jsonl$/, "_session-metadata.json"),
+      JSON.stringify({ sessionEnd: { type: "session_end", endReason: "success" } }),
+      "utf-8",
+    );
+    const reader = makeRealReader(dataDir);
+    // A DIFFERENT, non-existent webhook key: its fast path misses AND no pointer's
+    // sessionId equals it → null (no bleed from the present, unrelated session).
+    expect(await reader.readSessionMetadata("default:hook:devtask:OTHER:webhook")).toBeNull();
+  });
+
+  it("does not regress the clean telegram fast path (fallback only fires on a fast-path miss)", async () => {
+    // The canonical telegram SESSION_KEY round-trips cleanly: its fast-path
+    // artifacts exist, so resolveSessionFile must NOT consult the pointer fallback
+    // (and must return the telegram rollup, not the webhook one even if both live
+    // under the same tenant).
+    const dataDir = tmpDataDir();
+    // Webhook session present under the same tenant (a decoy for the fallback).
+    const whFile = makeWebhookSessionDir(dataDir);
+    writePointer(whFile, WH_KEY);
+    fs.writeFileSync(
+      whFile.replace(/\.jsonl$/, "_session-metadata.json"),
+      JSON.stringify({ sessionEnd: { endReason: "webhook-decoy" } }),
+      "utf-8",
+    );
+    // The real telegram layout for SESSION_KEY.
+    fs.writeFileSync(
+      realMetadataPath(dataDir),
+      JSON.stringify({ sessionEnd: { type: "session_end", endReason: "completed", degraded: false } }),
+      "utf-8",
+    );
+    const reader = makeRealReader(dataDir);
+    const meta = await reader.readSessionMetadata(SESSION_KEY);
+    expect(meta).not.toBeNull();
+    expect((meta!.sessionEnd as Record<string, unknown>).endReason).toBe("completed");
+  });
+});
+
 describe("makeRealReader.readCacheTraceRecords", () => {
   it("reads the session's cache-trace lines and soft-fails to [] when absent", async () => {
     const dataDir = tmpDataDir();

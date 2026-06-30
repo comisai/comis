@@ -46,6 +46,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { safePath, parseFormattedSessionKey } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
@@ -116,9 +117,113 @@ function defaultDataDir(): string {
 }
 
 /**
+ * The `<sessionFile>.trajectory-path.json` pointer suffix the trajectory recorder
+ * writes (`pointer-file.ts`). The pointer's `sessionId` is the VERBATIM formatted
+ * SessionKey the writer used — the only authoritative key→file record on disk, and
+ * the basis of the lossy-key fallback below (OBS-WEBHOOK-EXPLAIN-RESOLVE).
+ */
+const TRAJECTORY_POINTER_SUFFIX = ".trajectory-path.json";
+
+/**
+ * Runaway backstop on the pointer-`sessionId` fallback scan: at most this many
+ * pointer files are read per resolution. A tenant with more sessions than this
+ * loses only the fallback for the overflow — never the fast path (the common
+ * case), which never enters the scan.
+ */
+const MAX_POINTER_SCAN = 5_000;
+
+/**
+ * True when the fast-path session file resolves to a real session on disk — the
+ * `.jsonl` itself, its trajectory pointer, or its `_session-metadata.json`
+ * companion exists. A clean round-trip (telegram + any single-colon-field key)
+ * hits this and skips the fallback scan entirely.
+ */
+function sessionArtifactsExist(sessionFile: string): boolean {
+  return (
+    fs.existsSync(sessionFile) ||
+    fs.existsSync(`${sessionFile}${TRAJECTORY_POINTER_SUFFIX}`) ||
+    fs.existsSync(resolveMetadataFile(sessionFile))
+  );
+}
+
+/**
+ * Fallback resolution for a formatted sessionKey whose `parseFormattedSessionKey`
+ * round-trip is LOSSY. A colon-bearing userId — webhook sessions are created with
+ * `userId:"hook:devtask:<id>"`, `channelId:"webhook"` — is greedily mis-split into
+ * channelId by the parser (the inverse of the writer's intent), so `sessionKeyToPath`
+ * computes a path that does not exist and the readers report a false "nothing
+ * happened" for a session that succeeded (OBS-WEBHOOK-EXPLAIN-RESOLVE).
+ *
+ * The authoritative key→file mapping lives ONLY on disk: each session's
+ * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted key in
+ * `sessionId`. Scan the tenant's session dirs for the pointer whose `sessionId`
+ * EXACTLY equals the requested key and return its session `.jsonl` (the pointer path
+ * minus the suffix). Bounded: tenant-scoped (the tenant dir is the first colon
+ * segment — never mis-split), depth 2 (tenant/channel/<pointer>), capped at
+ * MAX_POINTER_SCAN. The untrusted sessionKey is used ONLY for the `===` comparison,
+ * never for path construction (the scanned names come from `readdirSync` of the
+ * contained tenant dir). Returns `undefined` on no match → the caller keeps the
+ * fast-path miss behavior (soft-fail to `[]`/`null`).
+ */
+function findSessionFileByPointerSessionId(
+  sessionKey: string,
+  sessionsBase: string,
+  encodedTenantDir: string,
+): string | undefined {
+  // safePath (not raw path.join): the on-disk session names are `@`-encoded
+  // single components created via sessionKeyToPath's safePath, so they round-trip
+  // (safePath's decodeURIComponent only touches `%XX`, never `@XX`), and a stray
+  // entry cannot traverse out of the tenant tree.
+  const tenantDir = safePath(sessionsBase, encodedTenantDir);
+  let channels: fs.Dirent[];
+  try {
+    channels = fs.readdirSync(tenantDir, { withFileTypes: true });
+  } catch {
+    return undefined; // Tenant dir absent/unreadable — soft-fail.
+  }
+  let scanned = 0;
+  for (const channel of channels) {
+    if (!channel.isDirectory()) continue;
+    const channelDir = safePath(tenantDir, channel.name);
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(channelDir);
+    } catch {
+      continue; // Unreadable channel dir — skip.
+    }
+    for (const name of entries) {
+      if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
+      if (scanned >= MAX_POINTER_SCAN) return undefined; // Runaway backstop.
+      scanned++;
+      const pointerPath = safePath(channelDir, name);
+      let pointer: Record<string, unknown>;
+      try {
+        pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
+      } catch {
+        continue; // Corrupt/unreadable pointer — skip.
+      }
+      if (
+        pointer["traceSchema"] === "comis-trajectory-pointer" &&
+        pointer["sessionId"] === sessionKey
+      ) {
+        // Session file = pointer path minus the `.trajectory-path.json` suffix.
+        return pointerPath.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Resolve the absolute `.jsonl` session-file path for a formatted sessionKey
  * under the workspace sessions base, via the authoritative `sessionKeyToPath`
  * mapper (`<sessionsBase>/<tenantId>/<channelId>/<file>.jsonl`).
+ *
+ * Two-stage: (1) the FAST PATH — a clean `parseFormattedSessionKey` round-trip
+ * whose computed artifacts exist on disk (telegram + any single-colon-field key);
+ * (2) the FALLBACK — when the fast-path artifacts are absent, the key may have a
+ * colon-bearing userId the parser mis-split (webhook sessions), so resolve via the
+ * on-disk pointer whose `sessionId` matches verbatim (OBS-WEBHOOK-EXPLAIN-RESOLVE).
  *
  * Returns `undefined` when the key is not a parseable formatted sessionKey
  * (the reader then soft-fails to `[]`/`null`). `sessionKeyToPath` runs every
@@ -128,7 +233,20 @@ function defaultDataDir(): string {
 function resolveSessionFile(sessionKey: string, sessionsBase: string): string | undefined {
   const key = parseFormattedSessionKey(sessionKey);
   if (key === undefined) return undefined;
-  return sessionKeyToPath(key, sessionsBase);
+  const fastPath = sessionKeyToPath(key, sessionsBase);
+  // Fast path: a clean round-trip whose session artifacts exist on disk. Use it.
+  if (sessionArtifactsExist(fastPath)) return fastPath;
+  // Fallback: the fast path missed — the key may have a colon-bearing userId the
+  // parser mis-split. The tenant dir is unambiguous (the first colon segment,
+  // never mis-split), so derive the ENCODED tenant dir from the fast path (already
+  // safePath-collapsed) to scope the scan, then resolve via the pointer sessionId.
+  const rel = path.relative(sessionsBase, fastPath);
+  const encodedTenantDir = rel.startsWith("..") ? undefined : rel.split(path.sep)[0];
+  if (encodedTenantDir !== undefined && encodedTenantDir.length > 0) {
+    const matched = findSessionFileByPointerSessionId(sessionKey, sessionsBase, encodedTenantDir);
+    if (matched !== undefined) return matched;
+  }
+  return fastPath; // No pointer match — unchanged fast-path miss behavior (soft-fail).
 }
 
 /**
