@@ -46,7 +46,7 @@ import {
   buildScopeArgs as defaultBuildScopeArgs,
   SYSTEM_RO_PATHS,
 } from "./terminal-scope-args.js";
-import { scrubChildEnv as defaultScrubChildEnv } from "./terminal-env-scrub.js";
+import { scrubChildEnv as defaultScrubChildEnv, secretEnvKeysIn } from "./terminal-env-scrub.js";
 import {
   buildEgressRelayLaunch as defaultBuildEgressRelayLaunch,
   type EgressRelayLaunch,
@@ -290,6 +290,12 @@ export async function buildSpawnPlan(
     // listed-hosts: the relay-init runs INSIDE the jail, so its script must be
     // --ro-bound in (node can't load a host path that isn't bound).
     relayInitScriptPath: relay?.relayInitScriptPath,
+    // The concrete daemon-secret keys present in the live env (gateway-token family /
+    // master key) → emitted as `--unsetenv <name>` so the DEFAULT tmux/durable backend
+    // (which inherits the tmux SERVER env, bypassing the scrubbed `env` object below)
+    // also strips them. The PTY backend is covered by the scrubChildEnv(input.env) below;
+    // this is the backend-independent half (TERM-ENV-GATEWAY-TOKEN-LEAK).
+    extraUnsetEnvKeys: secretEnvKeysIn(input.env),
   });
 
   // scopeArgs = [bwrapPath, ...args, "--"]. The child (and, for listed-hosts, the

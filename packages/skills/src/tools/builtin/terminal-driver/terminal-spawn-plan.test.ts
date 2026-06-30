@@ -148,6 +148,44 @@ describe("buildSpawnPlan — backend-independent env hardening in the bwrap argv
   });
 });
 
+describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (TERM-ENV-GATEWAY-TOKEN-LEAK)", () => {
+  // HIGH (security): the bwrap jail masks secrets.db (--tmpfs ~/.comis), but the daemon's admin
+  // gateway token leaked through the env-scrub on the `inherited` source — with network:full a
+  // prompt-injected driven CLI could `curl` the loopback gateway (scope `*`) and seize the control
+  // plane. Live-confirmed (webhook-claude-cli-tdd-20260630): a jailed claude 2.1.196's
+  // /proc/<pid>/environ carried COMIS_GATEWAY_TOKEN + GWTOKEN. This proves the PRODUCTION composition
+  // (buildSpawnPlan, not just scrubChildEnv) strips them on BOTH backends.
+  const LEAKY_ENV: NodeJS.ProcessEnv = {
+    COMIS_GATEWAY_TOKEN: "admin-bearer-scope-star",
+    GWTOKEN: "ops-alias",
+    GATEWAY_TOKEN_DEFAULT: "minted-default",
+    SECRETS_MASTER_KEY: "store-master-key",
+    COMIS_CAP_LEASE: "keep-lease", // broker/cap path must survive
+    TERM: "xterm-256color", // rich TUI env must survive
+  };
+
+  it("PTY backend: plan.env carries NONE of the daemon secrets but keeps the broker/cap + TUI vars", async () => {
+    const plan = await buildSpawnPlan(makeInput({ env: LEAKY_ENV }), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.env.COMIS_GATEWAY_TOKEN).toBeUndefined();
+    expect(plan.env.GWTOKEN).toBeUndefined();
+    expect(plan.env.GATEWAY_TOKEN_DEFAULT).toBeUndefined();
+    expect(plan.env.SECRETS_MASTER_KEY).toBeUndefined();
+    // No over-scrub.
+    expect(plan.env.COMIS_CAP_LEASE).toBe("keep-lease");
+    expect(plan.env.TERM).toBe("xterm-256color");
+  });
+
+  it("tmux/durable backend: emits --unsetenv for every leaked daemon-secret key in the bwrap argv", async () => {
+    // The DEFAULT durable/tmux backend inherits the tmux SERVER env, BYPASSING plan.env — only the
+    // bwrap --unsetenv flags protect it (the same gap that leaked the daemon's NODE_OPTIONS on the VPS).
+    const plan = await buildSpawnPlan(makeInput({ env: LEAKY_ENV }), { bwrapPath: "/usr/bin/bwrap" });
+    const argv = plan.argv.join(" ");
+    for (const key of ["COMIS_GATEWAY_TOKEN", "GWTOKEN", "GATEWAY_TOKEN_DEFAULT", "SECRETS_MASTER_KEY"]) {
+      expect(argv, `--unsetenv ${key} must be in the bwrap argv`).toContain(`--unsetenv ${key}`);
+    }
+  });
+});
+
 describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix, EROFS-03)", () => {
   // Real-VPS 2026-06-17: claude's Bash tool / SessionStart hook EROFSes on `mkdir ~/.claude/
   // session-env/<id>` because claude's OWN bash sandbox remounts $HOME read-only IN-PLACE. The

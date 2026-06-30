@@ -20,6 +20,11 @@
  *     blocked (it authenticates the cap socket — see {@link scrubChildEnv});
  *   - the net-new nested-CLI markers `CLAUDECODE` (exact) + `CLAUDE_CODE_*` (prefix)
  *     so a driven `claude` does not mis-detect a nested session (Tampering);
+ *   - the daemon-internal SECRETS `COMIS_GATEWAY_TOKEN`/`GWTOKEN`/`GATEWAY_TOKEN_*`
+ *     (the admin gateway bearer family) + `SECRETS_MASTER_KEY`, on BOTH sources — a
+ *     CONFIDENTIALITY leak (Info-Disclosure / Elevation): with `network:full` the
+ *     gateway token (scope `*`) reaches the loopback gateway = control-plane takeover
+ *     (TERM-ENV-GATEWAY-TOKEN-LEAK);
  *   - Shellshock function-export values (starting with `()`, Bash CVE-2014-6271).
  *
  * It is a BLOCKLIST (strip the known-dangerous keys, COPY everything else) — NOT an
@@ -97,6 +102,71 @@ const NESTED_CLI_PREFIXES: readonly string[] = ["CLAUDE_CODE_"];
 const NESTED_CLI_EXACT: ReadonlySet<string> = new Set(["CLAUDECODE"]);
 
 /**
+ * Daemon-internal SECRET env vars that must NEVER reach a jailed CLI's env
+ * (TERM-ENV-GATEWAY-TOKEN-LEAK, HIGH). Unlike the interpreter-control blocklist
+ * above — which prevents CODE EXEC via runtime startup hooks — these are
+ * CONFIDENTIALITY leaks:
+ *   - `COMIS_GATEWAY_TOKEN` — the admin gateway bearer. The `default` token's
+ *     scope is `*`, so with `scope.network:"full"` (bwrap `--share-net`) a
+ *     prompt-injected / compromised driven CLI can reach the loopback gateway and
+ *     seize the WHOLE control plane (agents/secrets/config/tokens). The daemon's
+ *     OWN boot scrub (`daemon.ts scrubProcessEnv`) DELIBERATELY preserves the
+ *     `COMIS_` namespace, documenting that "layout pointers … [are] excluded from
+ *     untrusted-child envs AT THE SPAWN SITE" — THIS scrubber is that spawn site,
+ *     so the gateway token is exactly the credential the boot layer trusted us to
+ *     exclude (the layer mismatch §2.11 warns about).
+ *   - `GWTOKEN` — the ops/rig alias that carries the SAME token value; not
+ *     `COMIS_`-prefixed, so the boot scrub never matched it.
+ *   - `GATEWAY_TOKEN_<ID>` (PREFIX {@link DAEMON_SECRET_PREFIXES}) — the minted
+ *     per-token-id family the daemon resolves at boot (`main-helpers.ts`).
+ *   - `SECRETS_MASTER_KEY` — decrypts the encrypted secret store. The boot scrub
+ *     already deletes it from `process.env`, so it does not ride the runtime spawn
+ *     env today; kept here as defense-in-depth (a spawn ordered before the boot
+ *     scrub, or a tmux SERVER env captured earlier, must STILL never carry it).
+ * NO driven CLI needs ANY of these: `claude`/`codex` authenticate via their OWN
+ * creds (RO-bound `credentialPaths` / `filesystem:home`), and env-key broker CLIs
+ * use `COMIS_BROKER_TOKEN`/`COMIS_CAP_LEASE` (NOT in this set — preserved).
+ * Stripped on BOTH env sources (a secret is a secret regardless of origin).
+ * NEVER remove a member without a security review.
+ */
+const DAEMON_SECRET_EXACT: ReadonlySet<string> = new Set([
+  "COMIS_GATEWAY_TOKEN",
+  "GWTOKEN",
+  "SECRETS_MASTER_KEY",
+]);
+
+/**
+ * The minted-gateway-token PREFIX family (`GATEWAY_TOKEN_<ID>`). bwrap
+ * `--unsetenv` is name-only (no glob), so the concrete present names are
+ * enumerated from the live env at spawn ({@link secretEnvKeysIn}) — they cannot be
+ * a fixed entry like the interpreter-control families.
+ */
+const DAEMON_SECRET_PREFIXES: readonly string[] = ["GATEWAY_TOKEN_"];
+
+/**
+ * True when `key` names a daemon-internal secret that must not enter a jailed CLI
+ * env — the gateway-token family + the secret-store master key. Exact-name or
+ * {@link DAEMON_SECRET_PREFIXES} prefix ONLY (never a substring), so a benign
+ * `MY_GATEWAY_TOKEN_NOTE` / `GATEWAY_URL` is untouched.
+ */
+export function isDaemonSecretEnvKey(key: string): boolean {
+  return DAEMON_SECRET_EXACT.has(key) || DAEMON_SECRET_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/**
+ * The concrete daemon-secret KEY NAMES present in `env` ({@link
+ * isDaemonSecretEnvKey}). bwrap `--unsetenv` takes a NAME not a glob, and the
+ * DEFAULT tmux/durable backend inherits the tmux SERVER env (bypassing the
+ * {@link scrubChildEnv} object), so the secret keys present must be enumerated
+ * from the live env at spawn and emitted as `--unsetenv <name>` for each
+ * (threaded into `terminal-scope-args` via `terminal-spawn-plan`). Used ALONGSIDE
+ * {@link scrubChildEnv} — defense on both backends.
+ */
+export function secretEnvKeysIn(env: NodeJS.ProcessEnv): string[] {
+  return Object.keys(env).filter(isDaemonSecretEnvKey);
+}
+
+/**
  * The fixed-name env keys to clear from the JAILED CLI via bwrap `--unsetenv` (emitted by
  * `terminal-scope-args`). This is the BACKEND-INDEPENDENT half of {@link scrubChildEnv}: that
  * function scrubs the `env` OBJECT the worker hands to the PTY backend's `pty.spawn`, but the
@@ -167,6 +237,7 @@ export function scrubChildEnv(
     if (typeof value !== "string") continue; // non-string (undefined) → skip
     if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // exact-name startup code-injection vector
     if (INTERPRETER_CONTROL_PREFIXES.some((p) => key.startsWith(p))) continue; // LD_/DYLD_/PIP_/UV_ family (JAIL-04, both sources)
+    if (isDaemonSecretEnvKey(key)) continue; // gateway-token family / master key — never into a jailed CLI, BOTH sources (TERM-ENV-GATEWAY-TOKEN-LEAK)
     if (blockComis && key.startsWith(COMIS_OPERATIONAL_PREFIX)) continue; // COMIS_* from an untrusted workspace .env ONLY (Open Q3)
     if (NESTED_CLI_EXACT.has(key)) continue; // CLAUDECODE
     if (NESTED_CLI_PREFIXES.some((p) => key.startsWith(p))) continue; // CLAUDE_CODE_*

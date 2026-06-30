@@ -70,6 +70,17 @@ export interface ScopeArgsInput {
    * relay, so this is unset for them.
    */
   relayInitScriptPath?: string;
+  /**
+   * Extra env KEY NAMES to `--unsetenv` BEYOND the fixed {@link JAIL_UNSET_ENV_VARS}
+   * (interpreter-control + CLAUDECODE). The caller (`terminal-spawn-plan`) passes the
+   * concrete daemon-secret keys present in the live env (`secretEnvKeysIn` — the
+   * gateway-token family / master key). bwrap `--unsetenv` is name-only, so a prefix
+   * family (`GATEWAY_TOKEN_*`) must arrive here as enumerated concrete names; this is
+   * what protects the DEFAULT tmux/durable backend, which inherits the tmux SERVER env
+   * and bypasses the `scrubChildEnv` object (TERM-ENV-GATEWAY-TOKEN-LEAK). Order- and
+   * duplicate-insensitive (deduped against the fixed list before emit).
+   */
+  extraUnsetEnvKeys?: readonly string[];
 }
 
 /** Push a `--proc /proc`, `--dev /dev`, `--dev-bind /dev/pts`, `--tmpfs /tmp` block. */
@@ -252,7 +263,11 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   //    bubblewrapped so it does NOT nest its own (nested-broken) sandbox. The PTY-path `env` scrub
   //    (`scrubChildEnv`) stays as defense-in-depth; this is the authoritative, backend-independent
   //    application.
-  for (const key of JAIL_UNSET_ENV_VARS) {
+  //    The fixed interpreter-control/CLAUDECODE names ALWAYS unset; the caller-supplied
+  //    daemon-secret names (the gateway-token family / master key present in the live env —
+  //    TERM-ENV-GATEWAY-TOKEN-LEAK) are deduped in so the tmux backend strips them too.
+  const unsetEnvKeys = new Set<string>([...JAIL_UNSET_ENV_VARS, ...(input.extraUnsetEnvKeys ?? [])]);
+  for (const key of unsetEnvKeys) {
     args.push("--unsetenv", key);
   }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");

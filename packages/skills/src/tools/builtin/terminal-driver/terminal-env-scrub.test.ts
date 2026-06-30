@@ -18,7 +18,12 @@
 
 import { describe, it, expect } from "vitest";
 
-import { scrubChildEnv, JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
+import {
+  scrubChildEnv,
+  JAIL_UNSET_ENV_VARS,
+  isDaemonSecretEnvKey,
+  secretEnvKeysIn,
+} from "./terminal-env-scrub.js";
 
 describe("scrubChildEnv — interpreter-control blocklist", () => {
   it("strips EVERY interpreter-control var and keeps PATH", () => {
@@ -217,5 +222,90 @@ describe("scrubChildEnv — JAIL_UNSET_ENV_VARS stays exact-name-only (bwrap --u
     // And no concrete prefix-family instance leaked in either (it would be a NAME,
     // but the family is open-ended — only the exact-name blocklist belongs here).
     expect(JAIL_UNSET_ENV_VARS).not.toContain("LD_PRELOAD");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TERM-ENV-GATEWAY-TOKEN-LEAK (HIGH, security): the daemon's admin gateway token
+// (+ secret-store master key) must NEVER reach a jailed CLI's env. The jail masks
+// secrets.db (--tmpfs ~/.comis) but the env-scrub COPIED COMIS_GATEWAY_TOKEN /
+// GWTOKEN / GATEWAY_TOKEN_<id> through on the `inherited` source → with
+// network:full a prompt-injected driven CLI could `curl` the loopback gateway
+// (the `default` token's scope is `*`) and seize the WHOLE control plane. The
+// daemon-boot scrub (daemon.ts scrubProcessEnv) deliberately PRESERVES the COMIS_
+// namespace ("layout pointers … excluded from untrusted children AT THE SPAWN
+// SITE") — this scrubber IS that spawn site, so the gateway token is exactly the
+// credential the boot layer trusted it to exclude (a layer mismatch). Stripped on
+// BOTH sources (a secret regardless of origin); the broker/cap-lease vars + a
+// layout pointer + the rich TUI env survive.
+// (Live-confirmed: webhook-claude-cli-tdd-20260630, jailed claude 2.1.196 — its
+//  /proc/<pid>/environ carried COMIS_GATEWAY_TOKEN + GWTOKEN.)
+// ---------------------------------------------------------------------------
+describe("scrubChildEnv — daemon-secret blocklist (TERM-ENV-GATEWAY-TOKEN-LEAK)", () => {
+  const LEAKY: NodeJS.ProcessEnv = {
+    // The daemon secrets that must be stripped:
+    COMIS_GATEWAY_TOKEN: "admin-bearer-scope-star",
+    GWTOKEN: "ops-alias-of-the-gateway-token",
+    GATEWAY_TOKEN_DEFAULT: "minted-token-default",
+    GATEWAY_TOKEN_OPS: "minted-token-ops",
+    SECRETS_MASTER_KEY: "decrypts-the-whole-store",
+    // Must SURVIVE — broker/cap path, a benign layout pointer, and the rich TUI env:
+    COMIS_CAP_LEASE: "lease-bearer-keep",
+    COMIS_BROKER_TOKEN: "broker-keep",
+    COMIS_CONFIG_PATHS: "/home/comis/.comis/config.yaml",
+    TERM: "xterm-256color",
+    PATH: "/usr/bin",
+  };
+
+  it("strips the gateway-token family + master key on the DEFAULT (inherited) source — the live leak path", () => {
+    const out = scrubChildEnv(LEAKY); // default source === "inherited" — the exact live path
+    for (const secret of [
+      "COMIS_GATEWAY_TOKEN",
+      "GWTOKEN",
+      "GATEWAY_TOKEN_DEFAULT",
+      "GATEWAY_TOKEN_OPS",
+      "SECRETS_MASTER_KEY",
+    ]) {
+      expect(out, `${secret} must NOT reach the jailed CLI env`).not.toHaveProperty(secret);
+    }
+    // No over-scrub: the broker/cap-lease path + a layout pointer + the rich TUI env survive.
+    expect(out.COMIS_CAP_LEASE).toBe("lease-bearer-keep");
+    expect(out.COMIS_BROKER_TOKEN).toBe("broker-keep");
+    expect(out.COMIS_CONFIG_PATHS).toBe("/home/comis/.comis/config.yaml");
+    expect(out.TERM).toBe("xterm-256color");
+    expect(out.PATH).toBe("/usr/bin");
+  });
+
+  it("strips them on the workspace source too (a secret is a secret regardless of origin)", () => {
+    const out = scrubChildEnv(LEAKY, { source: "workspace" });
+    for (const secret of ["COMIS_GATEWAY_TOKEN", "GWTOKEN", "GATEWAY_TOKEN_DEFAULT", "SECRETS_MASTER_KEY"]) {
+      expect(out).not.toHaveProperty(secret);
+    }
+  });
+
+  it("isDaemonSecretEnvKey: true for the gateway-token family + master key, false for layout/broker vars + look-alikes", () => {
+    for (const k of ["COMIS_GATEWAY_TOKEN", "GWTOKEN", "GATEWAY_TOKEN_DEFAULT", "GATEWAY_TOKEN_X", "SECRETS_MASTER_KEY"]) {
+      expect(isDaemonSecretEnvKey(k), `${k} is a daemon secret`).toBe(true);
+    }
+    // Layout pointers + broker/cap vars + substring look-alikes are NOT secrets (no over-match).
+    for (const k of [
+      "COMIS_CAP_LEASE",
+      "COMIS_BROKER_TOKEN",
+      "COMIS_CONFIG_PATHS",
+      "COMIS_DATA_DIR",
+      "GATEWAY_URL",
+      "MY_GATEWAY_TOKEN_NOTE",
+      "TERM",
+    ]) {
+      expect(isDaemonSecretEnvKey(k), `${k} is NOT a daemon secret`).toBe(false);
+    }
+  });
+
+  it("secretEnvKeysIn: returns exactly the secret KEY NAMES present (for the bwrap --unsetenv enumeration)", () => {
+    expect(secretEnvKeysIn(LEAKY).sort()).toEqual(
+      ["COMIS_GATEWAY_TOKEN", "GATEWAY_TOKEN_DEFAULT", "GATEWAY_TOKEN_OPS", "GWTOKEN", "SECRETS_MASTER_KEY"].sort(),
+    );
+    // None of the surviving vars are enumerated for --unsetenv.
+    expect(secretEnvKeysIn({ COMIS_CAP_LEASE: "x", COMIS_CONFIG_PATHS: "y", TERM: "z" })).toEqual([]);
   });
 });
