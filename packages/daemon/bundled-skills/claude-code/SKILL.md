@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.3"
+version: "1.1.4"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -35,6 +35,26 @@ Submit a prompt only when the session is **idle** (a bare `❯` input line, no s
 - `send_key` **Enter** to submit.
 
 Claude works autonomously with its own tools (edit, bash, tests, git). Give it the goal, not step-by-step micro-instructions.
+
+> **Deliver the task BEFORE you wait — the order is fixed.** The most common driving mistake is to
+> clear the first screen and then `wait`/poll *without ever sending the task* — the session then sits
+> idle forever with nothing to do (a long `wait` on a fresh session gets backgrounded, and the drive
+> strands at "idle, waiting for input"). Sequence: clear the first screen → **`send_text` the full task
+> + Enter** → only THEN `wait`/poll. Never `wait` on a session you have not yet given a task.
+
+## 3b. Unattended drives (webhook / cron — no human in the loop)
+
+When this drive was triggered by a webhook or a schedule (not a live chat), **there is no human to
+"reply with the next step"** — so you must carry the whole job to completion in this drive, not hand
+control back:
+- Give Claude the **COMPLETE** task in one prompt (§3) so it can run end-to-end on its own — don't
+  split it into steps that need someone to continue.
+- Then poll to completion (§4 + §6): `wait`/`read` through the minutes of work until the build is done
+  and the tests are green. If the long build gets backgrounded and you are later notified it has
+  settled, **resume and finish the job** — verify the result (§6) and report the outcome. Do **not**
+  end at "the session is idle, waiting for input"; that hand-back only makes sense in an interactive chat.
+- If you genuinely cannot finish (auth needed, repeated failure), report the failure honestly — never
+  claim a success you did not verify.
 
 ## 4. While it works
 
