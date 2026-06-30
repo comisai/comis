@@ -147,6 +147,15 @@ jobs:
         with:
           name: coverage-blob-${{ matrix.shard }}
           path: .vitest-reports/
+          # `.vitest-reports/` is a DOTFILE directory: vitest's blob reporter writes
+          # `.vitest-reports/blob-<i>-<n>.json`. upload-artifact@v4+ excludes hidden
+          # files (anything under a `.`-prefixed path) by default, so without this the
+          # blob is silently dropped and the step fails `if-no-files-found: error` with
+          # "No files were found with the provided path: .vitest-reports/" — even though
+          # the job log shows the blob WAS written. This is why the sharded pipeline
+          # (new in #260) never went green on main: local runs don't invoke
+          # upload-artifact, so the gap was invisible until CI ran.
+          include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
 
