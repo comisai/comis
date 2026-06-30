@@ -106,6 +106,44 @@ describe("decideAutoAnswer — ESCALATE-ALWAYS wins over a hintPattern (Test 4: 
   });
 });
 
+describe("decideAutoAnswer — a VETTED profile dialog: APPROVAL tier does NOT veto, AUTH/DESTRUCTIVE floors STILL do (webhook-claude-cli-tdd-20260630)", () => {
+  // Live VPS: claude 2.1.x reworded its trust gate to add an "Enter to confirm · Esc to cancel"
+  // footer. The bare APPROVAL veto ("confirm") then escalated the documented trust-gate auto-answer,
+  // stalling a driven claude session at the gate. A profile dialog is operator-vetted (selected by
+  // allowId, classified destructive:false), so the generic APPROVAL tier must not veto it — but the
+  // two real-threat floors (AUTH credential-phishing, DESTRUCTIVE data-loss) STILL must.
+  const trustGate: PlatformDialog = {
+    name: "trust-gate",
+    detect: /trust this folder/iu,
+    safeAnswer: ["\r"],
+    destructive: false,
+  };
+
+  it("auto-answers a vetted dialog whose footer carries an APPROVAL cue ('Enter to confirm')", () => {
+    const screen = ["Is this a project you trust?", "❯ 1. Yes, I trust this folder", "Enter to confirm · Esc to cancel"].join("\n");
+    const decision = decideAutoAnswer("safe-only", screen, [], [trustGate]);
+    expect(decision.action).toBe("answer");
+    if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
+  });
+
+  it("STILL escalates the SAME vetted dialog when an AUTH cue rides the screen (phishing floor intact)", () => {
+    const screen = ["Yes, I trust this folder", "Enter to confirm", "Please sign in to continue"].join("\n");
+    expect(decideAutoAnswer("safe-only", screen, [], [trustGate])).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "auth_login" });
+  });
+
+  it("STILL escalates the SAME vetted dialog when a DESTRUCTIVE cue rides the screen (data-loss floor intact)", () => {
+    const screen = ["Yes, I trust this folder", "Enter to confirm", "This will delete all files"].join("\n");
+    expect(decideAutoAnswer("safe-only", screen, [], [trustGate])).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "destructive" });
+  });
+
+  it("the HINT path is UNCHANGED — a hintPattern match + an APPROVAL cue STILL escalates (unvetted generic match)", () => {
+    // No profile dialog here: a generic operator hintPattern matched alongside an approval cue. The
+    // full veto (incl. APPROVAL) still applies to the unvetted hint path.
+    const decision = decideAutoAnswer("safe-only", "Confirm? (y/n)", ["(y/n)"], []);
+    expect(decision).toEqual<AutoAnswerDecision>({ action: "escalate", reason: "approval" });
+  });
+});
+
 describe("decideAutoAnswer — narration is NOT a prompt: a marker with no safe-pattern match must not force destructive (real-VPS 2026-06-16)", () => {
   // Live Telegram drive: gpt-5.5 launched claude to build a Python app. claude NARRATED a TODO
   // app ("add a todo, list, mark done, delete a todo by id, clear all completed") and queued

@@ -95,10 +95,16 @@ export const claudeCodeProfile: TerminalPlatformProfile = {
   // (Enter), sent via send_text exactly like the canned hintPattern answer.
   dialogs: [
     {
-      // The first-launch trust gate ("Do you trust the files in this folder?"). Benign — the operator
-      // launched Claude in their own workspace; Enter accepts the default. NOT destructive.
+      // The first-launch trust gate. Benign — the operator launched Claude in their own workspace;
+      // Enter accepts the pre-selected "trust" option. NOT destructive. The phrasing has changed
+      // across Claude Code versions, so match all known forms (ReDoS-safe — bounded char class):
+      //   pre-2.1:  "Do you trust the files in this folder?"
+      //   >= 2.1.x: "Quick safety check: Is this a project you created or one you trust?"
+      //             with option "1. Yes, I trust this folder"
+      // (webhook-claude-cli-tdd-20260630: a stale regex matching only the pre-2.1 wording stalled a
+      // driven claude 2.1.196 session at the gate — auto-answer never fired.)
       name: "trust-gate",
-      detect: /trust the files in this folder/iu,
+      detect: /trust the files in this folder|is this a project you[^\n]{0,80}trust|yes, i trust this folder/iu,
       safeAnswer: ["\r"],
       destructive: false,
     },

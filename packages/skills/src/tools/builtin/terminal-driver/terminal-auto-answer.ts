@@ -153,6 +153,29 @@ function escalateAlwaysReason(
   return undefined;
 }
 
+/**
+ * The HARD-floor veto for a PROFILE-declared, non-destructive dialog (the {@link decideAutoAnswer}
+ * dialog path) — AUTH (credential-phishing, the SEC-12 core) and DESTRUCTIVE (data-loss) cues ONLY,
+ * NOT the generic APPROVAL tier. A profile dialog is operator-vetted: selected by the operator
+ * `allowId` (never content-sniffed), matched by its specific `detect` regex, and explicitly
+ * classified `destructive:false` with a known `safeAnswer`. The APPROVAL markers ("confirm",
+ * "proceed with", …) false-positive on the near-universal benign keystroke-hint footer that such a
+ * dialog carries ("Enter to confirm · Esc to cancel"), which would VETO every confirmation dialog —
+ * defeating the whole point of a profile-declared safe dialog. So the approval tier does NOT veto a
+ * vetted dialog; the two real-threat floors (auth/destructive) STILL do.
+ *
+ * (webhook-claude-cli-tdd-20260630, live VPS: claude 2.1.x reworded its trust gate to add an "Enter
+ * to confirm" footer; the bare APPROVAL veto then escalated the documented auto-answer, stalling a
+ * driven claude session at the gate. The hintPattern path below keeps the FULL veto — those cues are
+ * generic operator strings, not a vetted-and-classified dialog.)
+ */
+function dialogVetoReason(screen: string): "auth_login" | "destructive" | undefined {
+  const lower = screen.toLowerCase();
+  if (containsAny(lower, AUTH_LOGIN_MARKERS)) return "auth_login";
+  if (containsAny(lower, DESTRUCTIVE_MARKERS)) return "destructive";
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // The operator safe-pattern match
 // ---------------------------------------------------------------------------
@@ -261,7 +284,9 @@ export function decideAutoAnswer(
   //    canned-Enter hintPattern (it carries the dialog's explicit keys). `source`+index are a
   //    content-free audit id (the woken turn namespaces the resume-dedup + audit by `source`).
   if (dialogAnswer !== undefined) {
-    const forced = escalateAlwaysReason(screen);
+    // A vetted profile dialog is vetoed ONLY by the AUTH/DESTRUCTIVE hard floors — NOT the generic
+    // APPROVAL tier (which false-positives on the benign "Enter to confirm" footer). See dialogVetoReason.
+    const forced = dialogVetoReason(screen);
     if (forced !== undefined) return { action: "escalate", reason: forced };
     return {
       action: "answer",

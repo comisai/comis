@@ -215,6 +215,37 @@ describe("claudeCodeProfile.dialogs — golden frames + safe-only auto-answer (D
     if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
   });
 
+  // REGRESSION (webhook-claude-cli-tdd-20260630, live VPS): Claude Code >= 2.1.x reworded the
+  // first-launch trust gate. The OLD regex `/trust the files in this folder/` matched the pre-2.1
+  // phrasing only, so a driven claude 2.1.196 session STALLED at the gate (auto-answer never fired)
+  // and never reached its prompt — the first-class terminal-driven flow was broken against current
+  // claude. This is the EXACT frame captured from claude 2.1.196 on the box.
+  const CLAUDE_211_TRUST_FRAME = [
+    "Quick safety check: Is this a project you created or one you trust? (Like your own code, a",
+    "well-known open source project, or work from your team). If not, take a moment to review what's",
+    "in this folder first.",
+    "",
+    "Claude Code'll be able to read, edit, and execute files here.",
+    "",
+    "Security guide",
+    "",
+    "❯ 1. Yes, I trust this folder",
+    "  2. No, exit",
+    "",
+    "Enter to confirm · Esc to cancel",
+  ].join("\n");
+
+  it("the trust-gate detect matches the claude 2.1.x reworded frame (live regression)", () => {
+    const tg = find("trust-gate");
+    expect(tg.detect.test(CLAUDE_211_TRUST_FRAME)).toBe(true);
+  });
+
+  it("auto-answers the claude 2.1.x reworded trust-gate under safe-only", () => {
+    const decision = decideAutoAnswer("safe-only", CLAUDE_211_TRUST_FRAME, [], dialogs);
+    expect(decision.action).toBe("answer");
+    if (decision.action === "answer") expect(decision.keys).toEqual(["\r"]);
+  });
+
   it("escalates a trust-gate frame that ALSO carries an auth cue (the veto wins over the dialog)", () => {
     const screen = ["Do you trust the files in this folder?", "First, please sign in"].join("\n");
     expect(decideAutoAnswer("safe-only", screen, [], dialogs)).toEqual({ action: "escalate", reason: "auth_login" });
