@@ -33,4 +33,17 @@ describe("toolFailureHint", () => {
     expect(toolFailureHint("result[0] was empty")).toBe(GENERIC_TOOL_FAILURE_HINT);
     expect(toolFailureHint("[error] generic")).toBe(GENERIC_TOOL_FAILURE_HINT);
   });
+
+  it("names EISDIR with a directory-path hint (the live read-a-directory incident)", () => {
+    const hint = toolFailureHint(
+      '{"content":[{"type":"text","text":"EISDIR: illegal operation on a directory, read"}],"details":{}}',
+    );
+    expect(hint).toContain("EISDIR");
+    expect(hint.toLowerCase()).toContain("director");
+    expect(hint).not.toBe(GENERIC_TOOL_FAILURE_HINT);
+  });
+
+  it("names ENOTDIR with a path hint", () => {
+    expect(toolFailureHint("ENOTDIR: not a directory, scandir '/x/file.txt/sub'")).toContain("ENOTDIR");
+  });
 });

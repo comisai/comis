@@ -22,6 +22,14 @@
 /** First bracketed snake_case code (≥ one underscore → avoids matching `[i]`/`[abc]`/array indices). */
 const BRACKETED_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
 
+/**
+ * Raw Node wrong-path-TYPE errno (`EISDIR`/`ENOTDIR`) — the model gave a directory
+ * to a file op (or a file where a dir was expected). Surfaced with a path-shaped
+ * hint instead of the generic one (matches the `validation` reclassification in
+ * `classifyToolError`). The `:` anchors the errno format and avoids matching prose.
+ */
+const NODE_PATH_TYPE_ERRNO = /\b(EISDIR|ENOTDIR):/;
+
 /** The generic fallback when no recognizable error code is present. */
 export const GENERIC_TOOL_FAILURE_HINT =
   "Tool execution failed; check errorText and toolArgs for root cause";
@@ -37,6 +45,11 @@ export function toolFailureHint(errorText?: string): string {
     if (m) {
       const code = m[1];
       return `Tool failed (${code}) — see errorText for the message; check toolArgs + the policy/config for "${code}" (e.g. command allowlist for permission_denied, the named param for invalid_value)`;
+    }
+    const errno = NODE_PATH_TYPE_ERRNO.exec(errorText);
+    if (errno) {
+      const code = errno[1];
+      return `Tool failed (${code}) — the path in toolArgs is a directory (or a file used as a directory); a file tool cannot operate on a directory. Pass a file path, or use a directory-listing/glob tool to enumerate it.`;
     }
   }
   return GENERIC_TOOL_FAILURE_HINT;

@@ -84,6 +84,19 @@ const TOOL_ERROR_INTERNAL_CODES: ReadonlySet<string> = new Set([
 const BRACKETED_TOOL_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
 
 /**
+ * Raw Node errno prefixes (no bracketed `[code]`) that can ONLY be a wrong-path-
+ * TYPE usage error: the model gave a DIRECTORY to a file op (`EISDIR`) or a file
+ * where a dir was expected (`ENOTDIR`). These are unambiguously the model's bad
+ * input → `validation`, NOT a `dependency` outage. Deliberately EXCLUDES the
+ * context-dependent errnos `ENOENT`/`EACCES` — an exec `ENOENT` (spawning an
+ * uninstalled `claude`) is a genuine missing-binary dependency, so those stay on
+ * the dependency fallback. (Live r3terse 2026-06-30: the agent `read` a directory
+ * → `EISDIR: illegal operation on a directory, read` surfaced as
+ * errorKind:"dependency", misdirecting an operator at a missing package.)
+ */
+const NODE_PATH_TYPE_USAGE_ERRNO = /\b(?:EISDIR|ENOTDIR):/;
+
+/**
  * Classify a tool failure's errorKind when the SDK reported `isError: true`
  * from the start (i.e., `toolSuccess === false` BEFORE the exitCode branch
  * flips it), so the `tool:executed` event carries an actionable errorKind for
@@ -104,6 +117,11 @@ export function classifyToolError(_toolName: string, errorText: string | undefin
   const code = errorText ? BRACKETED_TOOL_ERROR_CODE.exec(errorText)?.[1] : undefined;
   if (code !== undefined) {
     return TOOL_ERROR_INTERNAL_CODES.has(code) ? "internal" : "validation";
+  }
+  // A raw Node wrong-path-type errno (EISDIR/ENOTDIR) is the model's bad input,
+  // not an external dependency — classify as validation (the bad-argument family).
+  if (errorText !== undefined && NODE_PATH_TYPE_USAGE_ERRNO.test(errorText)) {
+    return "validation";
   }
   // No structured code → a genuinely external (MCP / transport / unknown) failure.
   return "dependency";

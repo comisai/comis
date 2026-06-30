@@ -67,4 +67,26 @@ describe("classifyToolError", () => {
     expect(classifyToolError("read", "result[0] was empty")).toBe("dependency");
     expect(classifyToolError("read", "[error] generic")).toBe("dependency");
   });
+
+  // Live r3terse incident (2026-06-30): the agent `read` a DIRECTORY
+  // (workspace/skills) → Node `EISDIR: illegal operation on a directory, read`
+  // (a RAW errno, no bracketed [code]) → pre-fix it fell through to "dependency",
+  // which points an operator at a missing package when the real cause is the
+  // agent's bad input. EISDIR/ENOTDIR can ONLY be a wrong-path-TYPE usage error.
+  it("classifies a raw Node EISDIR/ENOTDIR usage error as validation, not dependency", () => {
+    const eisdir = JSON.stringify({
+      content: [{ type: "text", text: "EISDIR: illegal operation on a directory, read" }],
+      details: {},
+    });
+    expect(classifyToolError("read", eisdir)).toBe("validation");
+    expect(classifyToolError("read", "ENOTDIR: not a directory, scandir '/x/file.txt/sub'")).toBe("validation");
+  });
+
+  it("leaves ENOENT/EACCES on the dependency fallback (context-dependent — exec ENOENT = a missing binary)", () => {
+    // Deliberately NOT remapped: an exec ENOENT (spawn `claude` → not installed)
+    // is a genuine dependency, not the agent's input. Only the unambiguous
+    // wrong-path-type codes (EISDIR/ENOTDIR) become validation.
+    expect(classifyToolError("exec", "ENOENT: no such file or directory, spawn claude")).toBe("dependency");
+    expect(classifyToolError("read", "EACCES: permission denied, open '/etc/shadow'")).toBe("dependency");
+  });
 });
