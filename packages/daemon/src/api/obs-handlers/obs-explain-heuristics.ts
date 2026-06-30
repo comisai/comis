@@ -72,6 +72,7 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // WR-4: NAMED spend verdict (sibling — subdir cap)
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // RECALL-01 (sibling — subdir cap)
+import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -432,6 +433,14 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     authoritative `degraded` flag (full rationale in the sibling
   //     obs-explain-recall-verdict.ts module doc).
   recallMissVerdict,
+
+  // 9d) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
+  //     but never given a task (no terminal_session_send_text). ABOVE the
+  //     completed_with_tool_errors catch-all: when a drive is opened-but-untasked, a
+  //     stray failure during the stall (e.g. reading a directory → EISDIR) is
+  //     incidental — the no-task diagnosis is the root. Keys only on toolStats, so it
+  //     never fires on a non-terminal session (no 678/503 regression). Sibling file.
+  terminalDriveNoTaskVerdict,
 
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A

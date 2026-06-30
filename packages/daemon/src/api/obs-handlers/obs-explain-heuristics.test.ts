@@ -318,6 +318,67 @@ describe("obs-explain-heuristics", () => {
     expect(rootCause(makeSignals({ endReason: "completed_with_tool_errors" }))).toBeNull();
   });
 
+  // ------------------------------------------------------------------------
+  // terminal_drive_opened_without_task — the unattended abandoned-drive case
+  // (live r3tdd/r3terse 2026-06-30): the agent opened a coding-CLI terminal
+  // drive (terminal_session_create) but never delivered a task
+  // (terminal_session_send_text), so the build never started. Pre-fix `explain`
+  // root-caused NOTHING (endReason:success → null verdict) — the 5-source
+  // hand-join that surfaced it is exactly the gap this verdict closes.
+  // ------------------------------------------------------------------------
+
+  it("fires when terminal_session_create succeeded but no terminal_session_send_text (drive opened, never tasked)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolStats: {
+          terminal_session_create: { ok: 1, failed: 0 },
+          terminal_session_wait: { ok: 2, failed: 0 },
+          terminal_session_read: { ok: 1, failed: 0 },
+        },
+        endReason: "success",
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("terminal_drive_opened_without_task");
+    expect(r!.suggestedNextSteps.some((s) => /send_text/.test(s))).toBe(true);
+  });
+
+  it("OUT-RANKS the completed_with_tool_errors catch-all (a stray failure during the stall is incidental)", () => {
+    // r3terse: opened claude, never sent the task, and a `read` of a directory
+    // EISDIR'd. The no-task diagnosis is the root; the stray failure is noise.
+    const r = rootCause(
+      makeSignals({
+        toolStats: {
+          terminal_session_create: { ok: 1, failed: 0 },
+          read: { ok: 0, failed: 1 },
+        },
+        failures: [{ toolName: "read", errorKind: "validation" }] as unknown as IncidentSignals["failures"],
+        endReason: "completed_with_tool_errors",
+      }),
+    );
+    expect(r!.code).toBe("terminal_drive_opened_without_task");
+  });
+
+  it("does NOT fire when a task WAS delivered (send_text succeeded) — the drive ran", () => {
+    expect(
+      rootCause(
+        makeSignals({
+          toolStats: {
+            terminal_session_create: { ok: 1, failed: 0 },
+            terminal_session_send_text: { ok: 1, failed: 0 },
+          },
+          endReason: "success",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("does NOT fire when no terminal drive was opened (no terminal_session_create)", () => {
+    expect(
+      rootCause(makeSignals({ toolStats: { web_fetch: { ok: 1, failed: 0 } }, endReason: "success" })),
+    ).toBeNull();
+  });
+
   it("a degraded session with tool failures and no named cause gets a catch-all tool-failure verdict", () => {
     // Live C13 finding (2026-06-12): an induced 2-tool-failure session
     // (memory_get + image_analyze, errorKind dependency, endReason
