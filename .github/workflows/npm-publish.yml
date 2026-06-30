@@ -3,6 +3,10 @@ name: Publish to npm
 on:
   push:
     tags: ["v*"]
+  # Manual re-trigger: pnpm publish keys off the package.json version, not the
+  # tag, so this re-publishes the current version from any ref without having to
+  # move/recreate a release tag (which would needlessly re-run the Docker jobs).
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,13 +31,21 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org/
 
+      - name: Install system dependencies (ffmpeg, bubblewrap)
+        # The release-gate `pnpm test` below runs the SAME suite as ci.yml,
+        # including the Linux-gated terminal-driver tests (*.linux.test.ts) that
+        # shell out to `which bwrap` and FAIL — not skip — when bubblewrap is
+        # absent (resolveBwrapPath throws). ci.yml installs these deps for its
+        # test jobs; this gate must match or `pnpm test` fails before publish.
+        # Regressed silently because npm hadn't published since 1.0.42, before
+        # the v2.x terminal-driver suites landed. ffmpeg/ffprobe likewise drive
+        # the media-conversion skill tests.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
+
       - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
-        # Same guard as ci.yml: newer runner images enforce
+        # Ubuntu 24.04 runner images enforce
         # kernel.apparmor_restrict_unprivileged_userns=1, which breaks any
-        # bwrap --unshare-net test ("loopback: Failed RTM_NEWADDR"). The
-        # Linux-gated suites skip when bwrap is absent, but if the runner
-        # image ever preinstalls bubblewrap the `pnpm test` release gate
-        # below would fail — this is a no-op otherwise.
+        # bwrap --unshare-net test ("loopback: Failed RTM_NEWADDR").
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Install dependencies
