@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/comis-readme-banner.png?v=1.0.42" alt="Comis: self-hosted AI agents you can audit" width="100%" />
+  <img src="assets/comis-readme-banner.png?v=1.0.43" alt="Comis: self-hosted AI agents you can audit" width="100%" />
 </p>
 
 <p align="center">
