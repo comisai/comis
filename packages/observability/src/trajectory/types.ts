@@ -178,6 +178,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   "background_task.completed",
   "background_task.failed",
 
+  // Terminal-driver drive lifecycle (DRIVE-02): a long coding-CLI drive crossed the
+  // inline→detached boundary and was backgrounded (reason: mode_detached | producing).
+  // Content-free — the reason enum only.
+  "terminal.drive_promoted",
+
   // Delivery queue lifecycle.
   "delivery.queued",
   "delivery.dispatched",

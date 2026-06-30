@@ -244,6 +244,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "background_task:completed": "background_task.completed",
   "background_task:failed": "background_task.failed",
 
+  // ---- Terminal drive lifecycle ----
+  // DRIVE-02: a long coding-CLI drive backgrounded at the inline→detached boundary
+  // (the unattended abandoned-drive blind spot — was daemon-log-only). Content-free
+  // (the reason enum only — see translate-payload). Emitted from packages/skills,
+  // which the trajectory-event arch test does NOT scan (it walks agent+orchestrator),
+  // so this was previously neither mapped nor allowlisted and the bridge dropped it.
+  "terminal:drive_promoted": "terminal.drive_promoted",
+
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",

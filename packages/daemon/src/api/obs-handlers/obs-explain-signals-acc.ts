@@ -124,4 +124,8 @@ export interface Acc {
   channel?: { type: string; id: string };
   sessionKey: string;
   seq: number;
+  /** DRIVE-02: the LAST `terminal.drive_promoted` reason seen (mode_detached |
+   *  producing), and how many promotions fired. Folded into `terminalDrivePromoted`. */
+  terminalDrivePromotedReason?: string;
+  terminalDrivePromotedCount: number;
 }

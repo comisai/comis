@@ -146,6 +146,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
+    case "terminal.drive_promoted": {
+      // DRIVE-02: a coding-CLI/terminal drive backgrounded at the inline→detached
+      // boundary (bridged from terminal:drive_promoted). Count promotions; keep the
+      // LAST reason (mode_detached | producing) for the terminal-drive verdict.
+      const reason = asString(data.reason);
+      if (reason !== undefined) acc.terminalDrivePromotedReason = reason;
+      acc.terminalDrivePromotedCount += 1;
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // W8: dedupe by toolCallId — the live ctx_search counted twice when its
@@ -447,6 +456,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     visionOutcomeSeq: -1,
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
+    terminalDrivePromotedCount: 0,
   };
 
   for (const rec of records) {
@@ -585,6 +595,16 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),
+    // DRIVE-02: surface the backgrounding ONLY when ≥1 promotion fired (undefined,
+    // never {}, when no drive backgrounded) — lets the terminal-drive verdict cite it.
+    ...(acc.terminalDrivePromotedCount > 0
+      ? {
+          terminalDrivePromoted: {
+            reason: acc.terminalDrivePromotedReason ?? "unknown",
+            count: acc.terminalDrivePromotedCount,
+          },
+        }
+      : {}),
     // 186/187/192/196: surface the reconstructed image/vision/video/voice turns (presence-conditional; voice = the OBS-02 oracle, keyless costUsd:0 visible).
     ...(acc.image !== undefined ? { image: acc.image } : {}),
     ...(acc.vision !== undefined ? { vision: acc.vision } : {}),

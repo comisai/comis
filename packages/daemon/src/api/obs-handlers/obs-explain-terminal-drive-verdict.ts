@@ -51,13 +51,20 @@ export const terminalDriveNoTaskVerdict = (s: IncidentSignals): TerminalDriveVer
   // A task WAS delivered (send_text succeeded) → the drive ran; not this cause.
   const sentText = s.toolStats["terminal_session_send_text"];
   if (sentText !== undefined && sentText.ok > 0) return null;
+  // DRIVE-02: when the bridged terminal.drive_promoted signal is present, name the
+  // backgrounding reason + count explicitly (else a generic clause). Makes the
+  // log-only mode_detached promotion visible in the one-call `explain` verdict.
+  const backgrounding =
+    s.terminalDrivePromoted !== undefined
+      ? `the drive was backgrounded (reason: ${s.terminalDrivePromoted.reason}, ×${s.terminalDrivePromoted.count}) at the idle prompt`
+      : "the durable terminal backgrounds it at the idle prompt";
   return {
     code: "terminal_drive_opened_without_task",
     detail:
       `a terminal drive was opened (terminal_session_create ×${create.ok}) but NO task was ever ` +
       "delivered (zero terminal_session_send_text successes) — the driven CLI (e.g. claude) sat idle " +
       "and the work never started. In an UNATTENDED drive (webhook/cron) this strands the session: " +
-      "there is no human to 'reply with the next step' after the durable terminal backgrounds it at the idle prompt.",
+      `there is no human to 'reply with the next step' after ${backgrounding}.`,
     suggestedNextSteps: [
       "deliver the full task with terminal_session_send_text immediately after clearing the launch gate, BEFORE any wait",
       "in an unattended (webhook/cron) drive, carry the session to completion in-turn — do not end at the 'idle, waiting for input' hand-back",

@@ -594,3 +594,20 @@ describe("translatePayload — WR-4 (177-obs-loop) spend kill-switch (content-fr
     expect("apiKey" in data).toBe(false);
   });
 });
+
+describe("translatePayload — DRIVE-02 terminal drive promotion (content-free, envelope-stripped)", () => {
+  it("translates terminal:drive_promoted to the reason enum ONLY (sessionId/agentId/timestamp are envelope)", () => {
+    const data = translatePayload("terminal:drive_promoted", {
+      sessionId: "term-abc-123",
+      agentId: "default",
+      reason: "mode_detached",
+      timestamp: 1717000000000,
+    });
+    expect(data).toEqual({ reason: "mode_detached" });
+    // The terminal sessionId, the agentId, and the raw clock are envelope/correlation
+    // ids — they MUST NOT cross into the trajectory data (the module's envelope rule).
+    expect("sessionId" in data).toBe(false);
+    expect("agentId" in data).toBe(false);
+    expect("timestamp" in data).toBe(false);
+  });
+});
