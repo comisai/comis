@@ -37,11 +37,11 @@ const SRC_ROOT = resolve(here, "..");
 
 // L11 re-opened for four sites:
 //   1. util/offline-secrets-store.ts — the CLI's offline secrets adapter (daemon-free bootstrap)
-//   2. doctor/repairs/repair-lcd.ts — the offline LCD repair path (DOC-03, Phase 171-04):
+//   2. doctor/repairs/repair-lcd.ts — the offline LCD repair path:
 //      the contentless lcd_messages_fts cannot use the FTS5 'rebuild' idiom; the repair
 //      re-derives FTS content via renderMessageFtsText (same render fn as the lcd-store adapter
 //      populate path). This is the only @comis/memory import in the repair layer.
-//   3. commands/cost-export.ts — the `comis cost export` CLI (179-03): imports the
+//   3. commands/cost-export.ts — the `comis cost export` CLI: imports the
 //      ObservabilityStore cost-aggregate TYPES (QuarterHourBucket / CostBucketFilter) it
 //      projects offline. Type-only; the data read routes through offline-obs's assemblers.
 //   4. util/offline-obs.ts — the offline obs adapter (already the sole L18 @comis/daemon
@@ -61,7 +61,7 @@ const L11_ALLOWLIST: readonly string[] = [
 // @comis/infra is now in HARD_FORBIDDEN_PACKAGES.
 const L12_INFRA_ALLOWLIST = [] as const;
 
-// L18 (W14 obs-llm-troubleshooting): @comis/daemon re-opened for exactly one
+// L18: @comis/daemon re-opened for exactly one
 // site — the CLI's OFFLINE obs adapter. `comis explain --offline` /
 // `comis fleet --offline` (and the automatic unreachable-gateway fallback)
 // reuse the daemon's exported PURE report assemblers over the local ~/.comis

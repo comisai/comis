@@ -89,7 +89,7 @@ export function emitStepLimitAbort(
 }
 
 // ---------------------------------------------------------------------------
-// Loop-detected check (FIX #2 — the programmatic loop-breaker)
+// Loop-detected check (the programmatic loop-breaker)
 // ---------------------------------------------------------------------------
 
 /**
@@ -127,7 +127,7 @@ export function checkLoopLimit(
  * Emit loop-detected abort events and log a warning. Mirrors
  * emitStepLimitAbort: errorKind "resource", an actionable operator hint, and
  * the execution:aborted{reason:"loop_detected"} health event so the stop is
- * reconstructable from logs + events (T-hbe-04).
+ * reconstructable from logs + events.
  */
 export function emitLoopAbort(
   deps: {
@@ -163,8 +163,8 @@ export function emitLoopAbort(
  * Returns abort descriptor if budget exceeded.
  */
 export function checkBudgetLimit(
-  // CR-01: a per-execution window (or the legacy shared guard, which is
-  // structurally assignable). Only checkBudget(0) is used here.
+  // A per-execution window (or the legacy shared guard, which is structurally
+  // assignable). Only checkBudget(0) is used here.
   budgetGuard: ExecutionBudgetWindow,
   aborted: boolean,
 ): SafetyCheckResult {
@@ -210,17 +210,17 @@ export function emitBudgetAbort(
 }
 
 // ---------------------------------------------------------------------------
-// Spend kill-switch check (Phase 177-03 — the dollars kill-switch routing)
+// Spend kill-switch check (the dollars kill-switch routing)
 // ---------------------------------------------------------------------------
 
 /** The three thin emit hooks the bridge binds to the counts-only spend events. */
 export interface SpendEmitHooks {
   /**
    * Emit `observability:spend_warning` — fired sub-ceiling at `warnAtFraction`.
-   * WR-1 (177-obs-loop): receives the breaching warn DIMENSION ({@link SpendWarn} —
-   * the crossed scope + its total/cap) so the emitted event is internally
-   * consistent (correct scope + that dimension's total + cap), not a hard-coded
-   * `scope:"agent"` + a session-local amount.
+   * Receives the breaching warn DIMENSION ({@link SpendWarn} — the crossed scope
+   * + its total/cap) so the emitted event is internally consistent (correct scope
+   * + that dimension's total + cap), not a hard-coded `scope:"agent"` + a
+   * session-local amount.
    */
   spendWarning: (warn: SpendWarn) => void;
   /** Emit `observability:spend_exceeded` — the ceiling tripped for this scope. */
@@ -266,7 +266,7 @@ export function checkSpendLimit(
   }
 
   // ok → emit the early warning when sub-ceiling-but-past-warnAtFraction; never abort.
-  // WR-1: forward the breaching warn DIMENSION so the event names the correct scope.
+  // Forward the breaching warn DIMENSION so the event names the correct scope.
   if (outcome.kind === "ok") {
     if (outcome.warn !== null) emit.spendWarning(outcome.warn);
     return { shouldAbort: false };
@@ -286,20 +286,20 @@ export function checkSpendLimit(
  * {@link emitBudgetAbort}. Routes through the SINGLE sanctioned
  * `execution:aborted` path (the spend_exceeded reason); no parallel kill
  * channel. The WARN carries `hint` + `errorKind` ONLY — never a dollar amount as
- * a body (§2.7): the dollar amounts ride the counts-only `observability:spend_*`
+ * a body: the dollar amounts ride the counts-only `observability:spend_*`
  * events. `systemNowMs()` is the established time source for THIS file's emit
  * functions (bridge-safety-controls is a bridge module, not `budget/`).
  *
- * `source` steers the operator hint at the knob that ACTUALLY bounded the trip
- * (SPEND-ABORT-OBS, hermes-usecases 2026-06-25): the per-(tenant,agent)
- * `observability.spend` ceiling and the per-ROOT `autonomy.budget` meter both
- * route their `exceeded` outcome through here, but they live in DIFFERENT config
- * trees — a per-root trip that points the operator at `observability.spend`
- * misdirects them. `per_root` names `autonomy.budget.*` instead; the exact limb
- * ($/token/wall-clock) + its numbers are surfaced by `comis explain <session>`
- * (the spend-verdict reads the `execution.aborted.perRootBudget` this event carries
- * and names `autonomy.budget.<limb>` — BUDGET-LIMB-OBS). The token/wall-clock limbs
- * ALSO log an adjacent `Per-root <limb> budget exceeded` line; the $ limb does not.
+ * `source` steers the operator hint at the knob that ACTUALLY bounded the trip:
+ * the per-(tenant,agent) `observability.spend` ceiling and the per-ROOT
+ * `autonomy.budget` meter both route their `exceeded` outcome through here, but
+ * they live in DIFFERENT config trees — a per-root trip that points the operator
+ * at `observability.spend` misdirects them. `per_root` names `autonomy.budget.*`
+ * instead; the exact limb ($/token/wall-clock) + its numbers are surfaced by
+ * `comis explain <session>` (the spend-verdict reads the
+ * `execution.aborted.perRootBudget` this event carries and names
+ * `autonomy.budget.<limb>`). The token/wall-clock limbs ALSO log an adjacent
+ * `Per-root <limb> budget exceeded` line; the $ limb does not.
  */
 export function emitSpendAbort(
   deps: {
@@ -310,7 +310,7 @@ export function emitSpendAbort(
     onAbort?: () => void;
   },
   source: "ceiling" | "per_root" = "ceiling",
-  /** OBS-3: the tripped per-root limb + its numbers (named units). Carried onto the
+  /** The tripped per-root limb + its numbers (named units). Carried onto the
    *  `execution:aborted` event so `explain` answers "which limb, by how much" in one
    *  call instead of a daemon-log grep for the "Per-root … budget exceeded" line. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string },
@@ -455,7 +455,7 @@ export function checkCircuitBreaker(
 }
 
 // ---------------------------------------------------------------------------
-// Abort redirect message builder (R2)
+// Abort redirect message builder
 // ---------------------------------------------------------------------------
 
 /**
@@ -473,7 +473,7 @@ export function checkCircuitBreaker(
  *
  * The response is shown to the user in place of the normal LLM response.
  * Content is sourced from the operator-side ExecutionPlan or the user's own
- * message text — no external or model-generated data (T-153-02b).
+ * message text — no external or model-generated data.
  */
 export function buildAbortRedirectMessage(
   plan: ExecutionPlan | undefined,

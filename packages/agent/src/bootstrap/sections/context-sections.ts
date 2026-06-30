@@ -29,12 +29,13 @@ export interface SubagentRoleParams {
   parentSummary?: string;
   /** Map of all registered agent IDs to their workspace directories. */
   agentWorkspaces?: Record<string, string>;
-  /** Inherited conversation language (DET-02 tag) for non-en user-facing output. */
+  /** Inherited conversation language for non-en user-facing output. */
   language?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Task Planning (SEP system prompt section -- static, cache-stable)
+// SEP = Silent Execution Planner.
 // ---------------------------------------------------------------------------
 
 /**
@@ -60,11 +61,11 @@ export function buildTaskPlanningSection(sepEnabled: boolean, isMinimal: boolean
 }
 
 // ---------------------------------------------------------------------------
-// Compressed context (P2 lossiness/uncertainty clause -- static, cache-stable)
+// Compressed context (lossiness/uncertainty clause -- static, cache-stable)
 // ---------------------------------------------------------------------------
 
 /**
- * Build the Compressed-context uncertainty clause (P2). Included in the
+ * Build the Compressed-context uncertainty clause. Included in the
  * cache-stable system prompt whenever the DAG (LCD) engine is enabled
  * (`dagModeEnabled`), so the model knows its context may contain LOSSY,
  * untrusted summaries and treats them as compressed recall cues -- not proof.
@@ -80,8 +81,8 @@ export function buildTaskPlanningSection(sepEnabled: boolean, isMinimal: boolean
  * The marker vocabulary here (`trust=untrusted`, `depth`, `descendant_count`,
  * the time-range, and the "Expand for details about:" footer) MUST match what
  * the LCD assembler actually renders around each summary (`lcd-assembler.ts`
- * `summaryRefToMessage`). The recovery TOOLS (`ctx_*`) are Phase 131 and are
- * deliberately NOT named here.
+ * `summaryRefToMessage`). The recovery TOOLS (`ctx_*`) are deliberately NOT
+ * named here.
  *
  * @param dagModeEnabled - true when `contextEngine.version === "dag"`
  * @param isMinimal - minimal (sub-agent) prompt mode
@@ -100,7 +101,7 @@ export function buildLossinessUncertaintySection(dagModeEnabled: boolean, isMini
 }
 
 // ---------------------------------------------------------------------------
-// 16a. Persona (SOUL.md promoted to standalone section before Safety)
+// Persona (SOUL.md promoted to a standalone section before Safety)
 // ---------------------------------------------------------------------------
 
 export function buildPersonaSection(
@@ -167,7 +168,7 @@ const SPECIALIST_AGENTS_MD = `# Platform Instructions (Specialist)
 - Be concise — you're a specialist worker, not a conversationalist`;
 
 // ---------------------------------------------------------------------------
-// 16. Project Context (include in minimal)
+// Project Context (included in minimal mode)
 // ---------------------------------------------------------------------------
 
 export function buildProjectContextSection(
@@ -209,7 +210,7 @@ export function buildProjectContextSection(
 }
 
 // ---------------------------------------------------------------------------
-// 16a-post. Post-Compaction Recovery (skip if minimal or no AGENTS.md)
+// Post-Compaction Recovery (skipped if minimal or no AGENTS.md)
 // ---------------------------------------------------------------------------
 
 export function buildPostCompactionRecoverySection(
@@ -244,7 +245,7 @@ export function buildPostCompactionRecoverySection(
 }
 
 // ---------------------------------------------------------------------------
-// 17. Subagent Context (only for sub-agents / minimal mode)
+// Subagent Context (only for sub-agents / minimal mode)
 // ---------------------------------------------------------------------------
 
 export function buildSubagentContextSection(
@@ -255,7 +256,7 @@ export function buildSubagentContextSection(
 }
 
 // ---------------------------------------------------------------------------
-// 18. Subagent Role (only for sub-agents -- structured replacement for buildSubagentContextSection)
+// Subagent Role (only for sub-agents -- structured replacement for buildSubagentContextSection)
 // ---------------------------------------------------------------------------
 
 export function buildSubagentRoleSection(

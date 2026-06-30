@@ -2,14 +2,14 @@
 /**
  * Autonomy doctrine: the one-paragraph, always-on contract + routing rule.
  *
- * SKILL-02 — every top-level run (and every sub-agent / lockdown run) carries
- * this paragraph in its bootstrap system prompt, even when the model never
- * opens the full `autonomy` skill. It is the always-on floor; the bundled
- * `autonomy` skill is the on-demand detail.
+ * Every top-level run (and every sub-agent / lockdown run) carries this
+ * paragraph in its bootstrap system prompt, even when the model never opens the
+ * full `autonomy` skill. It is the always-on floor; the bundled `autonomy` skill
+ * is the on-demand detail.
  *
- * The framing is M1-accurate: runs are revocable/clamped, NOT durable (no
- * resume across a daemon restart in M1). It names no Phase-215 / M2 surface
- * (no `whoami`, `capabilities.introspect`, or `comis-agent` CLI).
+ * The framing reflects current behavior: runs are revocable/clamped, NOT durable
+ * (no resume across a daemon restart). It names no introspection surface (no
+ * `whoami`, `capabilities.introspect`, or `comis-agent` CLI).
  */
 
 /**
@@ -17,10 +17,10 @@
  *
  * Returns a heading-first `string[]`: the `## Autonomy` heading followed by
  * one paragraph of prose (authored as concatenated fragments for readability)
- * stating the routing rule, the delegate-then-synthesize rule (COORD-02 —
- * heavy/long/high-volume work goes to a fresh-window child, the lead synthesizes
- * its returned summary + `ResultRef`), the autonomy envelope, the contract
- * truth, and how to read a denial.
+ * stating the routing rule, the delegate-then-synthesize rule (heavy/long/
+ * high-volume work goes to a fresh-window child, the lead synthesizes its
+ * returned summary + `ResultRef`), the autonomy envelope, the contract truth,
+ * and how to read a denial.
  *
  * The capability claim is PROFILE-CONDITIONAL by phrasing, not by plumbing: the
  * opener says "When your agent profile grants autonomy capabilities (the

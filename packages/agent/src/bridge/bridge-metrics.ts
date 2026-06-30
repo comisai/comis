@@ -35,7 +35,7 @@ export interface BridgeMetricsState {
   // Finish reason and abort tracking
   finishReason: ExecutionResult["finishReason"];
   aborted: boolean;
-  /** R2: Abort redirect message set at abort sites (max_steps, budget_exceeded, etc.).
+  /** Abort redirect message set at abort sites (max_steps, budget_exceeded, etc.).
    *  Overrides result.response in executor-post-execution when finishReason is non-stop. */
   abortResponse: string | undefined;
 
@@ -64,7 +64,7 @@ export interface BridgeMetricsState {
    *  snapshot); deleted in lockstep with `toolArgSnapshots` at tool_execution_end. */
   toolRawArgs: Map<string, unknown>;
   toolExecResults: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string; errorKind?: ErrorKind }>;
-  /** ATTR-01 (skill-use attribution): the named per-turn carrier. The bridge
+  /** Skill-use attribution: the named per-turn carrier. The bridge
    *  adds a skillName here when a `read`'s path matches a frozen learned-skill
    *  `<location>` (resolved via getSessionPromptSkillLocations). The executor
    *  reads it back at the postExecution call site and threads it onto the
@@ -75,7 +75,7 @@ export interface BridgeMetricsState {
   failedToolNames: string[];
   /** Per-execution count of breaker-open transitions (`tool:breaker_opened`).
    *  Incremented in pi-event-bridge's opened branch; forwarded as
-   *  `bridgeResult.breakerTripCount` for the session-health rollup (D5/F1). */
+   *  `bridgeResult.breakerTripCount` for the session-health rollup. */
   breakerTripCount: number;
 
   // TTL-split cache write token tracking (estimated, normalized to SDK total)
@@ -125,7 +125,7 @@ export interface BridgeMetricsState {
   // Budget trajectory warning: tracks whether the approaching-exhaustion warning has been emitted
   budgetWarningEmitted: boolean;
 
-  // KEYING-01: tracks whether THIS turn has already re-anchored the per-root
+  // Tracks whether THIS turn has already re-anchored the per-root
   // wall-clock/token limbs (evictRootIfIdle). State is per-execution (per turn), so
   // the flag fires the re-anchor exactly once per turn — at the turn's first
   // per-root reserve — so an interactive session root measures each turn's
@@ -311,7 +311,7 @@ export function buildBridgeResult(
   totalPendingCacheInvestmentUsd?: number;
   // Cumulative cost-correction delta surfaced on Execution-complete log
   totalCostCorrectionDeltaUsd?: number;
-  /** R2: Abort redirect message set at bridge abort sites; undefined for normal completions. */
+  /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
   abortResponse?: string;
 } {
   return {
@@ -370,7 +370,7 @@ export function buildBridgeResult(
     // the per-call emit at executor-post-execution gates on > 0 to
     // avoid logging zeros).
     totalCostCorrectionDeltaUsd: metrics.totalCostCorrectionDeltaUsd,
-    // R2: Abort redirect message — only set at abort sites; omitted for normal completions.
+    // Abort redirect message — only set at abort sites; omitted for normal completions.
     abortResponse: metrics.abortResponse,
   };
 }

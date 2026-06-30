@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the loop-detected safety control (FIX #2a) and
- * R2 abort-redirect response assertions (Plan 153-02).
+ * Unit tests for the loop-detected safety control and the abort-redirect
+ * response assertions.
  *
- * R2 tests verify that buildAbortRedirectMessage produces the correct
- * response text at all 7 abort sites (5 in-bridge + 2 pre-lock):
+ * The abort-redirect tests verify that buildAbortRedirectMessage produces the
+ * correct response text at all 7 abort sites (5 in-bridge + 2 pre-lock):
  *   - max_steps, loop_detected, budget_exceeded, context_exhausted, circuit_open (in-bridge)
  *   - provider_degraded, circuit_open pre-lock (safety-gate fallback with msg.text)
  */
@@ -84,7 +84,7 @@ describe("emitLoopAbort", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R2: buildAbortRedirectMessage — all 7 abort-site paths
+// buildAbortRedirectMessage — all 7 abort-site paths
 // ---------------------------------------------------------------------------
 
 /** Build a minimal ExecutionPlan for testing */
@@ -103,15 +103,15 @@ function makeActivePlan(overrides: Partial<ExecutionPlan> = {}): ExecutionPlan {
   };
 }
 
-describe("R2: buildAbortRedirectMessage — in-bridge abort sites (plan available)", () => {
-  it("R2: max_steps abort → response contains plan.request text", () => {
+describe("buildAbortRedirectMessage — in-bridge abort sites (plan available)", () => {
+  it("max_steps abort → response contains plan.request text", () => {
     const plan = makeActivePlan();
     const response = buildAbortRedirectMessage(plan, "max_steps");
     expect(response).toContain("max_steps");
     expect(response).toContain(plan.request);
   });
 
-  it("R2: loop_detected abort → response lists unmet steps", () => {
+  it("loop_detected abort → response lists unmet steps", () => {
     const plan = makeActivePlan();
     const response = buildAbortRedirectMessage(plan, "loop_detected");
     expect(response).toContain(plan.request);
@@ -122,7 +122,7 @@ describe("R2: buildAbortRedirectMessage — in-bridge abort sites (plan availabl
     expect(response).not.toContain("Create OAuth endpoint");
   });
 
-  it("R2: budget_exceeded abort → response contains plan.request text + unmet items", () => {
+  it("budget_exceeded abort → response contains plan.request text + unmet items", () => {
     const plan = makeActivePlan();
     const response = buildAbortRedirectMessage(plan, "budget_exceeded");
     expect(response).toContain("budget_exceeded");
@@ -130,7 +130,7 @@ describe("R2: buildAbortRedirectMessage — in-bridge abort sites (plan availabl
     expect(response).toContain("Wire callback handler");
   });
 
-  it("R2: context_exhausted abort → response contains plan.request text + unmet items", () => {
+  it("context_exhausted abort → response contains plan.request text + unmet items", () => {
     const plan = makeActivePlan();
     const response = buildAbortRedirectMessage(plan, "context_exhausted");
     expect(response).toContain("context_exhausted");
@@ -138,7 +138,7 @@ describe("R2: buildAbortRedirectMessage — in-bridge abort sites (plan availabl
     expect(response).toContain("Add session persistence");
   });
 
-  it("R2: circuit_open mid-loop abort → response contains plan.request text + unmet items", () => {
+  it("circuit_open mid-loop abort → response contains plan.request text + unmet items", () => {
     const plan = makeActivePlan();
     const response = buildAbortRedirectMessage(plan, "circuit_open");
     expect(response).toContain("circuit_open");
@@ -147,15 +147,15 @@ describe("R2: buildAbortRedirectMessage — in-bridge abort sites (plan availabl
   });
 });
 
-describe("R2: buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.text fallback)", () => {
-  it("R2: pre-lock provider_degraded (no plan) → response contains msg.text fragment", () => {
+describe("buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.text fallback)", () => {
+  it("pre-lock provider_degraded (no plan) → response contains msg.text fragment", () => {
     const msgText = "Please run the security scan on the codebase".slice(0, 200);
     const response = buildAbortRedirectMessage(undefined, "provider_degraded", msgText);
     expect(response).toContain("provider_degraded");
     expect(response).toContain(msgText);
   });
 
-  it("R2: pre-lock circuit_open (no plan) → response contains msg.text fragment", () => {
+  it("pre-lock circuit_open (no plan) → response contains msg.text fragment", () => {
     const msgText = "Deploy the new service to production".slice(0, 200);
     const response = buildAbortRedirectMessage(undefined, "circuit_open", msgText);
     expect(response).toContain("circuit_open");
@@ -164,10 +164,10 @@ describe("R2: buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.t
 });
 
 // ---------------------------------------------------------------------------
-// Spend kill-switch routing (Phase 177-03 Task 2): checkSpendLimit + emitSpendAbort
-// mirror the checkBudgetLimit/emitBudgetAbort mold. ONE abort reason
-// "spend_exceeded"; the unpriceable nuance rides the distinct
-// observability:spend_unpriceable event. warn-default never aborts.
+// Spend kill-switch routing: checkSpendLimit + emitSpendAbort mirror the
+// checkBudgetLimit/emitBudgetAbort mold. ONE abort reason "spend_exceeded";
+// the unpriceable nuance rides the distinct observability:spend_unpriceable
+// event. warn-default never aborts.
 // ---------------------------------------------------------------------------
 
 /** A set of fake emit hooks for the three spend events. */
@@ -175,7 +175,7 @@ function makeSpendEmit() {
   return { spendWarning: vi.fn(), spendExceeded: vi.fn(), spendUnpriceable: vi.fn() };
 }
 
-// WR-1 (177-obs-loop): warn is the breaching DIMENSION (scope + total/cap) or null.
+// warn is the breaching DIMENSION (scope + total/cap) or null.
 const okOutcome = (warn: SpendWarn | null): SpendGateOutcome => ({
   kind: "ok",
   reservation: { scopeKey: "t a", tenantKey: "t", reservedUsd: 0.5 },
@@ -204,7 +204,7 @@ describe("checkSpendLimit", () => {
 
   it("ok+warn emits spend_warning WITH the breaching dimension and does NOT abort", () => {
     const emit = makeSpendEmit();
-    // WR-1: a tenant-dimension warn must be FORWARDED verbatim to spendWarning so
+    // A tenant-dimension warn must be FORWARDED verbatim to spendWarning so
     // the emitted event names the correct scope/total/cap (not a hard-coded agent).
     const tenantWarn: SpendWarn = { scope: "tenant", totalUsd: 9, capUsd: 10 };
     const res = checkSpendLimit(okOutcome(tenantWarn), "abort", "warn", false, emit);
@@ -318,11 +318,11 @@ describe("emitSpendAbort", () => {
     expect(onAbort).toHaveBeenCalledOnce();
   });
 
-  // SPEND-ABORT-OBS (hermes-usecases live-test 2026-06-25): the per-root
-  // `autonomy.budget` meter (per-root-budget.ts → pi-event-bridge.ts:2088) routes its
-  // `exceeded` outcome through emitSpendAbort — which hardcoded the `observability.spend`
-  // hint. So tripping `autonomy.budget.aggregateUsd` told the operator to raise the WRONG
-  // config tree. The source must steer the hint at the knob that actually bounds the trip.
+  // The per-root `autonomy.budget` meter (per-root-budget.ts → pi-event-bridge.ts:2088)
+  // routes its `exceeded` outcome through emitSpendAbort — which hardcoded the
+  // `observability.spend` hint. So tripping `autonomy.budget.aggregateUsd` told the
+  // operator to raise the WRONG config tree. The source must steer the hint at the knob
+  // that actually bounds the trip.
   it("names autonomy.budget (NOT observability.spend) when the source is the per-root meter", () => {
     const eventBus = makeEventBus();
     const logger = makeLogger();

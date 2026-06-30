@@ -1,7 +1,7 @@
 name: Live-Fire Release Gate
 
-# Phase 148 (PROVE-04) — the v2.13 live-fire framework wired as a repeatable,
-# budget-capped, SCHEDULED release gate that publishes READINESS.md per run.
+# The v2.13 live-fire framework wired as a repeatable, budget-capped, SCHEDULED
+# release gate that publishes READINESS.md per run.
 #
 # This is the new "safe to ship" gate — `pnpm test:live all` against REAL LLMs +
 # real providers — complementing (NOT replacing) `pnpm validate`. It runs on a
@@ -13,7 +13,7 @@ name: Live-Fire Release Gate
 #     deterministic Stage-A/B layers + the PROVE meta/soak smoke; the COMIS_LIVE
 #     gate is unset so the real-provider Stage-C self-SKIPS (skip ≠ fail). The
 #     published READINESS.md is the honest PARTIAL build (most categories PARTIAL —
-#     deterministic Stage-A/B certified; real-provider Stage-C deferred, §20). The
+#     deterministic Stage-A/B certified; real-provider Stage-C deferred). The
 #     job makes NO certified-readiness claim.
 #   • COSTED (live secrets configured as repository secrets): the job writes them
 #     into the git-ignored test/live/live.env at runtime (COMIS_LIVE=1 + provider/
