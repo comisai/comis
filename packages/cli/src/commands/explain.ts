@@ -112,8 +112,16 @@ export function registerExplainCommand(program: Command): void {
           // Table view — concise key fields (kept small; the test exercises both
           // this branch and the json branch to hold the coverage floor).
           info(`Session:    ${report.sessionKey}`);
+          // Obs honesty: a defaulted "unknown" endReason with NO session-end rollup
+          // is an UNRESOLVED outcome, not a finding — caveat it so the operator does
+          // not read the "unknown" (or the cost/tools the session-index still supplies)
+          // as authoritative. `coverage.rollup.present:false` is the signal.
+          const endReasonLabel =
+            report.outcome.endReason === "unknown" && report.coverage?.rollup.present === false
+              ? "unknown — rollup unresolved (no session-end record found)"
+              : report.outcome.endReason;
           info(
-            `Outcome:    ${report.outcome.severity} (endReason=${report.outcome.endReason}, degraded=${report.outcome.degraded})`,
+            `Outcome:    ${report.outcome.severity} (endReason=${endReasonLabel}, degraded=${report.outcome.degraded})`,
           );
           info(
             `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok`,

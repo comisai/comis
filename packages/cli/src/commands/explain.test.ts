@@ -568,6 +568,73 @@ describe("comis explain with an RPC error prints error and exits with code 1", (
 });
 
 // ---------------------------------------------------------------------------
+// Obs honesty: when the session-end rollup is unresolved, the outcome line must
+// NOT present the defaulted "unknown" endReason as authoritative — it caveats
+// "rollup unresolved" so an operator does not read it as a real finding.
+// (Pre-FIX-3, a webhook session reported endReason:unknown + a real cost — a
+// self-inconsistent line; the rollup-absent caveat names the gap.)
+// ---------------------------------------------------------------------------
+
+describe("comis explain caveats an unresolved outcome when the rollup is absent", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  const UNRESOLVED_REPORT = {
+    ...FAKE_REPORT,
+    outcome: { endReason: "unknown", degraded: false, severity: "ok" as const },
+    summary: "0 tool failures across 0 turns",
+    likelyRootCause: null,
+    suggestedNextSteps: [],
+    coverage: {
+      trajectory: { found: false, records: 0 },
+      rollup: { present: false },
+      offloads: { pointersResolved: 0, pointersTotal: 0 },
+      toolStats: { reconciled: true, rollupSource: "last-execution" as const, divergentTools: [] },
+    },
+  };
+
+  it("renders 'rollup unresolved' when endReason is unknown AND coverage.rollup.present is false", async () => {
+    const client: RpcClient = {
+      call: () => Promise.resolve(UNRESOLVED_REPORT),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:hook:devtask:x:webhook"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("rollup unresolved");
+  });
+
+  it("does NOT caveat a resolved outcome (rollup present, real endReason)", async () => {
+    // FAKE_REPORT has endReason=completed_with_tool_errors (resolved) → no caveat.
+    const { client } = captureClient();
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "default:user123:telegram:1717000000"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).not.toContain("rollup unresolved");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // W14 (obs-llm-troubleshooting): offline fallback wiring.
 // ---------------------------------------------------------------------------
 
