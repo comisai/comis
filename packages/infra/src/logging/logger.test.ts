@@ -916,14 +916,21 @@ describe("log redaction — multi-target transport and err serializer", () => {
 
     // Allow transport worker thread(s) to flush.
     // Pipeline transports spawn a chain of worker threads; they need more time
-    // than a simple single-target transport to flush to disk. Poll until the
-    // file is non-empty (or until the deadline) to avoid flakiness under load.
+    // than a simple single-target transport to flush to disk. A bare
+    // `content.length > 0` check RACES: the error line is logged first, so on a
+    // loaded runner the loop breaks the instant that one line lands while the
+    // later `info` lines (including the env-ref line, logged LAST) are still in
+    // the pipeline worker's buffer — and the `toContain(ENV_REF)` assertion then
+    // fails against a partial file. (Flaky-failed the v1.0.44 npm-publish
+    // release gate on 2026-07-01.) Poll until BOTH lines whose *presence* we
+    // assert (argsPreview, logged 3rd; env-ref, logged 4th/last) have flushed,
+    // so all four records are on disk before we assert. The deadline backstops.
     const deadline = Date.now() + 8000;
     let content = "";
     while (Date.now() < deadline) {
       try {
         content = await readFile(logFile, "utf8");
-        if (content.length > 0) break;
+        if (content.includes(ENV_REF) && content.includes("argsPreview")) break;
       } catch {
         // File not yet created by the pipeline worker — keep polling
       }
@@ -948,13 +955,17 @@ describe("log redaction — multi-target transport and err serializer", () => {
 
     logger.error({ err }, "err serializer test");
 
-    // Poll until the file exists and has content (worker thread may take time to start).
+    // Poll until a COMPLETE record has flushed (worker thread may take time to
+    // start). A bare `content.length > 0` check can break mid-write, so the
+    // absence assertion could pass against a truncated line that hasn't reached
+    // the token yet — a false pass that would hide a redaction regression. Wait
+    // for the trailing newline that terminates a full JSON record.
     const deadline = Date.now() + 5000;
     let content = "";
     while (Date.now() < deadline) {
       try {
         content = await readFile(logFile, "utf8");
-        if (content.length > 0) break;
+        if (content.includes("\n")) break;
       } catch {
         // File not yet created — keep polling
       }
