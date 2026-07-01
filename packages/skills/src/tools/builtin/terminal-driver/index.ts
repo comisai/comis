@@ -53,6 +53,12 @@ export {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 
+// Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701): reap a turn's
+// LIVE never-tasked drives at an unattended (webhook/cron) turn-end so the origin records an honest
+// failure instead of a silent success with a leaked idle drive (the model-independent floor beneath
+// the wait-tool `WAIT_TASK_NOT_DELIVERED_NOTE` best-effort recovery).
+export { reapNeverTaskedDrives, type ReapUntaskedRegistry } from "./terminal-reap-untasked.js";
+
 // The production worker-spawn posture helper (extracted from the registry to keep it
 // under the 800-line cap; re-exported here so the package surface is unchanged).
 export {

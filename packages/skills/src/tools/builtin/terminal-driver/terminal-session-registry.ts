@@ -724,6 +724,13 @@ export function createTerminalSessionRegistry(
       // Fire-and-forget: the session is dropped locally regardless of the reply.
       send(sessionId, "kill", { sessionId });
     }
+    // A DURABLE session's tmux is DETACHED on a per-boot socket; the worker-IPC "kill" above does
+    // NOT reliably terminate it (a never-tasked webhook drive lingered as an idle `claude` after
+    // kill fired — webhook-claude-cli-tdd-20260701), so deterministically kill-session it by name
+    // (the path proven to reap it). Best-effort + belt-and-suspenders alongside the worker kill.
+    if (handle.durable === true && handle.tmuxName !== undefined) {
+      deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
+    }
     sessions.delete(sessionId);
     if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
     if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId); // BL-03

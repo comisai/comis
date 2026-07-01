@@ -978,6 +978,43 @@ describe("terminal-tools — wait delegation", () => {
     expect(body.matched).toBe(false);
   });
 
+  // LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701): the agent waited on a LIVE drive it
+  // NEVER tasked (handle exists, everSentText=false) — the dominant flub (create → clear gate →
+  // wait, before send_text). The wait tool returns a JIT task-not-delivered directive steering it
+  // to deliver the task now (or report honestly), instead of the idle result it reads as "nothing to do".
+  const NEVER_TASKED_HANDLE: SessionHandle = {
+    sessionId: "s1", allowId: "claude", command: "claude", status: "running",
+    cols: 80, rows: 24, lastActivity: 0, startedAt: 0,
+    owner: { agentId: "agent-1", sessionKey: "" }, durable: true, everSentText: false,
+  };
+
+  it("wait on a LIVE never-tasked drive (handle.everSentText=false) → returns the task-not-delivered directive", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE, handles: new Map([["s1", NEVER_TASKED_HANDLE]]) });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    const note = (res.details as { note?: string }).note;
+    expect(note).toMatch(/have NOT delivered a task/i);
+    expect(note).toMatch(/send_text/i);
+    expect(note).not.toMatch(/overall task is done/i);
+  });
+
+  it("wait on a TASKED drive (handle.everSentText=true) → NO directive (byte-identical; only the FINDING-3 scope note)", async () => {
+    const taskedHandle: SessionHandle = { ...NEVER_TASKED_HANDLE, everSentText: true };
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE, handles: new Map([["s1", taskedHandle]]) });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    const note = (res.details as { note?: string }).note;
+    expect(note).not.toMatch(/have NOT delivered a task/i);
+    expect(note).toMatch(/SETTLED/); // COMPLETE_INLINE is isComplete → the existing FINDING-3 note
+  });
+
+  it("wait with NO handle (gone/unknown session) → NO directive (a missing handle is not the never-tasked-live-drive case)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE }); // handle-less
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    expect((res.details as { note?: string }).note).not.toMatch(/have NOT delivered a task/i);
+  });
+
   it("logs a DEBUG with durationMs (wait is readOnly) (§2.7)", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();

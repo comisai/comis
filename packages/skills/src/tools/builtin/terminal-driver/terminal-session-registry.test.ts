@@ -262,6 +262,35 @@ describe("createTerminalSessionRegistry — MR-02: worker-crash emits a per-sess
   });
 });
 
+describe("createTerminalSessionRegistry — durable evict kill-sessions the detached tmux (webhook-claude-cli-tdd-20260701)", () => {
+  // The worker-IPC "kill" does NOT reliably terminate a DURABLE (detached, per-boot-socket) tmux —
+  // a never-tasked webhook drive lingered as an idle `claude` after kill fired, while a manual
+  // kill-session by name reaped it. evictInternal now deterministically kill-sessions a durable
+  // handle's tmux by name via the injected durability.killTmuxSession.
+  it("kill of a DURABLE session calls durability.killTmuxSession(comis-<id>, socket)", async () => {
+    const killTmuxSession = vi.fn();
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { currentTmuxSocket: "/sock/tmux-1.sock", durability: { killTmuxSession } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude", bin: "/c", argv: [], cols: 80, rows: 24, durable: true },
+      OWNER,
+    );
+    await registry.kill(sessionId, OWNER);
+    expect(killTmuxSession).toHaveBeenCalledWith(`comis-${sessionId}`, "/sock/tmux-1.sock");
+  });
+
+  it("kill of a NON-durable session does NOT kill-session (no durable tmux to reap)", async () => {
+    const killTmuxSession = vi.fn();
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { killTmuxSession } }));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.kill(sessionId, OWNER);
+    expect(killTmuxSession).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);

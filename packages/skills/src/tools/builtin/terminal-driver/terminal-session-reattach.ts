@@ -281,6 +281,15 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
 export interface TerminalDurabilityDeps {
   descriptorStore?: SessionDescriptorStorePort;
   isTmuxAlive?: (name: string, socket?: string) => boolean;
+  /**
+   * Deterministically terminate a DURABLE session's detached tmux by name (`tmux -S <socket>
+   * kill-session -t <name>`), the sibling of {@link isTmuxAlive}. The registry calls it on evict
+   * of a durable session because the worker-IPC "kill" does NOT reliably terminate a durable
+   * (detached, per-boot-socket) tmux — a never-tasked webhook drive lingered as an idle `claude`
+   * after `kill` fired, while a manual kill-session by name reaped it (webhook-claude-cli-tdd-20260701).
+   * Absent ⇒ no-op (the worker-IPC kill is the only teardown, today's behavior).
+   */
+  killTmuxSession?: (name: string, socket?: string) => void;
   onReattached?: (info: { sessionId: string; agentId: string }) => void;
   onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
 }
