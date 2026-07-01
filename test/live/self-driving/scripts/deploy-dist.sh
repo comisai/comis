@@ -21,4 +21,4 @@ ssh -o ConnectTimeout=15 "$VPS" "
   echo -n '  orchestrate dist: '; find '$SRC/packages' -path '*/dist/*' -name 'orchestrate-tool.js' | head -1
   echo -n '  REVOKE wiring   : '; grep -lq 'capEndpointHandle?.leaseManager' '$SRC/packages/daemon/dist/daemon.js' && echo present || echo 'ABSENT (pre-b7b5b48c)'
 "
-echo "Done. Next:  ssh $VPS 'bash /root/lt-scripts/clean-restart.sh'"
+echo "Done. Next:  ssh $VPS 'WIPE_CRONS=1 bash /root/clean-restart.sh'   # deploy-scripts.sh installs it to /root/, not /root/lt-scripts"

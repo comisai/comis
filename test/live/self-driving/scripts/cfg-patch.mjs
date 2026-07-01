@@ -24,12 +24,19 @@
 //   not-allowed (no turn):        {"channels":{"telegram":{"allowFrom":["999999999"]}}}
 //
 // Adjust the require path if the daemon src tree isn't at /root/comis-src.
-import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire('/root/comis-src/packages/daemon/package.json');
 const YAML = require('yaml');
 const path = (process.env.HOME || '/home/comis') + '/.comis/config.yaml';
-const patchRaw = process.argv[2] || readFileSync('/tmp/patch.json', 'utf8');
+// argv[2] is inline JSON, OR a path to a JSON file, ELSE fall back to /tmp/patch.json. The
+// path-detection avoids the footgun (webhook-claude-cli-tdd-20260701-backstop) where passing
+// `cfg-patch.mjs /tmp/patch.json` JSON.parsed the PATH STRING and threw "Unexpected token '/'"
+// — a file arg now Just Works instead of silently needing the no-arg form.
+const arg = process.argv[2];
+const patchRaw = arg
+  ? (existsSync(arg) ? readFileSync(arg, 'utf8') : arg)
+  : readFileSync('/tmp/patch.json', 'utf8');
 const patch = JSON.parse(patchRaw);
 const cfg = YAML.parse(readFileSync(path, 'utf8')) || {};
 function merge(t, s) {
