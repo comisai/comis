@@ -26,7 +26,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { safePath, systemNowDate, systemNowMs } from "@comis/core";
+import { safePath, systemGetEnv, systemNowDate, systemNowMs } from "@comis/core";
 import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
 import {
@@ -35,9 +35,16 @@ import {
   type ObservabilityStore,
 } from "./offline-secrets-store.js";
 
-/** The CLI's offline data dir — same resolution the offline secrets path uses. */
+/**
+ * The CLI's offline data dir. Honors `COMIS_DATA_DIR` (the daemon's + the wizard's
+ * data-dir env, `04-oauth-helpers.ts`), falling back to `<homedir>/.comis`. Without the
+ * env check, `comis explain --offline` / `comis fleet --offline` read the INVOKING user's
+ * home — so running the CLI as a different user than the daemon (or against a non-default
+ * `COMIS_DATA_DIR` install) silently reads an empty dir and reports a false "nothing
+ * happened" for a session that succeeded (webhook-claude-cli-tdd-20260630-rerun).
+ */
 export function resolveOfflineDataDir(): string {
-  return safePath(os.homedir(), ".comis");
+  return systemGetEnv("COMIS_DATA_DIR") ?? safePath(os.homedir(), ".comis");
 }
 
 /** Sanctioned system clock for the fleet window (cli has no infra edge). */

@@ -1332,3 +1332,22 @@ describe("toIncidentSignals — OBS-CANARY: comis explain still folds a reflect:
     expect(s.learning).toBeUndefined();
   });
 });
+
+describe("toIncidentSignals — DRIVE-02 terminal.drive_promoted (backgrounding signal)", () => {
+  it("sets terminalDrivePromoted{reason,count} from a terminal.drive_promoted record", () => {
+    const s = toIncidentSignals([event("terminal.drive_promoted", 1, { reason: "mode_detached" })]);
+    expect(s.terminalDrivePromoted).toEqual({ reason: "mode_detached", count: 1 });
+  });
+
+  it("counts repeated promotions and keeps the LAST reason", () => {
+    const s = toIncidentSignals([
+      event("terminal.drive_promoted", 1, { reason: "producing" }),
+      event("terminal.drive_promoted", 2, { reason: "mode_detached" }),
+    ]);
+    expect(s.terminalDrivePromoted).toEqual({ reason: "mode_detached", count: 2 });
+  });
+
+  it("is ABSENT (undefined, not {}) when the session backgrounded no drive", () => {
+    expect(toIncidentSignals([event("session.started", 0, {})]).terminalDrivePromoted).toBeUndefined();
+  });
+});

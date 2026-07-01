@@ -119,6 +119,10 @@ export interface GatewayDeps {
   sessionStore: ReturnType<typeof createSessionStore>;
   /** Resolver for per-agent executors. */
   getExecutor: (agentId: string) => AgentExecutor;
+  /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701): reap the LIVE
+   *  never-tasked drives a webhook turn left behind so the delivery is an honest failure, not a silent
+   *  success. Threaded into the webhook route. Absent ⇒ inert. */
+  reapNeverTaskedDrives?: (agentId: string, owner: { agentId: string; sessionKey: string }) => Promise<{ reaped: string[] }>;
   /** Assembles the three-tier tool pipeline for an agent. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
@@ -235,6 +239,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     cachedPort,
     sessionStore,
     getExecutor,
+    reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,
     rpcCall,
@@ -404,6 +409,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gwConfig,
     tokenStore,
     getExecutor,
+    reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,
     cachedPort,

@@ -46,6 +46,7 @@ import type { LivenessSignal } from "./terminal-wake-types.js";
 import {
   busyOrHung,
   buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
   terminalWorkerDir,
   resolveTmuxSocketPath,
   type TerminalDurabilityDeps,
@@ -142,6 +143,34 @@ export function buildIsTmuxAlive(
       return true; // exit 0 ⇒ the named detached session is alive
     } catch {
       return false; // non-zero exit (gone) / spawn fault ⇒ the SAFE direction is "not alive"
+    }
+  };
+}
+
+/**
+ * Deterministically kill a DURABLE session's detached tmux by name (`tmux -S <socket> kill-session
+ * -t <name>`) — the sibling of {@link buildIsTmuxAlive}. The registry calls this on evict of a
+ * durable session because the worker-IPC "kill" does NOT reliably terminate a detached, per-boot-
+ * socket tmux (a never-tasked webhook drive lingered as an idle `claude` after `kill`; a manual
+ * kill-session by name reaped it — webhook-claude-cli-tdd-20260701). Best-effort: a non-zero exit
+ * (already gone) or spawn fault is swallowed — the session is de-registered regardless. `run` is
+ * injected ONLY for the unit test; production keeps the bounded execFileSync.
+ */
+export function buildKillTmux(
+  tmuxPath: string | undefined,
+  socketPath: string,
+  run: (bin: string, args: string[]) => void = (bin, args) => {
+    // eslint-disable-next-line no-restricted-syntax -- bounded kill-session teardown (durable evict backstop)
+    execFileSync(bin, args, { stdio: "ignore" });
+  },
+): (name: string, socket?: string) => void {
+  if (tmuxPath === undefined) return (): void => {};
+  return (name: string, socket?: string): void => {
+    try {
+      const [bin, ...args] = buildTmuxKillArgv({ tmuxPath, socketPath: socket ?? socketPath, name });
+      run(bin!, args);
+    } catch {
+      /* already gone / spawn fault — the session is de-registered regardless (best-effort) */
     }
   };
 }
@@ -301,16 +330,16 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
   durability: TerminalDurabilityDeps;
   isBusy: (s: { sessionId: string; lastActivity: number }) => boolean;
 } {
-  const isTmuxAlive = buildIsTmuxAlive(
-    resolveDaemonTmuxPath(),
-    resolveTmuxSocketPath(terminalWorkerDir(i.dataDir)),
-  );
+  const tmuxSocketPath = resolveTmuxSocketPath(terminalWorkerDir(i.dataDir));
+  const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath(), tmuxSocketPath);
+  const killTmuxSession = buildKillTmux(resolveDaemonTmuxPath(), tmuxSocketPath);
   const storeDeps: SessionDescriptorPersistenceDeps = { dataDir: i.dataDir, agentId: i.agentId };
   const descriptorStore = createSessionDescriptorStore(storeDeps);
 
   const durability: TerminalDurabilityDeps = {
     descriptorStore,
     isTmuxAlive,
+    killTmuxSession,
     onReattached: ({ sessionId, agentId }) => {
       // DUR-01 (I5/I3): the re-attach ran under the SAME persisted allow-entry; the content-free
       // record carries ids only (the screen the drive resumed on rides the detached tmux, never the bus).
@@ -463,6 +492,17 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     const owner = resolveStampedOwner(registry, sessionId, agentId); // ISSUE-3: the live channel/API session's stamped owner
     const handle = registry.get(sessionId, owner);
     if (handle === undefined) return undefined; // gone → the backstop skips it
+    // LINGER-01 (webhook-claude-cli-tdd-20260701-backstop): capture the idle clock BEFORE the probe.
+    // The `status` round-trip below stamps `lastActivity = now` (the LO-03 I9 unify — keeps a
+    // quiet-but-busy compile fresh so the reaper never false-evicts it). But an UNATTENDED
+    // (webhook/cron, owner sessionKey "") drive that has cleanly SETTLED (awaiting-input) is
+    // classified BUSY, so that same passive stamp keeps a FINISHED drive warm forever → the
+    // ENDURE-01 idle reaper's `now - lastActivity > idleTtlMs` cap can never fire and the idle drive
+    // lingers until clean-restart. For that one case we restore the pre-probe value below so the
+    // reaper measures idleness from the drive's last REAL activity. (An interactive drive is left
+    // warm — a human owns its lifecycle; a working/stuck drive is untouched — never a false-evict.)
+    const idleClockBeforeProbe = handle.lastActivity;
+    const isUnattended = owner.sessionKey === "";
     // The SINGLE liveness check: the worker `status` round-trip (CLASSIFIER perception, NOT a
     // screen read — I2). It also refreshes the handle's lastActivity as a side effect.
     const status = await registry.status(sessionId, owner);
@@ -479,7 +519,15 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     // "finished — waiting for input" notification. A backgrounded drive emits no fd3 attention
     // once promoted, so without this the completion is never delivered. Purely additive — the
     // busy verdict is unchanged (awaiting-input is busy, never hung).
-    return { alive: true, noProgressMs: 0, stuckMs, ...(status.state === "awaiting-input" ? { awaitingInput: true } : {}) };
+    if (status.state === "awaiting-input") {
+      // LINGER-01: a SETTLED unattended drive made no progress — do NOT let the passive probe's
+      // stamp refresh its idle clock, or the reaper's idleTtlMs cap can never evict the finished
+      // drive. Restoring the pre-probe value keeps the completion signal (below) intact while
+      // letting idleness accrue from the last real activity. Interactive drives keep the warm stamp.
+      if (isUnattended) handle.lastActivity = idleClockBeforeProbe;
+      return { alive: true, noProgressMs: 0, stuckMs, awaitingInput: true };
+    }
+    return { alive: true, noProgressMs: 0, stuckMs };
   };
 
   // LO-03 (165-REVIEW): NO separate refreshLastActivity — checkLiveness's `registry.status`

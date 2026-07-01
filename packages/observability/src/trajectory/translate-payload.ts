@@ -343,6 +343,12 @@ export function translatePayload(
     case "background_task:failed":
       return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
 
+    case "terminal:drive_promoted":
+      // DRIVE-02 → trajectory (was daemon-log-only). Content-free: the reason enum
+      // ONLY. The terminal sessionId, agentId, and raw timestamp are envelope/
+      // correlation ids (the recorder envelope carries the agent session) — never echoed.
+      return { reason: payload.reason };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,

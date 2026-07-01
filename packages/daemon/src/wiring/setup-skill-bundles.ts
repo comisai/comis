@@ -27,7 +27,7 @@
  */
 
 import { readFileSync, mkdirSync } from "node:fs";
-import { isAbsolute, resolve as pathResolve } from "node:path";
+import { resolveSkillDiscoveryPaths } from "./setup-agents/skill-discovery-paths.js";
 import { safePath, SkillsConfigSchema } from "@comis/core";
 import type { AppContainer, McpServerEntry, PerAgentConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -415,12 +415,10 @@ export function buildSkillRegistriesForBundles(
     } catch {
       // Non-fatal — discovery will just produce zero skills for this path.
     }
-    const resolvedPaths = skillsConfig.discoveryPaths.map((p: string) =>
-      isAbsolute(p) ? p : pathResolve(dataDir, p),
-    );
-    if (!resolvedPaths.includes(agentSkillsDir)) {
-      resolvedPaths.unshift(agentSkillsDir);
-    }
+    // Force-include the bundled-skill install target (<dataDir>/skills) + the agent workspace skills
+    // dir, so this boot pre-pass discovers the SAME set the real per-agent registry will — including
+    // the daemon's bundled skills even under a custom `discoveryPaths` (skill-discovery-paths.ts).
+    const resolvedPaths = resolveSkillDiscoveryPaths(skillsConfig.discoveryPaths, dataDir, agentSkillsDir);
     const resolvedSkillsConfig = { ...skillsConfig, discoveryPaths: resolvedPaths };
 
     const registry = createSkillRegistry(

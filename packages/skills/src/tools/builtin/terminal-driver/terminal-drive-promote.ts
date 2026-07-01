@@ -140,14 +140,28 @@ export function emitDrivePromoted(
  * @param mode - The promotion policy: `"auto"` (honest-signal-driven, the default),
  *   `"attached"` (never promote = today, I1 opt-out), `"detached"` (promote at the first
  *   wait, explicit opt-in).
+ * @param everTasked - `true` iff the agent has delivered a task to this drive (any DELIVERED
+ *   `send_text` since create). LOOP-CLOSURE (webhook-claude-cli-tdd, 2026-06-30): a `detached`
+ *   durable drive otherwise promotes at the FIRST wait — even the initial gate/idle wait BEFORE
+ *   any task was sent — which backgrounds a work-less terminal, hands it to an absent human, and
+ *   persists a wake-state that RESURRECTS on the next boot. A never-tasked drive has no work to
+ *   track, so it must stay inline until the task lands (the NEXT wait then promotes normally).
+ *   Defaults `true` so every caller that does NOT thread the signal is byte-identical to today —
+ *   only the wait tool passes the real value (from the registry handle's `everSentText`).
  * @returns `true` to promote to a detached drive-owner, `false` to stay inline.
  */
 export function shouldPromoteDrive(
   result: Pick<WaitResult, "isComplete" | "producing">,
   mode: DriveMode,
+  everTasked = true,
 ): boolean {
   if (mode === "attached") return false; // I1: never background (= today's inline-only behavior).
-  if (mode === "detached") return true; // explicit opt-in: promote at the first wait.
+  // LOOP-CLOSURE (webhook-claude-cli-tdd): `detached` promotes at the FIRST wait — but ONLY once the
+  // agent has tasked the drive. A never-tasked drive that backgrounds at its initial gate/idle wait
+  // strands a work-less terminal + persists a resurrecting wake-state. `auto` (below) needs no such
+  // gate: it promotes only on `producing:true` (active output ⇒ already working ⇒ already tasked),
+  // and an un-tasked idle drive never reaches producing, so it never auto-promotes untasked.
+  if (mode === "detached") return everTasked; // explicit opt-in: promote at the first wait, once tasked.
   // auto (default): the honest signal — not done, but still producing output. `isComplete` is
   // read verbatim (never coerced to true), so a completed-inline wait stays inline (I1) and a
   // wedged worker's honest not-complete-without-producing settle does not promote.

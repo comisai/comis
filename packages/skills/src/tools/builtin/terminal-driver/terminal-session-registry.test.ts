@@ -262,6 +262,35 @@ describe("createTerminalSessionRegistry — MR-02: worker-crash emits a per-sess
   });
 });
 
+describe("createTerminalSessionRegistry — durable evict kill-sessions the detached tmux (webhook-claude-cli-tdd-20260701)", () => {
+  // The worker-IPC "kill" does NOT reliably terminate a DURABLE (detached, per-boot-socket) tmux —
+  // a never-tasked webhook drive lingered as an idle `claude` after kill fired, while a manual
+  // kill-session by name reaped it. evictInternal now deterministically kill-sessions a durable
+  // handle's tmux by name via the injected durability.killTmuxSession.
+  it("kill of a DURABLE session calls durability.killTmuxSession(comis-<id>, socket)", async () => {
+    const killTmuxSession = vi.fn();
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { currentTmuxSocket: "/sock/tmux-1.sock", durability: { killTmuxSession } }),
+    );
+    const { sessionId } = await registry.create(
+      { allowId: "claude", bin: "/c", argv: [], cols: 80, rows: 24, durable: true },
+      OWNER,
+    );
+    await registry.kill(sessionId, OWNER);
+    expect(killTmuxSession).toHaveBeenCalledWith(`comis-${sessionId}`, "/sock/tmux-1.sock");
+  });
+
+  it("kill of a NON-durable session does NOT kill-session (no durable tmux to reap)", async () => {
+    const killTmuxSession = vi.fn();
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { killTmuxSession } }));
+    const { sessionId } = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+    await registry.kill(sessionId, OWNER);
+    expect(killTmuxSession).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);
@@ -359,6 +388,39 @@ describe("createTerminalSessionRegistry — read round-trip", () => {
       alt: false,
       alive: true,
     });
+  });
+});
+
+describe("createTerminalSessionRegistry — LOOP-CLOSURE: everSentText marks a tasked drive", () => {
+  // webhook-claude-cli-tdd (2026-06-30): the wait tool reads handle.everSentText as `everTasked` and
+  // feeds it to shouldPromoteDrive, so a never-tasked detached durable drive does NOT background at
+  // its first gate/idle wait (which would strand a work-less terminal + persist a resurrecting
+  // wake-state). This proves the flag half of the wiring: create leaves it unset; a delivered
+  // send_text flips it true; send_key (gate/menu navigation) does NOT count as a task.
+  function okSend(req: TerminalRequestFrame): TerminalReplyFrame | undefined {
+    if (req.method !== "send_text" && req.method !== "send_key") return undefined;
+    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 } } };
+  }
+  const CREATE_REQ = { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 } as const;
+
+  it("a freshly-created session is NOT tasked (everSentText falsy) — nothing delivered yet", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBeFalsy();
+  });
+
+  it("a DELIVERED send_text flips everSentText true (the wait tool reads this as everTasked)", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    await registry.sendText(sessionId, OWNER, { text: "implement the feature test-first" });
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBe(true);
+  });
+
+  it("send_key does NOT mark the drive tasked — a trust-gate answer / menu navigation is not a task", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    await registry.sendKey(sessionId, OWNER, { keys: ["Down", "Enter"] });
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBeFalsy();
   });
 });
 

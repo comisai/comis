@@ -637,7 +637,13 @@ export function createTerminalSessionRegistry(
       submit: args.submit ?? false,
       bracketedPaste: args.bracketedPaste ?? false,
     });
-    return mapSendReply(handle, reply);
+    const result = mapSendReply(handle, reply);
+    // LOOP-CLOSURE: mark the drive TASKED once text actually lands on the pane (delivered). This is
+    // the signal shouldPromoteDrive reads (everTasked) so a never-tasked detached durable drive does
+    // not background at its first gate/idle wait. send_key is deliberately NOT counted — a trust-gate
+    // answer or menu navigation is not a delivered task.
+    if (result.delivered === true) handle.everSentText = true;
+    return result;
   }
 
   async function sendKey(sessionId: string, owner: SessionOwner, args: { keys: string[] }): Promise<SendResult> {
@@ -717,6 +723,13 @@ export function createTerminalSessionRegistry(
     if (worker !== undefined && handle.status === "running") {
       // Fire-and-forget: the session is dropped locally regardless of the reply.
       send(sessionId, "kill", { sessionId });
+    }
+    // A DURABLE session's tmux is DETACHED on a per-boot socket; the worker-IPC "kill" above does
+    // NOT reliably terminate it (a never-tasked webhook drive lingered as an idle `claude` after
+    // kill fired — webhook-claude-cli-tdd-20260701), so deterministically kill-session it by name
+    // (the path proven to reap it). Best-effort + belt-and-suspenders alongside the worker kill.
+    if (handle.durable === true && handle.tmuxName !== undefined) {
+      deps.durability?.killTmuxSession?.(handle.tmuxName, handle.tmuxSocket);
     }
     sessions.delete(sessionId);
     if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);

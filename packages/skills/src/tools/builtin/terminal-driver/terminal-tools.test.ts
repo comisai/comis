@@ -978,6 +978,43 @@ describe("terminal-tools — wait delegation", () => {
     expect(body.matched).toBe(false);
   });
 
+  // LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701): the agent waited on a LIVE drive it
+  // NEVER tasked (handle exists, everSentText=false) — the dominant flub (create → clear gate →
+  // wait, before send_text). The wait tool returns a JIT task-not-delivered directive steering it
+  // to deliver the task now (or report honestly), instead of the idle result it reads as "nothing to do".
+  const NEVER_TASKED_HANDLE: SessionHandle = {
+    sessionId: "s1", allowId: "claude", command: "claude", status: "running",
+    cols: 80, rows: 24, lastActivity: 0, startedAt: 0,
+    owner: { agentId: "agent-1", sessionKey: "" }, durable: true, everSentText: false,
+  };
+
+  it("wait on a LIVE never-tasked drive (handle.everSentText=false) → returns the task-not-delivered directive", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE, handles: new Map([["s1", NEVER_TASKED_HANDLE]]) });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    const note = (res.details as { note?: string }).note;
+    expect(note).toMatch(/have NOT delivered a task/i);
+    expect(note).toMatch(/send_text/i);
+    expect(note).not.toMatch(/overall task is done/i);
+  });
+
+  it("wait on a TASKED drive (handle.everSentText=true) → NO directive (byte-identical; only the FINDING-3 scope note)", async () => {
+    const taskedHandle: SessionHandle = { ...NEVER_TASKED_HANDLE, everSentText: true };
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE, handles: new Map([["s1", taskedHandle]]) });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    const note = (res.details as { note?: string }).note;
+    expect(note).not.toMatch(/have NOT delivered a task/i);
+    expect(note).toMatch(/SETTLED/); // COMPLETE_INLINE is isComplete → the existing FINDING-3 note
+  });
+
+  it("wait with NO handle (gone/unknown session) → NO directive (a missing handle is not the never-tasked-live-drive case)", async () => {
+    const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE }); // handle-less
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    expect((res.details as { note?: string }).note).not.toMatch(/have NOT delivered a task/i);
+  });
+
   it("logs a DEBUG with durationMs (wait is readOnly) (§2.7)", async () => {
     const registry = makeFakeRegistry();
     const logger = makeCapturingLogger();
@@ -1089,9 +1126,43 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(drivePromotedEvents(bus)).toHaveLength(0);
   });
 
-  it("detached + first wait → emits terminal:drive_promoted with reason 'mode_detached' (explicit opt-in)", async () => {
-    // Even a completed-inline wait promotes under detached (promote-at-first-wait).
+  it("detached + first wait + NEVER TASKED → NO emit (loop-closure: an un-tasked drive must not background)", async () => {
+    // webhook-claude-cli-tdd (2026-06-30): the pre-fix behavior promoted at the first wait
+    // UNCONDITIONALLY, so a durable claude drive backgrounded at its initial gate/idle wait —
+    // BEFORE the agent delivered any task — stranding a work-less terminal + persisting a wake-state
+    // that RESURRECTS on the next boot. With no handle (never-tasked), get(...)?.everSentText is
+    // falsy → everTasked=false → the detached branch returns false → no promotion. (handles is empty.)
     const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("detached + wait + TASKED (handle.everSentText) → emits mode_detached (DELIVER-02 tracking preserved once work lands)", async () => {
+    // Once the agent has delivered a task — a durable claude BUILD that then idles, the DELIVER-02
+    // scenario — the detached drive promotes at the next wait so the daemon backstop tracks it and
+    // fires a completion. everTasked rides the registry handle's everSentText (set by sendText on the
+    // first delivered send_text). Even a completed-inline wait promotes under detached, once tasked.
+    const taskedHandle: SessionHandle = {
+      sessionId: "s1",
+      allowId: "a",
+      command: "claude",
+      status: "running",
+      cols: 80,
+      rows: 24,
+      lastActivity: 0,
+      startedAt: 0,
+      owner: { agentId: "agent-1", sessionKey: "" },
+      durable: true,
+      everSentText: true,
+    };
+    const registry = makeFakeRegistry({
+      waitImpl: async () => COMPLETE_INLINE,
+      handles: new Map([["s1", taskedHandle]]),
+    });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
 

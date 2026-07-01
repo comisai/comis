@@ -1396,7 +1396,10 @@ describe("setupTools", () => {
       // Default agent gets lazy sharedPaths; resolve to verify empty (only one agent, skips self)
       const resolvedShared = typeof sandboxArg.sharedPaths === "function" ? sandboxArg.sharedPaths() : sandboxArg.sharedPaths;
       expect(resolvedShared).toEqual([]);
-      expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/test/data/logs"]);
+      // readOnlyPaths is routed through resolveSkillDiscoveryPaths, which force-includes the
+      // bundled-skill install target <dataDir>/skills (so a surfaced skill's SKILL.md is readable
+      // even when discoveryPaths omits ./skills — the 5ba0aa76 Issue-A fix).
+      expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/test/data/skills", "/test/data/logs"]);
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/test/data/logs"]);
     });
 
@@ -1563,7 +1566,9 @@ describe("setupTools", () => {
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
       const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
-      expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/logs"]);
+      // The bundled-skill install target <dataDir>/skills is force-included (lowest precedence),
+      // even with a custom absolute discoveryPaths that omits it (5ba0aa76 Issue-A fix).
+      expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/skills", "/test/data/logs"]);
     });
 
     it("enriches sharedPaths in ExecSandboxConfig for default agent", async () => {

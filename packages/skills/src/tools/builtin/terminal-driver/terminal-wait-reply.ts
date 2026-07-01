@@ -49,10 +49,35 @@ export const WAIT_COMPLETE_NOTE =
   "isComplete here means the terminal SETTLED (the driven CLI finished its current output) — it does NOT mean your overall task is done. If the user's request has remaining steps (more commands, edits, or a follow-up like a slash command), continue with them now; finish only when the whole request is handled.";
 
 /**
- * Attach {@link WAIT_COMPLETE_NOTE} to a settle-COMPLETE wait result (FINDING-3 scope guard,
- * model-facing only); a not-complete result is returned unchanged (the driver keeps waiting).
+ * LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701, `WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`):
+ * the dominant flub is the agent WAITING on a drive it NEVER tasked — it creates the session, clears
+ * the trust gate with `send_key`, then `wait`s BEFORE ever `send_text`-ing the task (the SKILL.md §3
+ * order violation). The wait resolves idle and the agent reads "nothing to do" → ends the turn or,
+ * on an unattended (webhook/cron) origin with no human to prompt it, hallucinates "I don't have a
+ * task from you yet". `cb57b96d` stops that never-tasked drive from BACKGROUNDING (no stranded
+ * resurrec-able wake-state); this note closes the other half — a JIT, deterministic tool-result
+ * directive delivered at the exact mistake site (stronger than the static SKILL.md nudge, which the
+ * flub survives) that steers the agent to deliver the task now OR fail honestly. Origin-independent:
+ * waiting on an un-tasked drive is always premature. Supersedes {@link WAIT_COMPLETE_NOTE} — a
+ * "your task isn't finished" note is moot when no task was ever delivered.
  */
-export function withCompleteNote(out: WaitResult): WaitResult & { note?: string } {
+export const WAIT_TASK_NOT_DELIVERED_NOTE =
+  "You have NOT delivered a task to this session yet (no send_text since it launched), so waiting will not make progress — the terminal is idle because it has nothing to do, NOT because your work is finished. Your task is in THIS conversation; do NOT report that you have no task or that the message came through empty. Send the full task now with send_text + Enter, THEN wait/poll to completion. If you genuinely cannot proceed (e.g. the CLI needs re-authentication), report the failure honestly — never claim a success you did not verify.";
+
+/**
+ * Attach the model-facing wait note. Two guards, in priority order (model-facing JSON only; the
+ * registry {@link WaitResult} / daemon contract is UNCHANGED):
+ *   1. `neverTaskedLiveDrive` (LOOP-CLOSURE recovery) → {@link WAIT_TASK_NOT_DELIVERED_NOTE}: the
+ *      agent is waiting on a LIVE drive it never tasked — steer it to deliver the task or fail
+ *      honestly (supersedes the complete-note). Set only for a drive whose handle exists AND has
+ *      `everSentText===false` (a gone/absent handle is NOT this case — see the wait tool).
+ *   2. else `isComplete` (FINDING-3 scope guard) → {@link WAIT_COMPLETE_NOTE}: don't over-read a
+ *      SETTLE-complete wait as "task done".
+ * A not-complete, tasked result is returned unchanged (the driver keeps waiting). `neverTaskedLiveDrive`
+ * defaults `false` so every existing caller is byte-identical to today (only the wait tool passes it).
+ */
+export function withCompleteNote(out: WaitResult, neverTaskedLiveDrive = false): WaitResult & { note?: string } {
+  if (neverTaskedLiveDrive) return { ...out, note: WAIT_TASK_NOT_DELIVERED_NOTE };
   return out.isComplete ? { ...out, note: WAIT_COMPLETE_NOTE } : out;
 }
 

@@ -17,6 +17,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   buildWakeDurabilityDeps,
   buildIsTmuxAlive,
+  buildKillTmux,
   isTmuxServerStranded,
   recreateStrandedTmuxServerOnBoot,
 } from "./terminal-durable-wiring.js";
@@ -110,6 +111,54 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(signal?.awaitingInput, "awaiting-input surfaces the DELIVER-01 completion signal").toBe(true);
   });
 
+  it("LINGER-01: a settled (awaiting-input) UNATTENDED drive does NOT get lastActivity refreshed by the passive probe (so the ENDURE-01 idle reaper can finally evict it)", async () => {
+    // webhook-claude-cli-tdd-20260701-backstop: a backgrounded UNATTENDED (webhook/cron, owner
+    // sessionKey "") drive that cleanly SETTLES (awaiting-input) is classified BUSY, so the LIVE-01
+    // backstop keeps probing it every ~90s and each `registry.status` round-trip stamps lastActivity
+    // = now → the ENDURE-01 idle reaper's `now - lastActivity > idleTtlMs` cap can NEVER fire → the
+    // finished drive lingers until clean-restart. The fix: the PASSIVE liveness probe must not
+    // refresh a settled unattended drive's idle clock (it made no progress), so the reaper's
+    // idleTtlMs measures from its last REAL activity and evicts it.
+    let now = 1_000;
+    const handle = { sessionId: "s-1", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const registry = {
+      getOwner: vi.fn(() => ({ agentId: "a", sessionKey: "" })), // the UNATTENDED (webhook/cron) owner
+      get: vi.fn(() => handle as never),
+      status: vi.fn(async () => {
+        handle.lastActivity = now; // the production registry.status lastActivity side effect
+        return { state: "awaiting-input" as const, lastActivity: now, interactions: 3, cursorParked: true, screenDiffEmpty: true, confidence: "high" as const, reason: "settled_cursor_parked" };
+      }),
+    };
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-linger01", registries: new Map([["a", registry]]) as never, workerStuckMs: 600_000, nowMs: () => now });
+
+    now = 50_000; // time advances; the drive has been settled since its last real activity
+    const signal = await deps.checkLiveness("s-1", "a");
+
+    expect(signal?.awaitingInput, "the DELIVER-01 completion signal still surfaces (the fix touches only the idle clock)").toBe(true);
+    // The passive probe restored lastActivity to its pre-probe (last-REAL-activity) value — NOT `now`.
+    expect(handle.lastActivity, "a settled UNATTENDED drive's idle clock is frozen so the reaper's idleTtlMs can evict it").toBe(1);
+  });
+
+  it("LINGER-01: an awaiting-input INTERACTIVE drive (owner sessionKey set) IS still refreshed — a human owns its lifecycle, the idle reaper does not touch it", async () => {
+    let now = 1_000;
+    const handle = { sessionId: "s-2", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const registry = {
+      getOwner: vi.fn(() => ({ agentId: "u", sessionKey: "default:u:u:peer:u" })), // an INTERACTIVE (channel) owner
+      get: vi.fn(() => handle as never),
+      status: vi.fn(async () => {
+        handle.lastActivity = now;
+        return { state: "awaiting-input" as const, lastActivity: now, interactions: 3, cursorParked: true, screenDiffEmpty: true, confidence: "high" as const, reason: "settled_cursor_parked" };
+      }),
+    };
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-linger01b", registries: new Map([["a", registry]]) as never, workerStuckMs: 600_000, nowMs: () => now });
+
+    now = 50_000;
+    await deps.checkLiveness("s-2", "a");
+
+    // An interactive drive is left warm — reaping it would surprise the human who may reply later.
+    expect(handle.lastActivity, "an interactive settled drive keeps the LO-03 refresh (human-owned lifecycle)").toBe(50_000);
+  });
+
   it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep (LO-03 removed)", () => {
     const deps = buildWakeDurabilityDeps({
       dataDir: "/tmp/nonexistent-comis-lo03",
@@ -149,6 +198,39 @@ describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the wor
 
   it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor, I1)", () => {
     expect(buildIsTmuxAlive(undefined, socketPath)("comis-abc")).toBe(false);
+  });
+});
+
+describe("buildKillTmux — deterministic durable-evict kill-session by name (webhook-claude-cli-tdd-20260701)", () => {
+  const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
+
+  it("kills `tmux -S <session socket> kill-session -t comis-<id>` — the path proven to reap a durable never-tasked drive", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }));
+    kill("comis-abc", "/home/comis/.comis/terminal-worker/tmux-999.sock");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.bin).toBe("/usr/bin/tmux");
+    // the per-session socket (a durable's per-boot server) leads, then kill-session -t <name>.
+    expect(calls[0]!.args).toEqual(["-S", "/home/comis/.comis/terminal-worker/tmux-999.sock", "kill-session", "-t", "comis-abc"]);
+  });
+
+  it("falls back to the default socket when no per-session socket is given", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }))("comis-abc");
+    expect(calls[0]!.args).toEqual(["-S", socketPath, "kill-session", "-t", "comis-abc"]);
+  });
+
+  it("swallows a kill fault (already gone / spawn error) — the session is de-registered regardless (best-effort)", () => {
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, () => {
+      throw new Error("exit 1: no such session");
+    });
+    expect(() => kill("comis-gone")).not.toThrow();
+  });
+
+  it("absent tmuxPath ⇒ no-op (no run attempted)", () => {
+    let ran = false;
+    buildKillTmux(undefined, socketPath, () => { ran = true; })("comis-abc");
+    expect(ran).toBe(false);
   });
 });
 

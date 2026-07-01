@@ -5,7 +5,8 @@
  * @module
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
+import { resolveSkillDiscoveryPaths } from "./setup-agents/skill-discovery-paths.js";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
@@ -419,12 +420,17 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       workspaceDirs.get(agentId) ?? defaultWorkspaceDir,
       "skills",
     );
-    const readOnlyPaths = skillsConfig.discoveryPaths.map((p: string) =>
-      isAbsolute(p) ? p : resolve(dataDir, p),
+    // Force-include the bundled-skill install target (<dataDir>/skills) alongside the agent
+    // workspace skills dir, so the read tool can READ a surfaced skill's SKILL.md at its
+    // <location> even when a custom discoveryPaths omits the default ./skills. Without this the
+    // registry surfaces the skill (skill-discovery-paths.ts, same force-include) but the agent's
+    // read of its body is a `[path_traversal] outside workspace bounds` refusal — the skill is
+    // visible yet its how-to is unreadable (webhook-claude-cli-tdd-20260630-rerun).
+    const readOnlyPaths = resolveSkillDiscoveryPaths(
+      skillsConfig.discoveryPaths,
+      dataDir,
+      agentWorkspaceSkillsDir,
     );
-    if (!readOnlyPaths.includes(agentWorkspaceSkillsDir)) {
-      readOnlyPaths.unshift(agentWorkspaceSkillsDir);
-    }
 
     // Default read-only access to daemon logs directory for troubleshooting
     const logsDir = resolve(dataDir, "logs");

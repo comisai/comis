@@ -574,6 +574,13 @@ export interface IncidentSignals {
     string,
     { ok: number; failed: number; topErrorKind?: string }
   >;
+  /** DRIVE-02: set when a terminal/coding-CLI drive was promoted to a backgrounded
+   *  drive-owner during the session — folded from `terminal.drive_promoted` trajectory
+   *  records (bridged from the `terminal:drive_promoted` event, previously daemon-log-only).
+   *  `reason` is the promotion enum (`mode_detached` | `producing`), last-wins; `count` is
+   *  how many fired. Lets the terminal-drive verdict cite the backgrounding. Absent (never
+   *  `{}`) when no drive backgrounded. */
+  terminalDrivePromoted?: { reason: string; count: number };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;

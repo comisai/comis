@@ -78,6 +78,7 @@ export {
   createTerminalSessionStatusTool,
   createTerminalSessionResizeTool,
   createTerminalSessionRegistry,
+  reapNeverTaskedDrives,
   buildProductionSpawnWorker,
   resolveWorkerMainPath,
   terminalWorkerDir,
@@ -120,6 +121,7 @@ export {
   // The daemon-side has-session liveness probe builder (165-07 wiring): `tmux has-session -t
   // comis-<id>` — the re-attach + backstop probe (exit 0 ⇒ alive).
   buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
   type SessionDescriptor,
   type ReattachDecision,
   type SessionDescriptorStorePort,

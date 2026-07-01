@@ -379,6 +379,18 @@ describe("obs-explain-heuristics", () => {
     ).toBeNull();
   });
 
+  it("cites the backgrounding reason in the detail when the drive was promoted (DRIVE-02 bridge → signal)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolStats: { terminal_session_create: { ok: 1, failed: 0 } },
+        terminalDrivePromoted: { reason: "mode_detached", count: 1 },
+        endReason: "success",
+      }),
+    );
+    expect(r!.code).toBe("terminal_drive_opened_without_task");
+    expect(r!.detail).toMatch(/backgrounded|mode_detached/);
+  });
+
   it("a degraded session with tool failures and no named cause gets a catch-all tool-failure verdict", () => {
     // Live C13 finding (2026-06-12): an induced 2-tool-failure session
     // (memory_get + image_analyze, errorKind dependency, endReason

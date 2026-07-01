@@ -172,6 +172,51 @@ describe("mountGatewayRoutes", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Unattended honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY,
+  // webhook-claude-cli-tdd-20260701): a webhook turn that launches Claude Code but
+  // ends WITHOUT delivering the task (a live never-tasked drive — the "I have no task"
+  // flub) must record an HONEST failure, not the silent success the delivered-event
+  // would otherwise report. Owner reconstructs deterministically (agentId = sk.userId).
+  // -----------------------------------------------------------------------
+
+  const WEBHOOK_CFG = { enabled: true, path: "/hooks", mappings: [{ id: "m1", name: "devtask" }], presets: [] } as any;
+
+  it("reaps a stranded never-tasked drive at webhook turn-end → webhook_delivered success:false + honest reason", async () => {
+    const reapNeverTaskedDrives = vi.fn(async () => ({ reaped: ["sess-1"] }));
+    const deps = createMockDeps({ webhooksConfig: WEBHOOK_CFG, reapNeverTaskedDrives });
+    mountGatewayRoutes(deps);
+    const cfg = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+    await cfg.onAgentAction({ id: "m1", name: "devtask" }, "build is_prime", "hook:devtask:x");
+    // the deterministic reap ran for the exec agent with the terminal-tools fallback owner
+    // ({ agentId: execAgentId, sessionKey: "" }) — the webhook execute() path leaves ctx.userId/sessionKey
+    // unset, so resolveOwner falls back to deps.agentId + "" (the owner the drive is registered under).
+    expect(reapNeverTaskedDrives).toHaveBeenCalledWith("default", { agentId: "default", sessionKey: "" });
+    const delivered = (deps.container.eventBus.emit as any).mock.calls.find((c: unknown[]) => c[0] === "diagnostic:webhook_delivered");
+    expect(delivered).toBeDefined();
+    expect(delivered[1]).toMatchObject({ success: false });
+    expect(String(delivered[1].error)).toMatch(/without delivering the task|never-tasked|did not run/i);
+  });
+
+  it("no stranded drive at webhook turn-end → webhook_delivered success:true (happy path unchanged)", async () => {
+    const reapNeverTaskedDrives = vi.fn(async () => ({ reaped: [] }));
+    const deps = createMockDeps({ webhooksConfig: WEBHOOK_CFG, reapNeverTaskedDrives });
+    mountGatewayRoutes(deps);
+    const cfg = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+    await cfg.onAgentAction({ id: "m1", name: "devtask" }, "build is_prime", "hook:devtask:x");
+    const delivered = (deps.container.eventBus.emit as any).mock.calls.find((c: unknown[]) => c[0] === "diagnostic:webhook_delivered");
+    expect(delivered[1]).toMatchObject({ success: true });
+  });
+
+  it("no reap seam wired (undefined) → inert; webhook_delivered success:true (byte-identical to pre-backstop)", async () => {
+    const deps = createMockDeps({ webhooksConfig: WEBHOOK_CFG }); // reapNeverTaskedDrives omitted
+    mountGatewayRoutes(deps);
+    const cfg = vi.mocked(createMappedWebhookEndpoint).mock.calls.at(-1)![0] as any;
+    await cfg.onAgentAction({ id: "m1", name: "devtask" }, "build is_prime", "hook:devtask:x");
+    const delivered = (deps.container.eventBus.emit as any).mock.calls.find((c: unknown[]) => c[0] === "diagnostic:webhook_delivered");
+    expect(delivered[1]).toMatchObject({ success: true });
+  });
+
+  // -----------------------------------------------------------------------
   // Webhook token resolution
   // -----------------------------------------------------------------------
 

@@ -785,7 +785,13 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
       // `auto` (inline, I1). Closes the gap where a short durable build whose wait resolved `idle`
       // (claude paused, never a `producing` timeout) never promoted → was untracked → no completion.
       const driveMode = resolveDriveMode(deps.driveMode, deps.durable === true);
-      if (shouldPromoteDrive(out, driveMode)) {
+      // LOOP-CLOSURE (webhook-claude-cli-tdd): gate promotion on whether the agent ever DELIVERED a
+      // task to this drive (a delivered send_text since create). A never-tasked detached durable
+      // drive must NOT background at its first (gate/idle) wait — that strands a work-less terminal
+      // and persists a wake-state that resurrects on the next boot. Owner-scoped read; absent ⇒ false.
+      const waitHandle = deps.registry.get(sessionId, owner);
+      const everTasked = waitHandle?.everSentText === true;
+      if (shouldPromoteDrive(out, driveMode, everTasked)) {
         emitDrivePromoted(
           { emit: deps.eventBus.emit.bind(deps.eventBus), info: deps.logger.info.bind(deps.logger), nowMs: deps.nowMs },
           sessionId,
@@ -793,7 +799,13 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
           driveMode === "detached" ? "mode_detached" : "producing",
         );
       }
-      return jsonResult(withCompleteNote(out)); // FINDING-3: scope `isComplete` for the model (registry `out` unchanged)
+      // LOOP-CLOSURE recovery (webhook-claude-cli-tdd-20260701): the agent is waiting on a LIVE drive
+      // it NEVER tasked (handle exists, no delivered send_text yet) — the dominant flub. Attach a JIT
+      // task-not-delivered directive so it delivers the task (or fails honestly) instead of reading the
+      // idle result as "nothing to do". A MISSING handle (gone/unknown session) is NOT this case — the
+      // gate requires the handle to exist, so a byte-identical result for every non-flub path holds.
+      const neverTaskedLiveDrive = waitHandle !== undefined && !everTasked;
+      return jsonResult(withCompleteNote(out, neverTaskedLiveDrive)); // FINDING-3 + loop-closure note (registry `out` unchanged)
     },
   };
 }

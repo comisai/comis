@@ -38,7 +38,7 @@
 
 import { createHmac } from "node:crypto";
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 function parseArgs(argv) {
   const pos = [];
@@ -76,7 +76,24 @@ function parseArgs(argv) {
 
 function readBody(spec) {
   if (spec === "-") return readFileSync(0, "utf8");
-  if (typeof spec === "string" && spec.startsWith("@")) return readFileSync(spec.slice(1), "utf8");
+  if (typeof spec === "string" && spec.startsWith("@")) {
+    const path = spec.slice(1);
+    // Surface the file's size + mtime so a STALE body is obvious. The footgun
+    // (webhook-claude-cli-tdd-20260701): a botched `writeFileSync` EACCES-failed to
+    // refresh a reused `/tmp/<name>.json` (a prior run left it comis-owned), but the
+    // POST still ran `@/tmp/<name>.json` and silently sent the STALE body — creating a
+    // phantom turn (id from the OLD run) that looked like a durable-drive resurrection.
+    // Two rules this echo enforces: (1) write each body to a UNIQUE, self-owned path per
+    // run (not a reused /tmp name); (2) `&&`-gate the body-write BEFORE the POST so a
+    // failed write aborts the send. If the printed mtime looks old, you're sending stale bytes.
+    try {
+      const st = statSync(path);
+      const ageS = Math.round((Date.now() - st.mtimeMs) / 1000);
+      console.error(`[local] body from ${path} (bytes=${st.size}, mtime=${new Date(st.mtimeMs).toISOString()}, age=${ageS}s)`);
+      if (ageS > 120) console.error(`[local] ⚠ that body file is ${ageS}s old — is it STALE from a prior run? (write a UNIQUE per-run path)`);
+    } catch { /* readFileSync below will surface the real error */ }
+    return readFileSync(path, "utf8");
+  }
   return spec ?? "";
 }
 
