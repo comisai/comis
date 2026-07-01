@@ -23,8 +23,36 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { safePath } from "@comis/core";
 import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
-import { assembleIncidentReportOffline, assembleFleetHealthReportOffline } from "./offline-obs.js";
+import {
+  assembleIncidentReportOffline,
+  assembleFleetHealthReportOffline,
+  resolveOfflineDataDir,
+} from "./offline-obs.js";
+
+// OBS-OFFLINE-DATADIR (webhook-claude-cli-tdd-20260630-rerun): `comis explain --offline` /
+// `comis fleet --offline` resolved the data dir from `os.homedir()` ALONE, ignoring
+// `COMIS_DATA_DIR`. Running the CLI as a different user than the daemon (the live-test rig runs
+// the daemon as `comis` but invokes the CLI as `root`) then read an EMPTY `<root-home>/.comis`
+// and reported `endReason=unknown, $0, 0 turns` for a session that SUCCEEDED — the exact false
+// "nothing happened" the obs lens exists to prevent. The daemon + the wizard (04-oauth-helpers)
+// both honor `COMIS_DATA_DIR`; the offline obs reader must match.
+describe("resolveOfflineDataDir", () => {
+  const prev = process.env.COMIS_DATA_DIR;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.COMIS_DATA_DIR;
+    else process.env.COMIS_DATA_DIR = prev;
+  });
+  it("honors COMIS_DATA_DIR when set (matches the daemon + wizard data-dir resolution)", () => {
+    process.env.COMIS_DATA_DIR = "/srv/custom-comis-data";
+    expect(resolveOfflineDataDir()).toBe("/srv/custom-comis-data");
+  });
+  it("falls back to <homedir>/.comis when COMIS_DATA_DIR is unset", () => {
+    delete process.env.COMIS_DATA_DIR;
+    expect(resolveOfflineDataDir()).toBe(safePath(os.homedir(), ".comis"));
+  });
+});
 
 // The live incident's session key — maps to tenant "default", channel
 // "678314278", file "678314278~peer~678314278.jsonl" (verified against the
