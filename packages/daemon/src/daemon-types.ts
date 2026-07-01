@@ -661,6 +661,9 @@ export interface BootContext {
   // Tools (assembler + preprocessor)
   assembleToolsForAgent?: ReturnType<typeof setupTools>["assembleToolsForAgent"];
   preprocessMessageText?: ReturnType<typeof setupTools>["preprocessMessageText"];
+  /** Per-agent terminal session registries (webhook-claude-cli-tdd-20260701): threaded to bootGateway
+   *  so the webhook route can reap a turn's LIVE never-tasked drives (the unattended honest-fail backstop). */
+  terminalRegistries?: ReturnType<typeof setupTools>["terminalRegistries"];
   getCapabilityPortForAgent?: (agentId: string) => ToolCapabilityPort;
   // Monitoring + heartbeat
   heartbeatRunner?: ReturnType<typeof setupMonitoring>["heartbeatRunner"];

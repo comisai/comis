@@ -123,6 +123,7 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // Phase 211 ENDPOINT-01/03 + JAIL-03
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
@@ -2254,6 +2255,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
   // ShutdownDeps.bgCompletionRunnerShutdown.
+  // Thread the terminal registries to bootGateway's webhook route for the unattended honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY).
+  Object.assign(boot, { terminalRegistries });
+
   // 6.6.8.0.2. Terminal-driver wake-FSM (v2.11 / 124-09 — THE KEYSTONE). One-per-daemon:
   // subscribes the re-published terminal:input_needed (the Task-1 fd3 hook) → dedupe/active-
   // check/hop-limit → wakes ONE turn that runs the safe-only auto-answer + loop-guard against
@@ -2530,6 +2534,8 @@ async function bootGateway(
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
     embeddingQueue, memoryAdapter, memoryApi, cachedPort, sessionStore, getExecutor,
+    // Deterministic honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY): reap a webhook turn's LIVE never-tasked drives so it records an honest failure, not a silent success.
+    reapNeverTaskedDrives: (agentId, owner) => { const r = channels.terminalRegistries?.get(agentId); return r ? reapNeverTaskedDrivesInRegistry(r, owner) : Promise.resolve({ reaped: [] }); },
     assembleToolsForAgent, preprocessMessageText, rpcCall,
     costTrackers, workspaceDirs,
     _createGatewayServer, piSessionAdapters,

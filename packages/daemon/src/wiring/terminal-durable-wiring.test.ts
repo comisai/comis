@@ -17,6 +17,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   buildWakeDurabilityDeps,
   buildIsTmuxAlive,
+  buildKillTmux,
   isTmuxServerStranded,
   recreateStrandedTmuxServerOnBoot,
 } from "./terminal-durable-wiring.js";
@@ -149,6 +150,39 @@ describe("buildIsTmuxAlive — DUR-01: the daemon liveness probe targets the wor
 
   it("absent tmuxPath ⇒ always-false (durable falls back to the lost floor, I1)", () => {
     expect(buildIsTmuxAlive(undefined, socketPath)("comis-abc")).toBe(false);
+  });
+});
+
+describe("buildKillTmux — deterministic durable-evict kill-session by name (webhook-claude-cli-tdd-20260701)", () => {
+  const socketPath = "/home/comis/.comis/terminal-worker/tmux.sock";
+
+  it("kills `tmux -S <session socket> kill-session -t comis-<id>` — the path proven to reap a durable never-tasked drive", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }));
+    kill("comis-abc", "/home/comis/.comis/terminal-worker/tmux-999.sock");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.bin).toBe("/usr/bin/tmux");
+    // the per-session socket (a durable's per-boot server) leads, then kill-session -t <name>.
+    expect(calls[0]!.args).toEqual(["-S", "/home/comis/.comis/terminal-worker/tmux-999.sock", "kill-session", "-t", "comis-abc"]);
+  });
+
+  it("falls back to the default socket when no per-session socket is given", () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    buildKillTmux("/usr/bin/tmux", socketPath, (bin, args) => calls.push({ bin, args }))("comis-abc");
+    expect(calls[0]!.args).toEqual(["-S", socketPath, "kill-session", "-t", "comis-abc"]);
+  });
+
+  it("swallows a kill fault (already gone / spawn error) — the session is de-registered regardless (best-effort)", () => {
+    const kill = buildKillTmux("/usr/bin/tmux", socketPath, () => {
+      throw new Error("exit 1: no such session");
+    });
+    expect(() => kill("comis-gone")).not.toThrow();
+  });
+
+  it("absent tmuxPath ⇒ no-op (no run attempted)", () => {
+    let ran = false;
+    buildKillTmux(undefined, socketPath, () => { ran = true; })("comis-abc");
+    expect(ran).toBe(false);
   });
 });
 

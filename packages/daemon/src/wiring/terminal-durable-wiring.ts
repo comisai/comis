@@ -46,6 +46,7 @@ import type { LivenessSignal } from "./terminal-wake-types.js";
 import {
   busyOrHung,
   buildTmuxHasSessionArgv,
+  buildTmuxKillArgv,
   terminalWorkerDir,
   resolveTmuxSocketPath,
   type TerminalDurabilityDeps,
@@ -142,6 +143,34 @@ export function buildIsTmuxAlive(
       return true; // exit 0 ⇒ the named detached session is alive
     } catch {
       return false; // non-zero exit (gone) / spawn fault ⇒ the SAFE direction is "not alive"
+    }
+  };
+}
+
+/**
+ * Deterministically kill a DURABLE session's detached tmux by name (`tmux -S <socket> kill-session
+ * -t <name>`) — the sibling of {@link buildIsTmuxAlive}. The registry calls this on evict of a
+ * durable session because the worker-IPC "kill" does NOT reliably terminate a detached, per-boot-
+ * socket tmux (a never-tasked webhook drive lingered as an idle `claude` after `kill`; a manual
+ * kill-session by name reaped it — webhook-claude-cli-tdd-20260701). Best-effort: a non-zero exit
+ * (already gone) or spawn fault is swallowed — the session is de-registered regardless. `run` is
+ * injected ONLY for the unit test; production keeps the bounded execFileSync.
+ */
+export function buildKillTmux(
+  tmuxPath: string | undefined,
+  socketPath: string,
+  run: (bin: string, args: string[]) => void = (bin, args) => {
+    // eslint-disable-next-line no-restricted-syntax -- bounded kill-session teardown (durable evict backstop)
+    execFileSync(bin, args, { stdio: "ignore" });
+  },
+): (name: string, socket?: string) => void {
+  if (tmuxPath === undefined) return (): void => {};
+  return (name: string, socket?: string): void => {
+    try {
+      const [bin, ...args] = buildTmuxKillArgv({ tmuxPath, socketPath: socket ?? socketPath, name });
+      run(bin!, args);
+    } catch {
+      /* already gone / spawn fault — the session is de-registered regardless (best-effort) */
     }
   };
 }
@@ -301,16 +330,16 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
   durability: TerminalDurabilityDeps;
   isBusy: (s: { sessionId: string; lastActivity: number }) => boolean;
 } {
-  const isTmuxAlive = buildIsTmuxAlive(
-    resolveDaemonTmuxPath(),
-    resolveTmuxSocketPath(terminalWorkerDir(i.dataDir)),
-  );
+  const tmuxSocketPath = resolveTmuxSocketPath(terminalWorkerDir(i.dataDir));
+  const isTmuxAlive = buildIsTmuxAlive(resolveDaemonTmuxPath(), tmuxSocketPath);
+  const killTmuxSession = buildKillTmux(resolveDaemonTmuxPath(), tmuxSocketPath);
   const storeDeps: SessionDescriptorPersistenceDeps = { dataDir: i.dataDir, agentId: i.agentId };
   const descriptorStore = createSessionDescriptorStore(storeDeps);
 
   const durability: TerminalDurabilityDeps = {
     descriptorStore,
     isTmuxAlive,
+    killTmuxSession,
     onReattached: ({ sessionId, agentId }) => {
       // DUR-01 (I5/I3): the re-attach ran under the SAME persisted allow-entry; the content-free
       // record carries ids only (the screen the drive resumed on rides the detached tmux, never the bus).

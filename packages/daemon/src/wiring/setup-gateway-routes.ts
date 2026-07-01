@@ -115,6 +115,15 @@ export interface GatewayRouteDeps {
   /** Interactive-callback wiring: the single-use email approval-token map
    *  + resolver. When present, the `ALL /approve/:token` route is mounted. */
   interactiveCallbackWiring?: import("./setup-interactive-callback.js").InteractiveCallbackWiring;
+  /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701,
+   *  `WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`): after an unattended (webhook) agent turn, reap the
+   *  LIVE terminal drives the turn created but NEVER tasked (no `send_text`) — the model
+   *  nondeterministically hallucinates "I have no task", launches Claude Code, and ends the turn
+   *  without delivering the task. Reaping ≥1 such drive means the task never ran → the webhook
+   *  delivery is recorded as an HONEST failure (not a silent success with a leaked idle drive). The
+   *  model-independent floor beneath the wait-tool `WAIT_TASK_NOT_DELIVERED_NOTE` best-effort recovery.
+   *  Absent ⇒ inert (byte-identical to today). Wired in the composition root from `terminalRegistries`. */
+  reapNeverTaskedDrives?: (agentId: string, owner: { agentId: string; sessionKey: string }) => Promise<{ reaped: string[] }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +151,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     cachedPort,
     defaultWorkspaceDir,
     interactiveCallbackWiring,
+    reapNeverTaskedDrives,
   } = deps;
 
   // -------------------------------------------------------------------------
@@ -243,6 +253,29 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             };
             const tools = await assembleToolsForAgent(execAgentId);
             await getExecutor(execAgentId).execute(msg, sk, tools, undefined, execAgentId);
+            // Deterministic honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY): if the turn
+            // launched Claude Code but ended WITHOUT delivering the task (a live never-tasked drive —
+            // the "I have no task" flub the wait-tool directive can't reliably fix), reap it and record
+            // an HONEST failure instead of the silent success this branch would otherwise report.
+            // OWNER: the webhook route calls execute() DIRECTLY (it does not run the inbound pipeline's
+            // resolveAndPreprocess that fills ctx.userId/sessionKey), so the RequestContext leaves both
+            // UNSET → the terminal tools' resolveOwner falls back to `{ agentId: deps.agentId (=execAgentId),
+            // sessionKey: "" }`. That fallback is the owner the drive is registered under — confirmed by the
+            // descriptor ground truth ({agentId:"default", sessionKey:""}, webhook-claude-cli-tdd-20260701).
+            if (reapNeverTaskedDrives) {
+              const { reaped } = await reapNeverTaskedDrives(execAgentId, {
+                agentId: execAgentId,
+                sessionKey: "",
+              });
+              if (reaped.length > 0) {
+                success = false;
+                error = `agent ended the unattended webhook turn without delivering the task to Claude Code — reaped ${reaped.length} never-tasked terminal drive(s); the task did not run`;
+                gatewayLogger.warn(
+                  { execAgentId, reapedCount: reaped.length, webhookId: _mapping.id ?? "unknown", hint: "the driven coding CLI was launched but the task was never sent (send_text) — the task-delivery precondition for a successful drive was not met; re-fire the webhook or drive it interactively" },
+                  "unattended webhook drive stranded a never-tasked terminal drive — reaped and recorded an honest failure",
+                );
+              }
+            }
           } catch (err: unknown) {
             success = false;
             error = err instanceof Error ? err.message : String(err);
