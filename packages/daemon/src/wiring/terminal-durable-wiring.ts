@@ -492,6 +492,17 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     const owner = resolveStampedOwner(registry, sessionId, agentId); // ISSUE-3: the live channel/API session's stamped owner
     const handle = registry.get(sessionId, owner);
     if (handle === undefined) return undefined; // gone → the backstop skips it
+    // LINGER-01 (webhook-claude-cli-tdd-20260701-backstop): capture the idle clock BEFORE the probe.
+    // The `status` round-trip below stamps `lastActivity = now` (the LO-03 I9 unify — keeps a
+    // quiet-but-busy compile fresh so the reaper never false-evicts it). But an UNATTENDED
+    // (webhook/cron, owner sessionKey "") drive that has cleanly SETTLED (awaiting-input) is
+    // classified BUSY, so that same passive stamp keeps a FINISHED drive warm forever → the
+    // ENDURE-01 idle reaper's `now - lastActivity > idleTtlMs` cap can never fire and the idle drive
+    // lingers until clean-restart. For that one case we restore the pre-probe value below so the
+    // reaper measures idleness from the drive's last REAL activity. (An interactive drive is left
+    // warm — a human owns its lifecycle; a working/stuck drive is untouched — never a false-evict.)
+    const idleClockBeforeProbe = handle.lastActivity;
+    const isUnattended = owner.sessionKey === "";
     // The SINGLE liveness check: the worker `status` round-trip (CLASSIFIER perception, NOT a
     // screen read — I2). It also refreshes the handle's lastActivity as a side effect.
     const status = await registry.status(sessionId, owner);
@@ -508,7 +519,15 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     // "finished — waiting for input" notification. A backgrounded drive emits no fd3 attention
     // once promoted, so without this the completion is never delivered. Purely additive — the
     // busy verdict is unchanged (awaiting-input is busy, never hung).
-    return { alive: true, noProgressMs: 0, stuckMs, ...(status.state === "awaiting-input" ? { awaitingInput: true } : {}) };
+    if (status.state === "awaiting-input") {
+      // LINGER-01: a SETTLED unattended drive made no progress — do NOT let the passive probe's
+      // stamp refresh its idle clock, or the reaper's idleTtlMs cap can never evict the finished
+      // drive. Restoring the pre-probe value keeps the completion signal (below) intact while
+      // letting idleness accrue from the last real activity. Interactive drives keep the warm stamp.
+      if (isUnattended) handle.lastActivity = idleClockBeforeProbe;
+      return { alive: true, noProgressMs: 0, stuckMs, awaitingInput: true };
+    }
+    return { alive: true, noProgressMs: 0, stuckMs };
   };
 
   // LO-03 (165-REVIEW): NO separate refreshLastActivity — checkLiveness's `registry.status`
