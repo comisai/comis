@@ -1,7 +1,7 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.4"
+version: "1.1.5"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
 ---
 
@@ -10,6 +10,16 @@ description: Drive the Claude Code CLI interactively in a terminal session to bu
 Claude Code is itself a capable coding agent. You operate it like a developer at a terminal: launch the interactive TUI, give it the task, let it work, answer its prompts, and verify. You drive it through the `terminal_session_*` tools — `create`, `send_text` (type), `send_key` (a keystroke), `read` (the screen), `wait`, `status`, `kill`.
 
 Use this for any non-trivial coding work (build a project, add a feature, fix a bug, write+run tests). Prefer it over running raw shell commands yourself.
+
+> **You already have this guide — do NOT go hunting for it.** This SKILL.md is injected into your context;
+> the numbered steps below are everything you need. Do **not** `find` / `read` / `exec` / `grep` for a
+> "claude-code" or "SKILL.md" file, nor for the project folder or "how to drive claude" — that hunt FAILS
+> (the file is outside your exec sandbox, and a guessed path like `~claude-code/SKILL.md` trips the
+> path-traversal guard), and flailing on those tool errors is what derails a drive into wrongly reporting
+> *"the message came through empty."* **Your task is in THIS conversation.** If you're unsure what to build,
+> re-read the request you were given — never claim the message was empty/missing when a task was provided.
+> Go straight to §1 below (create the session) and drive; your first tool call should be
+> `terminal_session_create`, not a filesystem search.
 
 ## 1. Launch — always in a named project
 
