@@ -24,7 +24,7 @@
 #     -t comis-installed:dev .
 
 # Global ARGs — declared before any FROM so they can be used in FROM lines.
-ARG COMIS_INSTALL_NODE_IMAGE="node:22-bookworm@sha256:1031993481795705055273f2eef0c24597abdcb277d6e058c82f78cbbdef92a6"
+ARG COMIS_INSTALL_NODE_IMAGE="node:22-bookworm@sha256:c601a46abb4d2ab80a9dc3da208d50d1122642d53f17a101926ace71e5a9bf1c"
 ARG COMIS_INSTALL_BASE_IMAGE="ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54"
 
 # ── Stage 1: build the comisai npm tarball ────────────────────────────────
