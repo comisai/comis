@@ -137,6 +137,13 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // (RECALL-01 — the #1 troubleshooting blind spot), so they are NOT listed here.
   "memory:entities_linked",
   "memory:recall_used",
+  // OE-6b (orchestration-excellence-20260701-fullregression): surfaced by broadening
+  // EMIT_REGEX to catch `?.emit(` (emitted via optional chaining by lcd-distillation-runner,
+  // invisible to the pre-fix scanner). LCD-distillation background/maintenance lifecycle
+  // metrics (skipped reason / completed counts), same class as memory:consolidated /
+  // memory:review_completed above — a maintenance job, NOT a turn-level trajectory step.
+  "memory:distillation_skipped",
+  "memory:distillation_complete",
   // NB: memory:skill_used (ATTR-02) is now BRIDGED to the trajectory (IMP-3 / PD-OBS-1 —
   // package-delivery-20260628: explain.skillsUsed was [] for an inline-surfaced reuse while
   // skillsPromoted>0), so it is NOT listed here (the disjoint mapped-vs-allowlisted invariant).
@@ -256,6 +263,16 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   //   ids/counts only, content-free. A counts-only internal-health signal (same
   //   class as context:compaction_routed above), NOT a turn-level trajectory step.
   "context:arbitrated",
+  // OE-6b (orchestration-excellence-20260701-fullregression): surfaced by broadening
+  // EMIT_REGEX to catch `?.emit(` (these were emitted via optional chaining and were
+  // invisible to the pre-fix scanner). Both are internal context-engine health signals,
+  // same class as context:compacted / context:dag_degraded above — NOT turn-level steps:
+  //   context:dag_compacted — LCD DAG compaction counts (consumed by the daemon
+  //     context-pipeline-collector, not the per-session trajectory).
+  //   context:thinking_downshifted — a reasoning-effort downshift routing decision
+  //     (same daemon-decision class as elevated:model_routed below).
+  "context:dag_compacted",
+  "context:thinking_downshifted",
 
   // -------------------------------------------------------------------
   // Diagnostic counters — internal aggregation, not user-visible.
@@ -357,7 +374,13 @@ const DIRECT_EMIT_TRAJECTORY_TYPES: ReadonlySet<TrajectoryEventType> = new Set<T
 ]);
 
 const SCANNED_PACKAGES = ["agent", "orchestrator"] as const;
-const EMIT_REGEX = /eventBus\.emit\(\s*"([^"]+)"/g;
+// OE-6b (orchestration-excellence-20260701-fullregression): match BOTH `eventBus.emit(` AND
+// `eventBus?.emit(` (optional-chaining). The previous `/eventBus\.emit\(/` deliberately MISSED
+// `?.emit` — a documented blind spot that let `subagent:delivery_retried` (emitted by the
+// announcement-batcher via `deps.eventBus?.emit`) slip through un-bridged AND un-allowlisted,
+// so P0-B's self-healing retry was invisible to `comis explain`/`fleet`. The `\??` makes the
+// `?` before `.emit` optional so an `?.emit` event can never again escape the bridge-or-allowlist gate.
+const EMIT_REGEX = /eventBus\??\.emit\(\s*"([^"]+)"/g;
 
 interface EmitSite {
   readonly file: string;

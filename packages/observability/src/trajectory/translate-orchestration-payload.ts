@@ -29,6 +29,7 @@ export type OrchestrationBridgedEventName =
   // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
   | "security:sandbox_downgrade_refused"
   | "subagent:delivery_deadlettered"
+  | "subagent:delivery_retried"
   | "subagent:budget_exceeded"
   // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-cap authorization decision
   // — the spawn-tree's per-node producer. Content-free: caps/tool-NAME/decision/
@@ -76,6 +77,13 @@ export function translateOrchestrationPayload(
       // (retries-exhausted vs immediate-permanent) tag ONLY — NEVER the announcement body or
       // the error string (§2.7). timestamp envelope-only.
       return { runId: payload.runId, channelType: payload.channelType, transient: payload.transient };
+
+    case "subagent:delivery_retried":
+      // OE-6b (DELIVERY-03): the self-healing transient retry — run id + closed channelType +
+      // the 1-based attempt count + the transient tag ONLY (the `explain` view wants the attempt
+      // number so an operator can see HOW MANY retries a completion took before it landed) —
+      // NEVER the announcement body or the error string (§2.7). timestamp envelope-only.
+      return { runId: payload.runId, channelType: payload.channelType, attempt: payload.attempt, transient: payload.transient };
 
     case "subagent:budget_exceeded":
       // ORCH-OBS (BUDGET-03): the per-incident breach view for `comis explain` — graphId/

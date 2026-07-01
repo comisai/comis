@@ -306,6 +306,7 @@ export function translatePayload(
     case "subagent:steered":
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
+    case "subagent:delivery_retried": // OE-6b: the self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}
     case "subagent:budget_exceeded":
     case "capability:audited":
     case "graph:node_spawned":

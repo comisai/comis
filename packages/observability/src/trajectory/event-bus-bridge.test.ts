@@ -1648,6 +1648,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       transient: true,
       timestamp: 0,
     },
+    "subagent:delivery_retried": {
+      runId: "run-rt",
+      channelType: "telegram",
+      attempt: 2,
+      transient: true,
+      timestamp: 0,
+    },
     "subagent:budget_exceeded": {
       graphId: "g1",
       nodeId: "greedy",
@@ -1970,13 +1977,19 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- subagent:steered (STEER-01, operator visi
 // ---------------------------------------------------------------------------
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator visibility)", () => {
-  it("maps the three events to their reserved trajectory types (arch closure)", () => {
+  it("maps the four events to their reserved trajectory types (arch closure)", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["security:sandbox_downgrade_refused"]).toBe("security.sandbox_downgrade_refused");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_deadlettered"]).toBe("subagent.delivery_deadlettered");
+    // OE-6b (orchestration-excellence-20260701-fullregression): delivery_retried was
+    // emitted (announcement-batcher) but bridged to NOTHING — the arch ?.emit blind spot
+    // let it slip past trajectory-event-types-known. It is the sibling of delivery_deadlettered
+    // and must be reconstructable in `comis explain` (spec §7/§10 + P0-B self-healing visibility).
+    expect(TRAJECTORY_BRIDGE_MAPPING["subagent:delivery_retried"]).toBe("subagent.delivery_retried");
     expect(TRAJECTORY_BRIDGE_MAPPING["subagent:budget_exceeded"]).toBe("subagent.budget_exceeded");
     const allTypes = new Set<string>(TRAJECTORY_EVENT_TYPES as readonly string[]);
     expect(allTypes.has("security.sandbox_downgrade_refused")).toBe(true);
     expect(allTypes.has("subagent.delivery_deadlettered")).toBe(true);
+    expect(allTypes.has("subagent.delivery_retried")).toBe(true);
     expect(allTypes.has("subagent.budget_exceeded")).toBe(true);
   });
 
@@ -2023,6 +2036,28 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- ORCH-OBS sub-agent lifecycle (operator vi
     expect(recorder.calls[0]!.type).toBe("subagent.delivery_deadlettered");
     const data = recorder.calls[0]!.data as Record<string, unknown>;
     expect(data).toEqual({ runId: "run-dl", channelType: "telegram", transient: true });
+    for (const forbidden of ["message", "text", "body", "content", "error"]) {
+      expect(data[forbidden]).toBeUndefined();
+    }
+  });
+
+  it("translates subagent:delivery_retried to runId/channelType/attempt/transient ONLY (no announcement/error body) — OE-6b", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("subagent:delivery_retried", {
+      runId: "run-rt",
+      channelType: "telegram",
+      attempt: 2,
+      transient: true,
+      timestamp: 1000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("subagent.delivery_retried");
+    const data = recorder.calls[0]!.data as Record<string, unknown>;
+    expect(data).toEqual({ runId: "run-rt", channelType: "telegram", attempt: 2, transient: true });
     for (const forbidden of ["message", "text", "body", "content", "error"]) {
       expect(data[forbidden]).toBeUndefined();
     }
@@ -3679,7 +3714,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     //   scope (the subagent:budget_exceeded precedent), so no allowlist entry is
     //   needed; the mapping is for operator trajectory visibility + arch closure.
     //   Content-free: caps/tool-NAME/decision/ids ONLY, NEVER args/body/secret — §2.7 / H1).
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(111); // +1 DRIVE-02 terminal:drive_promoted (webhook-claude-cli #2, 2026-06-30 — was daemon-log-only); +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only); +1 IMP-3/PD-OBS-1 memory:skill_used bridged (package-delivery-20260628 — inline-surfaced reuse credit, ids+count only); +1 finding A memory:skill_surfaced bridged (package-delivery-20260628 — topic-match reuse census, names+numbers only)
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(112); // +1 OE-6b subagent:delivery_retried (orchestration-excellence-20260701-fullregression — the self-healing retry sibling of delivery_deadlettered, bridged to nothing pre-fix via the ?.emit arch blind spot); +1 DRIVE-02 terminal:drive_promoted (webhook-claude-cli #2, 2026-06-30 — was daemon-log-only); +1 TREE-01 graph:node_spawned (finding D, 30uc-20260624); reflect:admitted + reflect:funnel RENAMED from learning:skill_synthesized/skill_synthesis_funnel (count-neutral); -3 Phase 226 SIMPLIFY-04 vestigial 0-emit DELETED (learning:skill_validated + user_model_revised + memory_generalized); -1 RANK-06 memory:online_tuning_applied REMOVED (Phase 224 — bandit deleted); +1 OBS-4b learning:memory_failure_attributed (reflect-obs-20260627 — the eviction-causation precursor, count-only); +1 IMP-3/PD-OBS-1 memory:skill_used bridged (package-delivery-20260628 — inline-surfaced reuse credit, ids+count only); +1 finding A memory:skill_surfaced bridged (package-delivery-20260628 — topic-match reuse census, names+numbers only)
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

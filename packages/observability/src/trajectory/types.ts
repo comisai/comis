@@ -152,6 +152,13 @@ export const TRAJECTORY_EVENT_TYPES = [
   // landing); the other two ride whichever session bridge is active when they fire.
   "security.sandbox_downgrade_refused",
   "subagent.delivery_deadlettered",
+  // OE-6b (orchestration-excellence-20260701-fullregression): the self-healing transient
+  // RETRY — the sibling of subagent.delivery_deadlettered. Emitted by the announcement-batcher
+  // via `?.emit` (which the trajectory-event-types-known arch regex missed pre-fix), so it was
+  // bridged to NOTHING while its terminal sibling was fully wired — P0-B's self-heal was invisible
+  // to `comis explain` (spec §7/§10 + the "all 7 bridged" claim). Content-free: runId + closed
+  // channelType + attempt count + the transient tag ONLY — never an announcement body / error string.
+  "subagent.delivery_retried",
   "subagent.budget_exceeded",
 
   // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization
