@@ -51,7 +51,7 @@ import {
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
-import { comparePosture, type SandboxPosture } from "./sandbox-posture.js";
+import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
 
@@ -1304,8 +1304,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           childPosture,
         });
         // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary.
-        throw new Error(
+        // Typed (OBS-RPC-REFUSAL-CLASS): classifyRpcError maps SandboxDowngradeError to
+        // precondition/warn — this fail-closed SECURITY refusal must NOT read as an
+        // internal/error handler fault in an operator's ERROR-level health sweep.
+        throw new SandboxDowngradeError(
           `Spawn refused: child "${params.agentId}" sandbox posture is less confined than parent "${params.callerAgentId}" on: ${violated}.`,
+          cmp.violatedDimensions,
         );
       }
     }

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
 import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
 import { RequiredToolsUnreachableError } from "@comis/core";
+import { SandboxDowngradeError } from "@comis/agent";
 
 // ---------------------------------------------------------------------------
 // Mock all 16 handler factory imports so createRpcDispatch can be tested
@@ -268,6 +269,18 @@ describe("classifyRpcError", () => {
 
   it("classifies PreconditionError as precondition error (warn level)", () => {
     const result = classifyRpcError(new PreconditionError("No active DAG conversation for this session"));
+    expect(result.errorKind).toBe("precondition");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toBeTruthy();
+  });
+
+  it("classifies SandboxDowngradeError as precondition error (warn level) — OBS-RPC-REFUSAL-CLASS", () => {
+    // A fail-closed P0-C no-downgrade spawn refusal is an EXPECTED security precondition
+    // failure, NOT an internal handler fault — it must classify warn/precondition so a
+    // fleet health sweep does not read it as an ERROR (orchestration-excellence-20260701).
+    const result = classifyRpcError(
+      new SandboxDowngradeError('Spawn refused: child "x" sandbox posture is less confined than parent "p" on: exec.', ["exec"]),
+    );
     expect(result.errorKind).toBe("precondition");
     expect(result.level).toBe("warn");
     expect(result.hint).toBeTruthy();

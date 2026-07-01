@@ -19,6 +19,7 @@ import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
 import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
+import { SandboxDowngradeError } from "@comis/agent";
 import {
   RequiredToolsUnreachableError,
   API_CONTRACTS_ORDERED,
@@ -174,6 +175,11 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
   // RequiredToolsUnreachableError is a caller-side validation failure (caller passed
   // invalid required_tools). Classify as validation/warn — NOT internal/error.
   if (err instanceof RequiredToolsUnreachableError) return { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" };
+  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the P0-C no-downgrade gate
+  // is a fail-closed SECURITY refusal (a caller precondition — the child's posture must be
+  // ≥ the spawner's), NOT an internal handler fault. precondition/warn so it does not read
+  // as a fleet ERROR in a health sweep, and names the exact knob to relax.
+  if (err instanceof SandboxDowngradeError) return { errorKind: "precondition", hint: "Child sandbox posture is less confined than its spawner; align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to allow", level: "warn" };
   return { errorKind: "internal", hint: "Check the RPC method handler and its dependencies", level: "error" };
 }
 

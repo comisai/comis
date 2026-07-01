@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { RequiredToolsUnreachableError } from "@comis/core";
+import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -4394,6 +4395,35 @@ describe("sandbox no-downgrade gate", () => {
         childPosture: { exec: "never" },
       }),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the refusal is a
+  // TYPED SandboxDowngradeError, so the daemon's classifyRpcError classifies it
+  // warn/precondition — a fail-closed SECURITY refusal must not read as an
+  // internal/error handler fault in a fleet health sweep.
+  // -------------------------------------------------------------------------
+  it("throws a TYPED SandboxDowngradeError carrying the violated dimensions", () => {
+    const resolvePosture = makePostureResolver({
+      parent: { exec: "always" },
+      "loose-child": { exec: "never" },
+    });
+    const runner = createSubAgentRunner(createGateDeps(resolvePosture));
+    let thrown: unknown;
+    try {
+      runner.spawn({
+        task: "escalate task",
+        agentId: "loose-child",
+        callerAgentId: "parent",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(SandboxDowngradeError);
+    expect((thrown as SandboxDowngradeError).violatedDimensions).toEqual(["exec"]);
   });
 
   // -------------------------------------------------------------------------

@@ -47,6 +47,7 @@ import { bindGraphMutateHandlers as bindGraphMutateHandlersRaw } from "./graph-m
 import * as graphHelpers from "./graph-helpers.js";
 import type { GraphHandlerDeps } from "./graph-helpers.js";
 import type { RpcHandler } from "../types.js";
+import { PreconditionError } from "../errors.js";
 import { withHeldCapabilities } from "../../../../../test/support/held-capabilities.js";
 
 // CAP-03: the gated graph.define/execute/save/load/delete/cancel/deleteRun
@@ -547,6 +548,16 @@ describe("graph.execute — from_intent gate + marker + synthesis emit (AUTHOR-0
         _agentId: "bot",
       }),
     ).rejects.toThrow(/intentAction|from_intent .*disabled|disabled by policy/i);
+    // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the policy refusal is a
+    // TYPED PreconditionError so rpc-dispatch classifies it warn/precondition — a gated-off
+    // feature is not an internal handler fault (which would read as a fleet ERROR).
+    await expect(
+      handlers["graph.execute"]!({
+        nodes: VALID_NODES,
+        _synthesizedFromIntent: "debate",
+        _agentId: "bot",
+      }),
+    ).rejects.toThrow(PreconditionError);
     // The gate fires BEFORE the coordinator — no graph ran.
     expect(seen).toHaveLength(0);
     expect(synthesizedPayloads(emit)).toHaveLength(0);

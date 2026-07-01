@@ -231,3 +231,32 @@ export function resolvePostureFromSkills(
     // filesystem / network / uid intentionally unset (present-but-inert, A1).
   };
 }
+
+/**
+ * Thrown by the sub-agent spawn path (P0-C no-downgrade gate) when a child's
+ * sandbox posture is strictly LESS confined than its spawner's on ≥1 dimension.
+ *
+ * A TYPED refusal (mirrors {@link RequiredToolsUnreachableError} in `@comis/core`):
+ * the daemon's `classifyRpcError` matches it to `precondition`/**warn**, so this
+ * fail-closed SECURITY refusal does NOT read as an `internal`/**error** handler
+ * fault in an operator's ERROR-level health sweep (OBS-RPC-REFUSAL-CLASS,
+ * orchestration-excellence-20260701). The refuse decision, the
+ * `security:sandbox_downgrade_refused` event, and the message are all unchanged —
+ * this only carries the type so the dispatch layer can classify it correctly.
+ *
+ * `violatedDimensions` are enum LABELS only (never posture values/paths/hosts, §2.7).
+ *
+ * @allow-throw: spawn() is consumed exclusively by daemon RPC handlers
+ * (@allow-throw boundary in sub-agent-runner.ts); rpc-dispatch converts this to a
+ * JSON-RPC error response.
+ */
+export class SandboxDowngradeError extends Error {
+  readonly kind = "sandbox_downgrade" as const;
+  readonly violatedDimensions: readonly PostureDimension[];
+
+  constructor(message: string, violatedDimensions: readonly PostureDimension[]) {
+    super(message);
+    this.name = "SandboxDowngradeError";
+    this.violatedDimensions = violatedDimensions;
+  }
+}
