@@ -26,7 +26,7 @@ import { createToolCapabilityAdapter } from "../tool-capability-adapter.js";
 import { suppressError } from "@comis/shared";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolveSkillDiscoveryPaths } from "./skill-discovery-paths.js";
 import {
   createCircuitBreaker,
   createBudgetGuard,
@@ -305,13 +305,11 @@ export async function setupSingleAgent(
   const agentSkillsDir = safePath(dir, "skills");  // dir = agent workspace from resolveWorkspaceDir()
   // fs-safe-allowed: per-agent workspace skills dir (`<agentWorkspace>/skills`); workspace dir is operator-configured, not ~/.comis/ directly
   mkdirSync(agentSkillsDir, { recursive: true });
-  const resolvedPaths = skillsConfig.discoveryPaths.map((p: string) =>
-    isAbsolute(p) ? p : resolve(dataDir, p),
-  );
-  // Prepend agent workspace skills dir (first-loaded-wins: agent skills take precedence)
-  if (!resolvedPaths.includes(agentSkillsDir)) {
-    resolvedPaths.unshift(agentSkillsDir);
-  }
+  // Resolve discovery paths + force-include the two daemon-controlled dirs (workspace skills,
+  // prepended; the bundled-skill install target <dataDir>/skills, appended). The latter keeps the
+  // daemon's bundled prompt skills (claude-code, codex, …) discoverable even when a CUSTOM
+  // `discoveryPaths` replaces the default `./skills` (webhook-claude-cli-tdd-20260630-rerun).
+  const resolvedPaths = resolveSkillDiscoveryPaths(skillsConfig.discoveryPaths, dataDir, agentSkillsDir);
 
   const resolvedSkillsConfig = {
     ...skillsConfig,
