@@ -15,7 +15,18 @@ CHATID="${CHATID:-678314278}"
 # scratch-acceptance runs (EXAMPLE-verified-learning target) MUST set WIPE_CRONS=1 for a true clean slate.
 WIPE_CRONS="${WIPE_CRONS:-0}"
 
-pkill -9 -f "^node .*daemon\.js" 2>/dev/null; sleep 2
+pkill -9 -f "^node .*daemon\.js" 2>/dev/null || true; sleep 2
+# Reap orphan terminal-driver tmux servers + their jailed coding-CLIs (claude/codex). The daemon is dead
+# now, but the tmux servers are detached and the bwrap jails are `--die-with-parent` on the TMUX PANE (not
+# the daemon), so they SURVIVE the daemon kill. Worse, the durable-drive store cleared below would otherwise
+# RESURRECT them on the next boot — recover-on-boot replays the persisted journal and RE-LAUNCHES + re-runs
+# the drive (not a clean re-attach), so a prior run's backgrounded "build X" drive comes back into a
+# from-scratch run, burning model tokens (webhook-claude-cli-tdd-20260630-rerun: DURABLE-DRIVE-RESURRECT-ON-
+# RESTART — the sockets are PID-named `tmux-<pid>.sock`, so the new daemon can't re-attach the old pane).
+for s in "$DATA"/terminal-worker/*.sock; do [ -e "$s" ] && { sudo -u comis tmux -S "$s" kill-server 2>/dev/null || true; }; done
+pkill -9 -f "share/claude/versions|share/codex|bwrap.*permission-mode" 2>/dev/null || true
+rm -f "$DATA"/terminal-worker/*.sock 2>/dev/null || true
+sleep 1
 # IMPORTANT: the session dir is default/<chatId>/ — NOT default/telegram/. Replacing memory.db clears the
 # LCD (prior-conversation replay); a bare jsonl rm is not enough (runbook §5).
 sudo -u comis bash -c "
@@ -33,6 +44,15 @@ sudo -u comis bash -c "
   # bare '*.log' leaves a 'clean' rig surfacing prior runs (F-OBS-1, 30uc-20260624 Phase 0).
   rm -f '$DATA'/logs/*.log '$DATA'/logs/session-index.*.jsonl* '$DATA'/logs/cache-trace.jsonl
   rm -rf '$DATA'/graph-runs/* '$DATA'/subagent-results/*
+  # Clear the DURABLE TERMINAL DRIVE + WAKE-STATE stores. A backgrounded coding-CLI drive persists its
+  # descriptor/journal in <DATA>/terminal-drive/ AND its wake-dispatch FSM state in <DATA>/terminal-wake/
+  # {sessionId}.json (OPS-09). On boot, recoverWakeStates RE-HYDRATES the wake-state + re-fires the wake →
+  # re-runs the drive's agent turn → spawns a FRESH coding CLI, so a prior run's drive RESURRECTS into a
+  # from-scratch run and (worse) RESPAWNS in a loop. Both live OUTSIDE workspace/sessions, so the
+  # session + memory.db wipe above does NOT catch them. terminal-wake is the LOAD-BEARING one (the
+  # re-fire trigger); clearing only terminal-drive leaves the wake-state to resurrect. (DURABLE-DRIVE-
+  # RESURRECT-ON-RESTART — webhook-claude-cli-tdd-20260630-rerun.)
+  rm -rf '$DATA'/terminal-drive/* '$DATA'/terminal-wake/*
   # Optional (WIPE_CRONS=1): clear the persisted cron store so a from-scratch run inherits NO stale crons
   # from a prior (different-dist) daemon. The daemon re-registers its current cron set from config on boot.
   # ALSO wipe execution.jsonl -- the ExecutionTracker per-job run HISTORY persists there (NOT in memory.db),
