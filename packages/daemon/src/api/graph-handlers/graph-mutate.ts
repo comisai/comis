@@ -29,6 +29,7 @@ import {
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
 import type { RpcHandler } from "../types.js";
+import { PreconditionError } from "../errors.js";
 import {
   IS_DEV,
   type GraphHandlerDeps,
@@ -145,7 +146,10 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       // graph runs. A non-from_intent execute (no marker) is wholly unaffected —
       // byte-identical to pre-174.
       if (synthPattern && !deps.authoringConfig?.intentAction) {
-        throw new Error(
+        // Typed (OBS-RPC-REFUSAL-CLASS): a gated-off policy refusal is a caller
+        // precondition failure, not an internal handler fault — classifyRpcError maps
+        // PreconditionError to precondition/warn so it doesn't read as a fleet ERROR.
+        throw new PreconditionError(
           "from_intent authoring is disabled by policy (orchestration.authoring.intentAction).",
         );
       }

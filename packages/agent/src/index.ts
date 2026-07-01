@@ -455,7 +455,7 @@ export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
-export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";
+export { comparePosture, resolvePostureFromSkills, SandboxDowngradeError } from "./spawn/index.js";
 export type {
   SandboxPosture,
   PostureDimension,
