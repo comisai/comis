@@ -38,7 +38,7 @@ export type { DeliveryDedup } from "./announce-key.js";
 // @comis/agent leaf; the daemon wiring (Plan 02) injects a resolver closure over
 // container.config.agents into the sub-agent runner, so the TYPE + comparator must
 // cross the package boundary here.
-export { comparePosture, resolvePostureFromSkills, SandboxDowngradeError } from "./sandbox-posture.js";
+export { comparePosture, resolvePostureFromSkills } from "./sandbox-posture.js";
 export type {
   SandboxPosture,
   PostureDimension,

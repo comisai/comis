@@ -81,7 +81,8 @@ export function setupRpcBridge(deps: {
       return await rpcCallInner(method, params);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const classified = classifyRpcError(errMsg);
+      // Pass the error OBJECT (not err.message) so classifyRpcError's typed-refusal recognition resolves (OBS-RPC-REFUSAL-CLASS).
+      const classified = classifyRpcError(err);
       gatewayLogger.debug({
         method,
         err: errMsg,
