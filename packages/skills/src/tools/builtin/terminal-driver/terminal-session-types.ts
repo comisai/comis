@@ -108,6 +108,15 @@ export interface SessionHandle {
    * absent ⇒ the boot socket fallback. Present only for a durable tmux session.
    */
   tmuxSocket?: string;
+  /**
+   * LOOP-CLOSURE (webhook-claude-cli-tdd, 2026-06-30): `true` once the agent has DELIVERED a task
+   * to this drive — set on the first delivered `send_text` (NOT `send_key`, which is gate/menu
+   * navigation, not a task). The wait tool feeds it to `shouldPromoteDrive` as `everTasked`: a
+   * never-tasked `detached` durable drive must NOT background at its first (gate/idle) wait, which
+   * would strand a work-less terminal + persist a resurrecting wake-state. Absent/false ⇒ the drive
+   * has only been created/read/waited/gate-navigated — never given work.
+   */
+  everSentText?: boolean;
 }
 
 // The registry's create/read/send/list shape DTOs. Moved here from

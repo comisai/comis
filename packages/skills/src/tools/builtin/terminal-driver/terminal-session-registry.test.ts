@@ -362,6 +362,39 @@ describe("createTerminalSessionRegistry — read round-trip", () => {
   });
 });
 
+describe("createTerminalSessionRegistry — LOOP-CLOSURE: everSentText marks a tasked drive", () => {
+  // webhook-claude-cli-tdd (2026-06-30): the wait tool reads handle.everSentText as `everTasked` and
+  // feeds it to shouldPromoteDrive, so a never-tasked detached durable drive does NOT background at
+  // its first gate/idle wait (which would strand a work-less terminal + persist a resurrecting
+  // wake-state). This proves the flag half of the wiring: create leaves it unset; a delivered
+  // send_text flips it true; send_key (gate/menu navigation) does NOT count as a task.
+  function okSend(req: TerminalRequestFrame): TerminalReplyFrame | undefined {
+    if (req.method !== "send_text" && req.method !== "send_key") return undefined;
+    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 } } };
+  }
+  const CREATE_REQ = { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 } as const;
+
+  it("a freshly-created session is NOT tasked (everSentText falsy) — nothing delivered yet", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBeFalsy();
+  });
+
+  it("a DELIVERED send_text flips everSentText true (the wait tool reads this as everTasked)", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    await registry.sendText(sessionId, OWNER, { text: "implement the feature test-first" });
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBe(true);
+  });
+
+  it("send_key does NOT mark the drive tasked — a trust-gate answer / menu navigation is not a task", async () => {
+    const registry = createTerminalSessionRegistry(baseDeps(() => makeFakeWorker(okSend).child));
+    const { sessionId } = await registry.create(CREATE_REQ, OWNER);
+    await registry.sendKey(sessionId, OWNER, { keys: ["Down", "Enter"] });
+    expect(registry.get(sessionId, OWNER)?.everSentText).toBeFalsy();
+  });
+});
+
 describe("createTerminalSessionRegistry — create forwards bin/argv verbatim", () => {
   it("sends a create frame whose params carry the daemon's {bin,argv} unmodified", async () => {
     const fake = makeFakeWorker();

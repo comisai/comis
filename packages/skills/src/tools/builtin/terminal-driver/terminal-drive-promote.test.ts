@@ -91,6 +91,41 @@ describe("shouldPromoteDrive (DRIVE-02 auto-promotion predicate)", () => {
     });
   });
 
+  describe("everTasked gate (loop-closure) — a drive that was NEVER tasked must not background", () => {
+    // webhook-claude-cli-tdd (2026-06-30): a DURABLE drive resolves to `detached`, so it promotes at
+    // the FIRST wait — even the initial gate/idle wait BEFORE the agent delivered any task (no
+    // send_text since create). Backgrounding a work-less drive hands an idle terminal back to an
+    // absent human and (worse) persists a wake-state that RESURRECTS on the next boot. An un-tasked
+    // drive has no work to track, so it must stay inline; the NEXT wait — after the task lands —
+    // promotes normally. The gate defaults on (everTasked=true) so every existing caller is unchanged.
+    it('does NOT promote a never-tasked "detached" drive (the loop-closure gate)', () => {
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "detached", false)).toBe(false);
+      expect(shouldPromoteDrive({ isComplete: false, producing: false }, "detached", false)).toBe(false);
+      expect(shouldPromoteDrive({ isComplete: true, producing: true }, "detached", false)).toBe(false);
+    });
+
+    it("promotes a TASKED detached drive (preserves the durable-tracking path once work is delivered)", () => {
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "detached", true)).toBe(true);
+      expect(shouldPromoteDrive({ isComplete: true, producing: true }, "detached", true)).toBe(true);
+    });
+
+    it('"auto" is UNAFFECTED by everTasked — a producing wait promotes regardless (producing already implies work)', () => {
+      // The everTasked gate is DETACHED-only (that is the promote-at-first-wait branch with the
+      // loop-closure bug). `auto` promotes solely on the honest producing signal, which cannot occur
+      // on an un-tasked idle drive — so it needs no separate gate and stays byte-identical.
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "auto", false)).toBe(true);
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "auto", true)).toBe(true);
+      expect(shouldPromoteDrive({ isComplete: false, producing: false }, "auto", false)).toBe(false);
+    });
+
+    it("everTasked defaults to true — every existing 2-arg caller/test stays byte-identical", () => {
+      // Only the wait tool threads the real everTasked (from the registry handle); every other
+      // caller relies on the default, so today's behavior is preserved for them verbatim.
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "detached")).toBe(true);
+      expect(shouldPromoteDrive({ isComplete: false, producing: true }, "auto")).toBe(true);
+    });
+  });
+
   describe("purity / totality — side-effect-free, never throws, reads only isComplete/producing", () => {
     it("is referentially transparent: repeated calls with the same args return the same value", () => {
       const result = { isComplete: false, producing: true } as const;

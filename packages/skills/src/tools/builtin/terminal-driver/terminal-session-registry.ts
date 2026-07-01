@@ -637,7 +637,13 @@ export function createTerminalSessionRegistry(
       submit: args.submit ?? false,
       bracketedPaste: args.bracketedPaste ?? false,
     });
-    return mapSendReply(handle, reply);
+    const result = mapSendReply(handle, reply);
+    // LOOP-CLOSURE: mark the drive TASKED once text actually lands on the pane (delivered). This is
+    // the signal shouldPromoteDrive reads (everTasked) so a never-tasked detached durable drive does
+    // not background at its first gate/idle wait. send_key is deliberately NOT counted — a trust-gate
+    // answer or menu navigation is not a delivered task.
+    if (result.delivered === true) handle.everSentText = true;
+    return result;
   }
 
   async function sendKey(sessionId: string, owner: SessionOwner, args: { keys: string[] }): Promise<SendResult> {

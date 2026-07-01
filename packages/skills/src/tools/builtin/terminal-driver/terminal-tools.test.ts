@@ -1089,9 +1089,43 @@ describe("terminal-tools — DRIVE-02 the wait tool emits terminal:drive_promote
     expect(drivePromotedEvents(bus)).toHaveLength(0);
   });
 
-  it("detached + first wait → emits terminal:drive_promoted with reason 'mode_detached' (explicit opt-in)", async () => {
-    // Even a completed-inline wait promotes under detached (promote-at-first-wait).
+  it("detached + first wait + NEVER TASKED → NO emit (loop-closure: an un-tasked drive must not background)", async () => {
+    // webhook-claude-cli-tdd (2026-06-30): the pre-fix behavior promoted at the first wait
+    // UNCONDITIONALLY, so a durable claude drive backgrounded at its initial gate/idle wait —
+    // BEFORE the agent delivered any task — stranding a work-less terminal + persisting a wake-state
+    // that RESURRECTS on the next boot. With no handle (never-tasked), get(...)?.everSentText is
+    // falsy → everTasked=false → the detached branch returns false → no promotion. (handles is empty.)
     const registry = makeFakeRegistry({ waitImpl: async () => COMPLETE_INLINE });
+    const bus = makeCapturingBus();
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+
+    expect(drivePromotedEvents(bus)).toHaveLength(0);
+  });
+
+  it("detached + wait + TASKED (handle.everSentText) → emits mode_detached (DELIVER-02 tracking preserved once work lands)", async () => {
+    // Once the agent has delivered a task — a durable claude BUILD that then idles, the DELIVER-02
+    // scenario — the detached drive promotes at the next wait so the daemon backstop tracks it and
+    // fires a completion. everTasked rides the registry handle's everSentText (set by sendText on the
+    // first delivered send_text). Even a completed-inline wait promotes under detached, once tasked.
+    const taskedHandle: SessionHandle = {
+      sessionId: "s1",
+      allowId: "a",
+      command: "claude",
+      status: "running",
+      cols: 80,
+      rows: 24,
+      lastActivity: 0,
+      startedAt: 0,
+      owner: { agentId: "agent-1", sessionKey: "" },
+      durable: true,
+      everSentText: true,
+    };
+    const registry = makeFakeRegistry({
+      waitImpl: async () => COMPLETE_INLINE,
+      handles: new Map([["s1", taskedHandle]]),
+    });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "detached" }));
 
