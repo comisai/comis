@@ -155,6 +155,15 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       acc.terminalDrivePromotedCount += 1;
       return;
     }
+    case "terminal.session_evicted": {
+      // EVICT-01: the reaper evicted a durable drive (bridged from terminal:session_evicted).
+      // Keep the LAST reason (idle | max_sessions | wall_clock | max_interactions) + the
+      // session's total lifetime at eviction for the terminal_drive_evicted verdict.
+      const reason = asString(data.reason);
+      if (reason !== undefined) acc.terminalDriveEvictedReason = reason;
+      acc.terminalDriveEvictedMs = asNumber(data.durationMs) ?? acc.terminalDriveEvictedMs;
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // W8: dedupe by toolCallId — the live ctx_search counted twice when its
@@ -602,6 +611,21 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           terminalDrivePromoted: {
             reason: acc.terminalDrivePromotedReason ?? "unknown",
             count: acc.terminalDrivePromotedCount,
+          },
+        }
+      : {}),
+    // EVICT-01: surface a reaper eviction ONLY when one fired (undefined, never {}, when
+    // no drive was evicted). `wasProducing` is DERIVED from the already-folded
+    // drive_promoted reason (zero new events) — the acute PRODUCING-01 canary (a drive
+    // that had been producing when the reaper idle-killed it). Lets the
+    // terminal_drive_evicted verdict distinguish a cut-short producing drive from an
+    // expected idle-out of a never-producing one.
+    ...(acc.terminalDriveEvictedReason !== undefined
+      ? {
+          terminalDriveEvicted: {
+            reason: acc.terminalDriveEvictedReason,
+            idleMs: acc.terminalDriveEvictedMs ?? 0,
+            wasProducing: acc.terminalDrivePromotedReason === "producing",
           },
         }
       : {}),

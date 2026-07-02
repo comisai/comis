@@ -128,4 +128,9 @@ export interface Acc {
    *  producing), and how many promotions fired. Folded into `terminalDrivePromoted`. */
   terminalDrivePromotedReason?: string;
   terminalDrivePromotedCount: number;
+  /** EVICT-01: the LAST `terminal.session_evicted` reason (idle | max_sessions |
+   *  wall_clock | max_interactions) + the session lifetime at that eviction. Folded into
+   *  `terminalDriveEvicted`; `wasProducing` is derived from `terminalDrivePromotedReason`. */
+  terminalDriveEvictedReason?: string;
+  terminalDriveEvictedMs?: number;
 }

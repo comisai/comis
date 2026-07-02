@@ -159,6 +159,56 @@ describe("buildWakeDurabilityDeps — LO-03: checkLiveness refreshes lastActivit
     expect(handle.lastActivity, "an interactive settled drive keeps the LO-03 refresh (human-owned lifecycle)").toBe(50_000);
   });
 
+  it("PRODUCING-01: a still-PRODUCING awaiting-input UNATTENDED drive (screen advancing across probes) is NOT frozen — the reaper must not evict a working autonomous drive (webhook-claude-gsd-snake-20260702)", async () => {
+    // The GSD-milestone finding: Claude Code parks its cursor at the `❯` composer WHILE autonomously
+    // working (subagents running, a `/gsd-autonomous` phase building, the status timer/token counter
+    // advancing), so the classifier reports awaiting-input. The unconditional LINGER-01 freeze then
+    // let the ENDURE-01 idle reaper EVICT a still-producing drive at idleTtlMs, mid-work. The fix: a
+    // CHANGING on-screen render (real progress) keeps lastActivity fresh so the reaper never evicts it.
+    let now = 1_000;
+    let frame = 0;
+    const handle = { sessionId: "s-3", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const registry = {
+      getOwner: vi.fn(() => ({ agentId: "a", sessionKey: "" })), // the UNATTENDED (webhook/cron) owner
+      get: vi.fn(() => handle as never),
+      status: vi.fn(async () => {
+        handle.lastActivity = now; // the production registry.status lastActivity side effect
+        return { state: "awaiting-input" as const, lastActivity: now, interactions: 3, cursorParked: true, screenDiffEmpty: true, confidence: "high" as const, reason: "settled_cursor_parked" };
+      }),
+      // Each probe sees a DIFFERENT render (an advancing timer / streaming subagent output) → producing.
+      read: vi.fn(async () => ({ screen: `... building phase 1 — elapsed ${frame++}m ...`, cursor: { x: 0, y: 0 } })),
+    };
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-producing01", registries: new Map([["a", registry]]) as never, workerStuckMs: 600_000, nowMs: () => now });
+
+    await deps.checkLiveness("s-3", "a"); // probe 1 seeds the digest (no prior → the safe freeze)
+    now = 50_000; // time advances
+    const signal = await deps.checkLiveness("s-3", "a"); // probe 2: the screen advanced → producing
+
+    expect(signal?.awaitingInput, "still surfaces the completion/attention signal").toBe(true);
+    expect(handle.lastActivity, "a still-PRODUCING unattended drive keeps its fresh lastActivity — the reaper must NOT evict it mid-work").toBe(50_000);
+  });
+
+  it("PRODUCING-01: a TRULY-IDLE awaiting-input UNATTENDED drive (screen UNCHANGED across probes) is still frozen — LINGER-01 preserved (a finished/idle drive still evicts)", async () => {
+    let now = 1_000;
+    const handle = { sessionId: "s-4", status: "running" as const, lastActivity: 1, durable: false as const, tmuxName: undefined };
+    const registry = {
+      getOwner: vi.fn(() => ({ agentId: "a", sessionKey: "" })),
+      get: vi.fn(() => handle as never),
+      status: vi.fn(async () => {
+        handle.lastActivity = now;
+        return { state: "awaiting-input" as const, lastActivity: now, interactions: 3, cursorParked: true, screenDiffEmpty: true, confidence: "high" as const, reason: "settled_cursor_parked" };
+      }),
+      read: vi.fn(async () => ({ screen: "All phases complete. ❯", cursor: { x: 2, y: 0 } })), // STATIC across probes
+    };
+    const deps = buildWakeDurabilityDeps({ dataDir: "/tmp/nonexistent-comis-producing01b", registries: new Map([["a", registry]]) as never, workerStuckMs: 600_000, nowMs: () => now });
+
+    await deps.checkLiveness("s-4", "a"); // seed the digest
+    now = 50_000;
+    await deps.checkLiveness("s-4", "a"); // same screen → NOT producing → freeze
+
+    expect(handle.lastActivity, "a truly-idle unattended drive (static screen) is frozen so idleTtlMs evicts it (LINGER-01)").toBe(1);
+  });
+
   it("the wake-durability bundle no longer exposes a redundant refreshLastActivity dep (LO-03 removed)", () => {
     const deps = buildWakeDurabilityDeps({
       dataDir: "/tmp/nonexistent-comis-lo03",

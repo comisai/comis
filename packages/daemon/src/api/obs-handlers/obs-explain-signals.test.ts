@@ -1351,3 +1351,30 @@ describe("toIncidentSignals — DRIVE-02 terminal.drive_promoted (backgrounding 
     expect(toIncidentSignals([event("session.started", 0, {})]).terminalDrivePromoted).toBeUndefined();
   });
 });
+
+describe("toIncidentSignals — EVICT-01 terminal.session_evicted (idle-reap signal)", () => {
+  it("sets terminalDriveEvicted{reason,idleMs,wasProducing:false} from an eviction with no prior producing promotion", () => {
+    const s = toIncidentSignals([event("terminal.session_evicted", 1, { reason: "idle", durationMs: 1_800_000 })]);
+    expect(s.terminalDriveEvicted).toEqual({ reason: "idle", idleMs: 1_800_000, wasProducing: false });
+  });
+
+  it("derives wasProducing:true when a producing promotion preceded the eviction (zero new events — reuses the DRIVE-02 signal)", () => {
+    const s = toIncidentSignals([
+      event("terminal.drive_promoted", 1, { reason: "producing" }),
+      event("terminal.session_evicted", 2, { reason: "idle", durationMs: 900_000 }),
+    ]);
+    expect(s.terminalDriveEvicted).toEqual({ reason: "idle", idleMs: 900_000, wasProducing: true });
+  });
+
+  it("keeps the LAST eviction reason + lifetime when more than one fires", () => {
+    const s = toIncidentSignals([
+      event("terminal.session_evicted", 1, { reason: "max_sessions", durationMs: 10_000 }),
+      event("terminal.session_evicted", 2, { reason: "wall_clock", durationMs: 7_200_000 }),
+    ]);
+    expect(s.terminalDriveEvicted).toEqual({ reason: "wall_clock", idleMs: 7_200_000, wasProducing: false });
+  });
+
+  it("is ABSENT (undefined, not {}) when no eviction fired", () => {
+    expect(toIncidentSignals([event("session.started", 0, {})]).terminalDriveEvicted).toBeUndefined();
+  });
+});

@@ -611,3 +611,21 @@ describe("translatePayload — DRIVE-02 terminal drive promotion (content-free, 
     expect("timestamp" in data).toBe(false);
   });
 });
+
+describe("translatePayload — EVICT-01 terminal drive eviction (content-free, envelope-stripped)", () => {
+  it("translates terminal:session_evicted to the reason enum + durationMs ONLY (sessionId/agentId/timestamp are envelope)", () => {
+    const data = translatePayload("terminal:session_evicted", {
+      sessionId: "term-abc-123",
+      agentId: "default",
+      reason: "idle",
+      durationMs: 1_800_000,
+      timestamp: 1717000000000,
+    });
+    // The reaper's audited reason (which cap tripped) + the session's total lifetime at
+    // eviction — the two facts the terminal_drive_evicted verdict needs. Nothing else.
+    expect(data).toEqual({ reason: "idle", durationMs: 1_800_000 });
+    expect("sessionId" in data).toBe(false);
+    expect("agentId" in data).toBe(false);
+    expect("timestamp" in data).toBe(false);
+  });
+});

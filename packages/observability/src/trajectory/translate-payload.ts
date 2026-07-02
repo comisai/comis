@@ -350,6 +350,13 @@ export function translatePayload(
       // correlation ids (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason };
 
+    case "terminal:session_evicted":
+      // EVICT-01 → trajectory (was a daemon WARN only). Content-free: the closed cap
+      // reason enum + durationMs (the session's total lifetime at eviction) ONLY. The
+      // terminal sessionId, agentId, and raw timestamp are envelope/correlation ids
+      // (the recorder envelope carries the agent session) — never echoed.
+      return { reason: payload.reason, durationMs: payload.durationMs };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,

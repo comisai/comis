@@ -391,6 +391,64 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/backgrounded|mode_detached/);
   });
 
+  // ------------------------------------------------------------------------
+  // terminal_drive_evicted — the idle/lifetime-reap case (EVICT-01, live
+  // webhook-claude-gsd-snake-20260702). A durable autonomous drive was
+  // idle-reaped by the terminal reaper; pre-fix that eviction was a daemon
+  // WARN only — `explain` couldn't see it, so a reaper-killed drive root-caused
+  // NOTHING. The observability completion of the PRODUCING-01 keep-alive fix:
+  // an idle-reap of a drive that HAD been producing is exactly the canary a
+  // PRODUCING-01 regression would trip, now a one-call verdict.
+  // ------------------------------------------------------------------------
+
+  it("fires on an idle eviction and names it terminal_drive_evicted", () => {
+    const r = rootCause(makeSignals({ terminalDriveEvicted: { reason: "idle", idleMs: 1_800_000, wasProducing: false }, endReason: "success" }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("terminal_drive_evicted");
+    expect(r!.detail).toMatch(/idle/);
+  });
+
+  it("flags the ACUTE producing-drive idle-reap in the detail (the PRODUCING-01 regression canary)", () => {
+    const r = rootCause(
+      makeSignals({
+        // tasked (send_text succeeded) so the no-task verdict does NOT shadow this
+        toolStats: { terminal_session_create: { ok: 1, failed: 0 }, terminal_session_send_text: { ok: 1, failed: 0 } },
+        terminalDriveEvicted: { reason: "idle", idleMs: 900_000, wasProducing: true },
+        endReason: "success",
+      }),
+    );
+    expect(r!.code).toBe("terminal_drive_evicted");
+    expect(r!.detail).toMatch(/produc/i); // it names that the drive had been producing when reaped
+  });
+
+  it("fires on a wall_clock (lifetime-cap) eviction", () => {
+    const r = rootCause(makeSignals({ terminalDriveEvicted: { reason: "wall_clock", idleMs: 7_200_000, wasProducing: true }, endReason: "success" }));
+    expect(r!.code).toBe("terminal_drive_evicted");
+  });
+
+  it("does NOT fire on a max_sessions eviction (benign LRU to make room — not a drive-cut-short cause)", () => {
+    expect(rootCause(makeSignals({ terminalDriveEvicted: { reason: "max_sessions", idleMs: 5_000, wasProducing: false }, endReason: "success" }))).toBeNull();
+  });
+
+  it("does NOT fire on a max_interactions eviction (a deliberate turn-budget cap, not a TTL reap)", () => {
+    expect(rootCause(makeSignals({ terminalDriveEvicted: { reason: "max_interactions", idleMs: 5_000, wasProducing: false }, endReason: "success" }))).toBeNull();
+  });
+
+  it("does NOT fire when no eviction was recorded (cannot regress the frozen non-terminal fixtures)", () => {
+    expect(rootCause(makeSignals({ toolStats: { web_fetch: { ok: 1, failed: 0 } }, endReason: "success" }))).toBeNull();
+  });
+
+  it("the no-task verdict OUT-RANKS eviction (a drive opened, never tasked, THEN idle-reaped — no-task is the root)", () => {
+    const r = rootCause(
+      makeSignals({
+        toolStats: { terminal_session_create: { ok: 1, failed: 0 } }, // created, never send_text'd
+        terminalDriveEvicted: { reason: "idle", idleMs: 1_800_000, wasProducing: false },
+        endReason: "success",
+      }),
+    );
+    expect(r!.code).toBe("terminal_drive_opened_without_task");
+  });
+
   it("a degraded session with tool failures and no named cause gets a catch-all tool-failure verdict", () => {
     // Live C13 finding (2026-06-12): an induced 2-tool-failure session
     // (memory_get + image_analyze, errorKind dependency, endReason
