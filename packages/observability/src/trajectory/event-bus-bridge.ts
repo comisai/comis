@@ -262,6 +262,15 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // so this was previously neither mapped nor allowlisted and the bridge dropped it.
   "terminal:drive_promoted": "terminal.drive_promoted",
 
+  // EVICT-01: the reaper evicted a durable drive (idle-TTL / max_sessions / wall_clock /
+  // max_interactions cap). Was a daemon WARN only — invisible to `explain`, so a
+  // reaper-killed autonomous drive root-caused NOTHING (the webhook-claude-gsd-snake
+  // idle-reap that stranded a producing drive). Content-free (reason enum + durationMs —
+  // see translate-payload). Emitted from the daemon reaper wiring (setup-terminal-tools)
+  // AND packages/skills, both OUTSIDE the agent/orchestrator emit-scanner, so — like
+  // drive_promoted — no arch allowlist entry is needed; this mapping is the bridge.
+  "terminal:session_evicted": "terminal.session_evicted",
+
   // ---- Delivery lifecycle ----
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",

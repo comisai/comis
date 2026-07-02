@@ -73,6 +73,7 @@ import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-exp
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // WR-4: NAMED spend verdict (sibling — subdir cap)
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // RECALL-01 (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
+import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // EVICT-01 reaper-killed drive (sibling — subdir cap)
 
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1 (Plan 01).
@@ -441,6 +442,15 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     incidental — the no-task diagnosis is the root. Keys only on toolStats, so it
   //     never fires on a non-terminal session (no 678/503 regression). Sibling file.
   terminalDriveNoTaskVerdict,
+
+  // 9e) terminal_drive_evicted (EVICT-01) — a durable drive was reaped by the idle-TTL or
+  //     wall-clock cap, cutting a (possibly still-working) autonomous drive short. AFTER
+  //     9d: a drive opened-but-never-tasked THEN idle-reaped is rooted in the no-task
+  //     stall (the eviction is its consequence); ABOVE the catch-all: a reaper kill is a
+  //     specific terminal-lifecycle cause. Fires ONLY on idle/wall_clock (not the
+  //     incidental max_sessions LRU or the deliberate max_interactions budget — no wolf).
+  //     Keys only on terminalDriveEvicted (absent on 678/503), so no regression. Sibling.
+  terminalDriveEvictedVerdict,
 
   // 10) completed_with_tool_errors (the CATCH-ALL ACUTE cause — last of the acute
   //     tier, above the BENIGN learning verdicts #11-13 below). A

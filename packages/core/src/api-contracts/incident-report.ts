@@ -581,6 +581,15 @@ export interface IncidentSignals {
    *  how many fired. Lets the terminal-drive verdict cite the backgrounding. Absent (never
    *  `{}`) when no drive backgrounded. */
   terminalDrivePromoted?: { reason: string; count: number };
+  /** EVICT-01: set when a durable terminal drive was evicted by a reaper cap during the
+   *  session — folded from `terminal.session_evicted` trajectory records (bridged from the
+   *  `terminal:session_evicted` event, previously a daemon WARN only). `reason` is the cap
+   *  enum (`idle` | `max_sessions` | `wall_clock` | `max_interactions`), last-wins; `idleMs`
+   *  is the session's total lifetime at eviction; `wasProducing` is DERIVED (zero new events)
+   *  from whether a `producing` drive_promoted preceded it — the acute PRODUCING-01 canary
+   *  (a producing drive that was idle-reaped). Lets the terminal_drive_evicted verdict name a
+   *  reaper-killed autonomous drive. Absent (never `{}`) when no eviction fired. */
+  terminalDriveEvicted?: { reason: string; idleMs: number; wasProducing: boolean };
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;

@@ -190,6 +190,12 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Content-free — the reason enum only.
   "terminal.drive_promoted",
 
+  // Terminal-driver reaper eviction (EVICT-01): a durable drive was evicted by a cap
+  // (idle-TTL | max_sessions | wall_clock | max_interactions). Content-free — the reason
+  // enum + durationMs (total lifetime at eviction). Was a daemon WARN only; bridged so
+  // `explain` can name a reaper-killed autonomous drive (the PRODUCING-01 obs completion).
+  "terminal.session_evicted",
+
   // Delivery queue lifecycle.
   "delivery.queued",
   "delivery.dispatched",
