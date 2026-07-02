@@ -470,6 +470,19 @@ export function buildTerminalWakeDurability(i: {
  *   SEPARATE refresh hook is needed (165-REVIEW LO-03 removed the redundant `refreshLastActivity`
  *   dep that double-stamped what `status` already does).
  */
+/**
+ * PRODUCING-01: a CONTENT-FREE digest of a screen render — a cheap 32-bit rolling checksum used
+ * ONLY for the idle-reap change-detection (a producing drive's screen advances; a truly-idle one is
+ * static). Never logged, bridged, or persisted (the I2 no-screen invariant holds — this is a hash,
+ * not the bytes). A rare collision merely risks a false-idle, the SAFE direction (the reaper is
+ * bounded by idleTtlMs regardless). Total + pure.
+ */
+function digestScreen(screen: string): string {
+  let h = 5381;
+  for (let idx = 0; idx < screen.length; idx++) h = ((h * 33) ^ screen.charCodeAt(idx)) >>> 0;
+  return `${screen.length}:${h}`;
+}
+
 export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
   driveJournalStore: DriveJournalStorePort;
   checkLiveness: (sessionId: string, agentId: string) => Promise<LivenessSignal | undefined>;
@@ -486,12 +499,17 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     remove: (agentId, sessionId) => removeDriveJournal({ dataDir: i.dataDir }, agentId, sessionId),
   };
 
+  // PRODUCING-01: the last content-free screen digest per session, for the idle-reap
+  // change-detection in checkLiveness (see the awaiting-input branch). Daemon-lifetime + small
+  // (keyed by sessionId, bounded by worker.maxSessions); pruned on the gone/exited early returns.
+  const screenDigests = new Map<string, string>();
+
   const checkLiveness = async (sessionId: string, agentId: string): Promise<LivenessSignal | undefined> => {
     const registry = i.registries.get(agentId);
     if (registry === undefined) return undefined; // no registry for the agent → gone
     const owner = resolveStampedOwner(registry, sessionId, agentId); // ISSUE-3: the live channel/API session's stamped owner
     const handle = registry.get(sessionId, owner);
-    if (handle === undefined) return undefined; // gone → the backstop skips it
+    if (handle === undefined) { screenDigests.delete(sessionId); return undefined; } // gone → the backstop skips it
     // LINGER-01 (webhook-claude-cli-tdd-20260701-backstop): capture the idle clock BEFORE the probe.
     // The `status` round-trip below stamps `lastActivity = now` (the LO-03 I9 unify — keeps a
     // quiet-but-busy compile fresh so the reaper never false-evicts it). But an UNATTENDED
@@ -507,11 +525,11 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
     // screen read — I2). It also refreshes the handle's lastActivity as a side effect.
     const status = await registry.status(sessionId, owner);
     const stuckMs = i.workerStuckMs;
-    if (status.state === "exited") return { alive: false, noProgressMs: 0, stuckMs };
+    if (status.state === "exited") { screenDigests.delete(sessionId); return { alive: false, noProgressMs: 0, stuckMs }; }
     // For a durable session also require the detached tmux to be alive (a wedged-but-present
     // worker whose tmux died is hung). `stuck` from the classifier → past the no-progress window.
     const tmuxOk = handle.durable !== true || (handle.tmuxName !== undefined && isTmuxAlive(handle.tmuxName, handle.tmuxSocket));
-    if (!tmuxOk) return { alive: false, noProgressMs: 0, stuckMs };
+    if (!tmuxOk) { screenDigests.delete(sessionId); return { alive: false, noProgressMs: 0, stuckMs }; }
     if (status.state === "stuck") return { alive: true, noProgressMs: stuckMs + 1, stuckMs };
     // working / awaiting-input → busy (recent progress; the classifier did not flag no-progress).
     // DELIVER-01 (#2): surface `awaiting-input` (a settled prompt — a backgrounded drive that
@@ -524,7 +542,31 @@ export function buildWakeDurabilityDeps(i: WakeDurabilityInputs): {
       // stamp refresh its idle clock, or the reaper's idleTtlMs cap can never evict the finished
       // drive. Restoring the pre-probe value keeps the completion signal (below) intact while
       // letting idleness accrue from the last real activity. Interactive drives keep the warm stamp.
-      if (isUnattended) handle.lastActivity = idleClockBeforeProbe;
+      //
+      // PRODUCING-01 (webhook-claude-gsd-snake-20260702): the classifier reports `awaiting-input`
+      // for a coding CLI (e.g. Claude Code) that parks its cursor at its persistent `❯` composer
+      // WHILE autonomously working — subagents running, a `/gsd-autonomous` phase building, the
+      // status timer/token counter advancing. Freezing the idle clock UNCONDITIONALLY then let the
+      // ENDURE-01 reaper EVICT a still-PRODUCING unattended drive at idleTtlMs, mid-work (the sole
+      // blocker to an unattended GSD milestone completing — the drive was reaped ~30min in while it
+      // was still committing). So freeze ONLY when the drive is TRULY idle: the on-screen render is
+      // UNCHANGED across probes. A CHANGING screen (real progress) keeps the fresh stamp so the
+      // reaper never evicts a working drive. The digest is CONTENT-FREE (a cheap checksum, never
+      // logged/bridged — the I2 no-screen-bridge invariant holds); a read fault falls back to the
+      // SAFE freeze (LINGER-01 preserved), and a truly-done drive (static screen) still evicts.
+      if (isUnattended) {
+        let producing = false;
+        try {
+          const view = await registry.read(sessionId, owner);
+          const digest = digestScreen(view.screen);
+          const prev = screenDigests.get(sessionId);
+          producing = prev !== undefined && digest !== prev;
+          screenDigests.set(sessionId, digest);
+        } catch {
+          /* read unavailable/failed → treat as not-producing → the safe freeze */
+        }
+        if (!producing) handle.lastActivity = idleClockBeforeProbe;
+      }
       return { alive: true, noProgressMs: 0, stuckMs, awaitingInput: true };
     }
     return { alive: true, noProgressMs: 0, stuckMs };

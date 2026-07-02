@@ -17,13 +17,15 @@
  * architecture cap. State (the per-agent registry map) lives in the `setupTools`
  * closure and is threaded in here — there is NO module-global mutable state.
  *
- * Fail-closed by construction at this stage: the operator
- * `TerminalDriverConfig.allow[]` is not yet threaded into `PerAgentConfig` (that
- * config-plumbing + the worker process entrypoint are later work), so
- * the wired allow-set is EMPTY — every `terminal_session_create` is rejected by
- * the allowlist gate (`matchAllowEntry` returns undefined) before any worker is
- * spawned. The surface is live + governed; the worker is never spawned until both
- * the allow-set and the worker main land. The seam is clean.
+ * Fail-closed by construction, config-gated: the WR-01 closure (124-09) IS landed —
+ * `buildTerminalSharedDeps` populates the allow-set from the threaded operator config
+ * (`deps.config?.allow.map(mapAllowEntry)`) and the production worker-spawn posture is
+ * wired, so a `terminal_session_create` matching an allowlisted binary spawns a jailed
+ * worker. When an agent has NO `skills.terminal` config (or an empty `allow[]`), the
+ * wired allow-set is EMPTY and every create is rejected by the allowlist gate
+ * (`matchAllowEntry` returns undefined) before any worker is spawned — the pre-P5
+ * fail-closed posture for an unconfigured agent. The surface is always live + governed;
+ * a worker spawns only for an operator-allowlisted entry. The seam is clean.
  *
  * @module
  */
