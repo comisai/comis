@@ -33,12 +33,14 @@
 //   --bad-sign          send a deliberately wrong signature (tests the 401 invalid-sig path)
 //   --raw               send the body verbatim, do NOT require it to be JSON (tests the 400 path)
 //   --method <m>        HTTP method (default POST)
+//   --allow-stale       permit a `@file` body older than 120s (default: HARD-FAIL on a stale reuse)
 //
 // Exit code: 0 if the HTTP response status is 2xx, else 1 (so `&&` chains are honest).
+// A missing `@file` or a stale reused body exits 2 (a rig error, distinct from an honest HTTP non-2xx).
 
 import { createHmac } from "node:crypto";
 import http from "node:http";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 
 function parseArgs(argv) {
   const pos = [];
@@ -57,6 +59,7 @@ function parseArgs(argv) {
     if (a === "--no-sign") opt.noSign = true;
     else if (a === "--bad-sign") opt.badSign = true;
     else if (a === "--raw") opt.raw = true;
+    else if (a === "--allow-stale") opt.allowStale = true;
     else if (a === "--ts") opt.ts = true;
     else if (a === "--secret") opt.secret = argv[++i];
     else if (a === "--base") opt.base = argv[++i];
@@ -74,24 +77,33 @@ function parseArgs(argv) {
   return { pos, opt };
 }
 
-function readBody(spec) {
+function readBody(spec, opt) {
   if (spec === "-") return readFileSync(0, "utf8");
   if (typeof spec === "string" && spec.startsWith("@")) {
     const path = spec.slice(1);
-    // Surface the file's size + mtime so a STALE body is obvious. The footgun
-    // (webhook-claude-cli-tdd-20260701): a botched `writeFileSync` EACCES-failed to
-    // refresh a reused `/tmp/<name>.json` (a prior run left it comis-owned), but the
-    // POST still ran `@/tmp/<name>.json` and silently sent the STALE body — creating a
-    // phantom turn (id from the OLD run) that looked like a durable-drive resurrection.
-    // Two rules this echo enforces: (1) write each body to a UNIQUE, self-owned path per
-    // run (not a reused /tmp name); (2) `&&`-gate the body-write BEFORE the POST so a
-    // failed write aborts the send. If the printed mtime looks old, you're sending stale bytes.
-    try {
-      const st = statSync(path);
-      const ageS = Math.round((Date.now() - st.mtimeMs) / 1000);
-      console.error(`[local] body from ${path} (bytes=${st.size}, mtime=${new Date(st.mtimeMs).toISOString()}, age=${ageS}s)`);
-      if (ageS > 120) console.error(`[local] ⚠ that body file is ${ageS}s old — is it STALE from a prior run? (write a UNIQUE per-run path)`);
-    } catch { /* readFileSync below will surface the real error */ }
+    // A MISSING @file is a rig error, not an honest HTTP negative — exit 2 with a clean
+    // message instead of a raw ENOENT stack. The footgun (webhook-claude-gsd-snake-20260702):
+    // a `node -e` used process.env.ID BEFORE `export ID`, wrote `wh-undefined.json`, and the
+    // POST referenced a DIFFERENT path → an ENOENT crash mid-drive that read as a daemon fault.
+    if (!existsSync(path)) {
+      console.error(`[local] body file not found: ${path}`);
+      console.error(`[local] ⚠ did an earlier step fail to write it (e.g. an unset $ID → wh-undefined.json)? Write the body to a UNIQUE per-run path and \`&&\`-gate it BEFORE this POST.`);
+      process.exit(2);
+    }
+    // Surface the file's size + mtime so a STALE body is obvious, and HARD-FAIL on a stale
+    // reuse. The prior footgun (webhook-claude-cli-tdd-20260701): a botched `writeFileSync`
+    // EACCES-failed to refresh a reused `/tmp/<name>.json` (a prior run left it comis-owned),
+    // but the POST still sent the STALE body — a phantom turn (id from the OLD run) that
+    // looked like a durable-drive resurrection. Rules: (1) UNIQUE, self-owned path per run;
+    // (2) `&&`-gate the write BEFORE the POST. Pass --allow-stale to override intentionally.
+    const st = statSync(path);
+    const ageS = Math.round((Date.now() - st.mtimeMs) / 1000);
+    console.error(`[local] body from ${path} (bytes=${st.size}, mtime=${new Date(st.mtimeMs).toISOString()}, age=${ageS}s)`);
+    if (ageS > 120 && !opt.allowStale) {
+      console.error(`[local] ✗ that body file is ${ageS}s old — refusing to send a likely-STALE body. Write a UNIQUE per-run path, or pass --allow-stale to override.`);
+      process.exit(2);
+    }
+    if (ageS > 120) console.error(`[local] ⚠ sending a ${ageS}s-old body anyway (--allow-stale).`);
     return readFileSync(path, "utf8");
   }
   return spec ?? "";
@@ -103,7 +115,7 @@ if (pos.length < 1) {
   process.exit(2);
 }
 const path = pos[0].replace(/^\/+/, "");
-const rawBody = readBody(pos[1] ?? "{}");
+const rawBody = readBody(pos[1] ?? "{}", opt);
 const secret = opt.secret ?? process.env.WEBHOOK_HMAC_SECRET ?? process.env.WH_SECRET ?? "";
 const base = (opt.base ?? process.env.WH_BASE ?? "/hooks").replace(/\/+$/, "");
 const port = opt.port ?? Number(process.env.GW_PORT ?? 4766);
