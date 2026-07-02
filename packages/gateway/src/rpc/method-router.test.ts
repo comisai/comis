@@ -261,6 +261,59 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("validation");
   });
 
+  // ---------------------------------------------------------------------------
+  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701, GATEWAY layer).
+  //
+  // Live-test found the daemon-side fix (typed PreconditionError/SandboxDowngradeError
+  // classified warn in rpc-dispatch's classifyRpcError) was INCOMPLETE: this trace
+  // wrapper is a SECOND, independent error classifier that still logged the same
+  // refusal at error(50) — so `logscan --level 50,60` STILL surfaced an intentional
+  // policy/security refusal as an ERROR (module:gateway, "RPC call failed: <method>").
+  //
+  // The typed errors propagate up to this wrapper with their `.name` intact; this
+  // package cannot `instanceof` the daemon/@comis/agent classes (dep direction), so
+  // it must recognize them by the stable `.name`. The messages below are the EXACT
+  // live shapes and match NONE of the substring branches, so pre-fix they fell
+  // through to internal/error(50) — that is the RED.
+  // ---------------------------------------------------------------------------
+  it("classifies a typed PreconditionError (by .name) as precondition/warn — not internal/error(50)", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("graph.fromintentgate", "rpc", () => {
+      // The from_intent gated-off refusal (graph-mutate.ts) — a caller precondition,
+      // NOT an internal handler fault. Message matches no substring branch.
+      const e = new Error("from_intent authoring is disabled by policy (orchestration.authoring.intentAction).");
+      e.name = "PreconditionError";
+      throw e;
+    });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "graph.fromintentgate", params: {}, id: 120 },
+      RPC_CTX,
+    );
+    expect(calls.error.length).toBe(0); // must NOT log error(50) — a health sweep counts it
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("precondition");
+  });
+
+  it("classifies a typed SandboxDowngradeError (by .name) as precondition/warn — not internal/error(50)", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("session.spawndowngrade", "rpc", () => {
+      // The P0-C sandbox no-downgrade spawn refusal (sub-agent-runner.ts) — a
+      // fail-closed SECURITY refusal, NOT an internal handler fault.
+      const e = new Error('Spawn refused: child "loose" sandbox posture is less confined than parent "default" on: exec.');
+      e.name = "SandboxDowngradeError";
+      throw e;
+    });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "session.spawndowngrade", params: {}, id: 121 },
+      RPC_CTX,
+    );
+    expect(calls.error.length).toBe(0); // must NOT log error(50)
+    expect(calls.warn.length).toBe(1);
+    expect((calls.warn[0]![0] as { errorKind: string }).errorKind).toBe("precondition");
+  });
+
   it("truncates the error excerpt at 120 characters with ellipsis when message exceeds limit", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);

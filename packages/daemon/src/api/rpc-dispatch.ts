@@ -18,10 +18,8 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
-import { PreconditionError, ValidationError, AuthorizationError } from "./errors.js";
-import { SandboxDowngradeError } from "@comis/agent";
 import {
-  RequiredToolsUnreachableError,
+  classifyTypedRpcError,
   API_CONTRACTS_ORDERED,
   HANDLER_CAPABILITY_MAP,
   CapabilityDeniedError,
@@ -146,40 +144,26 @@ const BINARY_PARAM_KEYS = ["source", "image", "video", "audio", "file"] as const
 /**
  * Classify an RPC error for structured logging.
  *
- * Accepts the raw error object (not just its message) so `instanceof`
- * checks against `PreconditionError` / `ValidationError` resolve. Returns
- * an ErrorKind, an actionable hint, AND a `level` (`"warn" | "error"`)
- * that the dispatcher uses to pick `logger.warn` vs `logger.error`. The
- * goal is to keep operator alerts meaningful: caller mistakes
- * (preconditions, validation) are warn-level via typed-class throws;
- * unmatched cases fall through to `error/internal`.
+ * Returns an ErrorKind, an actionable hint, AND a `level` (`"warn" | "error"`) that the
+ * dispatcher uses to pick `logger.warn` vs `logger.error`. The goal is to keep operator
+ * alerts meaningful: caller mistakes / policy / security refusals (`PreconditionError`,
+ * `ValidationError`, `AuthorizationError`, `RequiredToolsUnreachableError`,
+ * `SandboxDowngradeError`) are warn-level; unmatched cases fall through to `error/internal`.
  *
- * The legacy message-pattern (substring-match) fallbacks were deleted.
- * OBS-10 (reflect-obs-20260627): the admin-trust denials — every `throw new Error(
- * "Admin access required …")` across the ~26 control-plane handlers — were migrated to
- * `throw new AuthorizationError(...)`, so an operator's wrong-trust call classifies as
- * `auth`/`warn` instead of `internal`/`error` (it was reading as a fleet ERROR + tripping
- * operator alerts though the gate fired correctly). The remaining bare-Error handlers
- * ("immutable" preconditions, etc.) still classify as `internal`/`error` until migrated
- * to `PreconditionError`/`ValidationError` — that migration is incremental hardening. The
- * substring-fallback deletion is intentional; typed errors are the sanctioned path.
+ * The typed-refusal → kind/hint/level mapping lives in `@comis/core`
+ * ({@link classifyTypedRpcError}) as the SINGLE source of truth, because the SAME error is
+ * ALSO classified by the `@comis/gateway` method-router trace wrapper — which cannot
+ * `instanceof` these classes (dependency direction) and so keys off `Error.name`. Before
+ * that shared classifier the two layers drifted and the gateway kept logging intentional
+ * refusals as internal/ERROR after this layer was fixed (OBS-RPC-REFUSAL-CLASS,
+ * orchestration-excellence-20260701). **Add a new typed refusal in `@comis/core`, not
+ * here.** The legacy substring-match fallbacks remain deleted; typed errors are the
+ * sanctioned path (OBS-10: admin-trust denials throw `AuthorizationError`; bare-Error
+ * handlers still classify internal/error until migrated to a typed class).
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
-  // Typed errors: instanceof checks. Add new typed classes here as
-  // handlers migrate; do NOT re-introduce substring-match fallbacks.
-  if (err instanceof PreconditionError) return { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" };
-  if (err instanceof ValidationError) return { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" };
-  // OBS-10 (reflect-obs-20260627): an admin-trust denial is an EXPECTED authorization refusal, not an
-  // internal/handler fault — warn/auth, so an operator's wrong-trust call doesn't read as a fleet ERROR.
-  if (err instanceof AuthorizationError) return { errorKind: "auth", hint: "Caller lacks admin trust for this control-plane method; use an admin-scoped token or the documented operator route (e.g. `comis explain` assembles obs reports offline)", level: "warn" };
-  // RequiredToolsUnreachableError is a caller-side validation failure (caller passed
-  // invalid required_tools). Classify as validation/warn — NOT internal/error.
-  if (err instanceof RequiredToolsUnreachableError) return { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" };
-  // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): the P0-C no-downgrade gate
-  // is a fail-closed SECURITY refusal (a caller precondition — the child's posture must be
-  // ≥ the spawner's), NOT an internal handler fault. precondition/warn so it does not read
-  // as a fleet ERROR in a health sweep, and names the exact knob to relax.
-  if (err instanceof SandboxDowngradeError) return { errorKind: "precondition", hint: "Child sandbox posture is less confined than its spawner; align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to allow", level: "warn" };
+  const typed = classifyTypedRpcError(err);
+  if (typed) return typed;
   return { errorKind: "internal", hint: "Check the RPC method handler and its dependencies", level: "error" };
 }
 

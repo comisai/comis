@@ -3,7 +3,7 @@
 import type { SimpleJSONRPCMethod } from "json-rpc-2.0";
 import { JSONRPCServer, JSONRPCErrorException } from "json-rpc-2.0";
 import { checkScope } from "../auth/token-auth.js";
-import { tryGetContext } from "@comis/core";
+import { classifyTypedRpcError, tryGetContext } from "@comis/core";
 
 /**
  * RPC context passed as serverParams to JSON-RPC handlers.
@@ -109,9 +109,20 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
    * Classify an RPC method error for structured logging.
    */
   function classifyRpcMethodError(err: unknown): {
-    errorKind: "config" | "auth" | "validation" | "internal";
+    errorKind: "config" | "auth" | "validation" | "precondition" | "internal";
     hint: string;
   } {
+    // OBS-RPC-REFUSAL-CLASS (orchestration-excellence-20260701): typed policy/security/
+    // validation refusals → non-internal (warn) via the SINGLE source of truth in
+    // `@comis/core`, which the daemon's `classifyRpcError` (rpc-dispatch.ts) ALSO delegates
+    // to. They reach this outer trace wrapper with their `Error.name` intact; this package
+    // cannot `instanceof` the daemon/@comis/agent error classes (dependency direction), and
+    // `classifyTypedRpcError` keys off that name — so the two log layers cannot drift (the
+    // drift is exactly what let this layer keep logging refusals as internal/ERROR after the
+    // dispatch layer was fixed). A refusal must NOT log error(50) — a health sweep counts it.
+    const typed = classifyTypedRpcError(err);
+    if (typed) return { errorKind: typed.errorKind, hint: typed.hint };
+    // Unrecognized errors keep the gateway's own message-substring fallbacks, then internal.
     const msg = err instanceof Error ? err.message : String(err);
     const excerpt = msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
     if (msg.includes("immutable")) return { errorKind: "config", hint: `This config path requires daemon restart: ${excerpt}` };

@@ -166,6 +166,16 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
   "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
+  // OE-6b (orchestration-excellence-20260701-fullregression): the self-healing transient RETRY
+  // — the sibling of subagent:delivery_deadlettered. It was emitted by the announcement-batcher
+  // via `?.emit` (which the trajectory-event-types-known arch regex missed pre-fix), so it was
+  // bridged to NOTHING while its terminal sibling was fully wired — P0-B's self-heal was invisible
+  // to `comis explain` (spec §7/§10 + the "all 7 events bridged/surfaced" claim). Bridged here for
+  // per-session visibility (how many retries a completion took before landing). Content-free
+  // (translate-orchestration-payload.ts): runId + closed channelType + attempt count + transient tag
+  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a fleet
+  // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up; §10).
+  "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:budget_exceeded": "subagent.budget_exceeded",
 
   // AUDIT-01 / TREE (v2.29 Phase 215 Plan 01): the per-capability authorization

@@ -92,7 +92,9 @@ describe("setupRpcBridge", () => {
 
     await expect(rpcCall("bad.method", { x: 1 })).rejects.toThrow("Not found");
 
-    expect(mockClassifyRpcError).toHaveBeenCalledWith("Not found");
+    // OBS-RPC-REFUSAL-CLASS: classifyRpcError must receive the error OBJECT (so its
+    // typed-refusal recognition resolves), NOT err.message — a string can never match.
+    expect(mockClassifyRpcError).toHaveBeenCalledWith(expect.any(Error));
     expect(gatewayLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "bad.method",
