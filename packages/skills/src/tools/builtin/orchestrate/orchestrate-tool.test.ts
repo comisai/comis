@@ -110,6 +110,7 @@ describe("orchestrate-tool", () => {
     cleanupRun?: ReturnType<typeof vi.fn>;
     baseEnv?: Record<string, string | undefined>;
     loadSeccompFdFn?: () => number | null;
+    mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -140,6 +141,7 @@ describe("orchestrate-tool", () => {
         loadSeccompFdFn: over?.loadSeccompFdFn ?? (() => null),
         now: () => 1_700_000_000_000,
         baseEnv: over?.baseEnv ?? { PATH: "/usr/bin", HOME: "/home/x" },
+        ...(over?.mintRunLease ? { mintRunLease: over.mintRunLease } : {}),
       },
       cleanupRun,
     };
@@ -398,6 +400,106 @@ describe("orchestrate-tool", () => {
     // merged AFTER the scrub).
     expect(childEnv!.COMIS_CAP_LEASE).toBe("lease-xyz");
     expect(childEnv!.COMIS_ORCH_SOCKET).toBe(capSocketPath);
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-run child lease (D5, EXPLAIN-01). When the daemon threads a
+  // `mintRunLease(runId, timeoutMs)` seam, the runner mints a per-run CHILD
+  // bearer and injects it as COMIS_CAP_LEASE — OVERRIDING the assembly bearer
+  // that rides brokerSpawnEnv.placeholders. Every in-jail cap call for the run
+  // then audits under THAT run's leaseId (INV-1 correlator). Two sequential
+  // runs on the same tool instance must mint TWICE (disjoint bearers). Absent
+  // the seam (older wiring), the runner falls back to the assembly bearer —
+  // never an unauthenticated run.
+  // -------------------------------------------------------------------------
+  describe("per-run child lease bearer (mintRunLease seam, D5)", () => {
+    it("injects a DISJOINT per-run child bearer per run as COMIS_CAP_LEASE, called with (runId, timeoutMs)", async () => {
+      // A mintRunLease stub: record each (runId, timeoutMs) + return a UNIQUE
+      // {leaseId,bearer} per call (the daemon seam that mints the real child
+      // lease is proven in setup-tools-autonomy.test.ts — HERE we prove the
+      // RUNNER consumes it, once per run, and overrides the assembly bearer).
+      const calls: Array<{ runId: string; timeoutMs: number }> = [];
+      let n = 0;
+      const mintRunLease = vi.fn((runId: string, timeoutMs: number) => {
+        calls.push({ runId, timeoutMs });
+        n += 1;
+        return { leaseId: `child-lease-${n}`, bearer: `child-bearer-${n}` };
+      });
+
+      const envs: Array<Record<string, string | undefined>> = [];
+      const spawnFn: OrchestrateSpawnFn = (_bin, _args, opts) => {
+        envs.push(opts?.env ?? {});
+        return makeFakeChild("ok\n");
+      };
+      const { deps } = makeDeps({ spawnFn, mintRunLease });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("call-1", { script: "1", language: "ts", timeoutMs: 42_000 });
+      await tool.execute("call-2", { script: "2", language: "ts", timeoutMs: 42_000 });
+
+      // Two sequential runs → the seam is invoked TWICE (per-run mint).
+      expect(mintRunLease).toHaveBeenCalledTimes(2);
+      // Each call carries the run's OWN runId + the resolved run timeout.
+      expect(calls[0]!.timeoutMs).toBe(42_000);
+      expect(calls[1]!.timeoutMs).toBe(42_000);
+      // The two runIds are DISTINCT (per-run) → the two child leases are disjoint.
+      expect(calls[0]!.runId).not.toBe(calls[1]!.runId);
+      expect(calls[0]!.runId.length).toBeGreaterThan(0);
+      // The per-run CHILD bearer rides COMIS_CAP_LEASE — NOT the assembly
+      // bearer ("lease-xyz") from brokerSpawnEnv.placeholders.
+      expect(envs[0]!.COMIS_CAP_LEASE).toBe("child-bearer-1");
+      expect(envs[1]!.COMIS_CAP_LEASE).toBe("child-bearer-2");
+      expect(envs[0]!.COMIS_CAP_LEASE).not.toBe("lease-xyz");
+      // The cap socket still comes from the assembly placeholders (unchanged).
+      expect(envs[0]!.COMIS_ORCH_SOCKET).toBe(capSocketPath);
+    });
+
+    it("clamps the child mint to the run timeout — passes the clamped timeoutMs (not the raw request)", async () => {
+      // A model-supplied timeout above the ceiling is clamped BEFORE the mint,
+      // so the child lease TTL can never exceed MAX_TIMEOUT_MS.
+      let seenTimeoutMs: number | undefined;
+      const mintRunLease = vi.fn((_runId: string, timeoutMs: number) => {
+        seenTimeoutMs = timeoutMs;
+        return { leaseId: "child-lease", bearer: "child-bearer" };
+      });
+      const { deps } = makeDeps({ mintRunLease });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts", timeoutMs: 999_999_999 });
+
+      expect(seenTimeoutMs).toBe(MAX_TIMEOUT_MS);
+    });
+
+    it("falls back to the assembly bearer when NO mintRunLease seam is wired (never an unauthenticated run)", async () => {
+      let childEnv: Record<string, string | undefined> | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, _args, opts) => {
+        childEnv = opts?.env;
+        return makeFakeChild("ok\n");
+      };
+      // No mintRunLease injected — the older/non-seam wiring path.
+      const { deps } = makeDeps({ spawnFn });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" });
+
+      // The assembly bearer from brokerSpawnEnv.placeholders still authenticates.
+      expect(childEnv!.COMIS_CAP_LEASE).toBe("lease-xyz");
+    });
+
+    it("does NOT mint a child lease when the jail is unavailable (refuses before the mint)", async () => {
+      // The mint happens at the childEnv build (step 5), AFTER the jail-node
+      // honest-degrade (step 3). An unavailable jail throws first → no wasted mint.
+      const mintRunLease = vi.fn(() => ({ leaseId: "l", bearer: "b" }));
+      const { deps } = makeDeps({
+        mintRunLease,
+        resolveJailNodeFn: () => ({ mode: "unavailable", hint: "no node inside the jail" }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "1", language: "ts" }).catch(() => {});
+
+      expect(mintRunLease).not.toHaveBeenCalled();
+    });
   });
 
   it("honest-degrades on an unavailable jail (no node/bwrap) — throws, NO spawn", async () => {
