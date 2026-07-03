@@ -57,7 +57,44 @@ function makeTriage(overrides: Partial<SupportTriage> = {}): SupportTriage {
 
 describe("renderIssueSummary", () => {
   it("renders a deterministic markdown summary from a fixed triage", () => {
-    expect(renderIssueSummary(makeTriage())).toMatchInlineSnapshot();
+    expect(renderIssueSummary(makeTriage())).toMatchInlineSnapshot(`
+      "# Comis support summary
+
+      **Status:** \`degraded\`
+
+      ## Active signals
+
+      - \`daemon_down\`
+      - \`config_posture:chimeric_model\`
+
+      ## Versions
+
+      - CLI: \`1.0.45\`
+      - Daemon: \`1.0.45\`
+      - Node: \`v22.21.1\`
+      - Platform: \`linux\` (\`x64\`)
+
+      ## Doctor summary
+
+      - Checks run: 9
+      - Pass: 7
+      - Warn: 1
+      - Fail: 1
+      - Skip: 0
+      - Repairable: 1
+      - Failing checks: \`config\`, \`gateway\`
+
+      ## Suggested next steps
+
+      1. Run \`comis doctor --repair\` to fix the repairable checks.
+      2. Start the daemon, then generate the bundle again.
+
+      ## Evidence files
+
+      - \`triage.json\` — machine-readable verdict
+      - \`doctor.json\` — full diagnostic findings
+      "
+    `);
   });
 
   it("is a pure function of the triage (same input, same output)", () => {
