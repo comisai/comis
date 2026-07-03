@@ -53,6 +53,14 @@ const GATE = { script: "noop", language: "js" as const, timeoutSeconds: 30 };
 const CTX: WakeGateRunContext = { agentId: "agent-1", jobId: "job-1", sessionKey: "main:agent-1" };
 
 /**
+ * The richer runWakeGate outcome wrapped around a bare verdict. Under the default
+ * constant test clock `durationMs` is 0; with no event bus in deps `toolCalls` is 0.
+ */
+function outcome(verdict: unknown, over: { durationMs?: number; toolCalls?: number } = {}) {
+  return { verdict, durationMs: over.durationMs ?? 0, toolCalls: over.toolCalls ?? 0 };
+}
+
+/**
  * Hand-built fakes (AGENTS §2.5): a mint returning a neutral placeholder bearer,
  * spies for registerSecret + registerRoot, a fake sandbox, a workspace resolver,
  * and an agents map whose autonomy resolves ENABLED with caps
@@ -371,5 +379,37 @@ describe("createWakeGateRunner — deliver egress-scrub", () => {
 
     expect(verdict).toEqual({ wake: false });
     expect(scan).not.toHaveBeenCalled();
+  });
+});
+
+describe("createWakeGateRunner — richer outcome (durationMs on the clean AND fail-open paths)", () => {
+  it("returns { verdict, durationMs, toolCalls } with durationMs = the injected-clock delta across the run", async () => {
+    let clock = 5_000;
+    const now = vi.fn(() => clock);
+    const { deps, runJailedScriptFn } = makeDeps({ now });
+    // The run advances the injected clock by a known span; durationMs must equal it.
+    runJailedScriptFn.mockImplementation(async () => {
+      clock += 75;
+      return '{"wake":false}';
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(result).toEqual(outcome({ wake: false }, { durationMs: 75 }));
+  });
+
+  it("still reports a real durationMs on the fail-open catch path (a rejecting run has a span, never a throw)", async () => {
+    let clock = 1_000;
+    const now = vi.fn(() => clock);
+    const { deps, runJailedScriptFn } = makeDeps({ now });
+    // The run advances the clock THEN rejects — the timing wrap must cover the catch.
+    runJailedScriptFn.mockImplementation(async () => {
+      clock += 42;
+      throw new Error("run exceeded its 30000ms timeout");
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(result).toEqual(outcome({ wake: true }, { durationMs: 42 }));
   });
 });
