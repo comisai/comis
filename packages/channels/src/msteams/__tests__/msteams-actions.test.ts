@@ -7,11 +7,11 @@
  * adapter can make the security-relevant rejects observable. These tests pin the
  * two trust decisions the normalizer owns (and the drop reason) and nothing more:
  *
- *  - APPROVE-02 (verb-set): a verb outside the CLOSED rendered set never becomes
- *    a message — an attacker cannot invoke a method the bot did not render.
- *  - APPROVE-01 (verified clicker): the sender id is the verified
- *    `from.aadObjectId` of the activity, NEVER the client-controllable
- *    `value.action.data`. A forged `data.userId` is ignored.
+ *  - verb-set: a verb outside the CLOSED rendered set never becomes a message —
+ *    an attacker cannot invoke a method the bot did not render.
+ *  - verified clicker: the sender id is the verified `from.aadObjectId` of the
+ *    activity, NEVER the client-controllable `value.action.data`. A forged
+ *    `data.userId` is ignored.
  *
  * The default-deny decision on that clicker id and the HMAC/session/replay
  * verification are downstream layers, deliberately NOT exercised here.
@@ -61,7 +61,7 @@ function invoke(overrides: InvokeOverrides = {}): TeamsActivity {
   } as unknown as TeamsActivity;
 }
 
-describe("normalizeCardAction — verb-set validation (APPROVE-02)", () => {
+describe("normalizeCardAction — verb-set validation", () => {
   it("drops an invoke whose verb is not in the rendered verb set", () => {
     const result = normalizeCardAction(
       invoke({ action: { verb: "attacker.arbitrary.method", data: { cb: CB } } }),
@@ -82,7 +82,7 @@ describe("normalizeCardAction — verb-set validation (APPROVE-02)", () => {
   });
 });
 
-describe("normalizeCardAction — verified clicker identity (APPROVE-01)", () => {
+describe("normalizeCardAction — verified clicker identity", () => {
   it("keys the sender on from.aadObjectId of the verified activity", () => {
     const { message } = normalizeCardAction(invoke());
     expect(message).not.toBeNull();
