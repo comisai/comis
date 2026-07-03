@@ -183,6 +183,19 @@ export interface OrchestrateToolDeps {
    * {@link brokerSpawnEnv}, merged AFTER the scrub.
    */
   readonly baseEnv: Record<string, string | undefined>;
+  /**
+   * The per-run child-lease mint seam (D5, EXPLAIN-01). When present, the
+   * runner mints a short-TTL CHILD lease per run and injects the returned
+   * `bearer` as `COMIS_CAP_LEASE` — OVERRIDING the assembly bearer that rides
+   * {@link brokerSpawnEnv}. The child lease shares the assembly's `rootRunId`
+   * (tree accounting untouched) with `parentLeaseId` = the assembly lease and
+   * TTL clamped to `timeoutMs`, so every in-jail cap call for the run audits
+   * under this run's `leaseId` (the INV-1 per-run correlator). Minted daemon-side
+   * and threaded as a plain closure — the runner never imports the LeaseManager.
+   * Absent (older wiring) → the assembly bearer authenticates (no per-run mint;
+   * never an unauthenticated run).
+   */
+  readonly mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +347,10 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
+      // The per-run child leaseId (D5) — captured for downstream attribution
+      // (Plan 04 reads it for the run_summary emit). Undefined when no
+      // mintRunLease seam is wired (the assembly bearer authenticates instead).
+      let childLeaseId: string | undefined;
 
       log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
@@ -436,6 +453,24 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         const childEnv: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv);
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
+        }
+        // 5a. Per-run child lease (D5): when the daemon threads the mint seam,
+        //     mint a short-TTL CHILD bearer for THIS run and inject it as
+        //     COMIS_CAP_LEASE — OVERRIDING the assembly bearer merged just above.
+        //     Every in-jail cap call then audits under this run's leaseId (the
+        //     INV-1 per-run correlator). Minted here (step 5), AFTER the
+        //     honest-degrade refusals (steps 3/3b), so a refused run wastes no
+        //     lease. Absent seam → the assembly bearer authenticates (never an
+        //     unauthenticated run). The child bearer is registered in OutputGuard
+        //     at mint (daemon side), so logging its leaseId (not the bearer) is safe.
+        if (deps.mintRunLease) {
+          const child = deps.mintRunLease(runId, timeoutMs);
+          childLeaseId = child.leaseId;
+          childEnv.COMIS_CAP_LEASE = child.bearer;
+          log.debug(
+            { runId, leaseId: childLeaseId, step: "child-lease" },
+            "per-run child lease minted (overrides the assembly bearer)",
+          );
         }
         // 5b. Expose COMIS_AGENT_BIN (the in-jail comis-agent path) ONLY
         //     when the binary is bound. It is NOT a secret, so it is set AFTER the
