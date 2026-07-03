@@ -38,12 +38,22 @@ export type HostSnapshot = z.infer<typeof HostSnapshotSchema>;
  * A recoverable, section-level failure recorded on the bundle manifest so a
  * partial bundle is still generated (the section that failed is annotated
  * rather than aborting the whole run). `source` is the closed set of bundle
- * sections that can fail (the doctor run, the host snapshot, the file writer,
- * the fleet report, or the config-posture digest); `code` is the
- * section-failure identifier; `rows` carries offending indices when applicable.
+ * sections that can fail — the doctor run, the host snapshot, the file writer,
+ * the fleet report, the config-posture digest, the embedded explain report, the
+ * audit-summary read, or the trace-export bundle; `code` is the section-failure
+ * identifier; `rows` carries offending indices when applicable.
  */
 export const SupportBundleWarningSchema = z.strictObject({
-  source: z.enum(["doctor", "host", "writer", "fleet", "config-posture"]),
+  source: z.enum([
+    "doctor",
+    "host",
+    "writer",
+    "fleet",
+    "config-posture",
+    "explain",
+    "audit",
+    "trace-export",
+  ]),
   code: z.string(),
   count: z.number(),
   rows: z.array(z.number()).optional(),
@@ -174,6 +184,42 @@ export type ConfigPostureDigest = z.infer<typeof ConfigPostureDigestSchema>;
  */
 export function parseConfigPosture(raw: unknown): Result<ConfigPostureDigest, z.ZodError> {
   const result = ConfigPostureDigestSchema.safeParse(raw);
+  if (result.success) {
+    return ok(result.data);
+  }
+  return err(result.error);
+}
+
+/**
+ * The audit-summary digest written as `audit-summary.json`.
+ *
+ * Content-free by construction: `total` is how many audit events the window
+ * read returned, and `byKind` maps each closed audit-kind label to its count —
+ * counts and closed kind labels only, never an audit action, actor, or `refs`
+ * value. `byKind` stays a `z.record(z.string(), z.number())` to mirror the
+ * upstream incident report's `audit` shape (the kind keys are the fixed
+ * AuditKind universe at runtime). `capped` marks a window read that hit the
+ * store's row ceiling, so `total` is a lower bound rather than the true window
+ * count. `schemaVersion` is the literal 1 and the object is strict, so a drifted
+ * or forged digest fails `parseAuditSummary` rather than flowing through as a
+ * partially-typed object.
+ */
+export const AuditSummarySchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  total: z.number(),
+  byKind: z.record(z.string(), z.number()),
+  capped: z.boolean().optional(),
+});
+
+export type AuditSummary = z.infer<typeof AuditSummarySchema>;
+
+/**
+ * Parse unknown input into an AuditSummary, returning `Result<T, z.ZodError>`.
+ * An unknown key, a version other than 1, or a non-number `byKind` value
+ * returns `err`.
+ */
+export function parseAuditSummary(raw: unknown): Result<AuditSummary, z.ZodError> {
+  const result = AuditSummarySchema.safeParse(raw);
   if (result.success) {
     return ok(result.data);
   }
