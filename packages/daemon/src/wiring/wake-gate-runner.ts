@@ -223,7 +223,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
               err: scanned.error,
               agentId: ctx.agentId,
               jobId: ctx.jobId,
-              errorKind: "internal" satisfies ErrorKind,
+              errorKind: "internal" as const,
               hint: "output-guard scan failed on the gate deliver text — dropping the deliver (skip, no delivery) to avoid unscrubbed egress",
             },
             "Wake-gate deliver scrub failed — dropping deliver",
