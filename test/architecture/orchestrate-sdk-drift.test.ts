@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Drift gate: `pnpm sdk:generate` produces zero diff against the
- * committed `comis_tools.{d.ts,js}`. Because the SDK is emitted from the SAME
+ * committed `comis_tools.{d.ts,js,py}`. Because the SDK is emitted from the SAME
  * `TOOL_CAPABILITY_MAP` as the `tool.invoke` gate, this gate makes
  * SDK ↔ gate drift a BUILD failure — a hand-edit surfacing a tool the gate
  * denies (or hiding one it allows) no longer compiles past CI.
  *
  * Test strategy (a verbatim adaptation of `contract-codegen-drift.test.ts`):
- *   1. Read the committed `packages/skills/.../orchestrate/comis_tools.{d.ts,js}`.
+ *   1. Read the committed `packages/skills/.../orchestrate/comis_tools.{d.ts,js,py}`.
  *   2. Run `runCodegen()` into a throwaway temp dir — produces fresh strings
  *      AND the freshly-written bytes, without touching the committed artifacts.
  *   3. Compare byte-for-byte. Any mismatch indicates either:
@@ -30,6 +30,7 @@ import {
   runCodegen,
   OUT_DTS,
   OUT_JS,
+  OUT_PY,
 } from "../../scripts/orchestrate-sdk/generate-comis-tools-sdk.js";
 
 describe("orchestrate comis_tools SDK drift gate", () => {
@@ -37,17 +38,20 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     // Snapshot the committed artifacts.
     const committedDts = readFileSync(OUT_DTS, "utf8");
     const committedJs = readFileSync(OUT_JS, "utf8");
+    const committedPy = readFileSync(OUT_PY, "utf8");
 
     // Regenerate into a throwaway temp dir so we never touch (or race on) the
     // committed artifacts. The artifact filenames are constant across dirs.
     const tmp = mkdtempSync(join(tmpdir(), "comis-sdk-drift-"));
     let generatedDts: string;
     let generatedJs: string;
+    let generatedPy: string;
     let result: ReturnType<typeof runCodegen>;
     try {
       result = runCodegen(tmp);
       generatedDts = readFileSync(join(tmp, "comis_tools.d.ts"), "utf8");
       generatedJs = readFileSync(join(tmp, "comis_tools.js"), "utf8");
+      generatedPy = readFileSync(join(tmp, "comis_tools.py"), "utf8");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -56,25 +60,29 @@ describe("orchestrate comis_tools SDK drift gate", () => {
     // in-memory result (catches a writeFileSync regression).
     expect(generatedDts, "in-memory dts diverges from disk").toBe(result.dts);
     expect(generatedJs, "in-memory js diverges from disk").toBe(result.js);
+    expect(generatedPy, "in-memory py diverges from disk").toBe(result.py);
 
     // CRITICAL ASSERTION: the committed files must be byte-identical to the
     // freshly-regenerated ones. If this fails, run `pnpm sdk:generate` and
     // commit the resulting changes to comis_tools.{d.ts,js}.
     const dtsMatch = committedDts === generatedDts;
     const jsMatch = committedJs === generatedJs;
+    const pyMatch = committedPy === generatedPy;
 
-    if (!dtsMatch || !jsMatch) {
+    if (!dtsMatch || !jsMatch || !pyMatch) {
       const drifted: string[] = [];
       if (!dtsMatch) drifted.push("comis_tools.d.ts");
       if (!jsMatch) drifted.push("comis_tools.js");
+      if (!pyMatch) drifted.push("comis_tools.py");
       expect.fail(
         `comis_tools SDK drift detected — files differ from committed versions: ${drifted.join(", ")}. ` +
           `The SDK is generated from TOOL_CAPABILITY_MAP — run \`pnpm sdk:generate\` and commit the changes ` +
-          `to packages/skills/src/tools/builtin/orchestrate/comis_tools.{d.ts,js}.`,
+          `to packages/skills/src/tools/builtin/orchestrate/comis_tools.{d.ts,js,py}.`,
       );
     }
 
     expect(dtsMatch).toBe(true);
     expect(jsMatch).toBe(true);
+    expect(pyMatch).toBe(true);
   });
 });
