@@ -100,19 +100,19 @@ export function deriveFleetSignals(fleet: FleetHealthReport): string[] {
 }
 
 /**
- * Whether a fleet report carries any positive evidence — at least one session,
- * one finding, or a coverage read that located the session-summary store. An
- * absent report (offline read, no fleet at all) or a coverage-empty one (the
- * assembler ran but found nothing) is treated as no evidence, so the status
- * rules never report `healthy` off an empty fleet.
+ * Whether a fleet report carries positive operator evidence — at least one real
+ * session or one diagnostic finding. Evidence is keyed on the
+ * synthetic-EXCLUDED population (matching `sessions.total`), NOT on the
+ * `coverage.sessionSummary.found` read breadcrumb: that flag is
+ * synthetic-INCLUSIVE (`rows > 0` over the pre-exclusion row set), so a window
+ * holding only synthetic/test rows would otherwise be mistaken for evidence and
+ * let a thrown doctor run (zero passes) fall through to a false `healthy`. An
+ * absent report (offline read, no fleet at all), a synthetic-only window, or a
+ * coverage-empty one is treated as no evidence, so the status rules never
+ * report `healthy` off a fleet that carries no real activity.
  */
 export function fleetHasEvidence(fleet?: FleetHealthReport): boolean {
-  return (
-    fleet !== undefined &&
-    (fleet.sessions.total > 0 ||
-      fleet.findings.length > 0 ||
-      fleet.coverage?.sessionSummary.found === true)
-  );
+  return fleet !== undefined && (fleet.sessions.total > 0 || fleet.findings.length > 0);
 }
 
 /**
