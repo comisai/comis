@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
-import type { ComisLogger } from "@comis/core";
+import type { AgentCapability, ComisLogger } from "@comis/core";
 
 import {
   createOrchestrateTool,
@@ -123,6 +123,28 @@ describe("orchestrate-tool", () => {
     // Drop the broker lease env so the child gets NO COMIS_CAP_LEASE (the
     // lease_absent run_summary case).
     dropBrokerSpawnEnv?: boolean;
+    // The static pre-flight seams (PREFLIGHT-02/03) + the declared W3 repair
+    // contract (capabilityClass/repairSeam — unused by the pre-flight tests,
+    // consumed by the repair wave). Conditional-spread like mintRunLease/eventBus.
+    allowedCaps?: readonly AgentCapability[];
+    approvalGate?: {
+      requestApproval: (req: {
+        toolName: string;
+        action: string;
+        params: Record<string, unknown>;
+        agentId: string;
+        sessionKey: string;
+        trustLevel: "admin" | "user" | "guest";
+        channelType?: string;
+      }) => Promise<{ approved: boolean; reason?: string }>;
+    };
+    capabilityClass?: "frontier" | "mid" | "small" | "nano";
+    repairSeam?: (input: {
+      script: string;
+      language: "ts" | "js" | "py";
+      stderrTail: string;
+      describeDigest: string;
+    }) => Promise<string | undefined>;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     return {
@@ -167,6 +189,10 @@ describe("orchestrate-tool", () => {
         ...(over?.eventBus ? { eventBus: over.eventBus } : {}),
         ...(over?.rootRunId !== undefined ? { rootRunId: over.rootRunId } : {}),
         ...(over?.sessionKey !== undefined ? { sessionKey: over.sessionKey } : {}),
+        ...(over?.allowedCaps !== undefined ? { allowedCaps: over.allowedCaps } : {}),
+        ...(over?.approvalGate ? { approvalGate: over.approvalGate } : {}),
+        ...(over?.capabilityClass !== undefined ? { capabilityClass: over.capabilityClass } : {}),
+        ...(over?.repairSeam ? { repairSeam: over.repairSeam } : {}),
       },
       cleanupRun,
     };
@@ -658,6 +684,115 @@ describe("orchestrate-tool", () => {
       /no node inside the jail|unavailable|jail/i,
     );
     expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Static pre-flight gate (PREFLIGHT-02 fail-fast + PREFLIGHT-03 approval).
+  // The runner scans the model's script for its capability footprint BEFORE the
+  // spawn: a cap the agent lacks fails fast pre-spawn with a cap-named error
+  // (no jail burned), and — when an approval gate is wired (approvals.enabled) —
+  // one approval fires on the whole cap footprint. R6/INV-1: the pre-flight is
+  // ADVISORY UX only. A script that dodges the static scan (a dynamic/computed
+  // call → empty footprint) still proceeds here; the authoritative cap-socket
+  // endpoint (unchanged this phase) remains the sole boundary.
+  // ---------------------------------------------------------------------------
+  describe("static pre-flight gate (PREFLIGHT-02 fail-fast + PREFLIGHT-03 approval + R6 advisory)", () => {
+    it("PREFLIGHT-02: rejects a script needing a cap the agent lacks BEFORE spawning, naming the missing orch:* cap (no child spawned)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      // Held caps = orch:read only; the script calls web_fetch (which needs orch:web).
+      const { deps } = makeDeps({ spawnFn, allowedCaps: ["orch:read"] });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(
+        tool.execute("c", {
+          script: "await comis_tools.web_fetch({url:'https://x'});",
+          language: "ts",
+        }),
+      ).rejects.toThrow(/orch:web/);
+
+      // Fail-fast: the missing-cap rejection fires PRE-SPAWN — no jail is burned.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("PREFLIGHT-03 (approved): fires requestApproval ONCE on the exact sorted cap set, then proceeds to spawn", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      const requestApproval = vi.fn(async () => ({ approved: true }));
+      const { deps } = makeDeps({
+        spawnFn,
+        allowedCaps: ["orch:web"],
+        approvalGate: { requestApproval },
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", {
+        script: "await comis_tools.web_fetch({url:'https://x'});",
+        language: "ts",
+      });
+
+      // The approval fires exactly once, on the exact cap footprint.
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      const req = requestApproval.mock.calls[0]![0] as {
+        toolName: string;
+        action: string;
+        params: { caps?: unknown };
+      };
+      expect(req.toolName).toBe("orchestrate");
+      // The action string encodes the exact (sorted) cap set.
+      expect(req.action).toContain("orch:web");
+      expect(req.params.caps).toEqual(["orch:web"]);
+      // Approved → the run proceeds to spawn.
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
+
+    it("PREFLIGHT-03 (denied): a !approved resolution refuses the run with the reason in the hint — no child spawned", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      const requestApproval = vi.fn(async () => ({ approved: false, reason: "operator said no" }));
+      const { deps } = makeDeps({
+        spawnFn,
+        allowedCaps: ["orch:web"],
+        approvalGate: { requestApproval },
+      });
+      const tool = createOrchestrateTool(deps);
+
+      const err = await tool
+        .execute("c", {
+          script: "await comis_tools.web_fetch({url:'https://x'});",
+          language: "ts",
+        })
+        .then(
+          () => undefined,
+          (e: unknown) => e as Error,
+        );
+
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      expect(err).toBeInstanceOf(Error);
+      // The denial refuses the run; the resolution reason rides the hint.
+      expect(err!.message).toMatch(/denied by the approval workflow/i);
+      expect(err!.message).toContain("operator said no");
+      // Denied → fail-fast, no spawn.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("R6 (advisory-only): a script whose static footprint is EMPTY (a dynamic/computed call) passes pre-flight and proceeds to spawn — the endpoint stays the sole gate", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("dodged\n"));
+      // Held caps = orch:read only. The script reaches web_fetch through a computed
+      // member (comis_tools[m]) the token scan cannot see → empty footprint. The
+      // pre-flight must NOT reject on a missing cap (it is fail-fast UX, NOT the
+      // security gate); the authoritative cap-socket endpoint (default-deny by
+      // absence, unchanged this phase) denies orch:web at runtime.
+      const { deps } = makeDeps({ spawnFn, allowedCaps: ["orch:read"] });
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", {
+        script: "const m = 'web_fetch'; await comis_tools[m]({});",
+        language: "ts",
+      });
+
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("dodged");
+      // Advisory: the run proceeded to spawn despite calling a cap the agent lacks.
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -- Bind the comis-agent binary + honest-degrade the CLI surface --
