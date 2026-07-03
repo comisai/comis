@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * `comis support-bundle` — assemble an offline, paste-ready support bundle.
+ *
+ * The command is the sanctioned throw/exit boundary for the bundle pipeline: it
+ * resolves the data dir + config paths, validates the flag combination, calls
+ * the offline orchestrator, and maps the `Result` to a named `ExitCode`. A
+ * written bundle is a success even when the triage is degraded or the bundle is
+ * partial — the degraded verdict is the content, not a failure. Only a bundle
+ * that could not be produced at all is a `GeneralFailure`, and a misused flag is
+ * a `UsageError`.
+ *
+ * In table format it prints the bundle path, the triage status, the reporter
+ * next-steps, the privacy notice, and the two copy-paste lines — the `tar`
+ * archive command and the `gh issue create` command. Those lines are PRINTED
+ * for the operator to run; the command never runs them itself, so the bundle is
+ * never transmitted or published on the operator's behalf.
+ *
+ * @module
+ */
+
+import type { Command } from "commander";
+import * as os from "node:os";
+import { existsSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { systemGetEnv, systemNowMs } from "@comis/core";
+import { info, warn, error, json } from "../output/format.js";
+import { ExitCode } from "../util/exit-codes.js";
+import { resolveOfflineDataDir } from "../util/offline-obs.js";
+import { generateSupportBundle } from "../support-bundle/generate.js";
+
+/**
+ * Resolve default config paths from COMIS_CONFIG_PATHS or the standard
+ * locations. The environment is read via `systemGetEnv` (the sanctioned env
+ * reader — never a raw env global) so the globals architecture test passes, and
+ * the value is split on ":" exactly as the daemon and the doctor command split
+ * it. When the variable is unset, the standard candidate files that exist on
+ * disk are used.
+ */
+function resolveDefaultConfigPaths(): string[] {
+  const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
+  if (envPaths) {
+    return envPaths.split(":").filter((p) => p.length > 0);
+  }
+  const candidates = [
+    os.homedir() + "/.comis/config.yaml",
+    os.homedir() + "/.comis/config.local.yaml",
+    "/etc/comis/config.yaml",
+    "/etc/comis/config.local.yaml",
+  ];
+  return candidates.filter((p) => existsSync(p));
+}
+
+/** Options parsed by Commander for the support-bundle action. */
+interface SupportBundleOptions {
+  since: string;
+  format: string;
+  config?: string[];
+  session?: string;
+  deep?: boolean;
+}
+
+/**
+ * Register the `support-bundle` command on the program.
+ *
+ * Flags: `--since <hours>` (window, default 24), `--format table|json`
+ * (default table), `-c/--config <paths...>`, `--session <ref>`, and `--deep`
+ * (requires `--session`). The `--session`/`--deep` pair is declared for the
+ * usage contract; deep per-session evidence is not embedded yet.
+ *
+ * @param program - The root Commander program
+ */
+export function registerSupportBundleCommand(program: Command): void {
+  program
+    .command("support-bundle")
+    .description(
+      "Assemble an offline, paste-ready support bundle (triage verdict, health findings, host facts) — works with a stopped daemon",
+    )
+    .option("--since <hours>", "Window in hours", "24")
+    .option("--format <format>", 'Output format: "table" or "json"', "table")
+    .option("-c, --config <paths...>", "Config file paths")
+    .option(
+      "--session <sessionKeyOrTraceId>",
+      "Focus the bundle on a single session (requires --deep)",
+    )
+    .option("--deep", "Include deep per-session evidence (requires --session)")
+    .action(async (options: SupportBundleOptions) => {
+      // Usage guard: --deep only means something with a --session to deepen.
+      if (options.deep && !options.session) {
+        error("--deep requires --session <sessionKeyOrTraceId>");
+        process.exit(ExitCode.UsageError);
+      }
+
+      const startedAtMs = systemNowMs();
+      const configPaths = options.config ?? resolveDefaultConfigPaths();
+      const dataDir = resolveOfflineDataDir();
+      const sinceHours = Number.parseFloat(options.since);
+
+      const result = await generateSupportBundle({
+        dataDir,
+        configPaths,
+        sinceHours,
+        nowMs: startedAtMs,
+      });
+
+      // The one hard failure: the bundle directory could not be produced.
+      if (!result.ok) {
+        error(
+          `Support bundle could not be produced (${result.error.errorKind}): ${result.error.reason}`,
+        );
+        error(`hint: ${result.error.hint}`);
+        process.exit(ExitCode.GeneralFailure);
+      }
+
+      const { bundleDir, status, activeSignals, warnings } = result.value;
+
+      // Machine-readable surface: exactly the triage digest, nothing else.
+      if (options.format === "json") {
+        json({ bundleDir, status, activeSignals });
+        process.exit(ExitCode.Success);
+      }
+
+      // Human-readable surface.
+      const bundleName = basename(bundleDir);
+      const parentDir = dirname(bundleDir);
+      const durationMs = systemNowMs() - startedAtMs;
+
+      info(`Bundle written to: ${bundleDir}`);
+      info(`Triage status: ${status}`);
+      if (activeSignals.length > 0) {
+        info(`Active signals: ${activeSignals.join(", ")}`);
+      }
+      if (warnings.length > 0) {
+        warn(`${warnings.length} section(s) were partial — see manifest.json for details`);
+      }
+
+      // Reporter next-steps: what to do with the freshly-written bundle. The
+      // tar and gh lines are printed for the operator to run — the command
+      // never executes them, so nothing is transmitted or published here.
+      info("Next steps:");
+      info(`  1. Review the bundle, starting with ${bundleName}/issue-summary.md`);
+      info("  2. Compress it and attach the archive to your report:");
+      info(`       tar czf ${bundleName}.tar.gz -C ${parentDir} ${bundleName}`);
+      info("  3. Or open an issue directly from the summary:");
+      info(`       gh issue create --body-file ${bundleDir}/issue-summary.md`);
+
+      // Privacy notice: the bundle is content-free by construction, but treat
+      // it as sensitive all the same.
+      warn(
+        "Privacy: this bundle excludes secrets, message bodies, and raw config " +
+          "values by construction, but treat it as sensitive — share it only " +
+          "with authorized engineers over a secure channel and delete it after triage.",
+      );
+
+      info(`Support bundle ready in ${durationMs}ms.`);
+      process.exit(ExitCode.Success);
+    });
+}

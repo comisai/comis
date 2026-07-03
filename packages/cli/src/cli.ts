@@ -39,6 +39,7 @@ import { registerExplainCommand } from "./commands/explain.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerCostExportCommand } from "./commands/cost-export.js";
 import { registerFleetCommand } from "./commands/fleet.js";
+import { registerSupportBundleCommand } from "./commands/support-bundle.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
 export const program = new Command();
@@ -72,6 +73,7 @@ registerExplainCommand(program);
 registerWhoamiCommand(program);
 registerCostExportCommand(program);
 registerFleetCommand(program);
+registerSupportBundleCommand(program);
 registerUninstallCommand(program);
 
 // Parse and execute
