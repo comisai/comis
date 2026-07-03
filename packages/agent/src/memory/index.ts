@@ -18,6 +18,20 @@
 export { createOutcomeJudgeSeam, JUDGE_REWARD_CAP } from "./outcome-judge-seam.js";
 export type { OutcomeJudgeSeamDeps, OutcomeVerdict } from "./outcome-judge-seam.js";
 export type { CustomCompletionsModelSpec } from "./judge-model-resolver.js";
+
+// The one-shot orchestrate repair seam. The daemon constructs it (in
+// buildAutonomyToolWiring) on a repair-eligible capability class and injects the
+// resulting closure into the orchestrate runner, which calls it AT MOST once on a
+// recoverable non-zero exit. Built on the SAME resolveJudgeModel+completeSimple
+// machinery as the outcome-judge seam so @comis/skills never imports the model
+// layer — only the FACTORY + its types cross the boundary (resolveJudgeModel
+// stays package-internal).
+export { createOrchestrateRepairSeam } from "./orchestrate-repair-seam.js";
+export type {
+  OrchestrateRepairSeam,
+  OrchestrateRepairSeamDeps,
+  OrchestrateRepairInput,
+} from "./orchestrate-repair-seam.js";
 export { createCorrectionDetectorSeam, CORRECTION_REWARD_CAP } from "./correction-detector-seam.js";
 export type { CorrectionDetectorSeamDeps, CorrectionVerdict } from "./correction-detector-seam.js";
 

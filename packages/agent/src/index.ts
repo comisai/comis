@@ -566,6 +566,16 @@ export { createOutcomeJudgeSeam } from "./memory/index.js";
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";
 
+// The one-shot orchestrate repair seam the daemon mints (in buildAutonomyToolWiring)
+// on a repair-eligible capability class and injects into the orchestrate runner:
+// ONE bounded utility-model re-prompt regenerates a failed script for exactly one
+// re-run. Built on the SAME resolveJudgeModel+completeSimple machinery as the
+// outcome-judge seam so @comis/skills consumes only the injected closure and never
+// imports the model layer — resolveJudgeModel stays package-internal; the FACTORY
+// (+ its closure/deps types) is the export.
+export { createOrchestrateRepairSeam } from "./memory/index.js";
+export type { OrchestrateRepairSeam, OrchestrateRepairSeamDeps } from "./memory/index.js";
+
 // Reflection engine. The
 // reflection JOB (runReflection) + the cheap-model reflect adapter + the
 // prompt/parser the daemon invokes from the __REFLECT__ cron: SELECT

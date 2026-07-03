@@ -518,6 +518,9 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // (mirror runMemoryTripleExtraction). Shrink each entry as the daemon
       // wiring / orchestrate tool name-imports it cross-package.
       "autoRepairForClass",
+      "createOrchestrateRepairSeam",
+      "OrchestrateRepairSeam",
+      "OrchestrateRepairSeamDeps",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
