@@ -27,6 +27,7 @@ import {
   healthSignalLabel,
   multilingualFromRow,
   nodeBudgetExceededFromRow,
+  orchestrateEfficiencyFromRow,
   pipelineAuthoringFromRow,
   pricingGapFromRow,
   sandboxDowngradeFromRow,
@@ -232,6 +233,36 @@ export function buildFindings(
       detail: `${smallInvalid}/${smallTotal} small-tier pipeline authorings invalid (rate ${pct}%)`,
       count: smallInvalid,
       hint: "small/local models are failing to author valid pipeline DAGs; this is the small-model-authorable-DAGs gate metric — review before enabling orchestration.authoring.*",
+    });
+  }
+
+  // Dedicated orchestrate_efficiency finding — the daemon-wide MEASURED
+  // token savings from completed orchestrate runs, rolled up over the window: the
+  // run count + the summed est. tokens saved (+ a degraded-run count when any run
+  // carried a closed failureClass). The saving is the counterfactual of
+  // materializing large tool results as ResultRefs instead of re-entering them into
+  // context. Counts + token ESTIMATES + the closed failureClass ONLY — never the
+  // runId, the stdout, the resultRefBytes, or the stderr tail (safe to paste). Zero-
+  // traffic guard (the voice_health if-pattern). estSavedTokens coerces to 0 for a
+  // run that materialized nothing, so it still counts as a run without inflating the
+  // sum.
+  let orchestrateRunCount = 0;
+  let orchestrateEstSavedTotal = 0;
+  let orchestrateDegradedRuns = 0;
+  for (const row of healthSignals) {
+    const parsed = orchestrateEfficiencyFromRow(row);
+    if (parsed === null) continue;
+    orchestrateRunCount += 1;
+    orchestrateEstSavedTotal += parsed.estSavedTokens;
+    if (parsed.failureClass !== undefined) orchestrateDegradedRuns += 1;
+  }
+  if (orchestrateRunCount > 0) {
+    const base = `${orchestrateRunCount} orchestrate run(s), ~${orchestrateEstSavedTotal} est. tokens saved`;
+    findings.push({
+      code: "orchestrate_efficiency",
+      detail: orchestrateDegradedRuns > 0 ? `${base} (${orchestrateDegradedRuns} degraded)` : base,
+      count: orchestrateRunCount,
+      hint: "measured token savings from orchestrate runs materializing large tool results as ResultRefs instead of re-entering them into context; run `comis explain` on a session for the per-run savings breakdown",
     });
   }
 

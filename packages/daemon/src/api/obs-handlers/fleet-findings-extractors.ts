@@ -160,6 +160,11 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // generic `health_signal:pipeline_authoring` count — the finding + this entry
   // MOVE TOGETHER (listing it here without the dedicated branch silently drops it).
   "pipeline_authoring",
+  // orchestrate_efficiency gets the dedicated finding below (the measured
+  // token-savings roll-up). Excluded here so it is NOT also counted in the generic
+  // `health_signal:orchestrate_efficiency` rollup — the finding + this entry MOVE
+  // TOGETHER (listing it here without the dedicated branch silently drops it).
+  "orchestrate_efficiency",
   // The three previously-dark daemon-side
   // orchestration signals each get a dedicated finding below (named violated
   // dimensions / transient-vs-permanent split / dominant cap source). Excluded from
@@ -241,6 +246,33 @@ export function pipelineAuthoringFromRow(row: DiagnosticRow): { tier: string; sc
     const tier = typeof parsed.tier === "string" && parsed.tier.length > 0 ? parsed.tier : "unknown";
     const schemaValid = parsed.schemaValid === true;
     return { tier, schemaValid };
+  } catch {
+    return null; // malformed details JSON — counts only, no body.
+  }
+}
+
+/** The `estSavedTokens` estimate + the closed `failureClass` from an
+ *  `orchestrate_efficiency` health_signal row's details JSON (the run-summary
+ *  shape). Defensive parse cloning `pipelineAuthoringFromRow` — a non-orchestrate /
+ *  malformed / missing row folds to `null` (ignored; counts only, never throws). A
+ *  run that materialized nothing still counts (estSavedTokens coerces to 0 — the
+ *  run is real, it just saved nothing), so ONLY a wrong-signal/malformed row returns
+ *  null. `failureClass` is a CLOSED enum (or undefined on a clean run), rendered only
+ *  into a degraded-run count — never the runId, the stdout, or a body. */
+export function orchestrateEfficiencyFromRow(
+  row: DiagnosticRow,
+): { estSavedTokens: number; failureClass: string | undefined } | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as { signal?: unknown; estSavedTokens?: unknown; failureClass?: unknown };
+    if (parsed.signal !== "orchestrate_efficiency") return null;
+    const estSavedTokens =
+      typeof parsed.estSavedTokens === "number" && Number.isFinite(parsed.estSavedTokens) && parsed.estSavedTokens > 0
+        ? parsed.estSavedTokens
+        : 0;
+    const failureClass =
+      typeof parsed.failureClass === "string" && parsed.failureClass.length > 0 ? parsed.failureClass : undefined;
+    return { estSavedTokens, failureClass };
   } catch {
     return null; // malformed details JSON — counts only, no body.
   }
