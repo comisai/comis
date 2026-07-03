@@ -1574,6 +1574,68 @@ Requires an admin-scoped gateway token (same as `comis explain` / `comis trace`)
 
 ---
 
+### `comis support-bundle`
+
+Assemble a **paste-ready support bundle** — a single directory to hand to a maintainer or attach to a bug report. Each run writes four content-free files under `<dataDir>/support-bundles/comis-support-<ts>/`: a machine-readable triage verdict, the full health-check findings, a human-readable issue summary, and a manifest carrying the redaction fingerprint. The verdict is derived from the local health checks only — no LLM is invoked, so the same install state always yields the same verdict.
+
+The command runs **fully offline**: it composes the same checks as `comis doctor` against a stopped daemon, folds them into the triage verdict, and writes the bundle without contacting the gateway. A **degraded or partial** triage is still a written bundle — the degraded verdict is the content, not a failure — so the command exits `0` on any bundle it manages to write. It is safe to run the moment something looks wrong.
+
+The bundle is content-free by construction: it excludes secrets, message bodies, and raw config values, and the directory name carries a timestamp only (no hostname). Every file is written under an owner-only (`0o700`) directory with `0o600` file modes through a symlink-refusing safe writer.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--since <hours>` | `number` | `24` | Diagnostic window in hours (same unit as `comis fleet`) |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+| `-c, --config <paths...>` | `string[]` | auto | Config file paths; defaults to `COMIS_CONFIG_PATHS` or the standard `~/.comis` / `/etc/comis` locations |
+| `--session <sessionKeyOrTraceId>` | `string` | — | Focus the bundle on a single session (requires `--deep`) |
+| `--deep` | `boolean` | `false` | Include deep per-session evidence (requires `--session`) |
+
+**Output files** — written under `comis-support-<ts>/`:
+
+| File | Contents |
+|------|----------|
+| `issue-summary.md` | Human-readable triage summary, ready to paste into a bug report |
+| `triage.json` | Machine-readable triage verdict (status, active signals, doctor summary) |
+| `doctor.json` | Full diagnostic findings from the health checks |
+| `manifest.json` | Bundle index with the redaction fingerprint and any partial-section warnings |
+
+```bash
+# Write a bundle for the last 24h (default window)
+comis support-bundle
+
+# Machine-readable summary of where the bundle landed and what it found
+comis support-bundle --format json
+#   { "bundleDir": "…/support-bundles/comis-support-…", "status": "degraded", "activeSignals": ["daemon_down"] }
+
+# Widen the diagnostic window to 72h
+comis support-bundle --since 72
+```
+
+In table format the command also prints the copy-paste commands to compress the bundle and open an issue from the summary — **you** run them; the command never does:
+
+```bash
+tar czf comis-support-<ts>.tar.gz -C <parent> comis-support-<ts>
+gh issue create --body-file <bundleDir>/issue-summary.md
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | A bundle was written — including a **degraded** or **partial** triage |
+| `1` | The bundle could not be produced at all (e.g. the data dir is not writable) |
+| `2` | Usage error (e.g. `--deep` without `--session`) |
+
+<Warning>
+**Privacy notice**
+
+The bundle excludes secrets, message bodies, and raw config values by construction, and a redaction backstop masks value-shaped strings and substitutes absolute paths before anything reaches disk. Redaction is heuristic, though — always treat the bundle as sensitive: share it only with authorized engineers over a secure channel, and delete it after triage.
+</Warning>
+
+**No daemon required.** The bundle is assembled entirely from the local `~/.comis` files and the offline health checks, so it works when the daemon is stopped or crash-looping — exactly when you most need it. When the daemon happens to be running, the bundle also records its build version; otherwise that field is simply absent.
+
+---
+
 ### `comis whoami`
 
 Show the run's **resolved orchestration capabilities** plus the **remaining per-root budget and outward quota** — "what can I do, and how much budget is left". Backed by `CapabilitiesIntrospectContract` (`capabilities.introspect`, `rpc` scope — read-only, no capability required). The read is **self-scoped**: the daemon resolves the caller from the connection, so an operator token sees the default agent's posture and an in-process agent sees its OWN (never another agent's — the request carries no `agentId`).
