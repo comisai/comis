@@ -126,6 +126,7 @@ import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
+import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
 // The single process-singleton activity circuit breaker is constructed
 // here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
@@ -2136,6 +2137,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // The per-provider operator capabilityClass override so ctx_expand's walk depth honors a pinned tier (same providers.entries source as the executor's ModelProfile). Undefined ⇒ provider-family heuristic.
     getProviderCapabilityClass: (provider) =>
       container.config.providers?.entries?.[provider ?? ""]?.capabilities?.capabilityClass,
+    // The class-gated one-shot orchestrate repair-seam resolver (mirrors the getProviderCapabilityClass sibling): the daemon mints the keyless-safe repair closure per agent (small/nano ON, frontier/mid OFF — pure class-gate off the model profile, no config toggle). setup-tools threads it into the orchestrate runner.
+    resolveOrchestrateRepairSeam: buildOrchestrateRepairResolver({
+      config: container.config,
+      secretManager: container.secretManager,
+      clock: boot.clock,
+      logger: daemonLogger,
+    }),
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, platformSecretNames: container.platformSecretNames,
     eventBus: container.eventBus, skillsLogger, linkRunner,

@@ -197,6 +197,41 @@ describe("buildAutonomyToolWiring", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // One-shot repair wiring: setup-tools resolves the effective capabilityClass +
+  // (for a repair-eligible class) a daemon-minted repairSeam and threads BOTH into
+  // createOrchestrateTool — conditional-spread like eventBus/approvalGate. The
+  // class-gate is pure (off the model profile); there is no config toggle.
+  // -------------------------------------------------------------------------
+  describe("one-shot repair wiring (capabilityClass + repairSeam)", () => {
+    it("threads capabilityClass + the daemon-minted repairSeam into createOrchestrateTool for a small-class agent", () => {
+      const repairSeam = vi.fn(async () => "regenerated") as never as NonNullable<
+        AutonomyToolInputs["repairSeam"]
+      >;
+      buildAutonomyToolWiring(baseInput({ capabilityClass: "small", repairSeam }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        capabilityClass?: string;
+        repairSeam?: unknown;
+      };
+      expect(args.capabilityClass).toBe("small");
+      expect(args.repairSeam).toBe(repairSeam);
+    });
+
+    it("threads capabilityClass but OMITS repairSeam for a frontier agent (class-gated OFF → no seam resolved)", () => {
+      buildAutonomyToolWiring(baseInput({ capabilityClass: "frontier" }));
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect(args.capabilityClass).toBe("frontier");
+      expect("repairSeam" in args).toBe(false);
+    });
+
+    it("OMITS both capabilityClass and repairSeam keys when neither is threaded (older wiring)", () => {
+      buildAutonomyToolWiring(baseInput());
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as Record<string, unknown>;
+      expect("capabilityClass" in args).toBe(false);
+      expect("repairSeam" in args).toBe(false);
+    });
+  });
+
   it("does NOT mint a lease for a non-autonomy (assistant) agent", () => {
     const input = baseInput({ agentConfig: { autonomy: { profile: "assistant" } } as never });
     const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring(input);

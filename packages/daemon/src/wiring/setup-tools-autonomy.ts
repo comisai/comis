@@ -37,6 +37,7 @@ import {
 import type { PlatformToolProvider } from "@comis/skills";
 import type { SandboxProvider } from "@comis/skills/tools";
 import { createOrchestrateTool, createResultRefStore } from "@comis/skills/tools";
+import type { CapabilityClass, OrchestrateRepairSeam } from "@comis/agent";
 
 /** The daemon tool-assembly array element type (an `AgentTool`), derived via skills
  *  (mirrors setup-context-tools.ts / setup-terminal-tools.ts) so this file does not
@@ -104,6 +105,22 @@ export interface AutonomyToolInputs {
    * Absent ⇒ no approval fire (no regression to older wiring).
    */
   readonly approvalGate?: ApprovalGate;
+  /**
+   * The resolved effective capability class (operator override → provider-family →
+   * the `small` fail-safe), threaded from setup-tools. The orchestrate runner's
+   * one-shot auto-repair is class-gated off it — ON for weaker models (small/nano),
+   * OFF for stronger (frontier/mid). No config toggle: the class is the sole control.
+   * Absent ⇒ the runner treats it as the fail-safe class where consumed.
+   */
+  readonly capabilityClass?: CapabilityClass;
+  /**
+   * The daemon-minted one-shot repair closure, resolved per agent by
+   * `buildOrchestrateRepairResolver` ONLY when the class is repair-eligible AND a
+   * utility model resolves. Threaded into the orchestrate runner (like {@link mintRunLease})
+   * so a recoverable failed script gets ONE utility-model re-prompt + one re-run.
+   * Absent ⇒ no repair (frontier/mid, or no resolvable utility model).
+   */
+  readonly repairSeam?: OrchestrateRepairSeam;
 }
 
 /** The wiring {@link buildAutonomyToolWiring} returns: the minted env + the orchestrate tool. */
@@ -238,6 +255,14 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           // daemon-shared bus fans out to every session bridge — the payload
           // carries rootRunId + sessionKey so it lands on the right report).
           ...(input.eventBus !== undefined ? { eventBus: input.eventBus } : {}),
+          // The one-shot auto-repair class-gate + the daemon-minted repair closure
+          // — conditional-spread like eventBus. capabilityClass gates the runner's
+          // repair branch (a pure class-gate off the model profile; no config
+          // toggle); repairSeam is the injected one-attempt completion. Both absent
+          // for a stronger model / an unresolvable utility model ⇒ the runner does
+          // not repair (no regression to older wiring).
+          ...(input.capabilityClass !== undefined ? { capabilityClass: input.capabilityClass } : {}),
+          ...(input.repairSeam !== undefined ? { repairSeam: input.repairSeam } : {}),
           rootRunId,
           sessionKey,
         }) as unknown as AgentTool)
