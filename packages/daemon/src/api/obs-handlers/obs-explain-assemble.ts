@@ -396,6 +396,12 @@ export function assembleIncidentReport(
     // Absent when the session emitted no per-cap audit records (additive;
     // schemaVersion 1) — the offline path assembles it for free (same assembler).
     ...((signals.spawnTree ?? []).length > 0 ? { spawnTree: signals.spawnTree } : {}),
+    // The per-run orchestrate section reconstructed from the session's
+    // orchestrate.run_summary records (one entry per run; each carries its
+    // failureClass, the per-run toolCalls/denials attributed by the child leaseId,
+    // and the labeled savings estimate). Absent when the session ran no orchestrate
+    // script (additive; schemaVersion 1) — the spawnTree presence-conditional mold.
+    ...((signals.orchestrate ?? []).length > 0 ? { orchestrate: signals.orchestrate } : {}),
     // The terminal per-call budget equation (absent when the trajectory carries
     // no context.budget record).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
