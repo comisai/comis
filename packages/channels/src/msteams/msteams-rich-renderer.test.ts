@@ -141,6 +141,30 @@ describe("renderMSTeamsCardAttachment card body", () => {
   });
 });
 
+describe("renderMSTeamsCardAttachment nested card buttons", () => {
+  it("renders a RichCard's nested button rows as card actions (not silently dropped)", () => {
+    const cards: RichCard[] = [
+      {
+        title: "Choose",
+        buttons: [[{ text: "Yes", callback_data: SIGNED_CB }, { text: "No" }]],
+      },
+    ];
+    const actions = actionsOf(renderMSTeamsCardAttachment(cards, []));
+
+    expect(actions).toHaveLength(2);
+    expect(actions[0]).toMatchObject({ type: "Action.Execute", title: "Yes" });
+    expect(actions[1]).toMatchObject({ type: "Action.Submit", title: "No" });
+  });
+
+  it("folds card-nested rows ahead of the top-level button rows into one actions array", () => {
+    const cards: RichCard[] = [{ title: "T", buttons: [[{ text: "CardBtn" }]] }];
+    const buttons: RichButton[][] = [[{ text: "TopBtn" }]];
+    const actions = actionsOf(renderMSTeamsCardAttachment(cards, buttons));
+
+    expect(actions.map((a) => a.title)).toEqual(["CardBtn", "TopBtn"]);
+  });
+});
+
 describe("renderMSTeamsCardAttachment PascalCase enum enforcement", () => {
   it("maps a primary-style button to the PascalCase color Good", () => {
     const buttons: RichButton[][] = [

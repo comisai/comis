@@ -119,7 +119,8 @@ function cardToBody(card: RichCard): Record<string, unknown>[] {
  * contributes a companion colored marker TextBlock (a glyph, not its label) to
  * `content.body`, since `Action.Execute` has no color in the 1.4 core schema.
  *
- * @param cards - Card bodies (title/description/image/fields)
+ * @param cards - Card bodies (title/description/image/fields); any nested
+ *   `buttons` rows are folded into the card actions too
  * @param buttons - Button rows; flattened into the card actions
  * @returns One Adaptive Card attachment object (hand-built typed JSON)
  */
@@ -132,7 +133,13 @@ export function renderMSTeamsCardAttachment(
     body.push(...cardToBody(card));
   }
 
-  const flat = buttons.flat();
+  // Card-level button rows (RichCard.buttons) render as card actions too, folded
+  // ahead of the top-level button rows into the same flattened action set —
+  // otherwise a rich card's own buttons would be silently dropped.
+  const flat = [
+    ...cards.flatMap((card) => card.buttons ?? []),
+    ...buttons,
+  ].flat();
 
   // A styled button's emphasis is carried by a companion colored TextBlock
   // because Action.Execute has no color in the 1.4 core schema. The companion
