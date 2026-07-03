@@ -59,7 +59,7 @@ import {
   type EventMap,
   type SystemTimeoutHandle,
 } from "@comis/core";
-import { createToolResultSizeGuard } from "@comis/agent";
+import { autoRepairForClass, createToolResultSizeGuard } from "@comis/agent";
 import type { CapabilityClass } from "@comis/agent";
 
 import {
@@ -83,7 +83,11 @@ import type {
   RunAggregateContext,
 } from "./result-ref-store.js";
 import { estimateSavings } from "./savings-estimate.js";
-import { extractCapabilityFootprint } from "./orchestrate-preflight.js";
+import {
+  buildDescribeDigest,
+  classifyRecoverableStderr,
+  extractCapabilityFootprint,
+} from "./orchestrate-preflight.js";
 import type { ResultRef } from "@comis/core";
 
 // Activity label (channel render): the descriptor name equals the emitted tool
@@ -383,11 +387,24 @@ const EXIT_CODE_SPAWN_FAIL = 127; // exec/spawn failure convention.
 class OrchestrateRunFailure extends Error {
   readonly failureClass: OrchestrateFailureClass;
   readonly exitCode: number;
-  constructor(message: string, failureClass: OrchestrateFailureClass, exitCode: number) {
+  /**
+   * The bounded, already-scrubbed stderr tail captured at the non-zero exit (empty
+   * on the timeout / stdout-cap / spawn-throw paths, which carry no child stderr).
+   * A STRUCTURED field so the one-shot repair path can classify + feed it directly,
+   * never by re-parsing {@link Error.message}.
+   */
+  readonly stderrTail: string;
+  constructor(
+    message: string,
+    failureClass: OrchestrateFailureClass,
+    exitCode: number,
+    stderrTail = "",
+  ) {
     super(message);
     this.name = "OrchestrateRunFailure";
     this.failureClass = failureClass;
     this.exitCode = exitCode;
+    this.stderrTail = stderrTail;
   }
 }
 
@@ -631,10 +648,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       const seccompFd = loadSeccompFd();
 
       try {
-        // 1. Write the model's script verbatim into the jailed workspace.
+        // 1. Resolve the script path in the jailed workspace. The actual write is
+        //    deferred to attemptRun (step 6) so the one-shot repair can re-write the
+        //    SAME path with the regenerated script and re-run it, sharing the
+        //    identical jail/cap/lease envelope.
         const scriptName = `${runId}.${params.language}`;
         const scriptPath = safePath(workspacePath, scriptName);
-        writeFileSync(scriptPath, params.script);
 
         // 2. Copy the committed SDK + the runtime shim so the script can
         //    `import "./comis_tools.js"` (which imports ./orchestrate-sdk-runtime.js).
@@ -775,16 +794,80 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // mintRunLease). A run with none is degraded — flagged lease_absent below.
         const leasePresent = childEnv.COMIS_CAP_LEASE !== undefined;
 
-        // 6. Spawn the jailed child; capture stdout ONLY (stderr/intermediate
-        //    never re-enter); size-bounce the stdout.
-        const stdout = await runJailedChild(
-          spawnFn,
-          bin,
-          spawnArgs,
-          { env: childEnv, cwd: undefined },
-          timeoutMs,
-          { runId, log },
-        );
+        // 6. Run the jailed child, with a bounded one-shot auto-repair. attemptRun
+        //    writes the script into the workspace then drives the jailed child to
+        //    completion (stdout ONLY re-enters; stderr/intermediate never do).
+        //    Defined here — after the env + args + child-lease are built — so BOTH
+        //    the initial run and the single repaired re-run share the identical
+        //    jail/cap/lease envelope: the regenerated script has the SAME blast
+        //    radius as the original (no cap widening).
+        const attemptRun = async (scriptText: string): Promise<string> => {
+          writeFileSync(scriptPath, scriptText);
+          return runJailedChild(
+            spawnFn,
+            bin,
+            spawnArgs,
+            { env: childEnv, cwd: undefined },
+            timeoutMs,
+            { runId, log },
+          );
+        };
+
+        // On a non-zero exit whose bounded stderr tail matches a known-recoverable
+        // class, do ONE utility-model re-prompt (the injected repairSeam) and re-run
+        // the regenerated script EXACTLY once. Class-gated: ON for weaker models,
+        // OFF for stronger; an absent class defaults to the repair-eligible class
+        // (fail-safe ON for an unknown small-target deployment). Bounded to a single
+        // attempt: a repaired-then-failed run surfaces the ORIGINAL bounded error —
+        // no loop. The repair resolves the FINAL outcome HERE, before the terminal
+        // run_summary emit below, so a repaired-then-succeeded run emits exactly one
+        // (success) summary and an escaping error emits once in the outer catch.
+        let stdout: string;
+        try {
+          stdout = await attemptRun(params.script);
+        } catch (runErr) {
+          const { failureClass } = classifyRunError(runErr);
+          const recoverable =
+            runErr instanceof OrchestrateRunFailure
+              ? classifyRecoverableStderr(runErr.stderrTail)
+              : undefined;
+          if (
+            failureClass === "nonzero_exit" &&
+            autoRepairForClass(deps.capabilityClass ?? "small") &&
+            deps.repairSeam !== undefined &&
+            recoverable !== undefined
+          ) {
+            log.debug(
+              { runId, step: "repair", recoverable },
+              "orchestrate one-shot repair attempt",
+            );
+            const regenerated = await deps.repairSeam({
+              script: params.script,
+              language: params.language,
+              // Sound: recoverable !== undefined implies runErr is an
+              // OrchestrateRunFailure (the ternary above only classifies that case).
+              stderrTail: (runErr as OrchestrateRunFailure).stderrTail,
+              describeDigest: buildDescribeDigest(),
+            });
+            if (regenerated !== undefined && regenerated.trim() !== "") {
+              // The ONE re-run — no loop. A repaired-then-failed run re-throws the
+              // ORIGINAL bounded error (the seam's output did not fix the script).
+              try {
+                stdout = await attemptRun(regenerated);
+              } catch {
+                throw runErr;
+              }
+            } else {
+              // The seam gave up (no regenerated script) — honest-degrade to the
+              // original bounded error.
+              throw runErr;
+            }
+          } else {
+            // Not a recoverable class, class-gated off, or no repair seam wired —
+            // surface the original bounded error unchanged.
+            throw runErr;
+          }
+        }
 
         const bounced = sizeBounceStdout(stdout);
         // The POST-bounce char count — the tokens that actually re-entered
@@ -953,6 +1036,7 @@ function runJailedChild(
             `orchestrate jailed child exited with code ${code}${tail ? `:\n${tail}` : ""}`,
             "nonzero_exit",
             code,
+            tail,
           ),
         );
         return;
