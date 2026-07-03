@@ -88,13 +88,16 @@ describe("orchestrate-tool", () => {
 
   beforeEach(() => {
     workspacePath = mkdtempSync(join(tmpdir(), "comis-orchestrate-"));
-    // A fixture SDK-assets dir holding the three files the runner copies into the
+    // A fixture SDK-assets dir holding the files the runner copies into the
     // jail. (In production this dir is the built module dir, which carries the
-    // committed comis_tools.{d.ts,js} + the compiled orchestrate-sdk-runtime.js;
+    // committed comis_tools.{d.ts,js,py} + the compiled orchestrate-sdk-runtime.js;
     // the source dir lacks the compiled .js, so the unit suite injects a fixture.)
+    // comis_tools.py MUST be written too: it is in SDK_ASSETS, so the runner's
+    // unconditional copy loop would ENOENT without it.
     sdkAssetsDir = mkdtempSync(join(tmpdir(), "comis-orch-sdk-"));
     writeFileSync(join(sdkAssetsDir, "comis_tools.d.ts"), "// d.ts\n");
     writeFileSync(join(sdkAssetsDir, "comis_tools.js"), "// js\n");
+    writeFileSync(join(sdkAssetsDir, "comis_tools.py"), "# py\n");
     writeFileSync(join(sdkAssetsDir, "orchestrate-sdk-runtime.js"), "// runtime\n");
   });
 
@@ -106,6 +109,7 @@ describe("orchestrate-tool", () => {
   function makeDeps(over?: {
     spawnFn?: OrchestrateSpawnFn;
     resolveJailNodeFn?: () => { mode: "path" } | { mode: "bind"; execPath: string } | { mode: "unavailable"; hint: string };
+    resolveJailPythonFn?: () => { mode: "path"; pythonBin: string } | { mode: "unavailable"; hint: string };
     resolveJailAgentCliFn?: () => { mode: "bind"; binPath: string } | { mode: "unavailable"; hint: string };
     logger?: ComisLogger;
     cleanupRun?: ReturnType<typeof vi.fn>;
@@ -146,6 +150,11 @@ describe("orchestrate-tool", () => {
         },
         spawnFn: over?.spawnFn ?? ((): OrchestrateSpawnedChild => makeFakeChild("ok-output\n")),
         resolveJailNodeFn: over?.resolveJailNodeFn ?? (() => ({ mode: "path" as const })),
+        // Default to a resolved host python3 so a language:"py" run selects the
+        // interpreter by its absolute path unless a test overrides it.
+        resolveJailPythonFn:
+          over?.resolveJailPythonFn ??
+          (() => ({ mode: "path" as const, pythonBin: "/usr/bin/python3" })),
         // Default to a bound comis-agent so the CLI surface is on unless a test
         // overrides it (the default keeps unrelated tests' env/args stable).
         resolveJailAgentCliFn:
@@ -206,16 +215,19 @@ describe("orchestrate-tool", () => {
     return m ? m[1] : "";
   }
 
-  it("writes <workspace>/<runId>.<language> + the comis_tools SDK + the runtime before spawning (SDK-write)", async () => {
-    let writtenAtSpawn: { script: boolean; sdkJs: boolean; sdkDts: boolean; runtime: boolean } | undefined;
+  it("writes <workspace>/<runId>.<language> + the comis_tools SDK (js/dts/py) + the runtime before spawning (SDK-write)", async () => {
+    let writtenAtSpawn:
+      | { script: boolean; sdkJs: boolean; sdkDts: boolean; sdkPy: boolean; runtime: boolean }
+      | undefined;
     const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
       // The bash command is `node <scriptName>`; capture the workspace file state
-      // NOW (the runner must have written all four files before spawning).
+      // NOW (the runner must have written all SDK assets before spawning).
       const scriptName = scriptNameFromArgs(args);
       writtenAtSpawn = {
         script: scriptName !== "" && existsSync(join(workspacePath, scriptName)),
         sdkJs: existsSync(join(workspacePath, "comis_tools.js")),
         sdkDts: existsSync(join(workspacePath, "comis_tools.d.ts")),
+        sdkPy: existsSync(join(workspacePath, "comis_tools.py")),
         runtime: existsSync(join(workspacePath, "orchestrate-sdk-runtime.js")),
       };
       return makeFakeChild("done\n");
@@ -229,6 +241,8 @@ describe("orchestrate-tool", () => {
     expect(writtenAtSpawn!.script).toBe(true);
     expect(writtenAtSpawn!.sdkJs).toBe(true);
     expect(writtenAtSpawn!.sdkDts).toBe(true);
+    // comis_tools.py is copied into the jail on EVERY run (like the js-unused .d.ts).
+    expect(writtenAtSpawn!.sdkPy).toBe(true);
     expect(writtenAtSpawn!.runtime).toBe(true);
   });
 
@@ -292,6 +306,93 @@ describe("orchestrate-tool", () => {
     const command = spawnArgs![cmdIdx + 1] ?? "";
     expect(command.startsWith(`${execPath} `)).toBe(true);
     expect(command).not.toMatch(/^node\s/);
+  });
+
+  // -------------------------------------------------------------------------
+  // The "py" language path: a language:"py" run writes <runId>.py, resolves the
+  // RO-bound host python3 via resolveJailPython (2-mode: {path,pythonBin} |
+  // {unavailable,hint}), and invokes it by its ABSOLUTE path. An unavailable
+  // interpreter REFUSES the run with NO spawn (PY-03: never a silent unjailed
+  // run — the INV-1 fail-closed gate). The jail envelope is identical to js/ts
+  // (NG4 — no new sandbox primitive).
+  // -------------------------------------------------------------------------
+  describe("language: 'py' runner path (interpreter selection + fail-closed refuse)", () => {
+    it("invokes the resolved absolute pythonBin for a language:'py' run (not a bare python3, not node)", async () => {
+      let spawnArgs: string[] | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        spawnArgs = args;
+        return makeFakeChild("py-out\n");
+      };
+      const pythonBin = "/usr/bin/python3";
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailPythonFn: () => ({ mode: "path", pythonBin }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await tool.execute("c", { script: "print(1)", language: "py" });
+
+      // Read the RAW `/bin/bash -c` command — NOT scriptNameFromArgs, which only
+      // matches `node <script>` and would miss a `<pythonBin> <script>` command.
+      const cmdIdx = spawnArgs!.indexOf("-c");
+      const command = spawnArgs![cmdIdx + 1] ?? "";
+      // The interpreter is the resolved ABSOLUTE pythonBin, and the script is <runId>.py.
+      expect(command.startsWith(`${pythonBin} `)).toBe(true);
+      const scriptToken = command.slice(pythonBin.length + 1);
+      expect(scriptToken.endsWith(".py")).toBe(true);
+      // NOT run under node (the ts/js interpreter) and NOT a bare `python3`.
+      expect(command).not.toMatch(/^node\s/);
+      expect(command).not.toMatch(/^python3\s/);
+      // Identical jail envelope — general IP egress is still cut (--unshare-net).
+      expect(spawnArgs).toContain("--unshare-net");
+    });
+
+    it("honest-degrades a language:'py' run when python is unavailable — throws, NO spawn (never a silent unjailed run)", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild(""));
+      const { deps } = makeDeps({
+        spawnFn,
+        resolveJailPythonFn: () => ({ mode: "unavailable", hint: "no python3 inside the jail" }),
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", { script: "print(1)", language: "py" })).rejects.toThrow(
+        /not_implemented|unavailable|python|no python3 inside the jail/i,
+      );
+      // The PY-03 safety net: an absent interpreter must NEVER fall through to a
+      // silent unjailed run — the spawn seam is never called.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("uses the DEFAULT jail-python resolver for a language:'py' run when none is injected (resolves the host python3 by absolute path)", async () => {
+      // Every other py test injects resolveJailPythonFn; this one OMITS it so the
+      // real defaultResolveJailPython runs — it probes the ABSOLUTE host interpreter
+      // bin paths (/usr/bin/python3, /bin/python3, /usr/local/bin/python3), which are
+      // present on the dev + CI hosts (macOS has /usr/bin/python3; the Docker image
+      // apt-installs python3). The run then proceeds with the injected fake spawn,
+      // proving the default resolver returned a usable "path" mode and the interpreter
+      // is invoked by its absolute python3 path (never a bare `python3` → exit 127,
+      // never node). On a host genuinely missing python3 this would honest-degrade
+      // instead; that path is covered by the explicit-unavailable refuse test above.
+      let spawnArgs: string[] | undefined;
+      const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+        spawnArgs = args;
+        return makeFakeChild("py-default-ok\n");
+      };
+      const { deps } = makeDeps({ spawnFn });
+      // Drop the injected python resolver so the production default is used.
+      delete (deps as { resolveJailPythonFn?: unknown }).resolveJailPythonFn;
+      const tool = createOrchestrateTool(deps);
+
+      const result = await tool.execute("c", { script: "print(1)", language: "py" });
+
+      const text = result.content.map((b) => (b.type === "text" ? (b.text ?? "") : "")).join("");
+      expect(text).toContain("py-default-ok");
+      const cmdIdx = spawnArgs!.indexOf("-c");
+      const command = spawnArgs![cmdIdx + 1] ?? "";
+      // Invoked by an ABSOLUTE python3 path (…/python3 <script>.py) — not node, not bare.
+      expect(command).toMatch(/\/python3 \S+\.py$/);
+      expect(command).not.toMatch(/^node\s/);
+    });
   });
 
   // The runner passes `tempDir: <workspace>/.tmp`
