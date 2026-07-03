@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import type { ComisLogger } from "@comis/core";
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from "jose";
 import {
   createActivityJwtValidator,
+  createConnectorTokenProvider,
   type ActivityJwtValidatorOpts,
+  type ConnectorTokenDeps,
 } from "../msteams-auth.js";
 
 // Bot Framework issuer + a stand-in bot app id used as the audience claim.
@@ -114,5 +117,179 @@ describe("createActivityJwtValidator — jose signature + claim verification", (
     const validate = createActivityJwtValidator({ jwks, issuer: BF_ISSUER });
     const result = await validate(`Bearer ${token}`, APP_ID);
     expect(result.ok).toBe(false);
+  });
+});
+
+// --- Outbound Connector token mint (client-credentials, cached) ---
+
+const TENANT = "00000000-1111-2222-3333-444444444444";
+const APP_PASSWORD = "super-secret-pw";
+const MINTED_TOKEN = "connector-access-token-xyz";
+
+/** A logger whose spies record every argument to every level for redaction asserts. */
+function makeLoggerSpy() {
+  const info = vi.fn();
+  const warn = vi.fn();
+  const debug = vi.fn();
+  const error = vi.fn();
+  const noop = vi.fn();
+  const logger = {
+    level: "debug",
+    trace: noop,
+    debug,
+    info,
+    warn,
+    error,
+    fatal: noop,
+    audit: noop,
+    child: vi.fn().mockReturnThis(),
+  } as unknown as ComisLogger;
+  const serialized = () =>
+    JSON.stringify([
+      ...info.mock.calls,
+      ...warn.mock.calls,
+      ...debug.mock.calls,
+      ...error.mock.calls,
+    ]);
+  return { logger, serialized, info, warn };
+}
+
+/** A fetch stub returning a successful token response; captures its calls. */
+function makeTokenFetch(token = MINTED_TOKEN, expiresIn = 3600) {
+  const spy = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ access_token: token, expires_in: expiresIn }),
+  }));
+  return { fetchImpl: spy as unknown as typeof fetch, spy };
+}
+
+function makeTokenDeps(overrides: Partial<ConnectorTokenDeps> = {}) {
+  const loggerSpy = makeLoggerSpy();
+  const { fetchImpl, spy } = makeTokenFetch();
+  const deps: ConnectorTokenDeps = {
+    appId: "app-client-id",
+    appPassword: APP_PASSWORD,
+    tenantId: TENANT,
+    logger: loggerSpy.logger,
+    fetchImpl,
+    now: () => 1_000_000,
+    ...overrides,
+  };
+  return { deps, spy, loggerSpy };
+}
+
+describe("createConnectorTokenProvider — client-credentials mint", () => {
+  it("mints against the single-tenant endpoint with the client-credentials grant and connector scope", async () => {
+    const { deps, spy } = makeTokenDeps();
+    const provider = createConnectorTokenProvider(deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe(MINTED_TOKEN);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`);
+    expect(init.method).toBe("POST");
+    const body = new URLSearchParams(String(init.body));
+    expect(body.get("grant_type")).toBe("client_credentials");
+    expect(body.get("client_id")).toBe("app-client-id");
+    expect(body.get("client_secret")).toBe(APP_PASSWORD);
+    expect(body.get("scope")).toBe("https://api.botframework.com/.default");
+  });
+
+  it("reuses the cached token on a second call before the expiry-minus-skew boundary", async () => {
+    const { deps, spy } = makeTokenDeps();
+    const provider = createConnectorTokenProvider(deps);
+    const first = await provider.getToken();
+    const second = await provider.getToken();
+    expect(first.ok && second.ok).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the token once the clock passes the expiry-minus-skew boundary", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const { fetchImpl, spy } = makeTokenFetch(MINTED_TOKEN, 3600);
+    let clock = 1_000_000;
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl,
+      now: () => clock,
+      skewMs: 60_000,
+    });
+    await provider.getToken();
+    expect(spy).toHaveBeenCalledTimes(1);
+    // expiresAt = 1_000_000 + 3_600_000; refresh boundary = expiresAt - 60_000.
+    clock = 1_000_000 + 3_600_000 - 60_000 + 1;
+    await provider.getToken();
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a classified error and warns when the token endpoint responds non-2xx", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: TENANT,
+      logger: loggerSpy.logger,
+      fetchImpl: spy as unknown as typeof fetch,
+      now: () => 1_000_000,
+    });
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    const warnPayloads = loggerSpy.warn.mock.calls.map((c) => c[0]);
+    const platformWarn = warnPayloads.find(
+      (p) =>
+        p !== null &&
+        typeof p === "object" &&
+        (p as { errorKind?: string }).errorKind === "platform",
+    );
+    expect(platformWarn).toBeDefined();
+  });
+
+  it("logs a durationMs completion but never the app-password or the minted token", async () => {
+    const { deps, loggerSpy } = makeTokenDeps();
+    const provider = createConnectorTokenProvider(deps);
+    const result = await provider.getToken();
+    expect(result.ok).toBe(true);
+    const blob = loggerSpy.serialized();
+    expect(blob).not.toContain(APP_PASSWORD);
+    expect(blob).not.toContain(MINTED_TOKEN);
+    const infoPayloads = loggerSpy.info.mock.calls.map((c) => c[0]);
+    const mintLine = infoPayloads.find(
+      (p) =>
+        p !== null &&
+        typeof p === "object" &&
+        (p as { step?: string }).step === "msteams-token-mint",
+    );
+    expect(mintLine).toBeDefined();
+    expect(typeof (mintLine as { durationMs?: unknown }).durationMs).toBe("number");
+  });
+
+  it("rejects a path-unsafe tenant id with a precondition error and no network call", async () => {
+    const loggerSpy = makeLoggerSpy();
+    const spy = vi.fn();
+    const provider = createConnectorTokenProvider({
+      appId: "app-client-id",
+      appPassword: APP_PASSWORD,
+      tenantId: "../evil-tenant",
+      logger: loggerSpy.logger,
+      fetchImpl: spy as unknown as typeof fetch,
+      now: () => 1_000_000,
+    });
+    const result = await provider.getToken();
+    expect(result.ok).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    const warnPayloads = loggerSpy.warn.mock.calls.map((c) => c[0]);
+    const preconditionWarn = warnPayloads.find(
+      (p) =>
+        p !== null &&
+        typeof p === "object" &&
+        (p as { errorKind?: string }).errorKind === "precondition",
+    );
+    expect(preconditionWarn).toBeDefined();
   });
 });
