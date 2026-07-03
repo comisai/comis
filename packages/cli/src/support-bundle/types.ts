@@ -38,11 +38,12 @@ export type HostSnapshot = z.infer<typeof HostSnapshotSchema>;
  * A recoverable, section-level failure recorded on the bundle manifest so a
  * partial bundle is still generated (the section that failed is annotated
  * rather than aborting the whole run). `source` is the closed set of bundle
- * sections that can fail; `code` is the section-failure identifier; `rows`
- * carries offending indices when applicable.
+ * sections that can fail (the doctor run, the host snapshot, the file writer,
+ * the fleet report, or the config-posture digest); `code` is the
+ * section-failure identifier; `rows` carries offending indices when applicable.
  */
 export const SupportBundleWarningSchema = z.strictObject({
-  source: z.enum(["doctor", "host", "writer"]),
+  source: z.enum(["doctor", "host", "writer", "fleet", "config-posture"]),
   code: z.string(),
   count: z.number(),
   rows: z.array(z.number()).optional(),
@@ -133,6 +134,46 @@ export type SupportTriage = z.infer<typeof SupportTriageSchema>;
  */
 export function parseSupportTriage(raw: unknown): Result<SupportTriage, z.ZodError> {
   const result = SupportTriageSchema.safeParse(raw);
+  if (result.success) {
+    return ok(result.data);
+  }
+  return err(result.error);
+}
+
+/**
+ * The config-posture digest written as `config-posture.json`.
+ *
+ * Content-free by construction. `sections` is the set of top-level config
+ * section NAMES the raw config file wrote (each a member of the fixed
+ * AppConfigSchema universe) — a category structurally incapable of holding a
+ * config value. `configPosture` is the fleet `config_posture` finding copied
+ * verbatim: its `detail` carries closed name+state labels (e.g.
+ * `gateway.tls (off)`) and a stranded-secret COUNT, never a secret value, and
+ * it is null when no such finding fired. `schemaVersion` is the literal 1 and
+ * the object is strict, so a drifted or forged digest fails
+ * `parseConfigPosture` rather than flowing through as a partially-typed object.
+ */
+export const ConfigPostureDigestSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  sections: z.array(z.string()),
+  configPosture: z
+    .strictObject({
+      detail: z.string(),
+      count: z.number(),
+      hint: z.string(),
+    })
+    .nullable(),
+});
+
+export type ConfigPostureDigest = z.infer<typeof ConfigPostureDigestSchema>;
+
+/**
+ * Parse unknown input into a ConfigPostureDigest, returning
+ * `Result<T, z.ZodError>`. An unknown key, a version other than 1, or a
+ * malformed posture finding returns `err`.
+ */
+export function parseConfigPosture(raw: unknown): Result<ConfigPostureDigest, z.ZodError> {
+  const result = ConfigPostureDigestSchema.safeParse(raw);
   if (result.success) {
     return ok(result.data);
   }
