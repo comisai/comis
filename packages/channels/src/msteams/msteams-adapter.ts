@@ -26,6 +26,7 @@ import type {
   ComisLogger,
   MessageHandler,
   MsTeamsConversationStorePort,
+  NormalizedMessage,
   NormalizedReaction,
   ReactionHandler,
   SendMessageOptions,
@@ -52,6 +53,7 @@ import {
   isSafeServiceUrl,
 } from "./msteams-connector.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
+import { normalizeCardAction } from "./msteams-actions.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -186,6 +188,20 @@ export function createMsTeamsAdapter(
   let _lastError: string | undefined;
 
   /**
+   * The single sender-authorization gate every inbound path shares — message,
+   * reaction, and card-action. In allowlist mode an inbound is admitted only when
+   * its sender id OR its conversation id is on the allowlist; "open" mode admits
+   * all. One authoritative gate: no path re-implements authorization, so the
+   * default-deny decision is made in exactly one place for every inbound kind.
+   */
+  function isAllowedSender(senderId: string, channelId: string): boolean {
+    if (deps.allowMode !== "allowlist") return true;
+    return (
+      deps.allowFrom.includes(senderId) || deps.allowFrom.includes(channelId)
+    );
+  }
+
+  /**
    * Process a single inbound activity: map → allowlist-gate → record liveness →
    * fan out to handlers under a fresh request context.
    */
@@ -232,6 +248,48 @@ export function createMsTeamsAdapter(
   }
 
   /**
+   * Fan a normalized inbound message out to the registered message handlers under
+   * a fresh request context; a throwing or rejecting handler is logged and never
+   * aborts the loop or its siblings. Shared by the message and card-action paths.
+   */
+  function fanOutMessage(traceId: string, normalized: NormalizedMessage): void {
+    void runWithContext(
+      {
+        traceId,
+        startedAt: now(),
+        channelType: "msteams",
+        tenantId: "default",
+        trustLevel: "admin",
+      },
+      () => {
+        for (const handler of handlers) {
+          try {
+            Promise.resolve(handler(normalized)).catch((handlerErr) => {
+              deps.logger.error(
+                {
+                  err: handlerErr,
+                  hint: "Check the msteams inbound message handler",
+                  errorKind: "internal" as const,
+                },
+                "Inbound message handler error",
+              );
+            });
+          } catch (handlerErr) {
+            deps.logger.error(
+              {
+                err: handlerErr,
+                hint: "Check the msteams inbound message handler",
+                errorKind: "internal" as const,
+              },
+              "Inbound message handler error",
+            );
+          }
+        }
+      },
+    );
+  }
+
+  /**
    * Map an inbound messageReaction activity to a NormalizedReaction, gate the
    * reactor against the same allowlist the message path uses, and fan it out.
    */
@@ -239,11 +297,7 @@ export function createMsTeamsAdapter(
     const reaction = mapMsTeamsReaction(activity);
     if (!reaction) return;
 
-    if (
-      deps.allowMode === "allowlist" &&
-      !deps.allowFrom.includes(reaction.reactorId) &&
-      !deps.allowFrom.includes(reaction.channelId)
-    ) {
+    if (!isAllowedSender(reaction.reactorId, reaction.channelId)) {
       deps.logger.warn(
         {
           channelType: "msteams" as const,
@@ -361,6 +415,51 @@ export function createMsTeamsAdapter(
     });
   }
 
+  /**
+   * Route a card-action invoke: normalize it to a button-callback message (the
+   * normalizer sets the clicker id from the VERIFIED from.aadObjectId and drops
+   * any unrendered verb or missing callback), then gate it through the SAME
+   * sender allowlist the message path uses. An unlisted clicker is dropped before
+   * onMessage — the card action reuses the one default-deny gate and adds no
+   * parallel authorization. No conversation reference is captured: a button
+   * callback is not a fresh inbound to reply to.
+   */
+  function processCardAction(activity: TeamsActivity): void {
+    const normalized = normalizeCardAction(activity);
+    if (!normalized) return;
+
+    if (!isAllowedSender(normalized.senderId, normalized.channelId)) {
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          senderId: normalized.senderId,
+          hint: "Add the aadObjectId or conversation.id to channels.msteams.allowFrom",
+          errorKind: "precondition" as const,
+        },
+        "Inbound from non-allowlisted sender dropped",
+      );
+      return;
+    }
+
+    _lastMessageAt = now();
+
+    const traceId = randomUUID();
+    normalized.metadata.traceId = traceId;
+
+    deps.logger.info(
+      {
+        step: "channels-inbound",
+        channelType: "msteams" as const,
+        messageId: normalized.id,
+        chatId: normalized.channelId,
+        traceId,
+      },
+      "Inbound card action",
+    );
+
+    fanOutMessage(traceId, normalized);
+  }
+
   function processEvent(activity: TeamsActivity): void {
     // Reactions arrive as messageReaction activities on the same webhook; route
     // them to the reaction fanout before the message mapper (which skips them).
@@ -369,16 +468,20 @@ export function createMsTeamsAdapter(
       return;
     }
 
+    // Card-action clicks arrive as invoke activities on the same webhook; route
+    // them to the card-action path before the message mapper (which skips them),
+    // so they traverse the same default-deny gate the message path uses.
+    if (activity.type === "invoke") {
+      processCardAction(activity);
+      return;
+    }
+
     const normalized = mapMsTeamsActivityToNormalized(activity);
     if (!normalized) return;
 
     // Sender authorization: drop anyone whose aadObjectId AND conversation id are
     // both absent from the allowlist before the message reaches the pipeline.
-    if (
-      deps.allowMode === "allowlist" &&
-      !deps.allowFrom.includes(normalized.senderId) &&
-      !deps.allowFrom.includes(normalized.channelId)
-    ) {
+    if (!isAllowedSender(normalized.senderId, normalized.channelId)) {
       deps.logger.warn(
         {
           channelType: "msteams" as const,
@@ -416,40 +519,7 @@ export function createMsTeamsAdapter(
       "Inbound message",
     );
 
-    void runWithContext(
-      {
-        traceId,
-        startedAt: now(),
-        channelType: "msteams",
-        tenantId: "default",
-        trustLevel: "admin",
-      },
-      () => {
-        for (const handler of handlers) {
-          try {
-            Promise.resolve(handler(normalized)).catch((handlerErr) => {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  hint: "Check the msteams inbound message handler",
-                  errorKind: "internal" as const,
-                },
-                "Inbound message handler error",
-              );
-            });
-          } catch (handlerErr) {
-            deps.logger.error(
-              {
-                err: handlerErr,
-                hint: "Check the msteams inbound message handler",
-                errorKind: "internal" as const,
-              },
-              "Inbound message handler error",
-            );
-          }
-        }
-      },
-    );
+    fanOutMessage(traceId, normalized);
   }
 
   /** Extract an explicit typing serviceUrl from the action params (direct or under extra). */
