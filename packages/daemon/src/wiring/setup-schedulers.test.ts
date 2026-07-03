@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -32,6 +33,12 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
   toolPolicy: { profile: "default" },
 })));
 const mockMkdir = vi.hoisted(() => vi.fn(async () => {}));
+// A faithful stand-in for the real wrapExternalContent: it surrounds the finding
+// with UNTRUSTED boundary markers so the hook test can assert the wrap happened
+// (the real delimiter/warning text is pinned by external-content's own suite).
+const mockWrapExternalContent = vi.hoisted(() =>
+  vi.fn((content: string) => `<<<UNTRUSTED_boundary>>>\n${content}\n<<<END_UNTRUSTED_boundary>>>`),
+);
 
 vi.mock("@comis/scheduler", () => ({
   createCronScheduler: mockCreateCronScheduler,
@@ -60,6 +67,8 @@ vi.mock("@comis/core", () => ({
   // The cron-fire mint resolves the JOB agent's autonomy
   // caps via resolveAutonomy. Default disabled; tests override per-case.
   resolveAutonomy: mockResolveAutonomy,
+  // The wake-gate hook wraps a wake:true finding before prepending it.
+  wrapExternalContent: mockWrapExternalContent,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -1445,6 +1454,177 @@ describe("setupSchedulers", () => {
 
       await extractExecuteJob()(agentTurnJob());
       expect(leaseManager.mintLease).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The pre-payload wake-gate hook. A job may carry a `wakeGate`; when a runner
+  // ref is populated, executeJob runs the gate BEFORE the payload branch:
+  //   - wake:false → skip the payload entirely (no dispatch), record a
+  //     status:"skipped" row, and return status:"ok" so the job re-arms.
+  //   - wake:true + context → prepend the wrapExternalContent-wrapped finding
+  //     to the message before the existing dispatch.
+  //   - runAsToday / no wakeGate / no ref → byte-identical to today.
+  // The ref is read at FIRE time (late-bound), so a runner populated AFTER
+  // setup is picked up on the next fire.
+  // -------------------------------------------------------------------------
+  describe("pre-payload wake-gate hook", () => {
+    const GATE = { script: "export default async () => ({ wake: false });", language: "ts" as const, timeoutSeconds: 5 };
+
+    /** A gated agent_turn job WITH a delivery target (so it reaches the payload branch). */
+    function gatedAgentTurnJob(over: Record<string, unknown> = {}) {
+      return {
+        id: "job-wg-1",
+        name: "gated-cron",
+        agentId: "agent-1",
+        payload: { kind: "agent_turn", message: "do the thing" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+        ...over,
+      };
+    }
+
+    /** Resolve the agent_turn deferred `onComplete` immediately so executeJob does
+     *  not block on the 10-min race (the dispatch still fires synchronously first). */
+    function withFastComplete(deps: ReturnType<typeof createMinimalDeps>) {
+      deps.container.eventBus.emit = vi.fn((_e: string, payload?: { onComplete?: (r: { status: string }) => void }) => {
+        payload?.onComplete?.({ status: "ok" });
+      });
+      return deps;
+    }
+
+    function extractExecuteJob() {
+      return mockCreateCronScheduler.mock.calls[0][0].executeJob as (
+        job: unknown,
+      ) => Promise<{ status: string; summary?: string }>;
+    }
+
+    function makeRunnerRef(runWakeGate: ReturnType<typeof vi.fn>): { ref?: WakeGateRunner } {
+      return { ref: { runWakeGate } as unknown as WakeGateRunner };
+    }
+
+    it("runs the gate and SKIPS the payload on wake:false — no scheduler:job_result dispatch, a status:skipped row, and status:ok re-arm", async () => {
+      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+      const tracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+
+      const result = await extractExecuteJob()(gatedAgentTurnJob());
+
+      expect(runWakeGate).toHaveBeenCalledTimes(1);
+      // The payload dispatch (scheduler:job_result) is NEVER emitted on a skip.
+      expect(deps.container.eventBus.emit).not.toHaveBeenCalledWith("scheduler:job_result", expect.anything());
+      // A skipped row is recorded so the suppression is visible on cron.runs.
+      expect(tracker.record).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: "job-wg-1", status: "skipped", summary: "wake-gate: skipped" }),
+      );
+      // status:ok re-arms the job (a status:error would wrongly trigger backoff).
+      expect(result).toEqual(expect.objectContaining({ status: "ok", summary: "wake-gate: skipped" }));
+    });
+
+    it("prepends the wrapExternalContent-wrapped context to the agent_turn message on wake:true before dispatch", async () => {
+      const runWakeGate = vi.fn(async () => ({ wake: true, context: "CI is RED" }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) }));
+      await setupSchedulers(deps);
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      // The finding is wrapped as untrusted external content (source "unknown").
+      expect(mockWrapExternalContent).toHaveBeenCalledWith("CI is RED", { source: "unknown" });
+      const emitCall = (deps.container.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "scheduler:job_result",
+      );
+      expect(emitCall).toBeDefined();
+      const dispatched = (emitCall![1] as { result: string }).result;
+      // The wrapped finding is PREPENDED (before the original message), carries the
+      // UNTRUSTED boundary, and the original message survives.
+      expect(dispatched).toContain("CI is RED");
+      expect(dispatched).toContain("UNTRUSTED");
+      expect(dispatched).toContain("do the thing");
+      expect(dispatched.indexOf("CI is RED")).toBeLessThan(dispatched.indexOf("do the thing"));
+    });
+
+    it("does NOT call the gate and dispatches byte-identically when the job carries no wakeGate", async () => {
+      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()({
+        id: "job-1", name: "test-job", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Hello from cron" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+      });
+
+      expect(runWakeGate).not.toHaveBeenCalled();
+      expect(result.status).toBe("ok");
+      expect(deps.container.eventBus.emit).toHaveBeenCalledWith(
+        "scheduler:job_result",
+        expect.objectContaining({ result: "Hello from cron", success: true }),
+      );
+    });
+
+    it("falls through to the normal dispatch on a runAsToday degrade verdict (no skipped row)", async () => {
+      const runWakeGate = vi.fn(async () => ({ runAsToday: true }));
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef: makeRunnerRef(runWakeGate) });
+      await setupSchedulers(deps);
+      const tracker = mockCreateExecutionTracker.mock.results[0].value as { record: ReturnType<typeof vi.fn> };
+
+      const result = await extractExecuteJob()({
+        id: "job-degrade", name: "gated-cron", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Hello from cron" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+      });
+
+      expect(runWakeGate).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe("ok");
+      expect(deps.container.eventBus.emit).toHaveBeenCalledWith(
+        "scheduler:job_result",
+        expect.objectContaining({ result: "Hello from cron" }),
+      );
+      expect(tracker.record).not.toHaveBeenCalledWith(expect.objectContaining({ status: "skipped" }));
+    });
+
+    it("reads the runner ref at FIRE time — a ref populated AFTER setup is used on the next fire", async () => {
+      const wakeGateRunnerRef: { ref?: WakeGateRunner } = {}; // initially empty
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = withFastComplete(createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef }));
+      await setupSchedulers(deps);
+      // Populate the ref AFTER setup, BEFORE the fire — the hook must still pick it up.
+      const runWakeGate = vi.fn(async () => ({ wake: false }));
+      wakeGateRunnerRef.ref = { runWakeGate } as unknown as WakeGateRunner;
+
+      await extractExecuteJob()(gatedAgentTurnJob());
+
+      expect(runWakeGate).toHaveBeenCalledTimes(1); // proves the hook read .ref at fire time
+    });
+
+    it("runs a gated job as today when the runner ref is never populated (no throw, dispatch fires)", async () => {
+      const wakeGateRunnerRef: { ref?: WakeGateRunner } = {}; // never populated
+      const setupSchedulers = await getSetupSchedulers();
+      const deps = createMinimalDeps({ cronEnabled: true, wakeGateRunnerRef });
+      await setupSchedulers(deps);
+
+      const result = await extractExecuteJob()({
+        id: "job-1", name: "test-job", agentId: "agent-1",
+        payload: { kind: "system_event", text: "Hello from cron" },
+        schedule: { kind: "every", everyMs: 60_000 },
+        deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+        wakeGate: GATE,
+      });
+
+      expect(result.status).toBe("ok");
+      expect(deps.container.eventBus.emit).toHaveBeenCalledWith(
+        "scheduler:job_result",
+        expect.objectContaining({ result: "Hello from cron" }),
+      );
     });
   });
 });
