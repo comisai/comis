@@ -252,6 +252,13 @@ export { ensureDurableRunTable } from "./schema-durable-runs.js";
 export { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 export { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 
+// Conversation-reference store. The SQLite-backed MsTeamsConversationStorePort a
+// proactive send consults to recover {serviceUrl, tenantId, threadId} for a
+// conversation id; ensureMsTeamsConversationTable is the idempotent DDL initSchema
+// calls — exported for the offline/chaos path.
+export { createSqliteMsTeamsConversationStore } from "./msteams-conversation-store.js";
+export { ensureMsTeamsConversationTable } from "./schema-msteams-conversation.js";
+
 // Delivery mirror adapter
 export { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
 
