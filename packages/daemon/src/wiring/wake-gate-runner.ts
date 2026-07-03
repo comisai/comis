@@ -35,6 +35,7 @@ import {
   degradeAutonomy,
   systemNowMs,
   type ComisLogger,
+  type ErrorKind,
   type OutputGuardPort,
   type PerAgentConfig,
 } from "@comis/core";
@@ -104,6 +105,23 @@ export interface WakeGateRunnerDeps {
   ) => Promise<string>;
   /** The ResultRef store (default `createResultRefStore({ logger })`). */
   readonly store?: JailedScriptResultStore;
+}
+
+/**
+ * Classify a fail-open cause into the closed {@link ErrorKind} union so the WARN
+ * an operator filters on ("why does this gate always wake?") names the real
+ * fault, not a blanket `"timeout"`. A SIGKILL-timeout is `"timeout"`; a stdout
+ * size-cap overflow is `"resource"`; everything else — the gate script's
+ * non-zero exit, a spawn error, an unavailable jail, or a lease-broker mint
+ * fault — is a `"dependency"` failure (the gate is an external untrusted script
+ * and the jail/broker is an external dependency). The precise `err` still rides
+ * the WARN payload, so the exact cause stays visible.
+ */
+function classifyWakeGateFailure(err: unknown): ErrorKind {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/timeout/i.test(message)) return "timeout";
+  if (/hard cap/i.test(message)) return "resource";
+  return "dependency";
 }
 
 /**
@@ -190,10 +208,10 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
             err,
             agentId: ctx.agentId,
             jobId: ctx.jobId,
-            errorKind: "timeout" as const,
-            hint: "wake-gate run failed or timed out — waking the model (fail-open)",
+            errorKind: classifyWakeGateFailure(err),
+            hint: "wake-gate failed — waking the model (fail-open)",
           },
-          "Wake-gate run failed — waking (fail-open)",
+          "Wake-gate failed — waking (fail-open)",
         );
         return { wake: true };
       }
