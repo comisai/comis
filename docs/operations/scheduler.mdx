@@ -106,6 +106,8 @@ The gate is an **efficiency** layer, not a suppression control, and its posture 
 
 These signals roll up per agent in the [`comis fleet`](/reference/cli#comis-fleet) health report (skip-rate, turns-saved, tool-call cost -- counts only, never the gate's gathered findings), and each per-fire decision is visible in the job's run history via [`cron.runs`](/reference/json-rpc#cron-runs). Because the gate runs under the agent's own [autonomy capabilities](/agents/autonomy) in the standard jail, it grants no new reach -- see the [capability model](/security/capability-model#wake-gate-suppression-bound) for the suppression bound.
 
+Scheduler-initiated gates are governed fleet-wide by the **`scheduler.cron.wakeGate`** toggle. It defaults to each agent's autonomy `script` surface -- where an agent may run `orchestrate` scripts, its cron jobs may run wake-gates. Set it to `false` to disable scheduler-initiated pre-run gates while still allowing model-initiated `orchestrate`: a scheduler gate is a distinct trust context (no human or model in the loop at fire time), and with the toggle off a gated job simply runs as it would with no gate. The toggle grants no capability -- it only decides whether the pre-run script runs.
+
 ## Safety
 
 The scheduler includes several safety mechanisms to prevent runaway tasks:

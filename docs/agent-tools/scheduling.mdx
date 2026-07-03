@@ -186,6 +186,8 @@ The gate runs in the same jailed sandbox an autonomous [`orchestrate`](/agent-to
 | `language` | `js` \| `ts` | `js` | The gate language |
 | `timeoutSeconds` | integer | `30` | Wall-clock budget for the gate (1--300); a gate that overruns wakes the model |
 
+An agent attaches a gate when it creates or edits a job -- pass the gate source as **`wake_gate_script`** (and optionally **`wake_gate_language`**, `js` or `ts`) to the `cron` tool's `add` or `update` action.
+
 ### The verdict protocol
 
 The gate decides by what it prints. Its **last non-empty line of stdout** is read as the verdict:

@@ -144,6 +144,7 @@ scheduler:
   cron:
     enabled: true
     defaultTimezone: "America/New_York"
+    # wakeGate: true          # optional: run scheduler pre-run wake-gates (default: each agent's `script` surface)
   heartbeat:
     enabled: true
     intervalMs: 600000            # 10 min global heartbeat coalescer
