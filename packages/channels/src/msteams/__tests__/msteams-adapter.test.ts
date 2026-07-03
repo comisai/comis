@@ -748,7 +748,7 @@ describe("createMsTeamsAdapter — inbound reaction fanout (onReaction)", () => 
     expect(handler).toHaveBeenCalledOnce();
     const reaction = handler.mock.calls[0]![0] as NormalizedReaction;
     expect(reaction.channelType).toBe("msteams");
-    expect(reaction.emoji).toBe("👍");
+    expect(reaction.emoji).toBe("\u{1F44D}");
     expect(reaction.reactorId).toBe("allowed-aad");
     expect(reaction.messageId).toBe("parent-msg-id");
   });
@@ -1078,20 +1078,28 @@ describe("createMsTeamsAdapter — editMessage / deleteMessage via the Connector
     expect(body.text).toBe("updated text");
   });
 
-  it("DELETEs an activity at the same activity path and returns ok", async () => {
+  it("DELETEs an activity, recovering the serviceUrl from the store (the renderer's no-serviceUrl call)", async () => {
+    // deleteMessage(channelId, messageId) carries no options, so it recovers the
+    // serviceUrl from the store the inbound captured — the edit-in-place renderer
+    // calls it exactly this way.
+    const { store } = makeFakeStore({
+      conversationId: "19:convo",
+      serviceUrl: SERVICE_URL,
+      tenantId: "tenant-1",
+      updatedAt: FIXED_NOW,
+    });
     const { fetchImpl, spy, token } = makeConnectorFetch();
-    const { deps } = makeAdapterDeps({ fetchImpl });
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
     const adapter = createMsTeamsAdapter(deps);
     expect(adapter.deleteMessage).toBeInstanceOf(Function);
 
     const result = await adapter.deleteMessage!("19:convo", "activity-9");
-    // No serviceUrl in options → the default host-safe Connector URL is used.
     expect(result.ok).toBe(true);
     const call = findActivityCall(spy);
     expect(call).toBeDefined();
     const [url, init] = call!;
-    expect(url).toContain(
-      `/v3/conversations/${encodeURIComponent("19:convo")}/activities/${encodeURIComponent("activity-9")}`,
+    expect(url).toBe(
+      `${SERVICE_URL}v3/conversations/${encodeURIComponent("19:convo")}/activities/${encodeURIComponent("activity-9")}`,
     );
     expect(init.method).toBe("DELETE");
     expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${token}`);
@@ -1115,7 +1123,7 @@ describe("createMsTeamsAdapter — editMessage / deleteMessage via the Connector
     const { deps } = makeAdapterDeps({ fetchImpl });
     const adapter = createMsTeamsAdapter(deps);
 
-    const result = await adapter.deleteMessage!("19:convo", "bad id");
+    const result = await adapter.deleteMessage!("19:convo", "../evil");
 
     expect(result.ok).toBe(false);
     expect(spy).not.toHaveBeenCalled();

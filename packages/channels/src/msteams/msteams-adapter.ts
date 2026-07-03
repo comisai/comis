@@ -25,6 +25,7 @@ import type {
   ChannelStatus,
   ComisLogger,
   MessageHandler,
+  MsTeamsConversationStorePort,
   NormalizedReaction,
   ReactionHandler,
   SendMessageOptions,
@@ -44,6 +45,7 @@ import {
   mapMsTeamsReaction,
   type TeamsReactionActivity,
 } from "./msteams-reaction-binder.js";
+import { rebuildConversationReference } from "./msteams-proactive.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,13 @@ export interface MsTeamsAdapterDeps {
    * timers; when absent the typing keepalive degrades to a no-op (never a raw setTimeout).
    */
   timer?: TimerPort;
+  /**
+   * Persisted conversation-reference store. OPTIONAL — every inbound captures the
+   * routing tuple here, and a proactive send (no caller serviceUrl) recovers it.
+   * When absent, capture is skipped and a proactive send errs (never a wrong-host
+   * default). Injected by the composition root as the core port type.
+   */
+  conversationStore?: MsTeamsConversationStorePort;
 }
 
 /**
@@ -89,13 +98,6 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
 // ---------------------------------------------------------------------------
 // Outbound send helpers (pure)
 // ---------------------------------------------------------------------------
-
-/**
- * The Connector service URL used when a caller supplies none. The per-conversation
- * serviceUrl from the inbound activity should be preferred; this global-cloud
- * default keeps a bare send working.
- */
-const DEFAULT_SERVICE_URL = "https://smba.trafficmanager.net/teams/";
 
 /**
  * A Bot Framework typing activity lapses after roughly half a minute, so the
@@ -152,12 +154,8 @@ function isSafeServiceUrl(serviceUrl: string): boolean {
   );
 }
 
-/** Resolve the send target, preferring an explicit serviceUrl; ensures a trailing slash. */
-function resolveServiceUrl(options?: SendMessageOptions): string {
-  const raw =
-    typeof options?.extra?.serviceUrl === "string"
-      ? options.extra.serviceUrl
-      : DEFAULT_SERVICE_URL;
+/** Ensure a service base URL ends in a single trailing slash for path composition. */
+function withTrailingSlash(raw: string): string {
   return raw.endsWith("/") ? raw : `${raw}/`;
 }
 
@@ -165,17 +163,23 @@ function resolveServiceUrl(options?: SendMessageOptions): string {
  * Resolve the reply target. A Teams direct message is always sent top-level, so
  * a `dm` chatType forces no replyToId even when the caller supplies one (the
  * delivery layer stamps a reply target on every inbound). Channel and group
- * replies thread under the parent via replyToId.
+ * replies thread under the parent via replyToId; a proactive send with no
+ * explicit reply target threads under the stored thread root (channel/group
+ * references carry one, a 1:1 does not — so a DM stays top-level).
  */
-function resolveReplyToId(options?: SendMessageOptions): string | undefined {
+function resolveReplyToId(
+  options?: SendMessageOptions,
+  fallbackThreadId?: string,
+): string | undefined {
   // Honor "DM → top-level": never thread a direct message, whatever was passed.
   if (options?.extra?.chatType === "dm") return undefined;
   if (typeof options?.replyTo === "string" && options.replyTo.length > 0) {
     return options.replyTo;
   }
   const fromExtra = options?.extra?.replyToId;
-  return typeof fromExtra === "string" && fromExtra.length > 0
-    ? fromExtra
+  if (typeof fromExtra === "string" && fromExtra.length > 0) return fromExtra;
+  return typeof fallbackThreadId === "string" && fallbackThreadId.length > 0
+    ? fallbackThreadId
     : undefined;
 }
 
@@ -338,6 +342,93 @@ export function createMsTeamsAdapter(
     fanOutReactions(traceId, reaction);
   }
 
+  /**
+   * Fire-and-forget upsert of the conversation routing tuple on every inbound so a
+   * later proactive send can recover it. Reads the RAW activity fields (the mapper
+   * strips them into metadata / a stripped channelId) — the raw `conversation.id`
+   * is the key, `channelData.tenant.id` the tenant (fallback `conversation.tenantId`).
+   * Skips when there is no store or no serviceUrl to route with; a capture failure
+   * is logged at DEBUG and never breaks inbound delivery.
+   */
+  function captureReference(
+    activity: TeamsActivity,
+    threadId: string | undefined,
+  ): void {
+    const store = deps.conversationStore;
+    if (store === undefined) return;
+    const serviceUrl = activity.serviceUrl;
+    const tenantId =
+      activity.channelData?.tenant?.id ?? activity.conversation.tenantId;
+    if (typeof serviceUrl !== "string" || serviceUrl.length === 0) return;
+    if (typeof tenantId !== "string" || tenantId.length === 0) return;
+
+    Promise.resolve(
+      store.capture({
+        conversationId: activity.conversation.id,
+        serviceUrl,
+        tenantId,
+        threadId,
+        updatedAt: now(),
+      }),
+    ).then(
+      (result) => {
+        if (!result.ok) {
+          deps.logger.debug(
+            {
+              channelType: "msteams" as const,
+              hint: "Inspect the conversation store write path",
+              errorKind: "internal" as const,
+            },
+            "Conversation reference capture returned an error",
+          );
+        }
+      },
+      (captureErr) => {
+        deps.logger.debug(
+          {
+            channelType: "msteams" as const,
+            err: captureErr,
+            hint: "Inspect the conversation store write path",
+            errorKind: "internal" as const,
+          },
+          "Conversation reference capture threw",
+        );
+      },
+    );
+  }
+
+  /**
+   * Resolve the Connector service context for an outbound call. A reply rides the
+   * caller's `extra.serviceUrl` (the 228 path — never consults the store); a
+   * proactive send (no serviceUrl) recovers the stored reference and RE-VALIDATES
+   * its serviceUrl through the host allowlist before use. A miss (or no store)
+   * errs — never a wrong-host default that would 403 or leak the token.
+   */
+  async function resolveConnectorServiceContext(
+    conversationId: string,
+    options?: SendMessageOptions,
+  ): Promise<Result<{ serviceUrl: string; threadId?: string }, Error>> {
+    const explicit =
+      typeof options?.extra?.serviceUrl === "string"
+        ? options.extra.serviceUrl
+        : undefined;
+    if (explicit !== undefined) {
+      return ok({ serviceUrl: withTrailingSlash(explicit) });
+    }
+
+    const store = deps.conversationStore;
+    const got = store !== undefined ? await store.get(conversationId) : undefined;
+    if (got === undefined || !got.ok || got.value === undefined) {
+      return err(new Error("no stored conversation reference for a proactive send"));
+    }
+    const rebuilt = rebuildConversationReference(got.value, isSafeServiceUrl);
+    if (!rebuilt.ok) return err(rebuilt.error);
+    return ok({
+      serviceUrl: withTrailingSlash(rebuilt.value.serviceUrl),
+      threadId: rebuilt.value.threadId,
+    });
+  }
+
   function processEvent(activity: TeamsActivity): void {
     // Reactions arrive as messageReaction activities on the same webhook; route
     // them to the reaction fanout before the message mapper (which skips them).
@@ -369,6 +460,12 @@ export function createMsTeamsAdapter(
     }
 
     _lastMessageAt = now();
+
+    // Capture the routing tuple so a later proactive send can recover it.
+    captureReference(
+      activity,
+      normalized.metadata.msteamsThreadId as string | undefined,
+    );
 
     const traceId = randomUUID();
     normalized.metadata.traceId = traceId;
@@ -457,7 +554,23 @@ export function createMsTeamsAdapter(
       return err(new Error("unsafe activity id"));
     }
 
-    const serviceUrl = resolveServiceUrl(args.options);
+    // Reply → the caller's serviceUrl; an in-place edit/delete with none recovers
+    // the stored reference (the edit-in-place renderer supplies no serviceUrl).
+    const ctx = await resolveConnectorServiceContext(args.conversationId, args.options);
+    if (!ctx.ok) {
+      _lastError = ctx.error.message;
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          op: args.op,
+          hint: "Pass serviceUrl in extra, or capture an inbound so the edit/delete can recover its routing tuple",
+          errorKind: "precondition" as const,
+        },
+        "Connector activity mutation blocked: no usable service url",
+      );
+      return err(ctx.error);
+    }
+    const serviceUrl = ctx.value.serviceUrl;
     if (!isSafeServiceUrl(serviceUrl)) {
       _lastError = "service url failed the path-safety check";
       deps.logger.warn(
@@ -544,7 +657,7 @@ export function createMsTeamsAdapter(
     return ok(undefined);
   }
 
-  /** Resolve the typing serviceUrl from the action params (direct or under extra). */
+  /** Extract an explicit typing serviceUrl from the action params (direct or under extra). */
   function resolveTypingServiceUrl(
     params: Record<string, unknown>,
   ): string | undefined {
@@ -557,9 +670,7 @@ export function createMsTeamsAdapter(
       typeof (extra as { serviceUrl?: unknown }).serviceUrl === "string"
         ? (extra as { serviceUrl: string }).serviceUrl
         : undefined;
-    const raw = direct ?? fromExtra;
-    if (raw === undefined) return undefined;
-    return raw.endsWith("/") ? raw : `${raw}/`;
+    return direct ?? fromExtra;
   }
 
   /** Cancel the active typing keepalive, if any. Idempotent + cancel-safe. */
@@ -694,11 +805,9 @@ export function createMsTeamsAdapter(
       options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       const startedAt = now();
-      const serviceUrl = resolveServiceUrl(options);
-      const replyToId = resolveReplyToId(options);
 
-      // Path-safety gate: validate the interpolated segments before building the
-      // REST path — a traversal id must never reach a fetch.
+      // Path-safety gate: validate the conversation id before any store lookup or
+      // REST path build — a traversal id must never reach a fetch.
       if (!isSafeConversationId(conversationId)) {
         _lastError = "conversation id failed the path-safety check";
         deps.logger.warn(
@@ -711,6 +820,24 @@ export function createMsTeamsAdapter(
         );
         return err(new Error("unsafe conversation id"));
       }
+
+      // Reply → the caller's serviceUrl; proactive (none) → the stored reference.
+      const ctx = await resolveConnectorServiceContext(conversationId, options);
+      if (!ctx.ok) {
+        _lastError = ctx.error.message;
+        deps.logger.warn(
+          {
+            channelType: "msteams" as const,
+            hint: "Pass serviceUrl in extra, or capture an inbound so a proactive send can recover its routing tuple",
+            errorKind: "precondition" as const,
+          },
+          "Connector send blocked: no usable service url",
+        );
+        return err(ctx.error);
+      }
+      const serviceUrl = ctx.value.serviceUrl;
+      const replyToId = resolveReplyToId(options, ctx.value.threadId);
+
       if (!isSafeServiceUrl(serviceUrl)) {
         _lastError = "service url failed the path-safety check";
         deps.logger.warn(
@@ -848,16 +975,22 @@ export function createMsTeamsAdapter(
             : typeof params.channelId === "string"
               ? params.channelId
               : undefined;
-        const serviceUrl = resolveTypingServiceUrl(params);
-        if (
-          conversationId === undefined ||
-          serviceUrl === undefined ||
-          !isSafeConversationId(conversationId) ||
-          !isSafeServiceUrl(serviceUrl)
-        ) {
+        if (conversationId === undefined || !isSafeConversationId(conversationId)) {
           return ok({ typing: false });
         }
-        startTypingKeepalive(conversationId, serviceUrl);
+        // Reply-context typing rides the supplied serviceUrl; mid-turn typing with
+        // none recovers it from the store (the orchestrator passes only chatId).
+        const explicitServiceUrl = resolveTypingServiceUrl(params);
+        const ctx = await resolveConnectorServiceContext(
+          conversationId,
+          explicitServiceUrl !== undefined
+            ? { extra: { serviceUrl: explicitServiceUrl } }
+            : undefined,
+        );
+        if (!ctx.ok || !isSafeServiceUrl(ctx.value.serviceUrl)) {
+          return ok({ typing: false });
+        }
+        startTypingKeepalive(conversationId, ctx.value.serviceUrl);
         return ok({ typing: true });
       }
 

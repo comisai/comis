@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Microsoft Teams Channel Plugin: wraps the Teams adapter as a ChannelPluginPort
- * with honest text-only capability metadata.
+ * with capability-parity metadata.
  *
- * Every feature flag is false and `buttons` is `"none"`: this channel round-trips
- * plain text only. Declaring `editMessages:false` keeps it out of the closed
- * EditPlace rendering union, and `buttons:"none"` keeps it off the interactive
- * button surface — both are the honest reflection of what the adapter implements,
- * not a stub. `reactToMessage`/`removeReaction` are permanently omitted (Teams
- * exposes no bot-reaction send API).
+ * The adapter implements inbound reactions, edit/delete, a typing keepalive and
+ * threaded replies, so the plugin declares
+ * `reactions/editMessages/deleteMessages/typing/threads: true`. `editMessages:true`
+ * auto-routes the channel to the edit-in-place activity strategy. `buttons` stays
+ * `"none"` — the channel paints no interactive buttons yet. The send-reaction port
+ * methods (`reactToMessage`/`removeReaction`) are permanently omitted: Teams
+ * exposes no bot-reaction send API, so `reactions:true` is an INBOUND capability.
  *
  * @module
  */
@@ -24,16 +25,22 @@ import {
   type MsTeamsAdapterDeps,
 } from "./msteams-adapter.js";
 
-/** Microsoft Teams platform capabilities — text-only, self-declared. */
+/** Microsoft Teams platform capabilities — self-declared, matching the adapter. */
 const CAPABILITIES: ChannelCapability = {
   features: {
-    reactions: false,
-    editMessages: false,
-    deleteMessages: false,
+    // Inbound reactions only; the send-reaction methods stay omitted.
+    reactions: true,
+    // Bot Framework updateActivity — auto-routes to the edit-in-place strategy.
+    editMessages: true,
+    // Bot Framework deleteActivity.
+    deleteMessages: true,
     fetchHistory: false,
     attachments: false,
-    typing: false,
-    threads: false,
+    // A {type:"typing"} keepalive over the injected timer.
+    typing: true,
+    // Channel/group thread root via replyToId.
+    threads: true,
+    // No interactive buttons yet — the rich card variant is a later capability.
     buttons: "none",
   },
   limits: {
