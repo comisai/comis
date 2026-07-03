@@ -782,7 +782,9 @@ The wrongness-based **forgetting** sweep emits its own trajectory signals, surfa
 
 For an **unattended coding-CLI drive** (a webhook/cron turn that opens a `claude`/terminal drive), two dedicated `likelyRootCause` verdicts diagnose the two ways such a drive strands — both derived from the bridged terminal-drive trajectory records (counts / closed enums only, never screen text): **`terminal_drive_opened_without_task`** fires when a drive was created (`terminal_session_create.ok ≥ 1`) but NO task was ever delivered (zero `terminal_session_send_text` successes) — the driven CLI sat idle and the build never started (it cites the backgrounding reason from `terminal.drive_promoted` when present, and out-ranks the `completed_with_tool_errors` catch-all since a stray failure during the stall is incidental). **`terminal_drive_evicted`** fires when the reaper cut a drive short — folded from `terminal.session_evicted` into a `terminalDriveEvicted { reason, idleMs, wasProducing }` signal — but ONLY on the `idle` and `wall_clock` caps (a drive quiet past `worker.idleTtlMs`, or older than the entry's `limits.wallClockMs`), never the benign `max_sessions` LRU or the deliberate `max_interactions` budget. `wasProducing` is derived (no new event) from whether a `producing` `terminal.drive_promoted` preceded the eviction: an idle-reap of a drive that HAD been producing is the acute canary that the producing-drive keep-alive regressed, and the verdict names it as such. Both fire regardless of `endReason` (the turn that opened the drive often ended `success`), so a reaper-killed autonomous drive is a one-call diagnosis instead of a hand-correlation of the daemon WARN against the last activity.
 
-Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.fleet.health`](#obs-fleet-health) → `obs.explain` drill-down ref: pass the fleet report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report.
+Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.fleet.health`](#obs-fleet-health) → `obs.explain` drill-down ref: pass the fleet report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report. There is **no by-job-id form**: a cron [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) skip opens no session, so a cron **job id** is not a valid input — read a job's skipped fires from [`cron.runs`](#cron-runs) instead.
+
+When a scheduled fire's wake-gate **woke** the model, the resulting session's report folds an optional content-free `cronWakeGate` fact — `{ jobId, wake, durationMs, toolCalls, estTurnsSaved }` (ids and counts only, never the gate's gathered finding or script). It is present only when the woke fire ran in a session the recorder had already opened; a **skipped** fire runs no model and reaches no report. The cross-job skip-rate / turns-saved rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
 
 `depth: "summary"` (the default) bounds the serialized report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `depth: "full"` relaxes the array caps. At BOTH depths the report is digest-only: no raw tool-output body is ever inlined (oversized previews and untrusted external content collapse to a `resultDigest` fingerprint), and an honest `truncations[]` ledger records anything the bounding pass dropped.
 
@@ -794,7 +796,7 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` required. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -861,6 +863,8 @@ This finding is the metric behind a **pre-committed, measure-first decision rule
 
 When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_runs` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree. It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** fleet surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis fleet --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
 
+When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) over the window, the report carries an optional **`cronWakeGate`** efficiency block -- `{ fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent: [{ agentId, fires, skipped, skipRate, turnsSaved, toolCalls }] }` (**counts + agent ids only** -- never the gate's gathered finding, its script source, or a secret; safe to paste) -- rolled up from the content-free `cron_wake_gate` diagnostic rows one gated fire writes each. It carries two legibility properties: **suppression** (a `perAgent[].skipRate` of `1.0` is a gate that never wakes the model -- either working hard or silently poisoned, visible either way) and **net cost** (`toolCalls`, the gate's own cap-call cost, sits beside `turnsSaved`, the avoided model turns, so a gate that costs more than it saves is legible). The same rollup drives the `cron_wake_gate_efficiency` `findings[]` code, whose hint names `cron.runs jobName "<job>"` for the per-fire decisions and flags a 100% skip-rate on an expected monitor, or `toolCalls` exceeding `turnsSaved`, as the signals to inspect. The block is **absent** when no gated fire ran in the window (an honest omit, not a zero).
+
 This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.explain` post-mortems ONE session; `obs.fleet.health` rolls up a WINDOW of sessions.
 
 `sinceHours` is optional; the **24h** default is applied in the handler. The report is digest-only: `findings[]` is capped top-N and `topErrorKinds` is merged + capped (counts only), with an honest `truncations[]` ledger recording anything the bounding pass dropped. An optional `coverage` block reports READ-coverage of the fleet sources -- the session-summary store (`{ found, rows }`), the multi-day session index (`{ daysRead, daysMissing }`), and the billing source (`{ present }`) -- so a silently-empty window (e.g. `rows: 0` or `daysMissing > 0`) is self-evident rather than masquerading as a clean zero-activity fleet.
@@ -869,7 +873,7 @@ This is the cross-session **sibling** of [`obs.explain`](#obs-explain): `obs.exp
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceHours?: number }` -- the aggregation window in hours (positive). Optional; defaults to `24` in the handler. |
-| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | A `FleetHealthReport`: `{ schemaVersion, windowHours, sessions: { total, degraded, degradedRate }, degradedByCause, topErrorKinds[], breakerTripTotal, toolStats, cost: { costUsd, totalTokens }, activity: { activeAgents[], activeChannels[], exitReasons, turnTotal, tokenTotal }, findings[], likelyRootCause, pipelineAuthoringGate?: { buildAuthor, reason }, autonomy?: { runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }, cronWakeGate?: { fires: { total, skipped, skipRate }, turnsSaved, toolCalls, perAgent[] }, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -1450,20 +1454,22 @@ Get the current status of a single cron job by name.
 
 ### `cron.runs`
 
-Get the run history for a cron job — timestamps, durations, and whether each run succeeded.
+Get the run history for a cron job — the timestamp, duration, and outcome of each fire. This is the per-fire lens for a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters): a fire the gate **skipped** is recorded here as a `skipped` outcome (no model turn ran), so a gated job's skips are visible without a session to `obs.explain`.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string, limit?: number }` |
-| **Returns** | `{ runs: Array<{ runAt: number, durationMs: number, success: boolean, error?: string }> }` |
+| **Parameters** | `{ jobName: string, limit?: number, agentId?: string }` |
+| **Returns** | `{ runs: Array<{ ts: number, jobId: string, status: "ok" \| "error" \| "skipped", durationMs: number, summary?: string, error?: string, toolCalls?: number, estTurnsSaved?: number }> }` |
+
+Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` carries the message), or `skipped` (a wake-gate decided not to invoke the model — `summary` reads `wake-gate: skipped`). On a skip, `toolCalls` is the gate's own cap-call count and `estTurnsSaved` is the model turn it avoided (`1` per skip). The cross-job skip-rate rollup is on [`obs.fleet.health`](#obs-fleet-health)'s `cronWakeGate` block.
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "cron.runs",
-  "params": { "name": "daily-summary", "limit": 5 },
+  "params": { "jobName": "daily-summary", "limit": 5 },
   "id": 1
 }
 ```
@@ -1472,8 +1478,8 @@ Get the run history for a cron job — timestamps, durations, and whether each r
   "jsonrpc": "2.0",
   "result": {
     "runs": [
-      { "runAt": 1773248400000, "durationMs": 3200, "success": true },
-      { "runAt": 1773162000000, "durationMs": 4100, "success": true }
+      { "ts": 1773248400000, "jobId": "job_a1b2c3", "status": "ok", "durationMs": 3200 },
+      { "ts": 1773162000000, "jobId": "job_a1b2c3", "status": "skipped", "durationMs": 210, "summary": "wake-gate: skipped", "toolCalls": 1, "estTurnsSaved": 1 }
     ]
   },
   "id": 1
@@ -4631,6 +4637,10 @@ Internal scheduler wake signal. Used by webhooks and other triggers to nudge the
 ### `scheduler.wake`
 
 Signal the wake coalescer to fire immediately rather than waiting for the next scheduled interval. The coalescer debounces rapid wake calls, so multiple calls within a short window are collapsed into a single run. Returns immediately — the actual heartbeat execution is fire-and-forget.
+
+<Note>
+**Not the per-job wake-gate.** `scheduler.wake` nudges the whole heartbeat coalescer to run now — it is a scheduler-wide trigger. A [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) is the opposite: a per-job pre-run script that decides whether a *single* cron fire invokes the model. They share the word "wake" and nothing else.
+</Note>
 
 | Property | Value |
 |----------|-------|

@@ -174,6 +174,63 @@ Use `cron` for recurring jobs on a fixed schedule (like "every weekday at 9am").
   </Accordion>
 </AccordionGroup>
 
+## Wake-Gate -- Run the Model Only When It Matters
+
+A scheduled job may carry an optional **wake-gate**: a small pre-run script that runs *before* the job's payload and decides whether to invoke the model at all. It is the efficiency layer for a polling job -- a monitor that fires every few minutes usually finds nothing changed, and a wake-gate lets it answer "nothing to do" *without* spending a model turn.
+
+The gate runs in the same jailed sandbox an autonomous [`orchestrate`](/agent-tools/orchestrate) script uses, under the agent's own resolved capabilities -- it can `web_fetch`, `read`, `grep`, and the other tools the agent already holds, but grants no new reach. It carries three fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `script` | string | -- | The gate source -- the code that inspects the world and prints a verdict |
+| `language` | `js` \| `ts` | `js` | The gate language |
+| `timeoutSeconds` | integer | `30` | Wall-clock budget for the gate (1--300); a gate that overruns wakes the model |
+
+### The verdict protocol
+
+The gate decides by what it prints. Its **last non-empty line of stdout** is read as the verdict:
+
+| Last line | Meaning |
+|-----------|---------|
+| `{"wake": false}` | **Skip** -- the payload never runs and the model is never invoked |
+| `{"wake": true, "context": "..."}` | **Wake** -- run the model, injecting the pre-gathered `context` finding so the turn starts already informed |
+| `{"wake": false, "deliver": "..."}` | **Routine status** -- deliver the `deliver` text straight to the job's channel with **no** model turn |
+| `HEARTBEAT_OK` or `NO_REPLY` | **Skip** -- a bare sentinel line, same as `{"wake": false}` |
+| `[SILENT]` or `[SILENT] <status>` | **Skip** -- a trailing `<status>` after `[SILENT]` is delivered like `deliver` |
+| anything else | **Wake** -- a bounded tail of the gate's stdout rides along as `context` |
+
+The sentinel match is case-insensitive. Both `context` and `deliver` are bounded (roughly the last 4,000 characters) so a gate injects a content-light finding rather than an unbounded script dump, and a delivered status is scrubbed for secrets before it reaches the channel.
+
+<Warning>
+**The gate is fail-open.** A gate that crashes, exits non-zero, times out, over-caps its output, or prints no parseable verdict **wakes** the model -- a broken monitor is never silently dropped. Only an explicit `{"wake": false}` (or a silent sentinel) on the last line skips a fire. If the host cannot build the sandbox, or the agent's autonomy is disabled, the job simply runs as it would without a gate.
+</Warning>
+
+### Example -- skip the model when the queue is empty
+
+A gate that checks a build queue and only wakes the agent when something is waiting:
+
+```javascript
+// wake-gate script (language: js)
+const res = await tools.web_fetch({ url: "https://ci.example.com/api/queue" });
+const queue = JSON.parse(res.body);
+
+if (queue.pending.length === 0) {
+  // Nothing to triage -- deliver a one-line status, no model turn.
+  console.log('{"wake": false, "deliver": "Build queue clear ✓"}');
+} else {
+  // Wake the agent with the pending items pre-gathered as context.
+  console.log(JSON.stringify({ wake: true, context: `Pending builds: ${queue.pending.join(", ")}` }));
+}
+```
+
+On an empty queue the fire costs one sandboxed HTTP call and zero model turns; only a non-empty queue pays for a model turn, and that turn starts with the pending list already in hand.
+
+<Note>
+**A wake-gate is not the `wake` action.** The `cron` tool's `wake` action (and the `scheduler.wake` RPC) is a **restart-replay** -- it nudges the scheduler to pick up firings missed while the daemon was down. A **wake-gate** is a per-job pre-run decision about a *single* fire. They share a word and nothing else.
+</Note>
+
+Every gated fire is observable without exposing what the gate gathered: a skipped fire is recorded in the job's run history (`runs` shows it with a `skipped` status and the avoided-turn count), and the daemon-wide skip-rate, turns-saved, and gate tool-call cost roll up into the [fleet health report](/reference/cli#comis-fleet). See the [operations scheduler guide](/operations/scheduler#wake-gate-efficiency) for the operator view.
+
 ## heartbeat_manage -- Agent Heartbeat
 
 The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a built-in scheduled event that fires on its own clock (separate from `cron` jobs). The heartbeat runs with the `heartbeat-minimal` tool policy by default (just `message`, `memory_store`, `memory_search`, `discover`) and is intended for lightweight check-ins.

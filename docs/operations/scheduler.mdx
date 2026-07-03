@@ -94,6 +94,18 @@ When quiet hours are active, cron jobs and heartbeat alerts are suppressed. They
 
 <Tip>Critical tasks (like security alerts) bypass quiet hours by default. Set `criticalBypass: false` only if you want complete silence during quiet hours.</Tip>
 
+## Wake-Gate Efficiency
+
+A polling cron job -- "check the build queue every five minutes," "scan the inbox every ten" -- usually finds nothing changed, and waking the model on every empty fire is pure waste. A [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) lets a job answer "nothing to do" *before* the model runs: a small sandboxed script inspects the world and returns a verdict, and only a verdict that says "wake" spends a model turn. A gate can also deliver a routine ✓ status straight to the channel with no model turn at all -- and that routine status honors quiet hours, so an all-clear ping never lands overnight.
+
+The gate is an **efficiency** layer, not a suppression control, and its posture is designed to stay legible to an operator:
+
+- **Fail-open.** A gate that errors, times out, over-caps its output, or returns no verdict **wakes** the model. A broken gate can never silently drop a monitored job -- the worst a misbehaving gate does is wake the model too often (spending turns), never too rarely (missing an alert).
+- **Skip-rate.** The share of a job's fires the gate skipped. A high skip-rate is usually the gate *working* -- most polls found nothing -- not a fault. A gate at a **100% skip-rate on a monitor you expect to fire** is the signal to inspect: it may be genuinely quiet, or its logic may have broken toward always-skip.
+- **Net cost.** A gate's own tool calls (its `web_fetch`/`read`/`grep` cost) sit beside the model turns it saved. A gate whose tool-call cost exceeds the turns it avoids is not paying for itself -- compare the two numbers directly.
+
+These signals roll up per agent in the [`comis fleet`](/reference/cli#comis-fleet) health report (skip-rate, turns-saved, tool-call cost -- counts only, never the gate's gathered findings), and each per-fire decision is visible in the job's run history via [`cron.runs`](/reference/json-rpc#cron-runs). Because the gate runs under the agent's own [autonomy capabilities](/agents/autonomy) in the standard jail, it grants no new reach -- see the [capability model](/security/capability-model#wake-gate-suppression-bound) for the suppression bound.
+
 ## Safety
 
 The scheduler includes several safety mechanisms to prevent runaway tasks:
