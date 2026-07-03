@@ -7,7 +7,7 @@
  * `writeRegularFile` (0o600, O_NOFOLLOW, unlink-before-open); every path is
  * composed with `safePath`. The raw path-join and unchecked file-write calls
  * are deliberately avoided. The write set is an explicit allowlist of up to
- * seven files, never a data-dir glob.
+ * nine files, never a data-dir glob.
  *
  * Redaction is scoped per file. `doctor.json` echoes config-derived free text
  * (DoctorFinding messages — e.g. a configured gateway URL with `user:pass@`), so
@@ -73,6 +73,37 @@ export interface WriteSupportBundleInput {
    * config did not parse).
    */
   readonly configPostureJson?: unknown;
+  /**
+   * The embedded incident report (written as explain.json when present, on
+   * `--session`). An UNTRUSTED free-text leaf: the report is content-free by
+   * construction but carries genuine free-text (`errorPreview`, `resultDigest`,
+   * `likelyRootCause.detail`) that could surface a secret-shaped substring from a
+   * tool error, so every string leaf is value-shape masked before it reaches
+   * disk. The masking preserves the content-free correlation ids (a UUID
+   * traceId, a non-numeric colon-form sessionKey, tool names, clean root-cause
+   * codes) verbatim; it INTENTIONALLY redacts PII shapes it also catches — a 9+
+   * digit numeric channel/user id in a sessionKey (long-decimal-id) and a code
+   * that embeds a payload keyword (e.g. `context_exhausted` → "text"). Omitted
+   * from the write set when undefined (no `--session`).
+   */
+  readonly explainJson?: unknown;
+  /**
+   * The window-scoped audit `{ total, byKind }` digest (written as
+   * audit-summary.json when present). A content-free TRUSTED leaf: pure counts
+   * keyed by the closed `AuditKind` labels — path substitution only, never the
+   * value-shape pass (which would mask a kind label like `secret_access`).
+   * Omitted from the write set when undefined (the audit store was absent or
+   * unreadable — the caller records a manifest warning instead).
+   */
+  readonly auditSummaryJson?: unknown;
+  /**
+   * A pre-created bundle dir (from `ensureSupportBundleDir`). When provided the
+   * writer writes into it and skips re-deriving/creating the dir — the seam the
+   * orchestrator uses to export the trace bundle INTO the dir before the manifest
+   * write. When absent the writer derives + creates the dir itself, keeping every
+   * existing caller working.
+   */
+  readonly bundleDir?: string;
   /** Upstream coverage/section warnings folded into the manifest. */
   readonly warnings?: readonly SupportBundleWarning[];
 }
@@ -189,16 +220,44 @@ function prepareBundleDir(
   }
 }
 
+/** Derive the timestamp-only bundle dir name from the generation instant. */
+function bundleDirNameFor(generatedAtMs: number): string {
+  const tsIso = systemDateFrom(generatedAtMs).toISOString().replace(/[:.]/g, "-");
+  return `comis-support-${tsIso}`;
+}
+
 /**
- * Write the support bundle (up to seven files) under `<dataDir>/support-bundles/`.
+ * Resolve and create the per-bundle dir under `<dataDir>/support-bundles/`,
+ * returning the same path `writeSupportBundle` writes into. Exported so the
+ * orchestrator can create the dir FIRST (and export the trace bundle into it)
+ * before handing it back to the writer via `WriteSupportBundleInput.bundleDir`.
+ *
+ * The name carries a timestamp only (no host component), derived deterministically
+ * from `generatedAtMs`. Creation goes through the symlink-safe, real-path-confined
+ * `ensureContainedDir`, so a second call with the same instant is a no-op create
+ * (idempotent). A symlink escape or a refused create folds into the one hard error.
+ *
+ * @param dataDir - the resolved data-dir root.
+ * @param generatedAtMs - the generation instant (stamps the dir name).
+ * @returns `ok(bundleDir)`, or `err({ kind: "bundle-dir-create-failed" })`.
+ */
+export function ensureSupportBundleDir(
+  dataDir: string,
+  generatedAtMs: number,
+): Result<string, WriteSupportBundleError> {
+  return prepareBundleDir(dataDir, bundleDirNameFor(generatedAtMs));
+}
+
+/**
+ * Write the support bundle (up to nine files) under `<dataDir>/support-bundles/`.
  *
  * Creates `comis-support-<tsIso>/` (a timestamp-only name — no host component)
  * and writes `issue-summary.md`, `ai-issue-draft.md`, `triage.json`,
- * `doctor.json`, and `manifest.json`, plus `fleet.json` and `config-posture.json`
- * when their inputs are present, each through the symlink-safe primitives
- * with the redaction backstop applied. The manifest is written last so it
- * records every section that failed. Returns `err` only when the directory
- * itself cannot be created.
+ * `doctor.json`, and `manifest.json`, plus `fleet.json`, `config-posture.json`,
+ * `explain.json` (on `--session`), and `audit-summary.json` when their inputs are
+ * present, each through the symlink-safe primitives with the redaction backstop
+ * applied. The manifest is written last so it records every section that failed.
+ * Returns `err` only when the directory itself cannot be created.
  *
  * @param input - The bundle inputs (all pre-read by the caller).
  * @returns `ok({ bundleDir, warnings })` on a full or partial write, or
@@ -216,20 +275,29 @@ export function writeSupportBundle(
     doctorJson,
     fleetJson,
     configPostureJson,
+    explainJson,
+    auditSummaryJson,
   } = input;
 
-  // The dir name carries a timestamp only, never a host component.
+  // The dir name + ISO stamp carry a timestamp only, never a host component,
+  // and are derived deterministically from the instant (so they stay consistent
+  // whether the dir is created here or was pre-created by the orchestrator).
   const generatedAt = systemDateFrom(generatedAtMs).toISOString();
-  const tsIso = generatedAt.replace(/[:.]/g, "-");
-  const bundleDirName = `comis-support-${tsIso}`;
+  const bundleDirName = bundleDirNameFor(generatedAtMs);
 
-  // Create the support-bundles parent and the per-bundle dir. A failure to
-  // create either is the one hard error (the bundle cannot be produced).
-  const dirResult = prepareBundleDir(dataDir, bundleDirName);
-  if (!dirResult.ok) {
-    return dirResult;
+  // Create the per-bundle dir, or reuse the one the orchestrator pre-created (so
+  // it could export the trace bundle into it first). A failure to create is the
+  // one hard error (the bundle cannot be produced).
+  let bundleDir: string;
+  if (input.bundleDir !== undefined) {
+    bundleDir = input.bundleDir;
+  } else {
+    const dirResult = ensureSupportBundleDir(dataDir, generatedAtMs);
+    if (!dirResult.ok) {
+      return dirResult;
+    }
+    bundleDir = dirResult.value;
   }
-  const bundleDir = dirResult.value;
 
   // The redaction backstop, built once. stateDir/homeDir/workspaceDir drive the
   // path → placeholder substitution (longest-match-wins).
@@ -298,6 +366,33 @@ export function writeSupportBundle(
             name: "config-posture.json",
             body: (): string =>
               JSON.stringify(walkAndSubstitutePaths(configPostureJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    // explain.json rides the UNTRUSTED value-shape leaf (like doctor.json): the
+    // embedded incident report carries free-text (errorPreview/resultDigest/
+    // likelyRootCause.detail) that could surface a secret-shaped substring, so
+    // every string leaf is masked. The pass preserves content-free correlation
+    // ids and intentionally redacts PII shapes it catches. Appended only on
+    // `--session`.
+    ...(explainJson !== undefined
+      ? [
+          {
+            name: "explain.json",
+            body: (): string =>
+              JSON.stringify(walkAndRedactStrings(explainJson, redactionOpts), null, 2),
+          },
+        ]
+      : []),
+    // audit-summary.json rides the TRUSTED leaf (like fleet.json): pure counts +
+    // closed AuditKind labels — path substitution only. Appended only when the
+    // offline audit read returned a digest.
+    ...(auditSummaryJson !== undefined
+      ? [
+          {
+            name: "audit-summary.json",
+            body: (): string =>
+              JSON.stringify(walkAndSubstitutePaths(auditSummaryJson, redactionOpts), null, 2),
           },
         ]
       : []),
