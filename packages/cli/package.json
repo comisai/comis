@@ -64,13 +64,13 @@
     "open": "10.2.0",
     "ora": "9.4.1",
     "ws": "8.21.0",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/ws": "8.18.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.9",
-    "zod": "4.4.3"
+    "vitest": "4.1.9"
   }
 }
