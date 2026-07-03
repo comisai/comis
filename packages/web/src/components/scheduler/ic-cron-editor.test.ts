@@ -211,6 +211,91 @@ describe("IcCronEditor", () => {
     expect(detail.sessionTarget).toBe("main");
   });
 
+  it("surfaces a wake-gate script field in the editor form", async () => {
+    const el = await createElement<IcCronEditor>("ic-cron-editor", {
+      agents: ["default"],
+    });
+    expect(el.shadowRoot!.querySelector("#cron-wake-gate")).toBeTruthy();
+  });
+
+  it("typing a wake-gate script and saving carries a nested wakeGate (default js) on the save detail", async () => {
+    const el = await createElement<IcCronEditor>("ic-cron-editor", {
+      agents: ["default"],
+    });
+    (el as any)._id = "gated-job";
+    (el as any)._name = "Gated Job";
+    (el as any)._scheduleKind = "cron";
+    (el as any)._cronExpr = "*/5 * * * *";
+    (el as any)._timezone = "UTC";
+    (el as any)._agentId = "default";
+    await el.updateComplete;
+
+    const ta = el.shadowRoot!.querySelector("#cron-wake-gate") as HTMLTextAreaElement;
+    ta.value = 'print(JSON.stringify({ wake: false }))';
+    ta.dispatchEvent(new Event("input"));
+    await el.updateComplete;
+
+    const handler = vi.fn();
+    el.addEventListener("save", handler);
+    (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
+
+    expect(handler).toHaveBeenCalledOnce();
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
+    expect(detail.wakeGate).toEqual({
+      script: 'print(JSON.stringify({ wake: false }))',
+      language: "js",
+    });
+  });
+
+  it("leaving the wake-gate field empty omits wakeGate from the save detail (optional end-to-end)", async () => {
+    const el = await createElement<IcCronEditor>("ic-cron-editor", {
+      agents: ["default"],
+    });
+    (el as any)._id = "plain-job";
+    (el as any)._name = "Plain Job";
+    (el as any)._scheduleKind = "cron";
+    (el as any)._cronExpr = "0 9 * * *";
+    (el as any)._timezone = "UTC";
+    (el as any)._agentId = "default";
+    await el.updateComplete;
+
+    const handler = vi.fn();
+    el.addEventListener("save", handler);
+    (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
+
+    expect(handler).toHaveBeenCalledOnce();
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
+    expect(detail.wakeGate).toBeUndefined();
+    expect("wakeGate" in detail).toBe(false);
+  });
+
+  it("populates the wake-gate script and language from an existing job and round-trips them on save", async () => {
+    const el = await createElement<IcCronEditor>("ic-cron-editor", {
+      agents: ["default"],
+      job: {
+        id: "monitor",
+        name: "Monitor",
+        agentId: "default",
+        schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+        message: "Check the feed",
+        enabled: true,
+        maxConcurrent: 1,
+        sessionTarget: "main",
+        wakeGate: { script: "check()", language: "ts" },
+      },
+    });
+
+    expect((el as any)._wakeGateScript).toBe("check()");
+    expect((el as any)._wakeGateLanguage).toBe("ts");
+
+    const handler = vi.fn();
+    el.addEventListener("save", handler);
+    (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
+
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
+    expect(detail.wakeGate).toEqual({ script: "check()", language: "ts" });
+  });
+
   it("cancel button fires cancel event", async () => {
     const el = await createElement<IcCronEditor>("ic-cron-editor");
     const handler = vi.fn();
