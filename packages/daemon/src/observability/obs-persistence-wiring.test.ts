@@ -9,6 +9,7 @@ import {
   healthBudgetExceededEventToRow,
   reflectFunnelEventToRow,
   lifecycleSweptEventToRow,
+  wakeGateEventToRow,
   mcpReconnectFailedEventToRow,
   scriptZeroHitEventToRow,
   summaryLanguageMismatchEventToRow,
@@ -647,6 +648,62 @@ describe("lifecycleSweptEventToRow (forget sweep → memory_lifecycle)", () => {
     expect(d.demoted).toBe(1);
     // Counts only — never a memory id/body.
     expect(row.details).not.toMatch(/content|body|memory-[a-f0-9]/);
+  });
+});
+
+describe("wakeGateEventToRow (cron wake-gate fire → cron_wake_gate)", () => {
+  it("maps a scheduler:wake_gate payload to a cron_wake_gate row (info severity, content-free counts)", () => {
+    const row = wakeGateEventToRow({
+      jobId: "job-inbox-triage",
+      agentId: "default",
+      wake: false,
+      durationMs: 12,
+      toolCalls: 0,
+      estTurnsSaved: 1,
+      timestamp: 4242,
+    });
+    expect(row.timestamp).toBe(4242);
+    expect(row.category).toBe("cron_wake_gate");
+    // INFO: a skip (and a wake) is healthy posture, NOT a degrade alert — the row
+    // must NOT inflate the fleet degrade count (the benign-reason discipline).
+    expect(row.severity).toBe("info");
+    expect(row.agentId).toBe("default");
+    expect(row.message).toBe("scheduler:wake_gate");
+    const d = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+    expect(d.signal).toBe("cron_wake_gate");
+    expect(d.wake).toBe(false);
+    expect(d.durationMs).toBe(12);
+    expect(d.toolCalls).toBe(0);
+    expect(d.estTurnsSaved).toBe(1);
+    // CONTENT-FREE: the details keys are EXACTLY the counts/enum allowlist — no
+    // jobId, no gathered payload, no script source, no secret.
+    expect(Object.keys(d).sort()).toEqual([
+      "durationMs",
+      "estTurnsSaved",
+      "signal",
+      "toolCalls",
+      "wake",
+    ]);
+    // The jobId (an id, but the fleet fork rolls up per-AGENT) never lands on the
+    // row — never a gate script / gathered payload / prompt substring either.
+    expect(row.details ?? "").not.toContain("job-inbox-triage");
+    expect(row.details ?? "").not.toMatch(/script|payload|gather|prompt/i);
+
+    // A WOKE fire carries wake:true + estTurnsSaved:0 (the model DID run) — the
+    // toolCalls it made are the gate's cost (net-cost legibility downstream).
+    const wokeRow = wakeGateEventToRow({
+      jobId: "job-x",
+      agentId: "a1",
+      wake: true,
+      durationMs: 300,
+      toolCalls: 3,
+      estTurnsSaved: 0,
+      timestamp: 5,
+    });
+    const wd = JSON.parse(wokeRow.details ?? "{}") as Record<string, unknown>;
+    expect(wd.wake).toBe(true);
+    expect(wd.estTurnsSaved).toBe(0);
+    expect(wd.toolCalls).toBe(3);
   });
 });
 
@@ -1417,6 +1474,52 @@ describe("setupObsPersistence", () => {
     // The MCP row never carries the error body (bounded payload).
     const mcpRow = healthRows.find((r) => r.message === "mcp:server:reconnect_failed")!;
     expect(mcpRow.details ?? "").not.toContain("xxxx");
+
+    // Cleanup
+    clearInterval(result.snapshotTimer);
+    result.drainAll();
+  });
+
+  it("emitting scheduler:wake_gate pushes exactly one content-free cron_wake_gate row through the diagnostic buffer", () => {
+    const eventBus = createMockEventBus();
+    const obsStore = createMockObsStore();
+    const db = createMockDb();
+    const channelActivityTracker = createMockChannelActivityTracker();
+
+    const result = setupObsPersistence({
+      eventBus: eventBus as never,
+      obsStore: obsStore as never,
+      db: db as never,
+      channelActivityTracker: channelActivityTracker as never,
+      startupTimestamp: Date.now(),
+      snapshotIntervalMs: 300_000,
+    });
+
+    // The listener is registered beside the reflect/lifecycle persistence listeners.
+    expect(eventBus.on).toHaveBeenCalledWith("scheduler:wake_gate", expect.any(Function));
+
+    eventBus.emit("scheduler:wake_gate", {
+      jobId: "job-1",
+      agentId: "a1",
+      wake: false,
+      durationMs: 9,
+      toolCalls: 0,
+      estTurnsSaved: 1,
+      timestamp: 2000,
+    });
+
+    // Flush the diagnostic buffer.
+    vi.advanceTimersByTime(500);
+
+    const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
+    const gateRows = calls
+      .map((c) => c[0] as { category?: string; message?: string; details?: string })
+      .filter((r) => r.category === "cron_wake_gate");
+    expect(gateRows).toHaveLength(1);
+    expect(gateRows[0]!.message).toBe("scheduler:wake_gate");
+    expect(JSON.parse(gateRows[0]!.details ?? "{}").signal).toBe("cron_wake_gate");
+    // The jobId never reaches the persisted row (content-free).
+    expect(gateRows[0]!.details ?? "").not.toContain("job-1");
 
     // Cleanup
     clearInterval(result.snapshotTimer);
