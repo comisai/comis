@@ -367,12 +367,22 @@ describe("buildSupportTriage assembly", () => {
     }
   });
 
-  it("lists the bundle output files as evidence with descriptions", () => {
+  it("lists every written bundle file as evidence, in writer order, with descriptions", () => {
     const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
 
     const paths = triage.evidenceFiles.map((file) => file.path);
-    expect(paths).toContain("triage.json");
-    expect(paths).toContain("doctor.json");
+    // The evidence manifest must equal the exact set the writer emits (its
+    // FILE_PLAN order), so a file the bundle writes cannot silently drop out of
+    // the index — ai-issue-draft.md is written on every run.
+    expect(paths).toEqual([
+      "issue-summary.md",
+      "ai-issue-draft.md",
+      "triage.json",
+      "doctor.json",
+      "fleet.json",
+      "config-posture.json",
+      "manifest.json",
+    ]);
     for (const entry of triage.evidenceFiles) {
       expect(entry.description.length).toBeGreaterThan(0);
     }
