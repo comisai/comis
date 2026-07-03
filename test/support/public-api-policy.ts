@@ -2412,6 +2412,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // only sqlite + the session-index JSONL (never daemon.log).
       // Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
       "assembleFleetHealthReport",
+      // Pointer-discipline sessionKey → session `.jsonl` resolver — re-exported
+      // from the TOP-LEVEL daemon barrel so the CLI support-bundle offline seam
+      // (resolveSessionFileOffline in packages/cli/src/util/offline-obs.ts)
+      // resolves the real session file for the --deep trace export WITHOUT
+      // importing the agent package's sessionKeyToPath (the cli-no-agent arch
+      // ban). The CLI consumes it via the DYNAMIC loadDaemonAssemblers() import,
+      // and the daemon's own export closure imports it via the LEAF path
+      // (./api/obs-handlers/obs-explain-readers.js) — both invisible to the
+      // public-export-consumers AST walker, which scans only static
+      // @comis/daemon import/export-from declarations (skipping dynamic imports
+      // and in-package self-imports), so this orphan list is the canonical place
+      // to record the consumer. SECURITY: read-only widening — a pure path
+      // resolver over the sessions tree that returns a path only when the
+      // artifacts exist (else undefined); it grants no new authority (the same
+      // pointer resolution the daemon /export-trajectory closure already uses).
+      // Consumer: packages/cli/src/util/offline-obs.ts (resolveSessionFileOffline)
+      "resolveSessionFilePath",
       // Outward-send crash-injection seam — re-exported
       // from the daemon barrel so the exactly-once chaos test can arm/disarm a
       // REAL mid-send crash (BETWEEN markUnknown and commit) and assert the
