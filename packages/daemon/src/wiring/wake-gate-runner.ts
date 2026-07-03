@@ -38,6 +38,7 @@ import {
   type ErrorKind,
   type OutputGuardPort,
   type PerAgentConfig,
+  type TypedEventBus,
 } from "@comis/core";
 import { parseWakeGateVerdict, type WakeGateVerdict } from "@comis/scheduler";
 import {
@@ -106,6 +107,14 @@ export interface WakeGateRunnerDeps {
   readonly baseEnv: Record<string, string | undefined>;
   /** The boot namespace-preflight boolean — false ⇒ honest degrade (no jail). */
   readonly namespacePreflightOk: boolean;
+  /**
+   * The daemon event bus — the runner scopes a `capability:audited` subscription
+   * to THIS fire's `rootRunId` to count the gate's allow-decision cap-calls
+   * (`toolCalls`). Narrowed to the subscribe/unsubscribe port. OPTIONAL: when
+   * absent the count degrades honestly to 0 (never fabricated), and every
+   * bus-less test still constructs valid deps.
+   */
+  readonly eventBus?: Pick<TypedEventBus, "on" | "off">;
   /** Injected wall clock (default {@link systemNowMs}) — the `-<ts>` root suffix. */
   readonly now?: () => number;
   /**

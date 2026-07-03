@@ -29,12 +29,18 @@ vi.mock("@comis/skills/tools", () => ({
 }));
 
 import { ok } from "@comis/shared";
+import { TypedEventBus, type EventMap } from "@comis/core";
 
 import {
   createWakeGateRunner,
   type WakeGateRunnerDeps,
   type WakeGateRunContext,
 } from "./wake-gate-runner.js";
+
+/** A content-free capability:audited event for the scoped tool-call counter tests. */
+function makeAudit(rootRunId: string, decision: "allow" | "deny"): EventMap["capability:audited"] {
+  return { timestamp: 0, agentId: "agent-1", capability: "orch:read", method: "tool.invoke", decision, rootRunId };
+}
 
 function makeLogger(): WakeGateRunnerDeps["logger"] {
   const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -410,5 +416,84 @@ describe("createWakeGateRunner — richer outcome (durationMs on the clean AND f
     const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
     expect(result).toEqual(outcome({ wake: true }, { durationMs: 42 }));
+  });
+});
+
+describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCalls counter", () => {
+  it("counts N allow-decision capability:audited events under the gate's OWN rootRunId → toolCalls === N", async () => {
+    const bus = new TypedEventBus();
+    const { deps, runJailedScriptFn, registerRoot } = makeDeps({ eventBus: bus });
+    // The gate's per-fire rootRunId is anchored at mint (registerRoot), BEFORE the run.
+    runJailedScriptFn.mockImplementation(async () => {
+      const rootRunId = registerRoot.mock.calls[0]![0] as string;
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      return '{"wake":false}';
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(result).toEqual(outcome({ wake: false }, { toolCalls: 3 }));
+  });
+
+  it("excludes deny decisions AND events under a different rootRunId from the count", async () => {
+    const bus = new TypedEventBus();
+    const { deps, runJailedScriptFn, registerRoot } = makeDeps({ eventBus: bus });
+    runJailedScriptFn.mockImplementation(async () => {
+      const rootRunId = registerRoot.mock.calls[0]![0] as string;
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow")); // counted
+      bus.emit("capability:audited", makeAudit(rootRunId, "deny")); // NOT — a blocked call is no cost incurred
+      bus.emit("capability:audited", makeAudit("root-wakegate-other-9z", "allow")); // NOT — another fire's root
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow")); // counted
+      return '{"wake":false}';
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(result).toEqual(outcome({ wake: false }, { toolCalls: 2 }));
+  });
+
+  it("removes the capability:audited listener after the run resolves (no leak across fires)", async () => {
+    const bus = new TypedEventBus();
+    const { deps, runJailedScriptFn, registerRoot } = makeDeps({ eventBus: bus });
+    runJailedScriptFn.mockImplementation(async () => {
+      const rootRunId = registerRoot.mock.calls[0]![0] as string;
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      return '{"wake":false}';
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    // toolCalls===1 proves it WAS subscribed; listenerCount===0 proves it was cleaned up.
+    expect(result).toEqual(outcome({ wake: false }, { toolCalls: 1 }));
+    expect(bus.listenerCount("capability:audited")).toBe(0);
+  });
+
+  it("removes the listener even when the jailed run REJECTS (unsubscribe in a finally; count reflects allows before the reject)", async () => {
+    const bus = new TypedEventBus();
+    const { deps, runJailedScriptFn, registerRoot } = makeDeps({ eventBus: bus });
+    runJailedScriptFn.mockImplementation(async () => {
+      const rootRunId = registerRoot.mock.calls[0]![0] as string;
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      bus.emit("capability:audited", makeAudit(rootRunId, "allow"));
+      throw new Error("run exceeded its 30000ms timeout");
+    });
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    // Fail-open wake; the count survives to the fail-open return AND the listener is gone.
+    expect(result).toEqual(outcome({ wake: true }, { toolCalls: 2 }));
+    expect(bus.listenerCount("capability:audited")).toBe(0);
+  });
+
+  it("honest-degrades toolCalls to 0 when no eventBus is available (never fabricated)", async () => {
+    // The default deps carry no eventBus — the counter must degrade to 0, not throw.
+    const { deps, runJailedScriptFn } = makeDeps();
+    runJailedScriptFn.mockResolvedValue('{"wake":false}');
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
+
+    expect(result).toEqual(outcome({ wake: false }, { toolCalls: 0 }));
   });
 });
