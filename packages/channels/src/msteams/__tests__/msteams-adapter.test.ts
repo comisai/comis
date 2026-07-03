@@ -901,7 +901,7 @@ describe("createMsTeamsAdapter — typing keepalive over the injected TimerPort"
 });
 
 describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)", () => {
-  it("captures the RAW conversation reference (tenant from channelData) on a successful inbound", async () => {
+  it("captures the reference keyed by the stripped channelId (tenant from channelData) on a successful inbound", async () => {
     const { store, capture } = makeFakeStore();
     const { deps } = makeAdapterDeps({ conversationStore: store });
     const adapter = createMsTeamsAdapter(deps);
@@ -922,13 +922,65 @@ describe("createMsTeamsAdapter — conversation-reference capture (PROACTIVE-01)
 
     expect(capture).toHaveBeenCalledOnce();
     const ref = capture.mock.calls[0]![0] as ConversationReference;
-    // RAW conversation.id — NOT the stripped channelId (keeps the ;messageid= suffix).
-    expect(ref.conversationId).toBe("19:channel-convo@thread.tacv2;messageid=1700");
+    // The key is the STRIPPED channelId (the ;messageid= suffix is the thread root,
+    // captured separately as threadId) — it MUST equal the normalized channelId a
+    // proactive send targets, or the store.get() misses on a threaded reference.
+    expect(ref.conversationId).toBe("19:channel-convo@thread.tacv2");
     expect(ref.serviceUrl).toBe("https://smba.example.com/teams/");
     // channelData.tenant.id wins over conversation.tenantId.
     expect(ref.tenantId).toBe("tenant-from-channeldata");
     expect(ref.threadId).toBe("1700");
     expect(typeof ref.updatedAt).toBe("number");
+  });
+
+  it("keys capture by the SAME stripped id a later proactive send targets, so the get() hits (PROACTIVE-02)", async () => {
+    // End-to-end: an inbound channel reply carries a conversation.id WITH a
+    // ;messageid= suffix, but the normalized channelId a session — and thus a
+    // later proactive cron/heartbeat send — targets is the STRIPPED base id.
+    // Capture must key by that same stripped id; otherwise the proactive get()
+    // misses and the routing tuple cannot be recovered for a threaded reference.
+    const stored = new Map<string, ConversationReference>();
+    const store = {
+      capture: vi.fn(async (ref: ConversationReference) => {
+        stored.set(ref.conversationId, ref);
+        return ok<void, Error>(undefined);
+      }),
+      get: vi.fn(async (id: string) =>
+        ok<ConversationReference | undefined, Error>(stored.get(id)),
+      ),
+    } as unknown as MsTeamsConversationStorePort;
+
+    const { fetchImpl, spy } = makeConnectorFetch();
+    const { deps } = makeAdapterDeps({ fetchImpl, conversationStore: store });
+    const adapter = createMsTeamsAdapter(deps);
+    const captured: NormalizedMessage[] = [];
+    adapter.onMessage((m) => {
+      captured.push(m);
+    });
+
+    adapter.handleWebhookEvents([
+      messageActivity({
+        conversation: {
+          id: "19:channel-convo@thread.tacv2;messageid=1700",
+          conversationType: "channel",
+          tenantId: TENANT,
+        },
+        serviceUrl: "https://smba.trafficmanager.net/teams/",
+      }),
+    ]);
+    await flush();
+
+    // The session/delivery layer targets the STRIPPED channelId.
+    const target = captured[0]!.channelId;
+    expect(target).toBe("19:channel-convo@thread.tacv2");
+
+    // A proactive send to that stripped id must recover the captured reference and
+    // thread under the captured thread root (the ;messageid= value).
+    const result = await adapter.sendMessage(target, "cron notice", {});
+    expect(result.ok).toBe(true);
+    expect(store.get).toHaveBeenCalledWith("19:channel-convo@thread.tacv2");
+    const body = JSON.parse(String(findSendCall(spy)![1].body)) as { replyToId?: string };
+    expect(body.replyToId).toBe("1700");
   });
 
   it("falls back to conversation.tenantId when channelData carries no tenant", async () => {
