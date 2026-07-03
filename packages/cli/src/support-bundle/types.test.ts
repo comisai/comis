@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseSupportTriage, parseSupportBundleManifest } from "./types.js";
+import { parseSupportTriage, parseSupportBundleManifest, parseConfigPosture } from "./types.js";
 
 /**
  * Build a well-formed triage object, merging any overrides last so a test can
@@ -187,6 +187,44 @@ describe("parseSupportBundleManifest", () => {
     }
   });
 
+  it("accepts a warning sourced from the fleet section", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [
+          {
+            source: "fleet",
+            code: "fleet_read_failed",
+            count: 1,
+            message: "the fleet report could not be assembled",
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.warnings?.[0]?.source).toBe("fleet");
+    }
+  });
+
+  it("accepts a warning sourced from the config-posture section", () => {
+    const result = parseSupportBundleManifest(
+      makeValidManifest({
+        warnings: [
+          {
+            source: "config-posture",
+            code: "config_unreadable",
+            count: 1,
+            message: "the config could not be read for the posture digest",
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.warnings?.[0]?.source).toBe("config-posture");
+    }
+  });
+
   it("rejects a redaction policy other than the pinned literal", () => {
     const result = parseSupportBundleManifest(makeValidManifest({ redaction: { policy: "some-other-policy" } }));
     expect(result.ok).toBe(false);
@@ -196,6 +234,63 @@ describe("parseSupportBundleManifest", () => {
     const result = parseSupportBundleManifest(
       makeValidManifest({
         warnings: [{ source: "host", code: "x", count: 1, message: "m", bogus: true }],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * Build a well-formed config-posture digest, merging overrides last so a test
+ * can inject an unknown key, a drifted schema version, or a malformed posture
+ * finding over a valid baseline.
+ */
+function makeValidConfigPosture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    sections: ["gateway", "channels"],
+    configPosture: {
+      detail: "1 config-posture signal(s) — flagged: gateway.tls (off)",
+      count: 1,
+      hint: "reconcile the flagged config knobs",
+    },
+    ...overrides,
+  };
+}
+
+describe("parseConfigPosture", () => {
+  it("returns ok for a well-formed config-posture digest with the data intact", () => {
+    const result = parseConfigPosture(makeValidConfigPosture());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.schemaVersion).toBe(1);
+      expect(result.value.sections).toContain("gateway");
+      expect(result.value.configPosture?.count).toBe(1);
+    }
+  });
+
+  it("returns ok when the posture finding is null because no signal fired", () => {
+    const result = parseConfigPosture(makeValidConfigPosture({ configPosture: null }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.configPosture).toBeNull();
+    }
+  });
+
+  it("rejects a config-posture digest carrying an unknown top-level key", () => {
+    const result = parseConfigPosture(makeValidConfigPosture({ bogusKey: 1 }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a config-posture digest with a schemaVersion other than the literal one", () => {
+    const result = parseConfigPosture(makeValidConfigPosture({ schemaVersion: 2 }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a posture finding carrying an unknown nested key", () => {
+    const result = parseConfigPosture(
+      makeValidConfigPosture({
+        configPosture: { detail: "d", count: 1, hint: "h", bogusNested: true },
       }),
     );
     expect(result.ok).toBe(false);
