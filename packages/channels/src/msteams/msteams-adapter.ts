@@ -25,7 +25,11 @@ import type {
   ChannelStatus,
   ComisLogger,
   MessageHandler,
+  NormalizedReaction,
+  ReactionHandler,
   SendMessageOptions,
+  TimerHandle,
+  TimerPort,
 } from "@comis/core";
 import { runWithContext, systemNowMs } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -36,6 +40,10 @@ import {
   mapMsTeamsActivityToNormalized,
   type TeamsActivity,
 } from "./message-mapper.js";
+import {
+  mapMsTeamsReaction,
+  type TeamsReactionActivity,
+} from "./msteams-reaction-binder.js";
 import { createConnectorTokenProvider } from "./msteams-auth.js";
 
 // ---------------------------------------------------------------------------
@@ -60,6 +68,12 @@ export interface MsTeamsAdapterDeps {
   fetchImpl?: typeof fetch;
   /** Injected clock in ms, defaulting to systemNowMs; makes timing deterministic. */
   now?: () => number;
+  /**
+   * Injected timer for the typing keepalive. OPTIONAL — mirrors the `now`/`fetchImpl`
+   * seams so the composition root stays typecheck-clean before it supplies its runtime
+   * timers; when absent the typing keepalive degrades to a no-op (never a raw setTimeout).
+   */
+  timer?: TimerPort;
 }
 
 /**
@@ -82,6 +96,18 @@ export interface MsTeamsAdapterHandle extends ChannelPort {
  * default keeps a bare send working.
  */
 const DEFAULT_SERVICE_URL = "https://smba.trafficmanager.net/teams/";
+
+/**
+ * A Bot Framework typing activity lapses after roughly half a minute, so the
+ * keepalive re-POSTs one every {@link TYPING_REFRESH_MS} to hold the indicator
+ * open. {@link TYPING_TTL_MS} caps the total keepalive lifetime so an
+ * un-stopped indicator (a missed stop signal) can never refresh forever;
+ * {@link MAX_TYPING_REFRESHES} expresses that cap as a refresh count so it holds
+ * regardless of the injected clock. Internal constants — not operator-tunable.
+ */
+const TYPING_REFRESH_MS = 8_000;
+const TYPING_TTL_MS = 600_000;
+const MAX_TYPING_REFRESHES = Math.ceil(TYPING_TTL_MS / TYPING_REFRESH_MS);
 
 /** True if the id carries an ASCII control character (never valid, always dropped). */
 function hasControlChar(id: string): boolean {
@@ -212,9 +238,19 @@ export function createMsTeamsAdapter(
   });
 
   const handlers: MessageHandler[] = [];
+  // Teams surfaces inbound reactions as messageReaction activities on the same
+  // webhook; the send-reaction port methods stay omitted (Teams exposes no
+  // bot-reaction send API), so only the inbound fanout is wired.
+  const reactionHandlers: ReactionHandler[] = [];
   // Stable channel identity. This webhook adapter has no self-identity fetch
   // (unlike Slack resolving botUserId at start), so it reports a constant id.
   const _channelId = "msteams";
+
+  // Typing keepalive state. A single active keepalive per adapter; a fresh
+  // sendTyping restarts it (cancel + re-POST + reschedule), stopTyping cancels
+  // it, and the refresh count is bounded by MAX_TYPING_REFRESHES (the TTL cap).
+  let typingHandle: TimerHandle | undefined;
+  let typingRefreshCount = 0;
 
   // Health tracking. `_lastError` is a string because ChannelStatus.error is a
   // string; the message is captured on failure branches for getStatus().
@@ -227,7 +263,89 @@ export function createMsTeamsAdapter(
    * Process a single inbound activity: map → allowlist-gate → record liveness →
    * fan out to handlers under a fresh request context.
    */
+  /**
+   * Fan a mapped reaction out to the registered reaction handlers under a fresh
+   * request context; a throwing or rejecting handler is logged and never aborts
+   * the loop or its siblings (mirrors the message fanout).
+   */
+  function fanOutReactions(traceId: string, reaction: NormalizedReaction): void {
+    void runWithContext(
+      {
+        traceId,
+        startedAt: now(),
+        channelType: "msteams",
+        tenantId: "default",
+        trustLevel: "admin",
+      },
+      () => {
+        for (const handler of reactionHandlers) {
+          try {
+            Promise.resolve(handler(reaction)).catch((handlerErr) => {
+              deps.logger.error(
+                {
+                  err: handlerErr,
+                  hint: "Check the msteams inbound reaction handler",
+                  errorKind: "internal" as const,
+                },
+                "Inbound reaction handler error",
+              );
+            });
+          } catch (handlerErr) {
+            deps.logger.error(
+              {
+                err: handlerErr,
+                hint: "Check the msteams inbound reaction handler",
+                errorKind: "internal" as const,
+              },
+              "Inbound reaction handler error",
+            );
+          }
+        }
+      },
+    );
+  }
+
+  /**
+   * Map an inbound messageReaction activity to a NormalizedReaction, gate the
+   * reactor against the same allowlist the message path uses, and fan it out.
+   */
+  function processReaction(activity: TeamsReactionActivity): void {
+    const reaction = mapMsTeamsReaction(activity);
+    if (!reaction) return;
+
+    if (
+      deps.allowMode === "allowlist" &&
+      !deps.allowFrom.includes(reaction.reactorId) &&
+      !deps.allowFrom.includes(reaction.channelId)
+    ) {
+      deps.logger.warn(
+        {
+          channelType: "msteams" as const,
+          hint: "Add the aadObjectId or conversation.id to channels.msteams.allowFrom",
+          errorKind: "precondition" as const,
+        },
+        "Inbound reaction from non-allowlisted reactor dropped",
+      );
+      return;
+    }
+
+    _lastMessageAt = now();
+    const traceId = randomUUID();
+    deps.logger.debug(
+      { step: "channels-inbound", channelType: "msteams" as const, traceId },
+      "Inbound reaction",
+    );
+    fanOutReactions(traceId, reaction);
+  }
+
   function processEvent(activity: TeamsActivity): void {
+    // Reactions arrive as messageReaction activities on the same webhook; route
+    // them to the reaction fanout before the message mapper (which skips them).
+    if (activity.type === "messageReaction") {
+      processReaction(activity as TeamsReactionActivity);
+      return;
+    }
+
     const normalized = mapMsTeamsActivityToNormalized(activity);
     if (!normalized) return;
 
@@ -426,6 +544,101 @@ export function createMsTeamsAdapter(
     return ok(undefined);
   }
 
+  /** Resolve the typing serviceUrl from the action params (direct or under extra). */
+  function resolveTypingServiceUrl(
+    params: Record<string, unknown>,
+  ): string | undefined {
+    const direct =
+      typeof params.serviceUrl === "string" ? params.serviceUrl : undefined;
+    const extra = params.extra;
+    const fromExtra =
+      typeof extra === "object" &&
+      extra !== null &&
+      typeof (extra as { serviceUrl?: unknown }).serviceUrl === "string"
+        ? (extra as { serviceUrl: string }).serviceUrl
+        : undefined;
+    const raw = direct ?? fromExtra;
+    if (raw === undefined) return undefined;
+    return raw.endsWith("/") ? raw : `${raw}/`;
+  }
+
+  /** Cancel the active typing keepalive, if any. Idempotent + cancel-safe. */
+  function stopTypingKeepalive(): void {
+    if (typingHandle !== undefined && !typingHandle.cancelled) typingHandle.cancel();
+    typingHandle = undefined;
+  }
+
+  /** POST a single {type:"typing"} activity (best-effort; failures log at DEBUG). */
+  async function sendTypingActivity(
+    conversationId: string,
+    serviceUrl: string,
+  ): Promise<void> {
+    const tok = await tokens.getToken();
+    if (!tok.ok) return; // the token provider already logged its failure branch
+    const url = `${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`;
+    const responded = await fromPromise(
+      (deps.fetchImpl ?? fetch)(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tok.value}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ type: "typing" }),
+      }),
+    );
+    if (!responded.ok) {
+      const classified = classifyMsTeamsError(undefined, responded.error);
+      deps.logger.debug(
+        {
+          channelType: "msteams" as const,
+          hint: classified.hint,
+          errorKind: classified.errorKind,
+        },
+        "Typing keepalive post failed to reach the connector",
+      );
+      return;
+    }
+    if (!responded.value.ok) {
+      const classified = classifyMsTeamsError(responded.value.status);
+      deps.logger.debug(
+        {
+          channelType: "msteams" as const,
+          status: responded.value.status,
+          hint: classified.hint,
+          errorKind: classified.errorKind,
+        },
+        "Typing keepalive post rejected by the connector",
+      );
+    }
+  }
+
+  /** Reschedule the next keepalive refresh over the injected timer, bounded by the TTL cap. */
+  function scheduleTypingRefresh(conversationId: string, serviceUrl: string): void {
+    const timer = deps.timer;
+    if (timer === undefined) return;
+    if (typingRefreshCount >= MAX_TYPING_REFRESHES) {
+      // TTL backstop: stop rearming even without an explicit stopTyping.
+      stopTypingKeepalive();
+      return;
+    }
+    const handle = timer.setTimeout(() => {
+      typingHandle = undefined;
+      typingRefreshCount += 1;
+      void sendTypingActivity(conversationId, serviceUrl);
+      scheduleTypingRefresh(conversationId, serviceUrl);
+    }, TYPING_REFRESH_MS);
+    handle.unref();
+    typingHandle = handle;
+  }
+
+  /** (Re)start the keepalive: cancel any prior one, POST now, and schedule refreshes. */
+  function startTypingKeepalive(conversationId: string, serviceUrl: string): void {
+    stopTypingKeepalive();
+    typingRefreshCount = 0;
+    void sendTypingActivity(conversationId, serviceUrl);
+    scheduleTypingRefresh(conversationId, serviceUrl);
+  }
+
   const adapter: MsTeamsAdapterHandle = {
     get channelId(): string {
       return _channelId;
@@ -468,7 +681,8 @@ export function createMsTeamsAdapter(
     },
 
     async stop(): Promise<Result<void, Error>> {
-      // No persistent connection to tear down.
+      // No persistent connection to tear down; cancel any running typing keepalive.
+      stopTypingKeepalive();
       _connected = false;
       deps.logger.info({ channelType: "msteams" as const }, "Adapter stopped");
       return ok(undefined);
@@ -619,7 +833,39 @@ export function createMsTeamsAdapter(
       action: string,
       params: Record<string, unknown>,
     ): Promise<Result<unknown, Error>> {
-      void params;
+      if (action === "sendTyping") {
+        // Suppressed during streaming (the streamed text is itself the activity):
+        // cancel any running keepalive and do not start a new one.
+        if (params.streaming === true) {
+          stopTypingKeepalive();
+          return ok({ typing: false });
+        }
+        // No timer injected → the keepalive degrades to a no-op.
+        if (deps.timer === undefined) return ok({ typing: false });
+        const conversationId =
+          typeof params.chatId === "string"
+            ? params.chatId
+            : typeof params.channelId === "string"
+              ? params.channelId
+              : undefined;
+        const serviceUrl = resolveTypingServiceUrl(params);
+        if (
+          conversationId === undefined ||
+          serviceUrl === undefined ||
+          !isSafeConversationId(conversationId) ||
+          !isSafeServiceUrl(serviceUrl)
+        ) {
+          return ok({ typing: false });
+        }
+        startTypingKeepalive(conversationId, serviceUrl);
+        return ok({ typing: true });
+      }
+
+      if (action === "stopTyping") {
+        stopTypingKeepalive();
+        return ok({ typing: false });
+      }
+
       const unsupportedErr = new Error(`Unsupported action: ${action} on msteams`);
       deps.logger.warn(
         {
@@ -635,6 +881,10 @@ export function createMsTeamsAdapter(
 
     onMessage(handler: MessageHandler): void {
       handlers.push(handler);
+    },
+
+    onReaction(handler: ReactionHandler): void {
+      reactionHandlers.push(handler);
     },
 
     getStatus(): ChannelStatus {
