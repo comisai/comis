@@ -209,6 +209,42 @@ absent, `sql`/`jsonpath` honest-degrade and `read`/`grep`/`jq` keep working. See
 [the orchestrate tool reference](/agent-tools/orchestrate#resultref-high-volume-returns)
 for the full extraction API and the hardening details.
 
+## Measured savings
+
+The run-for-days pattern keeps a lead context-flat *by construction*; an
+[`orchestrate`](/agent-tools/orchestrate) run additionally puts a **measured number** on the
+saving. When a run materializes a high-volume tool return as a `ResultRef` on disk instead of
+re-entering it into context, Comis records how many tokens that avoided -- a **labeled
+estimate**:
+
+```text
+estSavedTokens  ≈  (Σ materialized ResultRef bytes  −  stdout chars re-entered) / 4
+```
+
+Both terms convert to tokens at the standard ~4-bytes-per-token approximation. It is a
+**counterfactual estimate**, not exact accounting, and it is deliberately conservative on both
+sides:
+
+- **Materialized-only.** Only bytes actually written to the run's `results/` directory count --
+  a payload the script streamed past without materializing is never credited.
+- **Post-bounce actual.** The subtracted term is what the script *actually* re-entered (its
+  `console.log` stdout, after in-jail slicing), so a run that re-logs its whole `ResultRef` nets
+  ~zero saving, honestly.
+- **Never negative.** `estSavedTokens` clamps at `0`; `savedRatio` -- the saved fraction of the
+  would-be cost -- is reported only when there was a would-be cost to divide by.
+
+The estimate surfaces in two places, both content-free (counts and token estimates only):
+
+- **Per run** -- `comis explain <sessionKey>` carries it as
+  `savings: { estSavedTokens, savedRatio }` on each entry of its
+  [`orchestrate`](/reference/json-rpc#obs-explain) section.
+- **Daemon-wide** -- `comis fleet` rolls it into an **`orchestrate_efficiency`** finding: the run
+  count and the summed estimated tokens saved across the window.
+
+Because it is labeled an estimate at every surface (`estSavedTokens`, never `savedTokens`), it
+reads as a directional efficiency signal -- "this run kept ~30k tokens of fetched data out of
+context" -- not a billing figure.
+
 ## 30-second progress fork
 
 A delegated task can run for a long time, and an isolated child by design does

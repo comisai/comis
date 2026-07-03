@@ -154,6 +154,53 @@ run arbitrary code safe:
   which the SDK authenticates with; the lease is registered with the OutputGuard at mint so it is
   never logged.
 
+## Per-run observability
+
+Every run is minted its **own per-run capability lease** — an attenuation of the agent's
+assembly lease, scoped to that single script execution. Because the already-emitted
+`capability:audited` audit stream is keyed on that per-run leaseId, a run's in-jail
+`tool.invoke` calls (and any **deny**) attribute to **the run** — not to the shared assembly
+lease that spans many runs. A denied `orch:web` groups under the run that attempted it, so a
+post-mortem can pin a denial to one script.
+
+`comis explain <sessionKey>` (the [`obs.explain`](/reference/json-rpc#obs-explain) report)
+renders a bounded, content-free **`orchestrate`** section — one entry per run in the session:
+
+```json
+{
+  "runId": "r-9f2c1e", "leaseId": "l-a17b23",
+  "outcome": "failure", "durationMs": 8140, "exitCode": 1,
+  "failureClass": "nonzero_exit",
+  "toolCalls": [{ "tool": "web_fetch", "capability": "orch:web", "decision": "allow", "count": 3 }],
+  "resultRefs": { "count": 3, "bytes": 122880 },
+  "savings": { "estSavedTokens": 30208, "savedRatio": 0.98 }
+}
+```
+
+`outcome` derives from `exitCode` (`0` → `success`). `failureClass` is present only on a failed
+run and is a **closed enum**: `timeout` (the wall-clock ceiling fired), `stdout_cap` (the stdout
+hard cap tripped), `nonzero_exit` (the script exited non-zero), `spawn_fail` (the jail never
+started), or `lease_absent` (the run reached the jail with no capability lease). `toolCalls` is
+the per-run tally attributed by the run's leaseId, `resultRefs` the materialized `{ count, bytes }`,
+and `savings` the measured token-savings **estimate** (below), carried only when the run
+materialized ResultRefs.
+
+A run that exited non-zero — or that recorded a `decision: "deny"` on any tool call —
+root-causes to a deterministic **`orchestrate_failed`** `likelyRootCause`: the same signals
+always produce the same verdict, so a failed run is a one-call `comis explain` diagnosis rather
+than a log grep. Across the whole daemon, [`comis fleet`](/reference/json-rpc#obs-fleet-health)
+rolls the per-run savings into an **`orchestrate_efficiency`** finding (run count + summed
+estimated tokens saved — counts only, safe to paste into a review).
+
+<Note>
+**What the audit stream does and does not cover.** `capability:audited` records the
+**authorization decision** for each `tool.invoke` — whether the run's lease *allowed* the call.
+It does **not** record whether an *allowed* call's tool **result** then failed. That half is
+covered at the run level instead: a script that reacts to a failed-but-allowed result by exiting
+non-zero surfaces as the run's `failureClass` + `exitCode`, and the failing tool's own bounded
+stderr tail rides the tool-error result — never the content-free audit fold.
+</Note>
+
 ## Related
 
 <CardGroup cols={2}>
