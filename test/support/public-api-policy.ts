@@ -943,6 +943,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "parseReaction",
       "NormalizedReaction",
       "ReactionHandler",
+      // ── conversation-reference contracts ──
+      // The ConversationReference domain schema + its parse ship AHEAD of their
+      // consumer: the store adapter round-trips the record and the inbound capture
+      // path builds it via parseConversationReference. The ConversationReference /
+      // MsTeamsConversationStorePort TYPES already have a cross-package consumer
+      // (the memory store), so only the schema value + parser orphan here. Shrink
+      // each entry as its real in-repo consumer lands.
+      "ConversationReferenceSchema",
+      "parseConversationReference",
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
@@ -2582,6 +2591,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // shrink-only).
       "createSqliteOutwardSendLedger",
       "ensureOutwardLedgerTable",
+      // Conversation-reference store. The SQLite
+      // MsTeamsConversationStorePort adapter `createSqliteMsTeamsConversationStore`
+      // and the idempotent DDL `ensureMsTeamsConversationTable` are surfaced ahead
+      // of their consumer: the channel adapter's conversation-store injection + the
+      // daemon composition root wire them in later waves. Interface-first planned
+      // orphans that SHRINK OUT once that wiring lands (mirror the
+      // outward-send-ledger entries above; allowlist-shrink enforces shrink-only).
+      "createSqliteMsTeamsConversationStore",
+      "ensureMsTeamsConversationTable",
       // NOTE: createContextStore (the DAG
       // context-store factory) was deleted here along with context-store.ts +
       // its barrel re-export — no longer an orphaned export to track.
